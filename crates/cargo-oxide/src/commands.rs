@@ -149,7 +149,7 @@ pub fn codegen_run(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, target_arch);
+    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
     apply_ld_library_path(&mut cmd);
 
     if let Some(bin) = bin {
@@ -221,7 +221,7 @@ pub fn codegen_build_example(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, target_arch);
+    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
     apply_ld_library_path(&mut cmd);
 
     println!("Building {}...", example);
@@ -292,7 +292,7 @@ pub fn codegen_show_pipeline(
     cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
     cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, target_arch);
+    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
     apply_ld_library_path(&mut cmd);
 
     println!("Building {}...", example);
@@ -813,14 +813,22 @@ fn build_rustflags(backend_so: &Path, debug: bool) -> String {
 
 /// Set environment variables that tell the codegen backend which output
 /// format to produce (LTOIR, NVVM IR) and the target GPU architecture.
-fn apply_output_mode(cmd: &mut Command, dlto: bool, emit_nvvm_ir: bool, target_arch: &str) {
+fn apply_output_mode(
+    cmd: &mut Command,
+    dlto: bool,
+    emit_nvvm_ir: bool,
+    arch: Option<&str>,
+    target_arch: &str,
+) {
     if dlto {
         cmd.env("CUDA_OXIDE_EMIT_LTOIR", "1");
         cmd.env("CUDA_OXIDE_ARCH", target_arch);
     }
+    if emit_nvvm_ir || arch.is_some() {
+        cmd.env("CUDA_OXIDE_TARGET", target_arch);
+    }
     if emit_nvvm_ir {
         cmd.env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
-        cmd.env("CUDA_OXIDE_TARGET", target_arch);
     }
 }
 

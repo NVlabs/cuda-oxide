@@ -121,7 +121,7 @@ impl CudaEvent {
         end.synchronize()?;
         let mut ms: f32 = 0.0;
         unsafe {
-            cuda_bindings::cuEventElapsedTime_v2(&mut ms as *mut _, self.cu_event, end.cu_event)
+            cuda_bindings::cu_event_elapsed_time(&mut ms as *mut _, self.cu_event, end.cu_event)
                 .result()?;
         }
         Ok(ms)

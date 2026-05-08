@@ -25,8 +25,18 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-env-changed=CUDA_TOOLKIT_PATH");
+    println!("cargo::rustc-check-cfg=cfg(cuda_has_cuEventElapsedTime_v2)");
 
     let toolkit = cuda_toolkit_dir();
+    let cuda_h = Path::new(&toolkit).join("include/cuda.h");
+    println!("cargo:rerun-if-changed={}", cuda_h.display());
+    if std::fs::read_to_string(&cuda_h)
+        .map(|contents| contents.contains("cuEventElapsedTime_v2"))
+        .unwrap_or(false)
+    {
+        println!("cargo:rustc-cfg=cuda_has_cuEventElapsedTime_v2");
+    }
+
     for path in collect_lib_paths(&toolkit) {
         println!("cargo:rustc-link-search=native={}", path.display());
     }

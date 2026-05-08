@@ -26,6 +26,31 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 use std::env;
 
+/// Calls the CUDA Driver API event elapsed-time function across toolkit header variants.
+///
+/// CUDA 12.8+ headers expose `cuEventElapsedTime_v2`, while older CUDA 12.x
+/// headers, including CUDA 12.4, expose `cuEventElapsedTime`.
+///
+/// # Safety
+///
+/// `p_milliseconds` must be valid for writes, and `start`/`end` must be valid
+/// CUDA event handles from the active context.
+pub unsafe fn cu_event_elapsed_time(
+    p_milliseconds: *mut f32,
+    start: CUevent,
+    end: CUevent,
+) -> CUresult {
+    #[cfg(cuda_has_cuEventElapsedTime_v2)]
+    {
+        unsafe { cuEventElapsedTime_v2(p_milliseconds, start, end) }
+    }
+
+    #[cfg(not(cuda_has_cuEventElapsedTime_v2))]
+    {
+        unsafe { cuEventElapsedTime(p_milliseconds, start, end) }
+    }
+}
+
 /// Root directory of the CUDA toolkit used for this build, for host code that must agree with
 /// compile-time include and link paths (e.g. loading companion libraries or probing layout).
 ///
