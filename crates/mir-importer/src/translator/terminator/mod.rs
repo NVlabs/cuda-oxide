@@ -1550,6 +1550,26 @@ fn try_dispatch_intrinsic(
         ));
     }
 
+    if let Some(intrinsic) =
+        intrinsics::float_math::RustFloatMathIntrinsic::from_cuda_device_math_path(name)
+    {
+        return Ok(Some(
+            intrinsics::float_math::emit_rust_float_math_intrinsic(
+                ctx,
+                body,
+                intrinsic,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?,
+        ));
+    }
+
     match name {
         // =================================================================
         // Compiler Hints

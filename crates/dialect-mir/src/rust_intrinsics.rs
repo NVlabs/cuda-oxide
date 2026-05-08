@@ -49,6 +49,13 @@ pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 pub const CALLEE_SQRT_F32: &str = placeholder!("sqrtf32");
 /// Placeholder call used for `core::intrinsics::sqrtf64`.
 pub const CALLEE_SQRT_F64: &str = placeholder!("sqrtf64");
+/// Placeholder call used for `cuda_device::math::rsqrt_f32`.
+///
+/// Not a Rust core intrinsic; cuda-oxide-specific shortcut for `1.0 / sqrt(x)`
+/// that lowers to libdevice `__nv_rsqrtf` (single PTX instruction on sm_53+).
+pub const CALLEE_RSQRT_F32: &str = placeholder!("rsqrtf32");
+/// Placeholder call used for `cuda_device::math::rsqrt_f64`.
+pub const CALLEE_RSQRT_F64: &str = placeholder!("rsqrtf64");
 /// Placeholder call used for `core::intrinsics::powif32`.
 pub const CALLEE_POWI_F32: &str = placeholder!("powif32");
 /// Placeholder call used for `core::intrinsics::powif64`.

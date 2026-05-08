@@ -150,6 +150,8 @@ impl RustSaturatingIntrinsic {
 enum RustFloatMathIntrinsic {
     SqrtF32,
     SqrtF64,
+    RsqrtF32,
+    RsqrtF64,
     PowiF32,
     PowiF64,
     SinF32,
@@ -195,6 +197,8 @@ impl RustFloatMathIntrinsic {
         match callee {
             rust_intrinsics::CALLEE_SQRT_F32 => Some(Self::SqrtF32),
             rust_intrinsics::CALLEE_SQRT_F64 => Some(Self::SqrtF64),
+            rust_intrinsics::CALLEE_RSQRT_F32 => Some(Self::RsqrtF32),
+            rust_intrinsics::CALLEE_RSQRT_F64 => Some(Self::RsqrtF64),
             rust_intrinsics::CALLEE_POWI_F32 => Some(Self::PowiF32),
             rust_intrinsics::CALLEE_POWI_F64 => Some(Self::PowiF64),
             rust_intrinsics::CALLEE_SIN_F32 => Some(Self::SinF32),
@@ -246,6 +250,8 @@ impl RustFloatMathIntrinsic {
         match self {
             Self::SqrtF32 => Ok("__nv_sqrtf"),
             Self::SqrtF64 => Ok("__nv_sqrt"),
+            Self::RsqrtF32 => Ok("__nv_rsqrtf"),
+            Self::RsqrtF64 => Ok("__nv_rsqrt"),
             Self::PowiF32 => Ok("__nv_powif"),
             Self::PowiF64 => Ok("__nv_powi"),
             Self::SinF32 => Ok("__nv_sinf"),
@@ -1066,6 +1072,14 @@ mod tests {
             (
                 rust_intrinsics::CALLEE_SQRT_F64,
                 RustFloatMathIntrinsic::SqrtF64,
+            ),
+            (
+                rust_intrinsics::CALLEE_RSQRT_F32,
+                RustFloatMathIntrinsic::RsqrtF32,
+            ),
+            (
+                rust_intrinsics::CALLEE_RSQRT_F64,
+                RustFloatMathIntrinsic::RsqrtF64,
             ),
             (
                 rust_intrinsics::CALLEE_POWI_F32,
