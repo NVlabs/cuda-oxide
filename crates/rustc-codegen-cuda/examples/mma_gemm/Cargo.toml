@@ -1,0 +1,20 @@
+[package]
+name = "mma_gemm"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# Mark as standalone crate (not part of parent workspace)
+[workspace]
+
+# bf16 GEMM with mma.sync.aligned.m16n8k16 + ldmatrix.x4 (SM80+).
+# Build / run with:
+#   cargo oxide build --arch sm_120 mma_gemm
+#   cargo oxide run   --arch sm_120 mma_gemm verify
+#   cargo oxide run   --arch sm_120 mma_gemm bench
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
+half = "2"
