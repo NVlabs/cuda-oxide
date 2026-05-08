@@ -2465,6 +2465,56 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
+        // MMA (warp-level mma.sync, from intrinsics::mma)
+        // =================================================================
+        "cuda_device::mma::mma_m16n8k16_bf16_f32" => {
+            Ok(Some(intrinsics::mma::emit_mma_m16n8k16_bf16_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
+        // =================================================================
+        // Ldmatrix (warp-cooperative ldmatrix.sync, from intrinsics::ldmatrix)
+        // =================================================================
+        "cuda_device::ldmatrix::ldmatrix_x4_b16" => {
+            Ok(Some(intrinsics::ldmatrix::emit_ldmatrix_x4_b16(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+        "cuda_device::ldmatrix::ldmatrix_x4_trans_b16" => {
+            Ok(Some(intrinsics::ldmatrix::emit_ldmatrix_x4_trans_b16(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
+        // =================================================================
         // TMA (from intrinsics::tma)
         // =================================================================
         "cuda_device::tma::cp_async_bulk_tensor_1d_g2s" => Ok(Some(intrinsics::tma::emit_tma_g2s(

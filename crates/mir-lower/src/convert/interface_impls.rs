@@ -46,7 +46,8 @@ use dialect_nvvm::ops::{
     MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
     MatchAnySyncI64Op, MbarrierArriveClusterOp, MbarrierArriveExpectTxSharedOp,
     MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
-    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, NanosleepOp, NvvmAtomicCmpxchgOp,
+    LdmatrixX4B16Op, LdmatrixX4TransB16Op,
+    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, MmaM16n8k16Bf16F32Op, NanosleepOp, NvvmAtomicCmpxchgOp,
     NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op,
     ReadPtxSregClockOp, ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp,
     ReadPtxSregClusterCtaidZOp, ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp,
@@ -2014,6 +2015,57 @@ impl MirToLlvmConversion for WgmmaMmaM64N64K16F32Bf16Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::wgmma::convert_mma(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM16n8k16Bf16F32Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::mma::convert_mma_m16n8k16_bf16_f32(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX4B16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::ldmatrix::convert_ldmatrix_x4_b16(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX4TransB16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::ldmatrix::convert_ldmatrix_x4_trans_b16(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
     }
 }
 

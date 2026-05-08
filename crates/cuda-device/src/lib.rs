@@ -20,6 +20,8 @@ pub mod debug;
 pub mod disjoint;
 pub mod fence;
 pub mod grid;
+pub mod ldmatrix;
+pub mod mma;
 pub mod shared;
 pub mod tcgen05;
 pub mod thread;
