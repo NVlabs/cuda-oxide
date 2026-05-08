@@ -220,7 +220,7 @@ impl CudaContext {
     /// decoded UTF-8 string with any trailing NULs stripped.
     pub fn device_name(&self) -> Result<String, DriverError> {
         self.bind_to_thread()?;
-        let mut buf = [0i8; 256];
+        let mut buf = [0; 256];
         unsafe {
             cuda_bindings::cuDeviceGetName(buf.as_mut_ptr(), buf.len() as c_int, self.cu_device)
                 .result()?;
