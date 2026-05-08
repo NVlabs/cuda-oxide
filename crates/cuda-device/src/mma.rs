@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warp-level Matrix Multiply-Accumulate (mma.sync) for SM80+.
+//! Warp-level Matrix Multiply-Accumulate (mma.sync) for sm_80+.
 //!
 //! Issues a single PTX `mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32`
 //! instruction. Per-lane fragment ABI (warp = 32 lanes, 16x8 = 128 outputs):
@@ -14,6 +14,19 @@
 //! - D: 4 x f32 per lane (output)                     -- 16x8 result
 //!
 //! All 32 lanes in the warp must execute together with consistent inputs.
+//!
+//! # Hardware Support
+//!
+//! - **sm_80 (Ampere)**: A100, A30, A40
+//! - **sm_86 (Ampere)**: GA10x consumer (RTX 3090, etc.)
+//! - **sm_89 (Ada)**: AD10x (RTX 4090, L40, etc.)
+//! - **sm_90 (Hopper)**: H100, H200
+//! - **sm_100 (Blackwell datacenter)**: B100, B200
+//! - **sm_120 (Blackwell consumer/workstation)**: RTX 5090, RTX PRO 6000 Blackwell
+//!
+//! Verified on sm_120 (RTX PRO 6000 Blackwell). For Hopper+, prefer
+//! `wgmma_mma_*` for larger warpgroup tiles when available; for sm_100a
+//! datacenter Blackwell, prefer `tcgen05_mma_*` for the 5th-gen tensor cores.
 
 use crate::cusimd::CuSimd;
 

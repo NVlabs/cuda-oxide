@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warp-cooperative `ldmatrix.sync.aligned.m8n8.x4` (SM75+).
+//! Warp-cooperative `ldmatrix.sync.aligned.m8n8.x4` (sm_75+).
 //!
 //! Loads four 8x8 b16 matrices from shared memory into the per-lane register
 //! layout consumed by `mma.sync.aligned.m16n8k16` (and friends).
@@ -11,6 +11,18 @@
 //! Per-lane fragment: 4 x b32 outputs (each holding 2 packed b16 elements).
 //! All 32 lanes in the warp must participate; lanes 0-7 each provide a row
 //! address, fanning out to 8 rows x 4 matrices = 32 8-byte rows total.
+//!
+//! # Hardware Support
+//!
+//! - **sm_75 (Turing)**: T4, RTX 2080
+//! - **sm_80 (Ampere)**: A100, A30, A40
+//! - **sm_86 (Ampere)**: GA10x consumer
+//! - **sm_89 (Ada)**: AD10x (RTX 4090, L40, etc.)
+//! - **sm_90 (Hopper)**: H100, H200
+//! - **sm_100 (Blackwell datacenter)**: B100, B200
+//! - **sm_120 (Blackwell consumer/workstation)**: RTX 5090, RTX PRO 6000 Blackwell
+//!
+//! Verified on sm_120 (RTX PRO 6000 Blackwell).
 
 use crate::cusimd::CuSimd;
 
