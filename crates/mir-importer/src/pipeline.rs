@@ -756,8 +756,8 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 
 /// Generates PTX from LLVM IR using `llc`.
 ///
-/// Tries `llc-22` then `llc-21` in order. LLVM 21+ is the minimum supported
-/// version: earlier `llc` releases reject the modern TMA / tcgen05 / WGMMA
+/// LLVM 21+ is the minimum supported version:
+/// earlier `llc` releases reject the modern TMA / tcgen05 / WGMMA
 /// intrinsic signatures that cuda-oxide emits (e.g. the 10-operand
 /// `llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d` with `addrspace(7)` + CTA
 /// group parameter requires LLVM 21). If `CUDA_OXIDE_LLC` is set, it is used
@@ -828,6 +828,26 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         };
     }
 
+    let llc_path = (|| {
+        let output = std::process::Command::new("rustc")
+            .arg("--print")
+            .arg("sysroot")
+            .arg("--print")
+            .arg("host-tuple")
+            .output()
+            .ok()
+            .and_then(|output| {
+                if output.status.success() {
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })?;
+        let (sysroot, host_tuple) = output.split_once('\n')?;
+        let llc_path = [sysroot, "lib", "rustlib", host_tuple, "bin", "llc"].join("/");
+        Some(llc_path)
+    })();
+
     // Try different llc versions (newest first for best atomics/scope support).
     //
     // LLVM 21 is the floor: older releases reject modern TMA / tcgen05 /
@@ -843,7 +863,12 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
 
     let mut last_error = String::new();
 
-    for (llc_cmd, llc_target) in llc_candidates {
+    for (llc_cmd, llc_target) in llc_path
+        .as_deref()
+        .map(|s| (s, target))
+        .into_iter()
+        .chain(llc_candidates)
+    {
         let result = std::process::Command::new(llc_cmd)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", llc_target))

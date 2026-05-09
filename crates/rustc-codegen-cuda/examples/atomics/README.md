@@ -14,6 +14,8 @@ Atomic operations require **llc-22 or newer** for correct syncscope
 generation. Without it, scopes (`.gpu`, `.cta`, `.sys`) will be missing
 from generated PTX.
 
+Usually `llc` in Rust toolchain is enough.
+
 Install on Ubuntu/Debian:
 
 ```bash
@@ -47,7 +49,7 @@ cargo oxide run atomics
 # Or with explicit llc path:
 CUDA_OXIDE_LLC=/path/to/llc-22 cargo oxide run atomics
 
-# Verbose mode (shows which llc was selected):
+# Verbose mode (shows which llc was used):
 CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 ```
 
@@ -265,7 +267,7 @@ dialect-llvm  (export.rs)                         ← Textual LLVM IR:
         │                                            atomicrmw add ptr %p, i32 %v ...
         │                                            fence syncscope("device") acquire
         ▼
-llc-22                                            ← PTX:
+llc                                               ← PTX:
                                                      fence.acq_rel.gpu
                                                      atom.add.u32 ...
                                                      fence.acq_rel.gpu

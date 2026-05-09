@@ -117,14 +117,10 @@ cargo oxide debug vecadd --tui
 ### Requirements
 
 - **cargo-oxide** — cargo subcommand that drives the build pipeline (`cargo oxide run`, `build`, `debug`, etc.)
-- **Rust nightly** with `rust-src` and `rustc-dev` components (pinned in `rust-toolchain.toml`)
+- **Rust nightly** with `rust-src` and `rustc-dev` and `llvm-tools` components (pinned in `rust-toolchain.toml`)
 - **CUDA Toolkit** (12.x+)
-- **LLVM 21+** with NVPTX backend (`llc` must be in PATH)
 - **Clang + libclang dev headers** (`clang-21` / `libclang-common-21-dev`) — needed by `bindgen` when building the host `cuda-bindings` crate
 - **Linux** (tested on Ubuntu 24.04)
-
-> **Why LLVM 21?** We emit TMA / tcgen05 / WGMMA intrinsics that `llc` from LLVM 20 and earlier can't
-> handle. Simple kernels might still work with an older `llc`, but anything Hopper / Blackwell needs 21+.
 
 ### Install
 
@@ -156,7 +152,7 @@ export PATH="/usr/local/cuda/bin:$PATH"
 nvcc --version
 ```
 
-#### LLVM
+#### LLVM (optional)
 
 ```bash
 # Ubuntu/Debian
@@ -176,8 +172,11 @@ sudo ./llvm.sh 21
 llc-21 --version | grep nvptx
 ```
 
-The pipeline auto-discovers `llc-22` and `llc-21` on `PATH` (in that order).
+The pipeline prefers `llc` in Rust toolchain, and auto-discovers `llc-22` and `llc-21` on `PATH` (in that order).
 To pin a specific binary, set `CUDA_OXIDE_LLC=/usr/bin/llc-21`.
+
+> We emit TMA / tcgen05 / WGMMA intrinsics that `llc` from LLVM 20 and earlier can't handle.
+> Simple kernels might still work with an older `llc`, but anything Hopper / Blackwell needs 21+.
 
 #### Clang (host `cuda-bindings`)
 

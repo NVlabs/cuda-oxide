@@ -82,9 +82,13 @@ If you installed CUDA to a non-default location, set `CUDA_TOOLKIT_PATH` to its 
 
 ---
 
-## LLVM (21+)
+## LLVM 21+ (optional)
 
-cuda-oxide uses LLVM's NVPTX backend to lower LLVM IR to PTX. Install LLVM 21 or newer and make sure `llc-21` (or `llc-22`) is on your `PATH`:
+cuda-oxide uses LLVM's NVPTX backend to lower LLVM IR to PTX.
+
+Usually `llc` in Rust toolchain is enough.
+
+Install LLVM 21 or newer and make sure `llc-21` (or `llc-22`) is on your `PATH`:
 
 ```bash
 # Ubuntu / Debian

@@ -12,7 +12,6 @@ from a fresh checkout. If you just want to run an example, the
 |:-----------------|:----------------------------- |:------------------------------------------------------------|
 | **Rust nightly** | `nightly-2026-04-03` (pinned) | Compiler toolchain with `rustc-dev` for the codegen backend |
 | **CUDA Toolkit** | 12.x+                         | Driver API, `nvcc`, PTX assembler                           |
-| **LLVM**         | 21+ with NVPTX backend        | `llc-21`/`llc-22` for LLVM IR → PTX lowering                |
 | **Clang**        | 21+ (`clang-21` pkg)          | `bindgen` in host `cuda-bindings` needs clang's headers     |
 | **Linux**        | Tested on Ubuntu 24.04        | Windows and macOS are not supported                         |
 | **GPU**          | sm_80, sm_90, sm_100a         | Hardware target                                             |
@@ -33,7 +32,7 @@ components. Rustup picks it up automatically:
 # rust-toolchain.toml (already in the repo root)
 [toolchain]
 channel = "nightly-2026-04-03"
-components = ["rust-src", "rustc-dev", "rust-analyzer"]
+components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
 ```
 
 If you need to install manually:
@@ -58,7 +57,7 @@ nvcc --version   # should print 12.x or later
 If you are building on a system without a GPU (e.g. CI), the toolkit is still
 required for `ptxas` and header files, but you will not be able to run kernels.
 
-## Install LLVM
+## Install LLVM (optional)
 
 The codegen pipeline emits LLVM IR and invokes `llc` to produce PTX. LLVM 21
 or later is required — earlier `llc` releases reject the TMA / tcgen05 / WGMMA
