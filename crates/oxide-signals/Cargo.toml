@@ -1,0 +1,31 @@
+[package]
+name = "oxide-signals"
+version = "0.1.0"
+edition.workspace = true
+description = "OIS (Oxide Instrumentation Signal) canonical envelope types with OpenTelemetry integration for cuda-oxide"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["cuda", "oxide", "observability", "opentelemetry", "signals"]
+categories = ["development-tools", "science"]
+rust-version = "1.85"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+schemars = { version = "1.2.1", features = ["derive", "chrono04"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+thiserror = { workspace = true }
+
+# OpenTelemetry integration
+opentelemetry = "0.32.0"
+opentelemetry_sdk = "0.32.0"
+
+[dev-dependencies]
+serde_json = "1.0.149"
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"

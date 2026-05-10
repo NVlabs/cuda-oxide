@@ -21,6 +21,8 @@ members = [
     "crates/reserved-oxide-symbols",
     # Differential codegen fuzzer support
     "crates/fuzzer",
+    # Observability / OIS signals
+    "crates/oxide-signals",
 ]
 
 [workspace.package]
@@ -55,6 +57,7 @@ libnvvm-sys = { path = "crates/libnvvm-sys" }
 nvjitlink-sys = { path = "crates/nvjitlink-sys" }
 reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
 fuzzer = { path = "crates/fuzzer" }
+oxide-signals = { path = "crates/oxide-signals" }
 
 # Common dependencies
 futures = "0.3"
