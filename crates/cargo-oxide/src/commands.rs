@@ -1002,6 +1002,8 @@ cuda-core = {{ git = "{GIT_REPO}" }}
         )
     };
 
+    let adjusted_file_name = name.replace("-", "_");
+
     let main_rs = if async_mode {
         format!(
             r#"use cuda_device::{{kernel, thread, DisjointSlice}};
@@ -1025,10 +1027,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {{
     use std::mem;
 
     init_device_contexts(0, 1)?;
-    // Loads `{name}.ptx` directly when cuda-oxide produced PTX, or builds a
-    // cubin from `{name}.ll` when cuda-oxide auto-detected libdevice math
+    // Loads `{adjusted_file_name}.ptx` directly when cuda-oxide produced PTX, or builds a
+    // cubin from `{adjusted_file_name}.ll` when cuda-oxide auto-detected libdevice math
     // (`sin`, `pow`, `exp`, ...). Requires CUDA Toolkit on the host.
-    let module = load_kernel_module_async("{name}", 0)?;
+    let module = load_kernel_module_async("{adjusted_file_name}", 0)?;
 
     const N: usize = 1024;
     let a_host: Vec<f32> = (0..N).map(|i| i as f32).collect();
@@ -1116,10 +1118,10 @@ fn main() {{
     let b_dev = DeviceBuffer::from_host(&stream, &b_host).unwrap();
     let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-    // Loads `{name}.ptx` directly when cuda-oxide produced PTX, or builds a
-    // cubin from `{name}.ll` when cuda-oxide auto-detected libdevice math
+    // Loads `{adjusted_file_name}.ptx` directly when cuda-oxide produced PTX, or builds a
+    // cubin from `{adjusted_file_name}.ll` when cuda-oxide auto-detected libdevice math
     // (`sin`, `pow`, `exp`, ...). Requires CUDA Toolkit on the host.
-    let module = load_kernel_module(&ctx, "{name}")
+    let module = load_kernel_module(&ctx, "{adjusted_file_name}")
         .expect("Failed to load kernel module");
 
     cuda_launch! {{
