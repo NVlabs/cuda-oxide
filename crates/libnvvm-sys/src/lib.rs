@@ -188,7 +188,7 @@ impl LibNvvm {
         })?;
 
         unsafe {
-            Ok(LibNvvm {
+            Ok(Self {
                 create_program: resolve(&lib, "nvvmCreateProgram")?,
                 destroy_program: resolve(&lib, "nvvmDestroyProgram")?,
                 add_module: resolve(&lib, "nvvmAddModuleToProgram")?,

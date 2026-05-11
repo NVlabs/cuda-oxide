@@ -127,7 +127,7 @@ impl AllocaOp {
             vec![],
             0,
         );
-        let op = AllocaOp { op };
+        let op = Self { op };
         op.set_attr_alloca_element_type(ctx, TypeAttr::new(elem_type));
         op
     }
@@ -175,7 +175,7 @@ pub struct LoadOp;
 impl LoadOp {
     /// Create a new [`LoadOp`].
     pub fn new(ctx: &mut Context, ptr: Value, res_ty: Ptr<TypeObj>) -> Self {
-        LoadOp {
+        Self {
             op: Operation::new(
                 ctx,
                 Self::get_concrete_op_info(),
@@ -235,7 +235,7 @@ pub struct StoreOp;
 impl StoreOp {
     /// Create a new [`StoreOp`].
     pub fn new(ctx: &mut Context, value: Value, ptr: Value) -> Self {
-        StoreOp {
+        Self {
             op: Operation::new(
                 ctx,
                 Self::get_concrete_op_info(),
@@ -298,8 +298,8 @@ impl Printable for GepIndex {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            GepIndex::Constant(c) => write!(f, "{c}"),
-            GepIndex::Value(v) => write!(f, "{}", v.disp(ctx)),
+            Self::Constant(c) => write!(f, "{c}"),
+            Self::Value(v) => write!(f, "{}", v.disp(ctx)),
         }
     }
 }
@@ -414,7 +414,7 @@ impl GetElementPtrOp {
             0,
         );
         let src_elem_type = TypeAttr::new(src_elem_type);
-        let op = GetElementPtrOp { op };
+        let op = Self { op };
 
         op.set_attr_gep_indices(ctx, GepIndicesAttr(attr));
         op.set_attr_gep_src_elem_type(ctx, src_elem_type);

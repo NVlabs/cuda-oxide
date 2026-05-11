@@ -70,7 +70,7 @@ pub struct MirConstructEnumOp;
 impl MirConstructEnumOp {
     /// Create a new MirConstructEnumOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirConstructEnumOp { op }
+        Self { op }
     }
 }
 
@@ -188,7 +188,7 @@ pub struct MirGetDiscriminantOp;
 impl MirGetDiscriminantOp {
     /// Create a new MirGetDiscriminantOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirGetDiscriminantOp { op }
+        Self { op }
     }
 }
 
@@ -280,7 +280,7 @@ pub struct MirEnumPayloadOp;
 impl MirEnumPayloadOp {
     /// Create a new MirEnumPayloadOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirEnumPayloadOp { op }
+        Self { op }
     }
 }
 

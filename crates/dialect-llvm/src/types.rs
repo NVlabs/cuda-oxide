@@ -75,7 +75,7 @@ impl StructType {
         fields: Option<Vec<Ptr<TypeObj>>>,
     ) -> Result<TypePtr<Self>> {
         let self_ptr = Type::register_instance(
-            StructType {
+            Self {
                 name: Some(name.clone()),
                 // Uniquing happens only on the name, so this doesn't matter.
                 fields: None,
@@ -84,7 +84,7 @@ impl StructType {
         );
         // Verify that we created a new or equivalent existing type.
         let mut self_ref = self_ptr.to_ptr().deref_mut(ctx);
-        let self_ref = self_ref.downcast_mut::<StructType>().unwrap();
+        let self_ref = self_ref.downcast_mut::<Self>().unwrap();
         assert!(self_ref.name.as_ref().unwrap() == &name);
         if let Some(fields) = fields {
             // We've been provided fields to be set.
@@ -105,7 +105,7 @@ impl StructType {
     /// These are finalized upon creation, and uniqued based on the fields.
     pub fn get_unnamed(ctx: &mut Context, fields: Vec<Ptr<TypeObj>>) -> TypePtr<Self> {
         Type::register_instance(
-            StructType {
+            Self {
                 name: None,
                 fields: Some(fields),
             },
@@ -117,7 +117,7 @@ impl StructType {
     #[must_use]
     pub fn get_existing_named(ctx: &Context, name: &Identifier) -> Option<TypePtr<Self>> {
         Type::get_instance(
-            StructType {
+            Self {
                 name: Some(name.clone()),
                 // Named structs are uniqued only on the name.
                 fields: None,
@@ -130,7 +130,7 @@ impl StructType {
     #[must_use]
     pub fn get_existing_unnamed(ctx: &Context, fields: Vec<Ptr<TypeObj>>) -> Option<TypePtr<Self>> {
         Type::get_instance(
-            StructType {
+            Self {
                 name: None,
                 fields: Some(fields),
             },
@@ -301,14 +301,14 @@ impl Parsable for StructType {
         let (loc, name_opt, body_opt) = struct_parser.parse_stream(state_stream).into_result()?.0;
         let ctx = &mut state_stream.state.ctx;
         if let Some(name) = name_opt {
-            StructType::get_named(ctx, name, body_opt)
+            Self::get_named(ctx, name, body_opt)
                 .map_err(|mut err| {
                     err.set_loc(loc);
                     err
                 })
                 .into_parse_result()
         } else {
-            Ok(StructType::get_unnamed(
+            Ok(Self::get_unnamed(
                 ctx,
                 body_opt.expect("Without a name, a struct type must have a body."),
             ))
@@ -357,7 +357,7 @@ pub struct PointerType {
 impl PointerType {
     /// Get or create a pointer type with the specified address space.
     pub fn get(ctx: &mut Context, address_space: u32) -> TypePtr<Self> {
-        Type::register_instance(PointerType { address_space }, ctx)
+        Type::register_instance(Self { address_space }, ctx)
     }
 
     /// Get or create a pointer in generic address space (0).
@@ -383,7 +383,7 @@ impl PointerType {
     /// Get, if it already exists, a pointer type with the given address space.
     #[must_use]
     pub fn get_existing(ctx: &Context, address_space: u32) -> Option<TypePtr<Self>> {
-        Type::get_instance(PointerType { address_space }, ctx)
+        Type::get_instance(Self { address_space }, ctx)
     }
 
     /// Returns the address space of this pointer type.
@@ -420,12 +420,12 @@ pub struct ArrayType {
 impl ArrayType {
     /// Get or create a new array type.
     pub fn get(ctx: &mut Context, elem: Ptr<TypeObj>, size: u64) -> TypePtr<Self> {
-        Type::register_instance(ArrayType { elem, size }, ctx)
+        Type::register_instance(Self { elem, size }, ctx)
     }
     /// Get, if it already exists, an array type.
     #[must_use]
     pub fn get_existing(ctx: &Context, elem: Ptr<TypeObj>, size: u64) -> Option<TypePtr<Self>> {
-        Type::get_instance(ArrayType { elem, size }, ctx)
+        Type::get_instance(Self { elem, size }, ctx)
     }
 
     /// Get array element type.
@@ -457,13 +457,13 @@ pub struct VectorType {
 impl VectorType {
     /// Get or create a new vector type.
     pub fn get(ctx: &mut Context, elem: Ptr<TypeObj>, size: u64) -> TypePtr<Self> {
-        Type::register_instance(VectorType { elem, size }, ctx)
+        Type::register_instance(Self { elem, size }, ctx)
     }
 
     /// Get, if it already exists, a vector type.
     #[must_use]
     pub fn get_existing(ctx: &Context, elem: Ptr<TypeObj>, size: u64) -> Option<TypePtr<Self>> {
-        Type::get_instance(VectorType { elem, size }, ctx)
+        Type::get_instance(Self { elem, size }, ctx)
     }
 
     /// Get vector element type.
@@ -517,7 +517,7 @@ impl FuncType {
         is_var_arg: bool,
     ) -> TypePtr<Self> {
         Type::register_instance(
-            FuncType {
+            Self {
                 res,
                 args,
                 is_var_arg,

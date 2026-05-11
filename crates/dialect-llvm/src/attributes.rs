@@ -34,7 +34,7 @@ pub struct FPHalfAttr(pub apfloat::Half);
 
 impl FPHalfAttr {
     pub fn from_bits(bits: u16) -> Self {
-        FPHalfAttr(<apfloat::Half as Float>::from_bits(bits as u128))
+        Self(<apfloat::Half as Float>::from_bits(bits as u128))
     }
 
     pub fn to_bits(&self) -> u16 {
@@ -71,7 +71,7 @@ impl FloatAttr for FPHalfAttr {
         let df = df
             .downcast::<apfloat::Half>()
             .expect("Expected a half precision float");
-        Box::new(FPHalfAttr(*df))
+        Box::new(Self(*df))
     }
 
     fn get_semantics(&self) -> apfloat::Semantics {
@@ -120,13 +120,13 @@ pub struct FastmathFlagsAttr(pub FastmathFlags);
 
 impl Default for FastmathFlagsAttr {
     fn default() -> Self {
-        FastmathFlagsAttr(FastmathFlags::empty())
+        Self(FastmathFlags::empty())
     }
 }
 
 impl From<FastmathFlags> for FastmathFlagsAttr {
     fn from(value: FastmathFlags) -> Self {
-        FastmathFlagsAttr(value)
+        Self(value)
     }
 }
 
@@ -179,7 +179,7 @@ impl Parsable for FastmathFlagsAttr {
             .map_err(|e| input_error!(pos.clone(), FastmathFlagParseErr(e)))
             .into_parse_result()?;
 
-        Ok(FastmathFlagsAttr(fast_math_flags)).into_parse_result()
+        Ok(Self(fast_math_flags)).into_parse_result()
     }
 }
 

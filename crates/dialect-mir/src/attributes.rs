@@ -68,7 +68,7 @@ pub struct MirFP16Attr(pub apfloat::Half);
 
 impl MirFP16Attr {
     pub fn from_bits(bits: u16) -> Self {
-        MirFP16Attr(<apfloat::Half as Float>::from_bits(bits as u128))
+        Self(<apfloat::Half as Float>::from_bits(bits as u128))
     }
 
     pub fn to_bits(&self) -> u16 {
@@ -105,7 +105,7 @@ impl FloatAttr for MirFP16Attr {
         let df = df
             .downcast::<apfloat::Half>()
             .expect("Expected a half precision float");
-        Box::new(MirFP16Attr(*df))
+        Box::new(Self(*df))
     }
 
     fn get_semantics(&self) -> apfloat::Semantics {

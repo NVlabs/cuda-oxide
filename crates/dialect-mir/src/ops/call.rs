@@ -58,7 +58,7 @@ pub struct MirCallOp;
 impl MirCallOp {
     /// Create a new MirCallOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirCallOp { op }
+        Self { op }
     }
 }
 

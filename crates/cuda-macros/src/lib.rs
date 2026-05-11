@@ -106,13 +106,13 @@ struct KernelArgs {
 impl Parse for KernelArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.is_empty() {
-            return Ok(KernelArgs {
+            return Ok(Self {
                 instantiate_types: vec![],
             });
         }
 
         let types: Punctuated<Type, Token![,]> = Punctuated::parse_terminated(input)?;
-        Ok(KernelArgs {
+        Ok(Self {
             instantiate_types: types.into_iter().collect(),
         })
     }
@@ -1777,11 +1777,11 @@ impl Parse for LaunchBoundsArgs {
             .collect::<Result<Vec<_>, _>>()?;
 
         match values.len() {
-            1 => Ok(LaunchBoundsArgs {
+            1 => Ok(Self {
                 max_threads: values[0],
                 min_blocks: 0, // Unspecified
             }),
-            2 => Ok(LaunchBoundsArgs {
+            2 => Ok(Self {
                 max_threads: values[0],
                 min_blocks: values[1],
             }),
@@ -1888,17 +1888,17 @@ impl Parse for ClusterArgs {
             .collect::<Result<Vec<_>, _>>()?;
 
         match values.len() {
-            1 => Ok(ClusterArgs {
+            1 => Ok(Self {
                 x: values[0],
                 y: 1,
                 z: 1,
             }),
-            2 => Ok(ClusterArgs {
+            2 => Ok(Self {
                 x: values[0],
                 y: values[1],
                 z: 1,
             }),
-            3 => Ok(ClusterArgs {
+            3 => Ok(Self {
                 x: values[0],
                 y: values[1],
                 z: values[2],
@@ -2438,14 +2438,14 @@ impl Parse for CudaLaunchArg {
                     let content;
                     parenthesized!(content in input);
                     let expr: syn::Expr = content.parse()?;
-                    return Ok(CudaLaunchArg::SliceWithLen(expr));
+                    return Ok(Self::SliceWithLen(expr));
                 }
                 "slice_mut" => {
                     input.parse::<Ident>()?;
                     let content;
                     parenthesized!(content in input);
                     let expr: syn::Expr = content.parse()?;
-                    return Ok(CudaLaunchArg::SliceMutWithLen(expr));
+                    return Ok(Self::SliceMutWithLen(expr));
                 }
                 // "move" keyword starts a move closure
                 "move" => {
@@ -2454,14 +2454,14 @@ impl Parse for CudaLaunchArg {
                     if let Some(closure) = as_closure_expr(&expr) {
                         let captures = extract_closure_captures(closure);
                         let is_move = closure.capture.is_some(); // `move` keyword present
-                        return Ok(CudaLaunchArg::Closure {
+                        return Ok(Self::Closure {
                             closure_expr: closure.clone(),
                             captures,
                             is_move,
                         });
                     }
                     // Not a closure, treat as direct expression
-                    return Ok(CudaLaunchArg::Direct(expr));
+                    return Ok(Self::Direct(expr));
                 }
                 _ => {}
             }
@@ -2473,14 +2473,14 @@ impl Parse for CudaLaunchArg {
             if let Some(closure) = as_closure_expr(&expr) {
                 let captures = extract_closure_captures(closure);
                 let is_move = closure.capture.is_some(); // `move` keyword present (false here)
-                return Ok(CudaLaunchArg::Closure {
+                return Ok(Self::Closure {
                     closure_expr: closure.clone(),
                     captures,
                     is_move,
                 });
             }
             // Shouldn't happen, but fallback to direct
-            return Ok(CudaLaunchArg::Direct(expr));
+            return Ok(Self::Direct(expr));
         }
 
         // Default: direct expression
@@ -2490,14 +2490,14 @@ impl Parse for CudaLaunchArg {
         if let Some(closure) = as_closure_expr(&expr) {
             let captures = extract_closure_captures(closure);
             let is_move = closure.capture.is_some(); // `move` keyword present
-            return Ok(CudaLaunchArg::Closure {
+            return Ok(Self::Closure {
                 closure_expr: closure.clone(),
                 captures,
                 is_move,
             });
         }
 
-        Ok(CudaLaunchArg::Direct(expr))
+        Ok(Self::Direct(expr))
     }
 }
 
@@ -2596,7 +2596,7 @@ impl Parse for CudaLaunchInput {
             ));
         }
 
-        Ok(CudaLaunchInput {
+        Ok(Self {
             kernel: kernel.ok_or_else(|| syn::Error::new(input.span(), "missing 'kernel'"))?,
             stream: stream.ok_or_else(|| syn::Error::new(input.span(), "missing 'stream'"))?,
             module: module.ok_or_else(|| syn::Error::new(input.span(), "missing 'module'"))?,
@@ -2989,7 +2989,7 @@ impl Parse for CudaLaunchAsyncInput {
             let _ = input.parse::<Token![,]>();
         }
 
-        Ok(CudaLaunchAsyncInput {
+        Ok(Self {
             kernel: kernel.ok_or_else(|| syn::Error::new(input.span(), "missing 'kernel'"))?,
             module: module.ok_or_else(|| syn::Error::new(input.span(), "missing 'module'"))?,
             config: config.ok_or_else(|| syn::Error::new(input.span(), "missing 'config'"))?,

@@ -76,7 +76,7 @@ pub struct ReadPtxSregClusterCtaidXOp;
 impl ReadPtxSregClusterCtaidXOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterCtaidXOp { op }
+        Self { op }
     }
 }
 
@@ -117,7 +117,7 @@ pub struct ReadPtxSregClusterCtaidYOp;
 
 impl ReadPtxSregClusterCtaidYOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterCtaidYOp { op }
+        Self { op }
     }
 }
 
@@ -158,7 +158,7 @@ pub struct ReadPtxSregClusterCtaidZOp;
 
 impl ReadPtxSregClusterCtaidZOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterCtaidZOp { op }
+        Self { op }
     }
 }
 
@@ -203,7 +203,7 @@ pub struct ReadPtxSregClusterNctaidXOp;
 
 impl ReadPtxSregClusterNctaidXOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterNctaidXOp { op }
+        Self { op }
     }
 }
 
@@ -244,7 +244,7 @@ pub struct ReadPtxSregClusterNctaidYOp;
 
 impl ReadPtxSregClusterNctaidYOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterNctaidYOp { op }
+        Self { op }
     }
 }
 
@@ -285,7 +285,7 @@ pub struct ReadPtxSregClusterNctaidZOp;
 
 impl ReadPtxSregClusterNctaidZOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterNctaidZOp { op }
+        Self { op }
     }
 }
 
@@ -332,7 +332,7 @@ pub struct ReadPtxSregClusterIdxOp;
 
 impl ReadPtxSregClusterIdxOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClusterIdxOp { op }
+        Self { op }
     }
 }
 
@@ -373,7 +373,7 @@ pub struct ReadPtxSregNclusterIdOp;
 
 impl ReadPtxSregNclusterIdOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNclusterIdOp { op }
+        Self { op }
     }
 }
 
@@ -425,7 +425,7 @@ pub struct ClusterSyncOp;
 
 impl ClusterSyncOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClusterSyncOp { op }
+        Self { op }
     }
 }
 
@@ -460,7 +460,7 @@ pub struct MapaSharedClusterOp;
 
 impl MapaSharedClusterOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        MapaSharedClusterOp { op }
+        Self { op }
     }
 }
 
@@ -493,7 +493,7 @@ pub struct DsmemReadU32Op;
 
 impl DsmemReadU32Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        DsmemReadU32Op { op }
+        Self { op }
     }
 }
 

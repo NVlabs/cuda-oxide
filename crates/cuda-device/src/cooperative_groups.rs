@@ -908,11 +908,11 @@ impl WarpShuffle for i32 {
     // shuffle sees the same 32 bits, so the round-trip is lossless.
     #[inline(always)]
     fn shfl_xor_via<G: WarpCollective>(group: &G, value: Self, lane_mask: u32) -> Self {
-        group.shfl_xor(value as u32, lane_mask) as i32
+        group.shfl_xor(value as u32, lane_mask) as Self
     }
     #[inline(always)]
     fn shfl_up_via<G: WarpCollective>(group: &G, value: Self, delta: u32) -> Self {
-        group.shfl_up(value as u32, delta) as i32
+        group.shfl_up(value as u32, delta) as Self
     }
 }
 

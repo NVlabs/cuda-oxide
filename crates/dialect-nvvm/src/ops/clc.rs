@@ -57,7 +57,7 @@ pub struct ClcTryCancelOp;
 
 impl ClcTryCancelOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClcTryCancelOp { op }
+        Self { op }
     }
 }
 
@@ -84,7 +84,7 @@ pub struct ClcTryCancelMulticastOp;
 
 impl ClcTryCancelMulticastOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClcTryCancelMulticastOp { op }
+        Self { op }
     }
 }
 
@@ -116,7 +116,7 @@ pub struct ClcQueryIsCanceledOp;
 
 impl ClcQueryIsCanceledOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClcQueryIsCanceledOp { op }
+        Self { op }
     }
 }
 
@@ -142,7 +142,7 @@ pub struct ClcQueryGetFirstCtaidXOp;
 
 impl ClcQueryGetFirstCtaidXOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClcQueryGetFirstCtaidXOp { op }
+        Self { op }
     }
 }
 
@@ -159,7 +159,7 @@ pub struct ClcQueryGetFirstCtaidYOp;
 
 impl ClcQueryGetFirstCtaidYOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClcQueryGetFirstCtaidYOp { op }
+        Self { op }
     }
 }
 
@@ -176,7 +176,7 @@ pub struct ClcQueryGetFirstCtaidZOp;
 
 impl ClcQueryGetFirstCtaidZOp {
     pub fn new(op: Ptr<Operation>) -> Self {
-        ClcQueryGetFirstCtaidZOp { op }
+        Self { op }
     }
 }
 

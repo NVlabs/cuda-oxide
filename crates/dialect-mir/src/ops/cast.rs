@@ -72,7 +72,7 @@ pub struct MirCastOp;
 impl MirCastOp {
     /// Create a new MirCastOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirCastOp { op }
+        Self { op }
     }
 }
 

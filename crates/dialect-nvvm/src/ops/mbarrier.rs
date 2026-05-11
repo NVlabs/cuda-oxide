@@ -73,7 +73,7 @@ pub struct MbarrierInitSharedOp;
 impl MbarrierInitSharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierInitSharedOp { op }
+        Self { op }
     }
 }
 
@@ -102,7 +102,7 @@ pub struct MbarrierInvalSharedOp;
 impl MbarrierInvalSharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierInvalSharedOp { op }
+        Self { op }
     }
 }
 
@@ -135,7 +135,7 @@ pub struct MbarrierArriveSharedOp;
 impl MbarrierArriveSharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierArriveSharedOp { op }
+        Self { op }
     }
 }
 
@@ -167,7 +167,7 @@ pub struct MbarrierArriveExpectTxSharedOp;
 impl MbarrierArriveExpectTxSharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierArriveExpectTxSharedOp { op }
+        Self { op }
     }
 }
 
@@ -198,7 +198,7 @@ pub struct MbarrierArriveClusterOp;
 impl MbarrierArriveClusterOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierArriveClusterOp { op }
+        Self { op }
     }
 }
 
@@ -232,7 +232,7 @@ pub struct MbarrierTestWaitSharedOp;
 impl MbarrierTestWaitSharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierTestWaitSharedOp { op }
+        Self { op }
     }
 }
 
@@ -265,7 +265,7 @@ pub struct MbarrierTryWaitSharedOp;
 impl MbarrierTryWaitSharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierTryWaitSharedOp { op }
+        Self { op }
     }
 }
 
@@ -295,7 +295,7 @@ pub struct MbarrierTryWaitParitySharedOp;
 impl MbarrierTryWaitParitySharedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierTryWaitParitySharedOp { op }
+        Self { op }
     }
 }
 
@@ -341,7 +341,7 @@ pub struct FenceProxyAsyncSharedCtaOp;
 impl FenceProxyAsyncSharedCtaOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        FenceProxyAsyncSharedCtaOp { op }
+        Self { op }
     }
 }
 
@@ -374,7 +374,7 @@ pub struct NanosleepOp;
 impl NanosleepOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        NanosleepOp { op }
+        Self { op }
     }
 }
 

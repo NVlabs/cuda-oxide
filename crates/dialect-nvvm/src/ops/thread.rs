@@ -79,7 +79,7 @@ pub struct ReadPtxSregTidXOp;
 impl ReadPtxSregTidXOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregTidXOp { op }
+        Self { op }
     }
 }
 
@@ -125,7 +125,7 @@ pub struct ReadPtxSregCtaidXOp;
 impl ReadPtxSregCtaidXOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregCtaidXOp { op }
+        Self { op }
     }
 }
 
@@ -174,7 +174,7 @@ pub struct ReadPtxSregNtidXOp;
 impl ReadPtxSregNtidXOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNtidXOp { op }
+        Self { op }
     }
 }
 
@@ -224,7 +224,7 @@ pub struct ReadPtxSregTidYOp;
 impl ReadPtxSregTidYOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregTidYOp { op }
+        Self { op }
     }
 }
 
@@ -270,7 +270,7 @@ pub struct ReadPtxSregCtaidYOp;
 impl ReadPtxSregCtaidYOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregCtaidYOp { op }
+        Self { op }
     }
 }
 
@@ -319,7 +319,7 @@ pub struct ReadPtxSregNtidYOp;
 impl ReadPtxSregNtidYOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNtidYOp { op }
+        Self { op }
     }
 }
 
@@ -369,7 +369,7 @@ pub struct ReadPtxSregTidZOp;
 impl ReadPtxSregTidZOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregTidZOp { op }
+        Self { op }
     }
 }
 
@@ -410,7 +410,7 @@ pub struct ReadPtxSregCtaidZOp;
 impl ReadPtxSregCtaidZOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregCtaidZOp { op }
+        Self { op }
     }
 }
 
@@ -454,7 +454,7 @@ pub struct ReadPtxSregNtidZOp;
 impl ReadPtxSregNtidZOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNtidZOp { op }
+        Self { op }
     }
 }
 
@@ -499,7 +499,7 @@ pub struct ReadPtxSregNctaidXOp;
 impl ReadPtxSregNctaidXOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNctaidXOp { op }
+        Self { op }
     }
 }
 
@@ -543,7 +543,7 @@ pub struct ReadPtxSregNctaidYOp;
 impl ReadPtxSregNctaidYOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNctaidYOp { op }
+        Self { op }
     }
 }
 
@@ -587,7 +587,7 @@ pub struct ReadPtxSregNctaidZOp;
 impl ReadPtxSregNctaidZOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregNctaidZOp { op }
+        Self { op }
     }
 }
 
@@ -641,7 +641,7 @@ pub struct ReadPtxSregEnvReg1Op;
 impl ReadPtxSregEnvReg1Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregEnvReg1Op { op }
+        Self { op }
     }
 }
 
@@ -685,7 +685,7 @@ pub struct ReadPtxSregEnvReg2Op;
 impl ReadPtxSregEnvReg2Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregEnvReg2Op { op }
+        Self { op }
     }
 }
 
@@ -740,7 +740,7 @@ pub struct Barrier0Op;
 impl Barrier0Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Barrier0Op { op }
+        Self { op }
     }
 }
 
@@ -760,7 +760,7 @@ pub struct ThreadfenceBlockOp;
 impl ThreadfenceBlockOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ThreadfenceBlockOp { op }
+        Self { op }
     }
 }
 
@@ -780,7 +780,7 @@ pub struct ThreadfenceOp;
 impl ThreadfenceOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ThreadfenceOp { op }
+        Self { op }
     }
 }
 
@@ -800,7 +800,7 @@ pub struct ThreadfenceSystemOp;
 impl ThreadfenceSystemOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ThreadfenceSystemOp { op }
+        Self { op }
     }
 }
 

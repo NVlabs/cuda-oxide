@@ -122,7 +122,7 @@ impl InlineAsmOp {
             vec![],
             0,
         );
-        let op = InlineAsmOp { op };
+        let op = Self { op };
         op.set_attr_inline_asm_template(ctx, StringAttr::new(asm_template.into()));
         op.set_attr_inline_asm_constraints(ctx, StringAttr::new(constraints.into()));
         op
@@ -258,7 +258,7 @@ impl InlineAsmMultiOp {
             vec![],
             0,
         );
-        let op = InlineAsmMultiOp { op };
+        let op = Self { op };
         op.set_attr_multi_asm_template(ctx, StringAttr::new(asm_template.into()));
         op.set_attr_multi_asm_constraints(ctx, StringAttr::new(constraints.into()));
 

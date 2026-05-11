@@ -101,7 +101,7 @@ impl ReturnOp {
             vec![],
             0,
         );
-        ReturnOp { op }
+        Self { op }
     }
 
     /// Get the returned value, if it exists.
@@ -173,7 +173,7 @@ impl UnreachableOp {
     /// Create a new [`UnreachableOp`].
     pub fn new(ctx: &mut Context) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
-        UnreachableOp { op }
+        Self { op }
     }
 }
 
@@ -267,7 +267,7 @@ impl BranchOpInterface for BrOp {
 impl BrOp {
     /// Create a new [`BrOp`].
     pub fn new(ctx: &mut Context, dest: Ptr<BasicBlock>, dest_opds: Vec<Value>) -> Self {
-        BrOp {
+        Self {
             op: Operation::new(
                 ctx,
                 Self::get_concrete_op_info(),
@@ -327,7 +327,7 @@ impl CondBrOp {
         let (operands, segment_sizes) =
             Self::compute_segment_sizes(vec![vec![condition], true_dest_opds, false_dest_opds]);
 
-        let op = CondBrOp {
+        let op = Self {
             op: Operation::new(
                 ctx,
                 Self::get_concrete_op_info(),
@@ -417,7 +417,7 @@ impl Parsable for CondBrOp {
                     let results = results.clone();
                     combine::parser(move |parsable_state: &mut StateStream<'a>| {
                         let ctx = &mut parsable_state.state.ctx;
-                        let op = CondBrOp::new(
+                        let op = Self::new(
                             ctx,
                             condition,
                             true_dest,
@@ -556,7 +556,7 @@ impl Parsable for SwitchCase {
         let ((value, _colon, dest, dest_opds, _spaces), _) =
             parser.parse_stream(state_stream).into_result()?;
 
-        Ok(SwitchCase {
+        Ok(Self {
             value,
             dest,
             dest_opds,
@@ -688,7 +688,7 @@ impl Parsable for SwitchOp {
                     let results = arg.clone();
                     combine::parser(move |parsable_state: &mut StateStream<'a>| {
                         let ctx = &mut parsable_state.state.ctx;
-                        let op = SwitchOp::new(
+                        let op = Self::new(
                             ctx,
                             condition,
                             default_dest,
@@ -728,7 +728,7 @@ impl SwitchOp {
 
         let case_dests = cases.iter().map(|case| case.dest);
         let successors = vec![default_dest].into_iter().chain(case_dests).collect();
-        let op = SwitchOp {
+        let op = Self {
             op: Operation::new(
                 ctx,
                 Self::get_concrete_op_info(),

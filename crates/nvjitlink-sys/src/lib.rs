@@ -229,7 +229,7 @@ impl LibNvJitLink {
         })?;
 
         unsafe {
-            Ok(LibNvJitLink {
+            Ok(Self {
                 create: resolve(&lib, "nvJitLinkCreate")?,
                 destroy: resolve(&lib, "nvJitLinkDestroy")?,
                 add_data: resolve(&lib, "nvJitLinkAddData")?,

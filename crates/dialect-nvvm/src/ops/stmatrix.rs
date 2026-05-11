@@ -75,7 +75,7 @@ pub struct StmatrixM8n8X4Op;
 impl StmatrixM8n8X4Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        StmatrixM8n8X4Op { op }
+        Self { op }
     }
 }
 
@@ -108,7 +108,7 @@ pub struct StmatrixM8n8X4TransOp;
 impl StmatrixM8n8X4TransOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        StmatrixM8n8X4TransOp { op }
+        Self { op }
     }
 }
 
@@ -145,7 +145,7 @@ pub struct StmatrixM8n8X2Op;
 impl StmatrixM8n8X2Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        StmatrixM8n8X2Op { op }
+        Self { op }
     }
 }
 
@@ -176,7 +176,7 @@ pub struct StmatrixM8n8X2TransOp;
 impl StmatrixM8n8X2TransOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        StmatrixM8n8X2TransOp { op }
+        Self { op }
     }
 }
 
@@ -209,7 +209,7 @@ pub struct CvtF32x2Bf16x2Op;
 impl CvtF32x2Bf16x2Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CvtF32x2Bf16x2Op { op }
+        Self { op }
     }
 }
 

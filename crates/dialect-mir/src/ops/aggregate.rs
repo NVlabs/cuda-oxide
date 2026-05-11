@@ -84,7 +84,7 @@ pub struct MirExtractFieldOp;
 impl MirExtractFieldOp {
     /// Create a new MirExtractFieldOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirExtractFieldOp { op }
+        Self { op }
     }
 }
 
@@ -301,7 +301,7 @@ pub struct MirInsertFieldOp;
 impl MirInsertFieldOp {
     /// Create a new MirInsertFieldOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirInsertFieldOp { op }
+        Self { op }
     }
 }
 
@@ -435,7 +435,7 @@ pub struct MirConstructStructOp;
 impl MirConstructStructOp {
     /// Create a new MirConstructStructOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirConstructStructOp { op }
+        Self { op }
     }
 }
 
@@ -528,7 +528,7 @@ pub struct MirConstructTupleOp;
 impl MirConstructTupleOp {
     /// Create a new MirConstructTupleOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirConstructTupleOp { op }
+        Self { op }
     }
 }
 
@@ -641,7 +641,7 @@ pub struct MirConstructArrayOp;
 impl MirConstructArrayOp {
     /// Create a new MirConstructArrayOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirConstructArrayOp { op }
+        Self { op }
     }
 }
 
@@ -761,7 +761,7 @@ pub struct MirExtractArrayElementOp;
 impl MirExtractArrayElementOp {
     /// Create a new MirExtractArrayElementOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirExtractArrayElementOp { op }
+        Self { op }
     }
 }
 
@@ -880,7 +880,7 @@ pub struct MirFieldAddrOp;
 impl MirFieldAddrOp {
     /// Create a new MirFieldAddrOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirFieldAddrOp { op }
+        Self { op }
     }
 }
 
@@ -1019,7 +1019,7 @@ pub struct MirArrayElementAddrOp;
 impl MirArrayElementAddrOp {
     /// Create a new MirArrayElementAddrOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirArrayElementAddrOp { op }
+        Self { op }
     }
 }
 

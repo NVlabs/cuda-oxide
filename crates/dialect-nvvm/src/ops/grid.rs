@@ -62,7 +62,7 @@ pub struct GridSyncOp;
 impl GridSyncOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        GridSyncOp { op }
+        Self { op }
     }
 }
 

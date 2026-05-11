@@ -81,7 +81,7 @@ pub struct MirAllocaOp;
 impl MirAllocaOp {
     /// Create a new `MirAllocaOp` wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirAllocaOp { op }
+        Self { op }
     }
 
     /// Return the pointee (element) type carried by the result pointer.
@@ -184,7 +184,7 @@ pub struct MirAssignOp;
 impl MirAssignOp {
     /// Create a new MirAssignOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirAssignOp { op }
+        Self { op }
     }
 }
 
@@ -232,7 +232,7 @@ pub struct MirStoreOp;
 impl MirStoreOp {
     /// Create a new MirStoreOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirStoreOp { op }
+        Self { op }
     }
 
     /// Destination pointer operand (operand 0).
@@ -335,7 +335,7 @@ pub struct MirLoadOp;
 impl MirLoadOp {
     /// Create a new MirLoadOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirLoadOp { op }
+        Self { op }
     }
 
     /// Source pointer operand (operand 0).
@@ -448,7 +448,7 @@ pub struct MirRefOp;
 impl MirRefOp {
     /// Create a new MirRefOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirRefOp { op }
+        Self { op }
     }
 
     /// Check if this is a mutable reference.
@@ -534,7 +534,7 @@ pub struct MirPtrOffsetOp;
 impl MirPtrOffsetOp {
     /// Create a new MirPtrOffsetOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirPtrOffsetOp { op }
+        Self { op }
     }
 }
 
@@ -629,7 +629,7 @@ pub struct MirSharedAllocOp;
 impl MirSharedAllocOp {
     /// Create a new MirSharedAllocOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirSharedAllocOp { op }
+        Self { op }
     }
 
     /// Get alignment as u64 (returns None if not set, meaning natural alignment).
@@ -728,7 +728,7 @@ pub struct MirGlobalAllocOp;
 impl MirGlobalAllocOp {
     /// Create a new `MirGlobalAllocOp` wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirGlobalAllocOp { op }
+        Self { op }
     }
 
     /// Get alignment as u64 (returns None if not set, meaning natural alignment).
@@ -834,7 +834,7 @@ pub struct MirExternSharedOp;
 impl MirExternSharedOp {
     /// Create a new MirExternSharedOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirExternSharedOp { op }
+        Self { op }
     }
 
     /// Get byte offset as u64 (returns 0 if not set).

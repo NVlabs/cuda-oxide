@@ -160,7 +160,7 @@ pub struct NvvmAtomicLoadOp;
 impl NvvmAtomicLoadOp {
     /// Create a new atomic load op wrapping an existing operation.
     pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomicLoadOp { op }
+        Self { op }
     }
 
     /// Create a new atomic load from scratch.
@@ -179,7 +179,7 @@ impl NvvmAtomicLoadOp {
             vec![],
             0,
         );
-        let this = NvvmAtomicLoadOp { op };
+        let this = Self { op };
         this.set_attr_nvvm_ld_ordering(ctx, ordering);
         this.set_attr_nvvm_ld_scope(ctx, scope);
         this
@@ -236,7 +236,7 @@ pub struct NvvmAtomicStoreOp;
 impl NvvmAtomicStoreOp {
     /// Create a new atomic store op wrapping an existing operation.
     pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomicStoreOp { op }
+        Self { op }
     }
 
     /// Create a new atomic store from scratch.
@@ -255,7 +255,7 @@ impl NvvmAtomicStoreOp {
             vec![],
             0,
         );
-        let this = NvvmAtomicStoreOp { op };
+        let this = Self { op };
         this.set_attr_nvvm_st_ordering(ctx, ordering);
         this.set_attr_nvvm_st_scope(ctx, scope);
         this
@@ -329,7 +329,7 @@ pub struct NvvmAtomicRmwOp;
 impl NvvmAtomicRmwOp {
     /// Create a new atomic RMW op wrapping an existing operation.
     pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomicRmwOp { op }
+        Self { op }
     }
 
     /// Create a new atomic RMW from scratch.
@@ -350,7 +350,7 @@ impl NvvmAtomicRmwOp {
             vec![],
             0,
         );
-        let this = NvvmAtomicRmwOp { op };
+        let this = Self { op };
         this.set_attr_nvvm_rmw_kind(ctx, rmw_kind);
         this.set_attr_nvvm_rmw_ordering(ctx, ordering);
         this.set_attr_nvvm_rmw_scope(ctx, scope);
@@ -434,7 +434,7 @@ pub struct NvvmAtomicCmpxchgOp;
 impl NvvmAtomicCmpxchgOp {
     /// Create a new cmpxchg op wrapping an existing operation.
     pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomicCmpxchgOp { op }
+        Self { op }
     }
 
     /// Create a new cmpxchg from scratch.
@@ -457,7 +457,7 @@ impl NvvmAtomicCmpxchgOp {
             vec![],
             0,
         );
-        let this = NvvmAtomicCmpxchgOp { op };
+        let this = Self { op };
         this.set_attr_nvvm_cas_success_ordering(ctx, success_ordering);
         this.set_attr_nvvm_cas_failure_ordering(ctx, failure_ordering);
         this.set_attr_nvvm_cas_scope(ctx, scope);

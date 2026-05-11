@@ -78,7 +78,7 @@ pub struct CpAsyncBulkTensorG2sTile1dOp;
 impl CpAsyncBulkTensorG2sTile1dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile1dOp { op }
+        Self { op }
     }
 }
 
@@ -110,7 +110,7 @@ pub struct CpAsyncBulkTensorG2sTile2dOp;
 impl CpAsyncBulkTensorG2sTile2dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile2dOp { op }
+        Self { op }
     }
 }
 
@@ -144,7 +144,7 @@ pub struct CpAsyncBulkTensorG2sTile2dMulticastOp;
 impl CpAsyncBulkTensorG2sTile2dMulticastOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile2dMulticastOp { op }
+        Self { op }
     }
 }
 
@@ -182,7 +182,7 @@ pub struct CpAsyncBulkTensorG2sTile2dMulticastCg2Op;
 impl CpAsyncBulkTensorG2sTile2dMulticastCg2Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile2dMulticastCg2Op { op }
+        Self { op }
     }
 }
 
@@ -215,7 +215,7 @@ pub struct CpAsyncBulkTensorG2sTile3dOp;
 impl CpAsyncBulkTensorG2sTile3dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile3dOp { op }
+        Self { op }
     }
 }
 
@@ -233,7 +233,7 @@ pub struct CpAsyncBulkTensorG2sTile4dOp;
 impl CpAsyncBulkTensorG2sTile4dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile4dOp { op }
+        Self { op }
     }
 }
 
@@ -251,7 +251,7 @@ pub struct CpAsyncBulkTensorG2sTile5dOp;
 impl CpAsyncBulkTensorG2sTile5dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorG2sTile5dOp { op }
+        Self { op }
     }
 }
 
@@ -283,7 +283,7 @@ pub struct CpAsyncBulkTensorS2gTile1dOp;
 impl CpAsyncBulkTensorS2gTile1dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorS2gTile1dOp { op }
+        Self { op }
     }
 }
 
@@ -301,7 +301,7 @@ pub struct CpAsyncBulkTensorS2gTile2dOp;
 impl CpAsyncBulkTensorS2gTile2dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorS2gTile2dOp { op }
+        Self { op }
     }
 }
 
@@ -319,7 +319,7 @@ pub struct CpAsyncBulkTensorS2gTile3dOp;
 impl CpAsyncBulkTensorS2gTile3dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorS2gTile3dOp { op }
+        Self { op }
     }
 }
 
@@ -337,7 +337,7 @@ pub struct CpAsyncBulkTensorS2gTile4dOp;
 impl CpAsyncBulkTensorS2gTile4dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorS2gTile4dOp { op }
+        Self { op }
     }
 }
 
@@ -355,7 +355,7 @@ pub struct CpAsyncBulkTensorS2gTile5dOp;
 impl CpAsyncBulkTensorS2gTile5dOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkTensorS2gTile5dOp { op }
+        Self { op }
     }
 }
 
@@ -388,7 +388,7 @@ pub struct CpAsyncBulkCommitGroupOp;
 impl CpAsyncBulkCommitGroupOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkCommitGroupOp { op }
+        Self { op }
     }
 }
 
@@ -416,7 +416,7 @@ pub struct CpAsyncBulkWaitGroupOp;
 impl CpAsyncBulkWaitGroupOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkWaitGroupOp { op }
+        Self { op }
     }
 }
 
@@ -445,7 +445,7 @@ pub struct CpAsyncBulkWaitGroupReadOp;
 impl CpAsyncBulkWaitGroupReadOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        CpAsyncBulkWaitGroupReadOp { op }
+        Self { op }
     }
 }
 

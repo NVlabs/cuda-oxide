@@ -154,7 +154,7 @@ impl AtomicRmwOp {
             vec![],
             0,
         );
-        let this = AtomicRmwOp { op };
+        let this = Self { op };
         this.set_attr_llvm_rmw_kind(ctx, rmw_kind);
         this.set_attr_llvm_rmw_ordering(ctx, ordering);
         this.set_attr_llvm_rmw_syncscope(ctx, syncscope);
@@ -249,7 +249,7 @@ impl AtomicCmpxchgOp {
             vec![],
             0,
         );
-        let this = AtomicCmpxchgOp { op };
+        let this = Self { op };
         this.set_attr_llvm_cas_success_ordering(ctx, success_ordering);
         this.set_attr_llvm_cas_failure_ordering(ctx, failure_ordering);
         this.set_attr_llvm_cas_syncscope(ctx, syncscope);
@@ -338,7 +338,7 @@ impl AtomicLoadOp {
             vec![],
             0,
         );
-        let this = AtomicLoadOp { op };
+        let this = Self { op };
         this.set_attr_llvm_ld_ordering(ctx, ordering);
         this.set_attr_llvm_ld_syncscope(ctx, syncscope);
         this
@@ -414,7 +414,7 @@ impl AtomicStoreOp {
             vec![],
             0,
         );
-        let this = AtomicStoreOp { op };
+        let this = Self { op };
         this.set_attr_llvm_st_ordering(ctx, ordering);
         this.set_attr_llvm_st_syncscope(ctx, syncscope);
         this
@@ -490,7 +490,7 @@ impl FenceOp {
     /// Create a new fence op.
     pub fn new(ctx: &mut Context, ordering: LlvmAtomicOrdering, syncscope: LlvmSyncScope) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
-        let this = FenceOp { op };
+        let this = Self { op };
         this.set_attr_llvm_fence_ordering(ctx, ordering);
         this.set_attr_llvm_fence_syncscope(ctx, syncscope);
         this

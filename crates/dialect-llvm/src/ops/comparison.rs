@@ -103,7 +103,7 @@ impl ICmpOp {
             vec![],
             0,
         );
-        let op = ICmpOp { op };
+        let op = Self { op };
         op.set_attr_icmp_predicate(ctx, pred);
         op
     }
@@ -203,7 +203,7 @@ impl FCmpOp {
             vec![],
             0,
         );
-        let op = FCmpOp { op };
+        let op = Self { op };
         op.set_attr_fcmp_predicate(ctx, pred);
         // Set default (empty) fast math flags - required by format_op
         op.set_fast_math_flags(ctx, FastmathFlagsAttr::default());

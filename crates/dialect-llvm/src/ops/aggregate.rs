@@ -119,7 +119,7 @@ impl InsertValueOp {
             vec![],
             0,
         );
-        let op = InsertValueOp { op };
+        let op = Self { op };
         op.set_attr_insert_value_indices(ctx, InsertExtractValueIndicesAttr(indices));
         op
     }
@@ -234,7 +234,7 @@ impl ExtractValueOp {
             vec![],
             0,
         );
-        let op = ExtractValueOp { op };
+        let op = Self { op };
         op.set_attr_extract_value_indices(ctx, InsertExtractValueIndicesAttr(indices));
         Ok(op)
     }
@@ -338,7 +338,7 @@ impl ExtractElementOp {
             vec![],
             0,
         );
-        Ok(ExtractElementOp { op })
+        Ok(Self { op })
     }
 }
 

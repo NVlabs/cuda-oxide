@@ -77,7 +77,7 @@ pub struct MirFuncOp;
 impl MirFuncOp {
     /// Create a new MirFuncOp.
     pub fn new(ctx: &mut Context, op_ptr: Ptr<Operation>, func_type_attr: TypeAttr) -> Self {
-        let op = MirFuncOp { op: op_ptr };
+        let op = Self { op: op_ptr };
         op.set_attr_mir_func_type(ctx, func_type_attr);
         op
     }
@@ -87,7 +87,7 @@ impl MirFuncOp {
     /// Returns `None` if the operation is not a `mir.func`.
     pub fn wrap(ctx: &Context, op: Ptr<Operation>) -> Option<Self> {
         if Operation::get_opid(op, ctx) == Self::get_opid_static() {
-            Some(MirFuncOp { op })
+            Some(Self { op })
         } else {
             None
         }
@@ -171,7 +171,7 @@ impl Parsable for MirFuncOp {
                 let ctx = &mut state_stream.state.ctx;
                 op.deref_mut(ctx).attributes = attrs;
                 let ty_attr = TypeAttr::new(fty);
-                let opop = MirFuncOp { op };
+                let opop = Self { op };
                 opop.set_symbol_name(ctx, fname);
                 opop.set_attr_mir_func_type(ctx, ty_attr);
                 OpObj::new(opop)

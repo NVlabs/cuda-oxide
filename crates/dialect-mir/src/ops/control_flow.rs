@@ -57,7 +57,7 @@ pub struct MirReturnOp;
 impl MirReturnOp {
     /// Create a new MirReturnOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirReturnOp { op }
+        Self { op }
     }
 }
 
@@ -139,7 +139,7 @@ pub struct MirGotoOp;
 impl MirGotoOp {
     /// Create a new MirGotoOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirGotoOp { op }
+        Self { op }
     }
 }
 
@@ -220,7 +220,7 @@ pub struct MirCondBranchOp;
 impl MirCondBranchOp {
     /// Create a new MirCondBranchOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirCondBranchOp { op }
+        Self { op }
     }
 }
 
@@ -337,7 +337,7 @@ pub struct MirAssertOp;
 impl MirAssertOp {
     /// Create a new MirAssertOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirAssertOp { op }
+        Self { op }
     }
 }
 
@@ -434,7 +434,7 @@ impl MirUnreachableOp {
     /// Create a new MirUnreachableOp.
     pub fn new(ctx: &mut Context) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
-        MirUnreachableOp { op }
+        Self { op }
     }
 }
 

@@ -112,7 +112,7 @@ impl FuncOp {
     pub fn new(ctx: &mut Context, name: Identifier, ty: TypePtr<FuncType>) -> Self {
         let ty_attr = TypeAttr::new(ty.into());
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
-        let opop = FuncOp { op };
+        let opop = Self { op };
         opop.set_symbol_name(ctx, name);
         opop.set_attr_llvm_func_type(ctx, ty_attr);
 
@@ -232,7 +232,7 @@ impl Parsable for FuncOp {
                 let ctx = &mut state_stream.state.ctx;
                 op.deref_mut(ctx).attributes = attrs;
                 let ty_attr = TypeAttr::new(fty);
-                let opop = FuncOp { op };
+                let opop = Self { op };
                 opop.set_symbol_name(ctx, fname);
                 opop.set_attr_llvm_func_type(ctx, ty_attr);
                 OpObj::new(opop)
@@ -282,7 +282,7 @@ impl GlobalOp {
     /// Create a new [`GlobalOp`]. An initializer region can be added later if needed.
     pub fn new(ctx: &mut Context, name: Identifier, ty: Ptr<TypeObj>) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
-        let op = GlobalOp { op };
+        let op = Self { op };
         op.set_symbol_name(ctx, name);
         op.set_attr_llvm_global_type(ctx, TypeAttr::new(ty));
         op.set_address_space(ctx, crate::types::address_space::GENERIC);
@@ -481,7 +481,7 @@ impl Parsable for GlobalOp {
             .and(spaced(attr_dict_parser));
 
         let (((name, ty), attr_dict), _) = parser.parse_stream(state_stream).into_result()?;
-        let op = GlobalOp::new(state_stream.state.ctx, name, ty);
+        let op = Self::new(state_stream.state.ctx, name, ty);
         op.get_operation()
             .deref_mut(state_stream.state.ctx)
             .attributes
@@ -572,7 +572,7 @@ impl AddressOfOp {
             vec![],
             0,
         );
-        let op = AddressOfOp { op };
+        let op = Self { op };
         op.set_attr_global_name(ctx, IdentifierAttr::new(global_name));
         op
     }

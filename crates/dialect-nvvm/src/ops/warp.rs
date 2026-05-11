@@ -84,7 +84,7 @@ pub struct ReadPtxSregLaneIdOp;
 impl ReadPtxSregLaneIdOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregLaneIdOp { op }
+        Self { op }
     }
 }
 
@@ -140,7 +140,7 @@ pub struct ShflSyncIdxI32Op;
 impl ShflSyncIdxI32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncIdxI32Op { op }
+        Self { op }
     }
 }
 
@@ -171,7 +171,7 @@ pub struct ShflSyncBflyI32Op;
 impl ShflSyncBflyI32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncBflyI32Op { op }
+        Self { op }
     }
 }
 
@@ -201,7 +201,7 @@ pub struct ShflSyncDownI32Op;
 impl ShflSyncDownI32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncDownI32Op { op }
+        Self { op }
     }
 }
 
@@ -231,7 +231,7 @@ pub struct ShflSyncUpI32Op;
 impl ShflSyncUpI32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncUpI32Op { op }
+        Self { op }
     }
 }
 
@@ -263,7 +263,7 @@ pub struct ShflSyncIdxF32Op;
 impl ShflSyncIdxF32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncIdxF32Op { op }
+        Self { op }
     }
 }
 
@@ -291,7 +291,7 @@ pub struct ShflSyncBflyF32Op;
 impl ShflSyncBflyF32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncBflyF32Op { op }
+        Self { op }
     }
 }
 
@@ -319,7 +319,7 @@ pub struct ShflSyncDownF32Op;
 impl ShflSyncDownF32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncDownF32Op { op }
+        Self { op }
     }
 }
 
@@ -347,7 +347,7 @@ pub struct ShflSyncUpF32Op;
 impl ShflSyncUpF32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ShflSyncUpF32Op { op }
+        Self { op }
     }
 }
 
@@ -378,7 +378,7 @@ pub struct VoteSyncAllOp;
 impl VoteSyncAllOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        VoteSyncAllOp { op }
+        Self { op }
     }
 }
 
@@ -405,7 +405,7 @@ pub struct VoteSyncAnyOp;
 impl VoteSyncAnyOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        VoteSyncAnyOp { op }
+        Self { op }
     }
 }
 
@@ -435,7 +435,7 @@ pub struct ActiveMaskOp;
 impl ActiveMaskOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ActiveMaskOp { op }
+        Self { op }
     }
 }
 
@@ -497,7 +497,7 @@ pub struct BarWarpSyncOp;
 impl BarWarpSyncOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        BarWarpSyncOp { op }
+        Self { op }
     }
 }
 
@@ -529,7 +529,7 @@ pub struct MatchAnySyncI32Op;
 impl MatchAnySyncI32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAnySyncI32Op { op }
+        Self { op }
     }
 }
 
@@ -556,7 +556,7 @@ pub struct MatchAnySyncI64Op;
 impl MatchAnySyncI64Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAnySyncI64Op { op }
+        Self { op }
     }
 }
 
@@ -586,7 +586,7 @@ pub struct MatchAllSyncI32Op;
 impl MatchAllSyncI32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAllSyncI32Op { op }
+        Self { op }
     }
 }
 
@@ -613,7 +613,7 @@ pub struct MatchAllSyncI64Op;
 impl MatchAllSyncI64Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAllSyncI64Op { op }
+        Self { op }
     }
 }
 
@@ -640,7 +640,7 @@ pub struct VoteSyncBallotOp;
 impl VoteSyncBallotOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        VoteSyncBallotOp { op }
+        Self { op }
     }
 }
 

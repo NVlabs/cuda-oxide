@@ -737,7 +737,7 @@ impl<Kind, const ID: usize> ManagedBarrier<Uninit, Kind, ID> {
     /// }
     /// ```
     pub fn from_static(ptr: *mut Barrier) -> Self {
-        ManagedBarrier {
+        Self {
             ptr,
             _state: PhantomData,
             _kind: PhantomData,

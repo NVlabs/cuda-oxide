@@ -258,7 +258,7 @@ impl AddrSpaceCastOp {
             vec![],
             0,
         );
-        AddrSpaceCastOp { op }
+        Self { op }
     }
 }
 

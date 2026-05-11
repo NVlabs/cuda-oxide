@@ -328,21 +328,21 @@ impl GpuPrintfArg for i16 {
 }
 
 impl GpuPrintfArg for i32 {
-    type Promoted = i32;
+    type Promoted = Self;
     const FORMAT_CHAR: char = 'd';
     const IS_64BIT: bool = false;
     const IS_FLOAT: bool = false;
-    fn promote(self) -> i32 {
+    fn promote(self) -> Self {
         self
     }
 }
 
 impl GpuPrintfArg for i64 {
-    type Promoted = i64;
+    type Promoted = Self;
     const FORMAT_CHAR: char = 'd';
     const IS_64BIT: bool = true;
     const IS_FLOAT: bool = false;
-    fn promote(self) -> i64 {
+    fn promote(self) -> Self {
         self
     }
 }
@@ -379,21 +379,21 @@ impl GpuPrintfArg for u16 {
 }
 
 impl GpuPrintfArg for u32 {
-    type Promoted = u32;
+    type Promoted = Self;
     const FORMAT_CHAR: char = 'u';
     const IS_64BIT: bool = false;
     const IS_FLOAT: bool = false;
-    fn promote(self) -> u32 {
+    fn promote(self) -> Self {
         self
     }
 }
 
 impl GpuPrintfArg for u64 {
-    type Promoted = u64;
+    type Promoted = Self;
     const FORMAT_CHAR: char = 'u';
     const IS_64BIT: bool = true;
     const IS_FLOAT: bool = false;
-    fn promote(self) -> u64 {
+    fn promote(self) -> Self {
         self
     }
 }
@@ -420,11 +420,11 @@ impl GpuPrintfArg for f32 {
 }
 
 impl GpuPrintfArg for f64 {
-    type Promoted = f64;
+    type Promoted = Self;
     const FORMAT_CHAR: char = 'f';
     const IS_64BIT: bool = false;
     const IS_FLOAT: bool = true;
-    fn promote(self) -> f64 {
+    fn promote(self) -> Self {
         self
     }
 }
@@ -433,8 +433,8 @@ impl GpuPrintfArg for f64 {
 impl GpuPrintfArg for bool {
     type Promoted = i32;
     const FORMAT_CHAR: char = 'd';
-    const IS_64BIT: bool = false;
-    const IS_FLOAT: bool = false;
+    const IS_64BIT: Self = false;
+    const IS_FLOAT: Self = false;
     fn promote(self) -> i32 {
         self as i32
     }

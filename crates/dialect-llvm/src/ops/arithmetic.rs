@@ -471,7 +471,7 @@ impl FNegOp {
             vec![],
             0,
         );
-        let op = FNegOp { op };
+        let op = Self { op };
         op.set_fast_math_flags(ctx, fast_math_flags);
         op
     }

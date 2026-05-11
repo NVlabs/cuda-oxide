@@ -53,7 +53,7 @@ impl Parse for GpuPrintfInput {
             }
         }
 
-        Ok(GpuPrintfInput {
+        Ok(Self {
             format_string,
             args,
         })

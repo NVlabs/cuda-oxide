@@ -248,7 +248,7 @@ pub struct MirCheckedAddOp;
 impl MirCheckedAddOp {
     /// Create a new MirCheckedAddOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirCheckedAddOp { op }
+        Self { op }
     }
 }
 
@@ -361,7 +361,7 @@ pub struct MirCheckedMulOp;
 impl MirCheckedMulOp {
     /// Create a new MirCheckedMulOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirCheckedMulOp { op }
+        Self { op }
     }
 }
 
@@ -436,7 +436,7 @@ pub struct MirCheckedSubOp;
 impl MirCheckedSubOp {
     /// Create a new MirCheckedSubOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirCheckedSubOp { op }
+        Self { op }
     }
 }
 

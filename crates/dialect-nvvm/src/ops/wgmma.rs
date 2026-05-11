@@ -76,7 +76,7 @@ pub struct WgmmaFenceSyncAlignedOp;
 impl WgmmaFenceSyncAlignedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaFenceSyncAlignedOp { op }
+        Self { op }
     }
 }
 
@@ -106,7 +106,7 @@ pub struct WgmmaCommitGroupSyncAlignedOp;
 impl WgmmaCommitGroupSyncAlignedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaCommitGroupSyncAlignedOp { op }
+        Self { op }
     }
 }
 
@@ -136,7 +136,7 @@ pub struct WgmmaWaitGroupSyncAlignedOp;
 impl WgmmaWaitGroupSyncAlignedOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaWaitGroupSyncAlignedOp { op }
+        Self { op }
     }
 }
 
@@ -169,7 +169,7 @@ pub struct WgmmaMakeSmemDescOp;
 impl WgmmaMakeSmemDescOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaMakeSmemDescOp { op }
+        Self { op }
     }
 }
 
@@ -206,7 +206,7 @@ pub struct WgmmaMmaM64N64K16F32Bf16Op;
 impl WgmmaMmaM64N64K16F32Bf16Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaMmaM64N64K16F32Bf16Op { op }
+        Self { op }
     }
 }
 

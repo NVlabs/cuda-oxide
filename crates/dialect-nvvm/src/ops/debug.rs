@@ -56,7 +56,7 @@ pub struct ReadPtxSregClockOp;
 impl ReadPtxSregClockOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClockOp { op }
+        Self { op }
     }
 }
 
@@ -102,7 +102,7 @@ pub struct ReadPtxSregClock64Op;
 impl ReadPtxSregClock64Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        ReadPtxSregClock64Op { op }
+        Self { op }
     }
 }
 
@@ -157,7 +157,7 @@ pub struct TrapOp;
 impl TrapOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        TrapOp { op }
+        Self { op }
     }
 }
 
@@ -185,7 +185,7 @@ pub struct BreakpointOp;
 impl BreakpointOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        BreakpointOp { op }
+        Self { op }
     }
 }
 
@@ -219,7 +219,7 @@ pub struct PmEventOp;
 impl PmEventOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        PmEventOp { op }
+        Self { op }
     }
 
     /// Create a new pmevent operation with the given event ID.
@@ -285,7 +285,7 @@ pub struct VprintfOp;
 impl VprintfOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        VprintfOp { op }
+        Self { op }
     }
 
     /// Create a new vprintf operation.

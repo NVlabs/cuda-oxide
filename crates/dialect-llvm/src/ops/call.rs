@@ -105,7 +105,7 @@ impl CallOp {
                     vec![],
                     0,
                 );
-                let op = CallOp { op };
+                let op = Self { op };
                 op.set_attr_llvm_call_callee(ctx, IdentifierAttr::new(cval));
                 op
             }
@@ -119,7 +119,7 @@ impl CallOp {
                     vec![],
                     0,
                 );
-                CallOp { op }
+                Self { op }
             }
         };
         op.set_callee_type(ctx, callee_ty.into());
@@ -276,7 +276,7 @@ impl Parsable for CallOp {
                 let results = results.clone();
                 combine::parser(move |parsable_state: &mut StateStream<'a>| {
                     let ctx = &mut parsable_state.state.ctx;
-                    let op = CallOp::new(ctx, callee.clone(), ty, args.clone());
+                    let op = Self::new(ctx, callee.clone(), ty, args.clone());
                     if let Some(fmf) = &fastmath_flags {
                         op.set_attr_llvm_call_fastmath_flags(ctx, *fmf);
                     }
@@ -389,7 +389,7 @@ impl CallIntrinsicOp {
             vec![],
             0,
         );
-        let op = CallIntrinsicOp { op };
+        let op = Self { op };
         op.set_attr_llvm_intrinsic_name(ctx, intrinsic_name);
         op.set_attr_llvm_intrinsic_type(ctx, TypeAttr::new(intrinsic_type.into()));
         op
@@ -466,7 +466,7 @@ impl Parsable for CallIntrinsicOp {
             err.set_loc(pos);
             err
         })?;
-        let op = CallIntrinsicOp::new(ctx, iname, intr_ty, operands);
+        let op = Self::new(ctx, iname, intr_ty, operands);
         if let Some(fmf) = fmf {
             op.set_attr_llvm_intrinsic_fastmath_flags(ctx, fmf);
         }

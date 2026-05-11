@@ -216,7 +216,7 @@ impl<const N_COLS: u32> TmemGuard<TmemUninit, N_COLS> {
     /// ```
     #[inline(always)]
     pub fn from_static(smem_ptr: *mut u32) -> Self {
-        TmemGuard {
+        Self {
             smem_ptr,
             _state: PhantomData,
         }

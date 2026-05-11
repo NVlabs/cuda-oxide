@@ -83,7 +83,7 @@ pub struct Tcgen05AllocOp;
 impl Tcgen05AllocOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05AllocOp { op }
+        Self { op }
     }
 }
 
@@ -114,7 +114,7 @@ pub struct Tcgen05DeallocOp;
 impl Tcgen05DeallocOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05DeallocOp { op }
+        Self { op }
     }
 }
 
@@ -143,7 +143,7 @@ pub struct Tcgen05RelinquishAllocPermitOp;
 impl Tcgen05RelinquishAllocPermitOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05RelinquishAllocPermitOp { op }
+        Self { op }
     }
 }
 
@@ -175,7 +175,7 @@ pub struct Tcgen05FenceBeforeThreadSyncOp;
 impl Tcgen05FenceBeforeThreadSyncOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05FenceBeforeThreadSyncOp { op }
+        Self { op }
     }
 }
 
@@ -203,7 +203,7 @@ pub struct Tcgen05FenceAfterThreadSyncOp;
 impl Tcgen05FenceAfterThreadSyncOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05FenceAfterThreadSyncOp { op }
+        Self { op }
     }
 }
 
@@ -235,7 +235,7 @@ pub struct Tcgen05CommitOp;
 impl Tcgen05CommitOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CommitOp { op }
+        Self { op }
     }
 }
 
@@ -261,7 +261,7 @@ pub struct Tcgen05CommitSharedClusterOp;
 impl Tcgen05CommitSharedClusterOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CommitSharedClusterOp { op }
+        Self { op }
     }
 }
 
@@ -301,7 +301,7 @@ pub struct Tcgen05MmaWsF16Op;
 impl Tcgen05MmaWsF16Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05MmaWsF16Op { op }
+        Self { op }
     }
 }
 
@@ -333,7 +333,7 @@ pub struct Tcgen05MmaF16Op;
 impl Tcgen05MmaF16Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05MmaF16Op { op }
+        Self { op }
     }
 }
 
@@ -349,7 +349,7 @@ pub struct Tcgen05MmaWsBf16Op;
 impl Tcgen05MmaWsBf16Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05MmaWsBf16Op { op }
+        Self { op }
     }
 }
 
@@ -365,7 +365,7 @@ pub struct Tcgen05MmaWsTf32Op;
 impl Tcgen05MmaWsTf32Op {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05MmaWsTf32Op { op }
+        Self { op }
     }
 }
 
@@ -398,7 +398,7 @@ pub struct Tcgen05CpSmemToTmemOp;
 impl Tcgen05CpSmemToTmemOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CpSmemToTmemOp { op }
+        Self { op }
     }
 }
 
@@ -440,7 +440,7 @@ pub struct Tcgen05Ld16x256bX8PureOp;
 impl Tcgen05Ld16x256bX8PureOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05Ld16x256bX8PureOp { op }
+        Self { op }
     }
 }
 
@@ -469,7 +469,7 @@ pub struct Tcgen05Ld16x256bPureOp;
 impl Tcgen05Ld16x256bPureOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05Ld16x256bPureOp { op }
+        Self { op }
     }
 }
 
@@ -501,7 +501,7 @@ pub struct Tcgen05LoadWaitOp;
 impl Tcgen05LoadWaitOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05LoadWaitOp { op }
+        Self { op }
     }
 }
 
@@ -527,7 +527,7 @@ pub struct Tcgen05StoreWaitOp;
 impl Tcgen05StoreWaitOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05StoreWaitOp { op }
+        Self { op }
     }
 }
 
@@ -553,7 +553,7 @@ pub struct Tcgen05AllocCg2Op;
 
 impl Tcgen05AllocCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05AllocCg2Op { op }
+        Self { op }
     }
 }
 
@@ -575,7 +575,7 @@ pub struct Tcgen05DeallocCg2Op;
 
 impl Tcgen05DeallocCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05DeallocCg2Op { op }
+        Self { op }
     }
 }
 
@@ -592,7 +592,7 @@ pub struct Tcgen05RelinquishAllocPermitCg2Op;
 
 impl Tcgen05RelinquishAllocPermitCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05RelinquishAllocPermitCg2Op { op }
+        Self { op }
     }
 }
 
@@ -613,7 +613,7 @@ pub struct Tcgen05MmaF16Cg2Op;
 
 impl Tcgen05MmaF16Cg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05MmaF16Cg2Op { op }
+        Self { op }
     }
 }
 
@@ -634,7 +634,7 @@ pub struct Tcgen05CommitCg2Op;
 
 impl Tcgen05CommitCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CommitCg2Op { op }
+        Self { op }
     }
 }
 
@@ -655,7 +655,7 @@ pub struct Tcgen05CommitSharedClusterCg2Op;
 
 impl Tcgen05CommitSharedClusterCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CommitSharedClusterCg2Op { op }
+        Self { op }
     }
 }
 
@@ -680,7 +680,7 @@ pub struct Tcgen05CommitMulticastCg2Op;
 
 impl Tcgen05CommitMulticastCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CommitMulticastCg2Op { op }
+        Self { op }
     }
 }
 
@@ -702,7 +702,7 @@ pub struct Tcgen05CpSmemToTmemCg2Op;
 
 impl Tcgen05CpSmemToTmemCg2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
-        Tcgen05CpSmemToTmemCg2Op { op }
+        Self { op }
     }
 }
 

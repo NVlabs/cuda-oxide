@@ -66,7 +66,7 @@ pub struct MirConstantOp;
 impl MirConstantOp {
     /// Create a new MirConstantOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirConstantOp { op }
+        Self { op }
     }
 }
 
@@ -142,7 +142,7 @@ pub struct MirFloatConstantOp;
 impl MirFloatConstantOp {
     /// Create a new MirFloatConstantOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
-        MirFloatConstantOp { op }
+        Self { op }
     }
 }
 
@@ -213,7 +213,7 @@ pub struct MirUndefOp;
 impl MirUndefOp {
     /// Create a new `MirUndefOp` producing a single result of `result_ty`.
     pub fn new(ctx: &mut Context, result_ty: Ptr<TypeObj>) -> Self {
-        MirUndefOp {
+        Self {
             op: Operation::new(
                 ctx,
                 Self::get_concrete_op_info(),

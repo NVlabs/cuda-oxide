@@ -97,7 +97,7 @@ impl VAArgOp {
             vec![],
             0,
         );
-        VAArgOp { op }
+        Self { op }
     }
 }
 

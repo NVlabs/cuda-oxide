@@ -43,11 +43,11 @@ pub struct MirTupleType {
 
 impl MirTupleType {
     pub fn get(ctx: &mut Context, types: Vec<Ptr<TypeObj>>) -> TypePtr<Self> {
-        Type::register_instance(MirTupleType { types }, ctx)
+        Type::register_instance(Self { types }, ctx)
     }
 
     pub fn get_existing(ctx: &Context, types: Vec<Ptr<TypeObj>>) -> Option<TypePtr<Self>> {
-        Type::get_instance(MirTupleType { types }, ctx)
+        Type::get_instance(Self { types }, ctx)
     }
 
     pub fn get_types(&self) -> &[Ptr<TypeObj>] {
@@ -114,7 +114,7 @@ impl MirPtrType {
         address_space: u32,
     ) -> TypePtr<Self> {
         Type::register_instance(
-            MirPtrType {
+            Self {
                 pointee,
                 is_mutable,
                 address_space,
@@ -163,7 +163,7 @@ impl MirPtrType {
         address_space: u32,
     ) -> Option<TypePtr<Self>> {
         Type::get_instance(
-            MirPtrType {
+            Self {
                 pointee,
                 is_mutable,
                 address_space,
@@ -213,11 +213,11 @@ pub struct MirSliceType {
 
 impl MirSliceType {
     pub fn get(ctx: &mut Context, element_ty: Ptr<TypeObj>) -> TypePtr<Self> {
-        Type::register_instance(MirSliceType { element_ty }, ctx)
+        Type::register_instance(Self { element_ty }, ctx)
     }
 
     pub fn get_existing(ctx: &Context, element_ty: Ptr<TypeObj>) -> Option<TypePtr<Self>> {
-        Type::get_instance(MirSliceType { element_ty }, ctx)
+        Type::get_instance(Self { element_ty }, ctx)
     }
 
     pub fn element_type(&self) -> Ptr<TypeObj> {
@@ -246,11 +246,11 @@ pub struct MirDisjointSliceType {
 
 impl MirDisjointSliceType {
     pub fn get(ctx: &mut Context, element_ty: Ptr<TypeObj>) -> TypePtr<Self> {
-        Type::register_instance(MirDisjointSliceType { element_ty }, ctx)
+        Type::register_instance(Self { element_ty }, ctx)
     }
 
     pub fn get_existing(ctx: &Context, element_ty: Ptr<TypeObj>) -> Option<TypePtr<Self>> {
-        Type::get_instance(MirDisjointSliceType { element_ty }, ctx)
+        Type::get_instance(Self { element_ty }, ctx)
     }
 
     pub fn element_type(&self) -> Ptr<TypeObj> {
@@ -356,7 +356,7 @@ impl MirStructType {
         total_size: u64,
     ) -> TypePtr<Self> {
         Type::register_instance(
-            MirStructType {
+            Self {
                 name,
                 field_names,
                 field_types,
@@ -376,7 +376,7 @@ impl MirStructType {
         field_types: Vec<Ptr<TypeObj>>,
     ) -> Option<TypePtr<Self>> {
         Type::get_instance(
-            MirStructType {
+            Self {
                 name,
                 field_names,
                 field_types,
@@ -484,7 +484,7 @@ pub struct MirArrayType {
 impl MirArrayType {
     /// Create a new array type.
     pub fn get(ctx: &mut Context, element_ty: Ptr<TypeObj>, size: u64) -> TypePtr<Self> {
-        Type::register_instance(MirArrayType { element_ty, size }, ctx)
+        Type::register_instance(Self { element_ty, size }, ctx)
     }
 
     /// Get an existing array type if it exists.
@@ -493,7 +493,7 @@ impl MirArrayType {
         element_ty: Ptr<TypeObj>,
         size: u64,
     ) -> Option<TypePtr<Self>> {
-        Type::get_instance(MirArrayType { element_ty, size }, ctx)
+        Type::get_instance(Self { element_ty, size }, ctx)
     }
 
     /// Get the element type.
@@ -527,12 +527,12 @@ pub struct EnumVariant {
 impl EnumVariant {
     /// Create a new enum variant.
     pub fn new(name: String, field_types: Vec<Ptr<TypeObj>>) -> Self {
-        EnumVariant { name, field_types }
+        Self { name, field_types }
     }
 
     /// Create a unit variant (no fields).
     pub fn unit(name: String) -> Self {
-        EnumVariant {
+        Self {
             name,
             field_types: vec![],
         }
@@ -591,7 +591,7 @@ impl MirEnumType {
         }
 
         Type::register_instance(
-            MirEnumType {
+            Self {
                 name,
                 discriminant_ty,
                 variant_names,

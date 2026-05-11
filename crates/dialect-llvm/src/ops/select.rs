@@ -84,7 +84,7 @@ impl SelectOp {
             vec![],
             0,
         );
-        SelectOp { op }
+        Self { op }
     }
 }
 

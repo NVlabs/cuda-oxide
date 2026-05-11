@@ -84,7 +84,7 @@ impl ConstantOp {
             vec![],
             0,
         );
-        let op = ConstantOp { op };
+        let op = Self { op };
         op.set_attr_constant_value(ctx, value);
         op
     }
@@ -135,7 +135,7 @@ impl ZeroOp {
             vec![],
             0,
         );
-        ZeroOp { op }
+        Self { op }
     }
 }
 
@@ -174,7 +174,7 @@ impl UndefOp {
             vec![],
             0,
         );
-        UndefOp { op }
+        Self { op }
     }
 }
 
