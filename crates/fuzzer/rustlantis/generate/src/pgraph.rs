@@ -1463,8 +1463,8 @@ impl HasComplexity for Place {
 impl HasComplexity for Operand {
     fn complexity(&self, pt: &PlaceGraph) -> usize {
         match self {
-            Operand::Copy(place) | Operand::Move(place) => place.complexity(pt),
-            Operand::Constant(_) => 1,
+            Self::Copy(place) | Operand::Move(place) => place.complexity(pt),
+            Self::Constant(_) => 1,
         }
     }
 }
@@ -1472,17 +1472,17 @@ impl HasComplexity for Operand {
 impl HasComplexity for Rvalue {
     fn complexity(&self, pt: &PlaceGraph) -> usize {
         match self {
-            Rvalue::Use(operand) | Rvalue::Cast(operand, _) | Rvalue::UnaryOp(_, operand) => {
+            Self::Use(operand) | Self::Cast(operand, _) | Self::UnaryOp(_, operand) => {
                 operand.complexity(pt)
             }
-            Rvalue::BinaryOp(_, l, r) | Rvalue::CheckedBinaryOp(_, l, r) => {
+            Self::BinaryOp(_, l, r) | Self::CheckedBinaryOp(_, l, r) => {
                 l.complexity(pt) + r.complexity(pt)
             }
-            Rvalue::Aggregate(_, elems) => elems.iter().map(|op| op.complexity(pt)).sum(),
-            Rvalue::Len(_) => 1,
-            Rvalue::Discriminant(place) => place.complexity(pt),
-            Rvalue::AddressOf(_, place) => place.complexity(pt),
-            Rvalue::Ref(_, place) => place.complexity(pt),
+            Self::Aggregate(_, elems) => elems.iter().map(|op| op.complexity(pt)).sum(),
+            Self::Len(_) => 1,
+            Self::Discriminant(place) | Self::AddressOf(_, place) | Self::Ref(_, place) => {
+                place.complexity(pt)
+            }
         }
     }
 }

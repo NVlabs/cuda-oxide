@@ -249,15 +249,15 @@ pub enum Operand {
 impl Operand {
     pub fn ty(&self, local_decls: &LocalDecls, tcx: &TyCtxt) -> TyId {
         match self {
-            Operand::Copy(place) | Operand::Move(place) => place.ty(local_decls, tcx),
-            Operand::Constant(lit) => lit.ty(),
+            Self::Copy(place) | Operand::Move(place) => place.ty(local_decls, tcx),
+            Self::Constant(lit) => lit.ty(),
         }
     }
 
     pub fn place(&self) -> Option<&Place> {
         match self {
-            Operand::Copy(place) | Operand::Move(place) => Some(place),
-            Operand::Constant(..) => None,
+            Self::Copy(place) | Self::Move(place) => Some(place),
+            Self::Constant(..) => None,
         }
     }
 }
@@ -511,11 +511,11 @@ impl TyKind {
 
     pub fn is_scalar(&self) -> bool {
         match self {
-            &TyKind::Int(..)
-            | &TyKind::Uint(..)
-            | &TyKind::Bool
-            | &TyKind::Char
-            | &TyKind::Unit => true,
+            Self::Int(..)
+            | Self::Uint(..)
+            | Self::Bool
+            | Self::Char
+            | Self::Unit => true,
             _ => false,
         }
     }
@@ -530,7 +530,7 @@ impl TyKind {
 
     pub fn is_enum(&self) -> bool {
         match self {
-            TyKind::Adt(adt) => adt.is_enum(),
+            Self::Adt(adt) => adt.is_enum(),
             _ => false,
         }
     }
@@ -884,15 +884,15 @@ impl Mutability {
     /// Returns `""` (empty string) or `"mut "` depending on the mutability.
     pub fn prefix_str(&self) -> &'static str {
         match self {
-            Mutability::Mut => "mut ",
-            Mutability::Not => "",
+            Self::Mut => "mut ",
+            Self::Not => "",
         }
     }
 
     pub fn ptr_prefix_str(&self) -> &'static str {
         match self {
-            Mutability::Mut => "*mut ",
-            Mutability::Not => "*const ",
+            Self::Mut => "*mut ",
+            Self::Not => "*const ",
         }
     }
 }
@@ -904,23 +904,23 @@ impl Place {
 impl BinOp {
     pub fn symbol(&self) -> &'static str {
         match self {
-            BinOp::Add => "+",
-            BinOp::Sub => "-",
-            BinOp::Mul => "*",
-            BinOp::Div => "/",
-            BinOp::Rem => "%",
-            BinOp::BitXor => "^",
-            BinOp::BitAnd => "&",
-            BinOp::BitOr => "|",
-            BinOp::Shl => "<<",
-            BinOp::Shr => ">>",
-            BinOp::Eq => "==",
-            BinOp::Lt => "<",
-            BinOp::Le => "<=",
-            BinOp::Ne => "!=",
-            BinOp::Ge => ">=",
-            BinOp::Gt => ">",
-            BinOp::Offset => panic!("offset is not a real infix operator"),
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::Rem => "%",
+            Self::BitXor => "^",
+            Self::BitAnd => "&",
+            Self::BitOr => "|",
+            Self::Shl => "<<",
+            Self::Shr => ">>",
+            Self::Eq => "==",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Ne => "!=",
+            Self::Ge => ">=",
+            Self::Gt => ">",
+            Self::Offset => panic!("offset is not a real infix operator"),
         }
     }
 }
@@ -928,8 +928,8 @@ impl BinOp {
 impl UnOp {
     pub fn symbol(&self) -> &'static str {
         match self {
-            UnOp::Not => "!",
-            UnOp::Neg => "-",
+            Self::Not => "!",
+            Self::Neg => "-",
         }
     }
 }

@@ -127,10 +127,10 @@ impl Place {
 impl Serialize for Literal {
     fn serialize(&self, tcx: &TyCtxt) -> String {
         match self {
-            Literal::Uint(i, _) => format!("{i}_{}", self.ty().serialize(tcx)),
-            Literal::Int(i, _) if *i < 0 => format!("({i}_{})", self.ty().serialize(tcx)),
-            Literal::Int(i, _) => format!("{i}_{}", self.ty().serialize(tcx)),
-            Literal::Float(f, _) => {
+            Self::Uint(i, _) => format!("{i}_{}", self.ty().serialize(tcx)),
+            Self::Int(i, _) if *i < 0 => format!("({i}_{})", self.ty().serialize(tcx)),
+            Self::Int(i, _) => format!("{i}_{}", self.ty().serialize(tcx)),
+            Self::Float(f, _) => {
                 if f.is_nan() {
                     format!("{}::NAN", self.ty().serialize(tcx))
                 } else if f.is_infinite() {
@@ -145,8 +145,8 @@ impl Serialize for Literal {
                     format!("{f}_{}", self.ty().serialize(tcx))
                 }
             }
-            Literal::Bool(b) => b.to_string(),
-            Literal::Char(c) => format!("'\\u{{{:x}}}'", u32::from(*c)),
+            Self::Bool(b) => b.to_string(),
+            Self::Char(c) => format!("'\\u{{{:x}}}'", u32::from(*c)),
         }
     }
 }
@@ -154,9 +154,9 @@ impl Serialize for Literal {
 impl Serialize for Operand {
     fn serialize(&self, tcx: &TyCtxt) -> String {
         match self {
-            Operand::Copy(place) => place.serialize_value(tcx),
-            Operand::Move(place) => format!("Move({})", place.serialize_value(tcx)),
-            Operand::Constant(lit) => lit.serialize(tcx),
+            Self::Copy(place) => place.serialize_value(tcx),
+            Self::Move(place) => format!("Move({})", place.serialize_value(tcx)),
+            Self::Constant(lit) => lit.serialize(tcx),
         }
     }
 }
@@ -164,37 +164,37 @@ impl Serialize for Operand {
 impl Serialize for Rvalue {
     fn serialize(&self, tcx: &TyCtxt) -> String {
         match self {
-            Rvalue::Use(a) => a.serialize(tcx),
-            Rvalue::UnaryOp(op, a) => format!("{}{}", op.symbol(), a.serialize(tcx)),
-            Rvalue::BinaryOp(BinOp::Offset, a, b) => {
+            Self::Use(a) => a.serialize(tcx),
+            Self::UnaryOp(op, a) => format!("{}{}", op.symbol(), a.serialize(tcx)),
+            Self::BinaryOp(BinOp::Offset, a, b) => {
                 format!("Offset({}, {})", a.serialize(tcx), b.serialize(tcx))
             }
-            Rvalue::BinaryOp(op, a, b) => {
+            Self::BinaryOp(op, a, b) => {
                 format!("{} {} {}", a.serialize(tcx), op.symbol(), b.serialize(tcx))
             }
-            Rvalue::CheckedBinaryOp(op, a, b) => format!(
+            Self::CheckedBinaryOp(op, a, b) => format!(
                 "Checked({} {} {})",
                 a.serialize(tcx),
                 op.symbol(),
                 b.serialize(tcx)
             ),
 
-            Rvalue::Cast(a, target) => format!("{} as {}", a.serialize(tcx), target.serialize(tcx)),
-            Rvalue::Len(place) => format!("Len({})", place.serialize_value(tcx)),
-            Rvalue::Discriminant(place) => format!("Discriminant({})", place.serialize_value(tcx)),
-            Rvalue::AddressOf(Mutability::Not, place) => {
+            Self::Cast(a, target) => format!("{} as {}", a.serialize(tcx), target.serialize(tcx)),
+            Self::Len(place) => format!("Len({})", place.serialize_value(tcx)),
+            Self::Discriminant(place) => format!("Discriminant({})", place.serialize_value(tcx)),
+            Self::AddressOf(Mutability::Not, place) => {
                 format!("core::ptr::addr_of!({})", place.serialize_place(tcx))
             }
-            Rvalue::AddressOf(Mutability::Mut, place) => {
+            Self::AddressOf(Mutability::Mut, place) => {
                 format!("core::ptr::addr_of_mut!({})", place.serialize_place(tcx))
             }
-            Rvalue::Ref(Mutability::Not, place) => {
+            Self::Ref(Mutability::Not, place) => {
                 format!("&{}", place.serialize_place(tcx))
             }
-            Rvalue::Ref(Mutability::Mut, place) => {
+            Self::Ref(Mutability::Mut, place) => {
                 format!("&mut {}", place.serialize_place(tcx))
             }
-            Rvalue::Aggregate(kind, operands) => match kind {
+            Self::Aggregate(kind, operands) => match kind {
                 AggregateKind::Array(_) => {
                     let list: String = operands
                         .iter()
@@ -238,17 +238,17 @@ impl Serialize for Rvalue {
 impl Serialize for Statement {
     fn serialize(&self, tcx: &TyCtxt) -> String {
         match self {
-            Statement::Assign(place, rvalue) => {
+            Self::Assign(place, rvalue) => {
                 format!("{} = {}", place.serialize_place(tcx), rvalue.serialize(tcx))
             }
-            Statement::StorageLive(local) => format!("StorageLive({})", local.identifier()),
-            Statement::StorageDead(local) => format!("StorageDead({})", local.identifier()),
-            Statement::Deinit(local) => format!("Deinit({})", local.serialize_value(tcx)),
-            Statement::SetDiscriminant(place, discr) => {
+            Self::StorageLive(local) => format!("StorageLive({})", local.identifier()),
+            Self::StorageDead(local) => format!("StorageDead({})", local.identifier()),
+            Self::Deinit(local) => format!("Deinit({})", local.serialize_value(tcx)),
+            Self::SetDiscriminant(place, discr) => {
                 format!("SetDiscriminant({}, {discr})", place.serialize_value(tcx))
             }
-            Statement::Retag(place) => format!("Retag({})", place.serialize_value(tcx)),
-            Statement::Nop => String::default(),
+            Self::Retag(place) => format!("Retag({})", place.serialize_value(tcx)),
+            Self::Nop => String::default(),
         }
     }
 }
@@ -256,17 +256,17 @@ impl Serialize for Statement {
 impl Terminator {
     fn serialize(&self, tcx: &TyCtxt, call_syntax: CallSynatx) -> String {
         match self {
-            Terminator::Return => "Return()".to_owned(),
-            Terminator::Goto { target } => format!("Goto({})", target.identifier()),
-            Terminator::Unreachable => "Unreachable()".to_owned(),
-            Terminator::Drop { place, target } => {
+            Self::Return => "Return()".to_owned(),
+            Self::Goto { target } => format!("Goto({})", target.identifier()),
+            Self::Unreachable => "Unreachable()".to_owned(),
+            Self::Drop { place, target } => {
                 format!(
                     "Drop({}, {})",
                     place.serialize_value(tcx),
                     target.identifier()
                 )
             }
-            Terminator::Call {
+            Self::Call {
                 destination,
                 target,
                 callee,
@@ -305,11 +305,11 @@ impl Terminator {
                     ),
                 }
             }
-            Terminator::SwitchInt { discr, targets } => {
+            Self::SwitchInt { discr, targets } => {
                 let arms = targets.match_arms();
                 format!("match {} {{\n{}\n}}", discr.serialize(tcx), arms)
             }
-            Terminator::Hole => unreachable!("hole"),
+            Self::Hole => unreachable!("hole"),
         }
     }
 }

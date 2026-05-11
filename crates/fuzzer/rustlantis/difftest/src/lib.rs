@@ -23,8 +23,8 @@ pub enum Source {
 impl Display for Source {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Source::File(path) => f.write_str(&path.to_string_lossy()),
-            Source::Stdin(_) => f.write_str("[stdin]"),
+            Self::File(path) => f.write_str(&path.to_string_lossy()),
+            Self::Stdin(_) => f.write_str("[stdin]"),
         }
     }
 }

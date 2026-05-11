@@ -37,7 +37,7 @@ impl GlobalSchedulingPolicy {
     /// Returns a reference to the inner policy as a trait object.
     pub fn as_scheduling_policy(&self) -> Result<&impl SchedulingPolicy, DeviceError> {
         match self {
-            GlobalSchedulingPolicy::RoundRobin(rr) => Ok(rr),
+            Self::RoundRobin(rr) => Ok(rr),
         }
     }
 }
@@ -46,7 +46,7 @@ impl GlobalSchedulingPolicy {
 impl SchedulingPolicy for GlobalSchedulingPolicy {
     fn init(&mut self, ctx: &Arc<CudaContext>) -> Result<(), DeviceError> {
         match self {
-            GlobalSchedulingPolicy::RoundRobin(rr) => rr.init(ctx),
+            Self::RoundRobin(rr) => rr.init(ctx),
         }
     }
     fn schedule<T: Send, O: DeviceOperation<Output = T>>(
@@ -54,12 +54,12 @@ impl SchedulingPolicy for GlobalSchedulingPolicy {
         op: O,
     ) -> Result<DeviceFuture<T, O>, DeviceError> {
         match self {
-            GlobalSchedulingPolicy::RoundRobin(rr) => rr.schedule(op),
+            Self::RoundRobin(rr) => rr.schedule(op),
         }
     }
     fn sync<T: Send, O: DeviceOperation<Output = T>>(&self, op: O) -> Result<T, DeviceError> {
         match self {
-            GlobalSchedulingPolicy::RoundRobin(rr) => rr.sync(op),
+            Self::RoundRobin(rr) => rr.sync(op),
         }
     }
 }
