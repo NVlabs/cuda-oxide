@@ -838,7 +838,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         {
             self.warn_once(
                 "dynamic-shared-array",
-                caller.def_id(),     // new dedup parameter — once per containing kernel
+                caller.def_id(),
                 const_op.span,
                 "`DynamicSharedArray` returns CUDA dynamic shared memory; make sure the kernel launch config provides enough `shared_mem_bytes`".to_string(),
             );
