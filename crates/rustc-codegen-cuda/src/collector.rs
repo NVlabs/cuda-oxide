@@ -775,6 +775,7 @@ impl<'tcx> DeviceCollector<'tcx> {
             let static_name = self.tcx.def_path_str(static_def_id);
             self.warn_once(
                 "shared-array-static",
+                static_def_id,
                 span,
                 format!(
                     "`static mut {static_name}` uses `SharedArray`, which cuda-oxide lowers to per-block CUDA shared memory, not persistent device global memory"
@@ -783,12 +784,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         }
     }
 
-    fn warn_once(&mut self, kind: &str, span: Span, message: String) {
-        let key = format!("{kind}:{span:?}:{message}");
+    fn warn_once(&mut self, kind: &str, dedup_id: DefId, span: Span, message: String) {
+        let key = format!("{kind}:{dedup_id:?}");
         if self.emitted_shared_memory_warnings.insert(key) {
             self.tcx.sess.dcx().span_warn(span, message);
         }
     }
+
 
     /// Process a terminator to find function calls.
     ///
@@ -836,6 +838,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         {
             self.warn_once(
                 "dynamic-shared-array",
+                caller.def_id(),     // new dedup parameter — once per containing kernel
                 const_op.span,
                 "`DynamicSharedArray` returns CUDA dynamic shared memory; make sure the kernel launch config provides enough `shared_mem_bytes`".to_string(),
             );
