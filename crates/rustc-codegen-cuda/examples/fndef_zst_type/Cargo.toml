@@ -1,0 +1,20 @@
+[package]
+name = "fndef_zst_type"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for the type translator's FnDef arm.
+# `RigidTy::FnDef(...)` is a per-function-definition ZST type that
+# rustc materializes for things like `format_args!("{}", ...)` (which
+# embeds `Display::fmt::<T>` as a function value in `Arguments`).
+#
+# Build with:
+#   cargo oxide build fndef_zst_type
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
