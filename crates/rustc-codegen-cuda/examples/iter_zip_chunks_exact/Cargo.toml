@@ -1,0 +1,21 @@
+[package]
+name = "iter_zip_chunks_exact"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for the mir-importer's type translator:
+# `<U as IntoIterator>::IntoIter` (an alias / associated type that
+# falls out of `Iterator::zip`'s return type after monomorphization)
+# is not handled. Hit by anything that does
+# `slice.iter_mut().zip(other.chunks_exact(N))` and friends.
+#
+# Build with:
+#   cargo oxide build iter_zip_chunks_exact
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
