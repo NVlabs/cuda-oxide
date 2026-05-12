@@ -1,11 +1,11 @@
-//! Known-failure reproducer for `<T as SomeTrait>::AssocType` aliases
-//! on user-defined / third-party traits beyond the hard-coded list in
-//! `crates/mir-importer/src/translator/types.rs`. Specific real-world
-//! surface: `generic_array::sequence::GenericSequence::Sequence`,
-//! reached from `k256`'s
-//! `<AffinePoint<Secp256k1> as ToEncodedPoint<Secp256k1>>::to_encoded_point`.
+//! Regression test for `<T as GenericSequence<…>>::Sequence` aliases —
+//! the third-party-trait associated type from `generic_array`. The
+//! reproducer uses a local mock `GenericSequence` trait (no
+//! `generic_array` dep) so the matcher substring
+//! `"GenericSequence::Sequence"` catches it exactly as it would the
+//! real `generic_array::sequence::GenericSequence::Sequence`.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -23,18 +23,18 @@
 //! folding the alias before monomorphization is fully resolved.
 //!
 //! ```rust,ignore
-//! trait Seq {
-//!     type Out;
-//!     fn into_out(self) -> Self::Out;     // ← return is Self::Out
+//! trait GenericSequence<T> {
+//!     type Sequence;
+//!     fn into_out(self) -> Self::Sequence;     // ← return is Self::Sequence
 //! }
 //!
-//! impl Seq for Arr {
-//!     type Out = Arr;
+//! impl GenericSequence<u32> for Arr {
+//!     type Sequence = Arr;
 //!     #[inline(never)]
-//!     fn into_out(self) -> Self::Out { self }
+//!     fn into_out(self) -> Self::Sequence { self }
 //! }
 //!
-//! Seq::into_out(arr);  // <Arr as Seq>::Out alias survives
+//! GenericSequence::into_out(arr);  // <Arr as GenericSequence<u32>>::Sequence alias survives
 //! ```
 //!
 //! ## Where the gap lives
@@ -56,30 +56,20 @@
 //! signature surfaces a new wall — each fix is ~5 lines but the
 //! compound bookkeeping is real.
 //!
-//! ## What would it take to fix
+//! ## What landed
 //!
-//! Two paths, in order of effort:
+//! Added a `"GenericSequence::Sequence"` arm in the alias matcher,
+//! recursing on `self_ty` for ADT Self. Same shape as the
+//! `IntoIterator::IntoIter` and arith-output handlers above it. The
+//! canonical impl is `impl<T, N> GenericSequence<T> for
+//! GenericArray<T, N> { type Sequence = Self; … }` and every reachable
+//! device impl follows the same `Sequence = Self` pattern.
 //!
-//! 1. **Single-purpose arm**: add `"GenericSequence::Sequence"` to the
-//!    existing matcher, recursing on `self_ty` for ADT Self. Same
-//!    shape as the previous arith-output / IntoIter handlers. Covers
-//!    the `k256` path that triggered this. Doesn't generalize.
-//!
-//! 2. **Generic "recurse on Self for unknown projections on
-//!    canonical-Self impls"**: a default arm that, when the alias's
-//!    `Self` arg is an ADT, conservatively returns Self. Risky —
-//!    every mismatched-`Output` impl (like the curve25519-dalek
-//!    `Mul<Scalar> for &BasepointTable` → `Point` case the
-//!    `mul_output_mismatched` test locks in) would become a silent
-//!    miscompile instead of a hard error.
-//!
-//! 3. **Real normalization**: drop into `rustc_middle::ty::TyCtxt::
-//!    normalize_erasing_regions`. The right answer. Requires
-//!    threading `TyCtxt` through `translate_type` — significant
-//!    surgery in the importer.
-//!
-//! Tier 1 is the pragmatic move for this specific reproducer and the
-//! real-world `k256` trigger. Tier 3 is the principled long-term fix.
+//! Doesn't generalize — every new third-party trait whose associated
+//! type reaches a device-reachable MIR signature still needs its own
+//! arm here. Real fix would thread `rustc_middle::ty::TyCtxt::
+//! normalize_erasing_regions` through `translate_type`. Out of scope
+//! for this loop.
 //!
 //! ## User-side workaround for vanity-miner-rs
 //!
@@ -99,13 +89,9 @@
 //!
 //! ## Build with
 //!
-//!     cargo oxide build generic_sequence_alias
+//!     cargo oxide run generic_sequence_alias
 //!
-//! Expected: build error from the mir-importer's type translator —
-//! `Alias type not yet supported: AliasDef(DefId { … name:
-//! "...::Seq::Out" })` (the reproducer uses a local mock trait so the
-//! failure shape is exactly the same as `GenericSequence::Sequence`
-//! without dragging in `generic_array`).
+//! Expected: kernel runs, each output equals `input[i].wrapping_add(1)`.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
@@ -113,9 +99,9 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 /// Mock of `generic_array::sequence::GenericSequence` — minimal trait
 /// with an associated type returned by a method. Single type param so
 /// the alias args shape matches `GenericSequence<T>::Sequence`.
-pub trait Seq<T> {
-    type Out;
-    fn into_out(self) -> Self::Out;
+pub trait GenericSequence<T> {
+    type Sequence;
+    fn into_out(self) -> Self::Sequence;
 }
 
 /// Mock of `GenericArray<T, N>`. One field so it has non-trivial
@@ -127,10 +113,10 @@ pub struct Arr {
     pub v: u32,
 }
 
-impl Seq<u32> for Arr {
-    type Out = Arr;
+impl GenericSequence<u32> for Arr {
+    type Sequence = Arr;
     #[inline(never)]
-    fn into_out(self) -> Self::Out {
+    fn into_out(self) -> Self::Sequence {
         Arr { v: self.v.wrapping_add(1) }
     }
 }
@@ -139,7 +125,7 @@ impl Seq<u32> for Arr {
 pub mod kernels {
     use super::*;
 
-    /// Trigger: `Seq::into_out(arr)` returns `<Arr as Seq<u32>>::Out`.
+    /// Trigger: `GenericSequence::into_out(arr)` returns `<Arr as GenericSequence<u32>>::Sequence`.
     /// With `#[inline(never)]` on the impl, the alias survives into
     /// the call's return-type slot in the kernel's MIR, where the
     /// type translator hits the catch-all error.
@@ -151,7 +137,7 @@ pub mod kernels {
             && i < input.len()
         {
             let arr = Arr { v: input[i] };
-            let next = Seq::into_out(arr);
+            let next = GenericSequence::into_out(arr);
             *slot = next.v;
         }
     }
@@ -183,5 +169,5 @@ fn main() {
         let expected = host[i].wrapping_add(1);
         assert_eq!(result[i], expected, "thread {} mismatch", i);
     }
-    println!("SUCCESS: <Arr as Seq<u32>>::Out codegen'd to PTX");
+    println!("SUCCESS: <Arr as GenericSequence<u32>>::Sequence codegen'd to PTX");
 }

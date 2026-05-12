@@ -884,6 +884,39 @@ pub fn translate_type(
                 }
             }
 
+            // For `generic_array::sequence::GenericSequence::Sequence`
+            // and similar `Self`-returning third-party-trait associated
+            // types. `GenericSequence`'s canonical impl is
+            // `impl<T, N> GenericSequence<T> for GenericArray<T, N>
+            // { type Sequence = Self; … }` — `Sequence` is always `Self`
+            // for every type that reaches device codegen via this
+            // trait. Recursing on the first generic arg covers it,
+            // mirroring the `IntoIterator::IntoIter` handler.
+            //
+            // Surfaced from `~/vanity-miner-rs/` via `k256`'s
+            // `to_encoded_point`. The whole `RustCrypto` /
+            // `elliptic-curve` / `generic_array` family is heavily
+            // associated-type-projected; each new trait that reaches
+            // device codegen needs its own arm here until real
+            // normalization (drop into
+            // `rustc_middle::ty::TyCtxt::normalize_erasing_regions` —
+            // requires threading `TyCtxt` through `translate_type`)
+            // replaces this hand-rolled allowlist.
+            //
+            // See `examples/generic_sequence_alias/` for the
+            // self-contained regression.
+            if def_name.contains("GenericSequence::Sequence") {
+                let args = &alias_ty.args.0;
+                if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first()
+                    && matches!(
+                        self_ty.kind(),
+                        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_, _))
+                    )
+                {
+                    return translate_type(ctx, self_ty);
+                }
+            }
+
             input_err_noloc!(TranslationErr::unsupported(format!(
                 "Alias type not yet supported: {:?}",
                 alias_ty.def_id
