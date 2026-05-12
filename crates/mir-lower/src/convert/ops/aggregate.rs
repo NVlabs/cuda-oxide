@@ -766,15 +766,25 @@ pub(crate) fn convert_field_addr(
         }
     };
 
+    // ZST predecessors get *dropped* from the LLVM struct (see
+    // `MirStructType` lowering and `build_struct_with_explicit_padding`),
+    // so the LLVM GEP index must skip them. `is_zero_sized_type` only
+    // recognizes LLVM struct types, so we have to `convert_type` the
+    // MIR field type first — otherwise EVERY predecessor counts and
+    // the GEP index drifts past the LLVM struct's actual field count.
     let mut llvm_field_idx = 0u32;
     for i in 0..mem_index {
         let decl_idx = mem_to_decl[i];
-        if !is_zero_sized_type(ctx, field_types[decl_idx]) {
+        let llvm_field_ty =
+            convert_type(ctx, field_types[decl_idx]).map_err(anyhow_to_pliron)?;
+        if !is_zero_sized_type(ctx, llvm_field_ty) {
             llvm_field_idx += 1;
         }
     }
 
-    let target_is_zst = is_zero_sized_type(ctx, field_types[field_index]);
+    let target_llvm_ty =
+        convert_type(ctx, field_types[field_index]).map_err(anyhow_to_pliron)?;
+    let target_is_zst = is_zero_sized_type(ctx, target_llvm_ty);
     if target_is_zst {
         rewriter.replace_operation_with_values(ctx, op, vec![ptr_operand]);
         return Ok(());
