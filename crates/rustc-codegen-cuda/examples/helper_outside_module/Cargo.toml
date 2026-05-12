@@ -1,0 +1,23 @@
+[package]
+name = "helper_outside_module"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Reproducer for bug A of cuda-oxide limitation #4 (helpers outside
+# `#[cuda_module]`): a `pub fn` declared at crate root and called from a
+# kernel produces an LLVM verification failure because the codegen
+# backend only walks items reachable from inside the inline mod.
+#
+# Build with:
+#   cargo oxide run helper_outside_module
+#
+# This example is expected to FAIL until the collector is taught to
+# walk crate-level items reachable from kernels.
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
