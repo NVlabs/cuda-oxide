@@ -29,5 +29,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v25
 
-      - name: Verify Dev Shell Loads
-        run: nix develop --command echo "Successfully loaded environment on ${{ matrix.os }}!"
+        # Run a basic cargo check to prove the Nix environment provides
+        # the correct LLVM and CUDA linker paths to compile the workspace.
+      - name: Verify Environment Compilation
+        run: nix develop --command cargo check --workspace --all-targets
