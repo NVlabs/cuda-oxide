@@ -1,0 +1,23 @@
+[package]
+name = "generic_sequence_alias"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for `<T as Trait>::AssocType` aliases on
+# user-defined / third-party traits beyond the hard-coded list in
+# `crates/mir-importer/src/translator/types.rs`. Specific surface:
+# `generic_array::sequence::GenericSequence::Sequence`. Same shape as
+# `Iterator::Item` / `IntoIterator::IntoIter` / `Mul::Output` /
+# `Index::Output` / `FnOnce::Output` — the matcher knows only the
+# enumerated names, every new trait surfaces a fresh wall.
+#
+# Build with:
+#   cargo oxide build generic_sequence_alias
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
