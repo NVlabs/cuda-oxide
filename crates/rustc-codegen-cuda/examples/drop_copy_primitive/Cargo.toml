@@ -1,0 +1,21 @@
+[package]
+name = "drop_copy_primitive"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for the drop terminator rejecting Copy-shaped
+# primitives. `<usize as Ord>::min` is the natural trigger — its MIR
+# carries `Drop(_unused_arg)` terminators for the `usize` it didn't
+# return, and the importer's `translate_drop` hard-errors on any drop
+# regardless of whether the type actually has drop glue.
+#
+# Build with:
+#   cargo oxide build drop_copy_primitive
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
