@@ -1,0 +1,23 @@
+[package]
+name = "result_unwrap_dyn_debug"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for trait-object (`dyn Trait`) types
+# surfacing through `Result::unwrap()` / `Result::expect()`.
+#
+# `unwrap`'s panic path internally formats the error value via
+# `&dyn Debug`, which the mir-importer's type translator doesn't
+# yet handle. Any `try_into().unwrap()` (or any other `.unwrap()`
+# on a `Result<_, E: Debug>`) drags the type in.
+#
+# Build with:
+#   cargo oxide build result_unwrap_dyn_debug
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
