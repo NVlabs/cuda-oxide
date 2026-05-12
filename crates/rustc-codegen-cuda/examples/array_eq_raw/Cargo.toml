@@ -1,0 +1,24 @@
+[package]
+name = "array_eq_raw"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for the missing `core::intrinsics::raw_eq`
+# intrinsic handler in the mir-importer.
+#
+# `[T; N] == [T; N]` lowers via `<[T; N] as PartialEq>::eq` in
+# `core/src/array/equality.rs`, which uses `raw_eq` as a memcmp-style
+# fast path when `T: BytewiseEq`. The intrinsic has no handler in
+# `crates/mir-importer/src/translator/terminator/intrinsics/`, so the
+# call survives as an undefined symbol and llc fails.
+#
+# Build with:
+#   cargo oxide build array_eq_raw
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
