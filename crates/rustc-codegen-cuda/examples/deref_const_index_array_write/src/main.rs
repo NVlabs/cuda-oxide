@@ -1,8 +1,8 @@
-//! Known-failure repro for the `Deref -> ConstantIndex` writer arm
-//! when the slot is `&mut [T; N]` (pointer-to-array), not the
-//! pointer-to-slice case the existing handler covers.
+//! Regression test for the `Deref -> ConstantIndex` writer arm when
+//! the slot is `&mut [T; N]` (pointer-to-array), not the
+//! pointer-to-slice case the original handler covered.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Compilation error: invalid input program.
@@ -15,14 +15,22 @@
 //! state update writes `state[k] = value` where `state: &mut [u32; 8]`,
 //! lowering to `Place(local, [Deref, ConstantIndex { offset: k, .. }])`.
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! `crates/mir-importer/src/translator/statement.rs` — the
-//! `(Deref, ConstantIndex)` writer arm only handles
-//! `MirPtrType<MirSliceType<T>>` slots (`&mut [T]`). The sibling
-//! `(Deref, Index(local))` arm already dispatches on both the array
-//! and slice pointee shapes (see `examples/deref_index_local_write/`);
-//! the constant-index arm just needs the same dispatch.
+//! `(Deref, ConstantIndex)` now dispatches on the slot's pointee
+//! shape, mirroring the runtime-index sibling
+//! `(Deref, Index(local))` (see `deref_index_local_write/`):
+//!
+//! * `MirPtrType<MirPtrType<MirArrayType<T, N>>>` (`&mut [T; N]`):
+//!   load the thin array pointer, then defer to
+//!   `emit_array_element_store` — the same helper the single-level
+//!   `arr[const_idx] = ...` Index path uses.
+//! * `MirPtrType<MirSliceType<T>>` (`&mut [T]`): unchanged — load
+//!   the fat slice value, extract the data pointer, GEP, store.
+//!
+//! Slice path is untouched; only the new array branch was added,
+//! plus the shared i64 constant for the offset which both branches
+//! consume.
 //!
 //! ## Build with
 //!

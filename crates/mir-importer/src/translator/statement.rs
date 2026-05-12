@@ -617,11 +617,20 @@ pub fn translate_statement(
                             from_end,
                         },
                     ) => {
-                        // `(*slice_local)[const_idx] = value`, where the
-                        // local is a `&mut [T]` (or `*mut [T]`). The slot
-                        // holds the slice fat pointer; we load it, take
-                        // the data-pointer half, GEP to the constant
-                        // offset, and store.
+                        // `(*ref_local)[const_idx] = value`, where the local
+                        // is either `&mut [T]` (slice) or `&mut [T; N]`
+                        // (array). Mirrors the runtime-index sibling
+                        // `(Deref, Index(local))` arm — see
+                        // `examples/deref_index_local_write/`.
+                        //
+                        // * `&mut [T; N]` slot:
+                        //   `MirPtrType<MirPtrType<MirArrayType<T, N>>>`.
+                        //   Load the thin pointer to the array, then use
+                        //   `mir.array_element_addr` + `mir.store`.
+                        // * `&mut [T]` slot:
+                        //   `MirPtrType<MirSliceType<T>>`. Load the fat
+                        //   slice value, extract the data pointer, GEP,
+                        //   store.
                         if *from_end {
                             return input_err!(
                                 loc,
@@ -657,85 +666,68 @@ pub fn translate_statement(
                             );
                         };
 
-                        // The slot's pointee must be a slice. Anything else
-                        // (e.g. a thin `*mut T` would only be a single Deref)
-                        // is a structural mismatch.
-                        let element_ty = {
-                            let slot_ty = slot.get_type(ctx);
+                        // Look at the slot's pointee BEFORE loading, so we
+                        // know what type to ask the load for. Same shape
+                        // dispatch as the runtime-index arm below.
+                        let slot_ty = slot.get_type(ctx);
+                        let inner_ty = {
                             let slot_ty_ref = slot_ty.deref(ctx);
-                            let slot_ptr =
-                                slot_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>();
-                            let slice_ty = slot_ptr.and_then(|p| {
-                                p.pointee
-                                    .deref(ctx)
-                                    .downcast_ref::<dialect_mir::types::MirSliceType>()
-                                    .map(|s| s.element_type())
-                            });
-                            match slice_ty {
-                                Some(elem) => elem,
-                                None => {
-                                    let ty_dbg = format!("{}", slot_ty.disp(ctx));
-                                    return input_err!(
-                                        loc,
-                                        TranslationErr::unsupported(format!(
-                                            "Deref->ConstantIndex write expects slot of MirPtrType<MirSliceType<T>>, got {}",
-                                            ty_dbg
-                                        ))
-                                    );
+                            slot_ty_ref
+                                .downcast_ref::<dialect_mir::types::MirPtrType>()
+                                .map(|p| p.pointee)
+                        };
+                        let Some(inner_ty) = inner_ty else {
+                            let ty_dbg = format!("{}", slot_ty.disp(ctx));
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "Deref->ConstantIndex write: slot {:?} is not a MirPtrType, got {}",
+                                    place.local, ty_dbg
+                                ))
+                            );
+                        };
+
+                        enum InnerShape {
+                            Array {
+                                arr_ptr_ty: Ptr<pliron::r#type::TypeObj>,
+                                element_ty: Ptr<pliron::r#type::TypeObj>,
+                                address_space: u32,
+                            },
+                            Slice(Ptr<pliron::r#type::TypeObj>),
+                            Other,
+                        }
+                        let shape = {
+                            let inner_ty_ref = inner_ty.deref(ctx);
+                            if let Some(inner_ptr_ty) =
+                                inner_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>()
+                            {
+                                let arr_address_space = inner_ptr_ty.address_space;
+                                let arr_target_ty = inner_ptr_ty.pointee;
+                                let arr_target_ref = arr_target_ty.deref(ctx);
+                                if let Some(arr_ty) = arr_target_ref
+                                    .downcast_ref::<dialect_mir::types::MirArrayType>()
+                                {
+                                    InnerShape::Array {
+                                        arr_ptr_ty: inner_ty,
+                                        element_ty: arr_ty.element_type(),
+                                        address_space: arr_address_space,
+                                    }
+                                } else {
+                                    InnerShape::Other
                                 }
+                            } else if let Some(slice_ty) =
+                                inner_ty_ref.downcast_ref::<dialect_mir::types::MirSliceType>()
+                            {
+                                InnerShape::Slice(slice_ty.element_type())
+                            } else {
+                                InnerShape::Other
                             }
                         };
 
-                        // Load slot -> MirSliceType<T> value.
-                        let slice_ty: Ptr<pliron::r#type::TypeObj> =
-                            dialect_mir::types::MirSliceType::get(ctx, element_ty).into();
-                        use dialect_mir::ops::MirLoadOp;
-                        let load_op = Operation::new(
-                            ctx,
-                            MirLoadOp::get_concrete_op_info(),
-                            vec![slice_ty],
-                            vec![slot],
-                            vec![],
-                            0,
-                        );
-                        load_op.deref_mut(ctx).set_loc(loc.clone());
-                        if let Some(prev) = current_prev {
-                            load_op.insert_after(ctx, prev);
-                        } else {
-                            load_op.insert_at_front(block_ptr, ctx);
-                        }
-                        let slice_val = Value::OpResult {
-                            op: load_op,
-                            res_idx: 0,
-                        };
-
-                        // Extract data pointer (field 0 of the fat pointer).
-                        // Mutable + generic addrspace matches how the
-                        // intrinsic and rvalue paths model slice data ptrs.
-                        let data_ptr_ty: Ptr<pliron::r#type::TypeObj> =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, true)
-                                .into();
-                        use dialect_mir::ops::MirExtractFieldOp;
-                        let extract_op = Operation::new(
-                            ctx,
-                            MirExtractFieldOp::get_concrete_op_info(),
-                            vec![data_ptr_ty],
-                            vec![slice_val],
-                            vec![],
-                            0,
-                        );
-                        extract_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirExtractFieldOp::new(extract_op).set_attr_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(0),
-                        );
-                        extract_op.insert_after(ctx, load_op);
-                        let data_ptr = Value::OpResult {
-                            op: extract_op,
-                            res_idx: 0,
-                        };
-
-                        // Constant offset (i64 signless).
+                        // Build a shared i64 constant for the offset; both
+                        // branches need it (array uses it for
+                        // array_element_addr, slice uses it for
+                        // ptr_offset).
                         use dialect_mir::ops::MirConstantOp;
                         use pliron::builtin::attributes::IntegerAttr;
                         let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
@@ -752,42 +744,140 @@ pub fn translate_statement(
                         );
                         const_op.deref_mut(ctx).set_loc(loc.clone());
                         MirConstantOp::new(const_op).set_attr_value(ctx, idx_attr);
-                        const_op.insert_after(ctx, extract_op);
+                        if let Some(prev) = current_prev {
+                            const_op.insert_after(ctx, prev);
+                        } else {
+                            const_op.insert_at_front(block_ptr, ctx);
+                        }
                         let idx_val = Value::OpResult {
                             op: const_op,
                             res_idx: 0,
                         };
 
-                        // GEP: data_ptr + offset -> element pointer.
-                        use dialect_mir::ops::MirPtrOffsetOp;
-                        let offset_op = Operation::new(
-                            ctx,
-                            MirPtrOffsetOp::get_concrete_op_info(),
-                            vec![data_ptr_ty],
-                            vec![data_ptr, idx_val],
-                            vec![],
-                            0,
-                        );
-                        offset_op.deref_mut(ctx).set_loc(loc.clone());
-                        offset_op.insert_after(ctx, const_op);
-                        let elem_ptr = Value::OpResult {
-                            op: offset_op,
-                            res_idx: 0,
-                        };
+                        if let InnerShape::Array {
+                            arr_ptr_ty,
+                            element_ty,
+                            address_space,
+                        } = shape
+                        {
+                            // `&mut [T; N]` shape — load the thin pointer
+                            // to the array, then defer to the same
+                            // address-build + store helper the single-level
+                            // Index path uses.
+                            use dialect_mir::ops::MirLoadOp;
+                            let load_op = Operation::new(
+                                ctx,
+                                MirLoadOp::get_concrete_op_info(),
+                                vec![arr_ptr_ty],
+                                vec![slot],
+                                vec![],
+                                0,
+                            );
+                            load_op.deref_mut(ctx).set_loc(loc.clone());
+                            load_op.insert_after(ctx, const_op);
+                            let arr_ptr = Value::OpResult {
+                                op: load_op,
+                                res_idx: 0,
+                            };
 
-                        // Store value through element pointer.
-                        let store_op = Operation::new(
-                            ctx,
-                            MirStoreOp::get_concrete_op_info(),
-                            vec![],
-                            vec![elem_ptr, result_value],
-                            vec![],
-                            0,
-                        );
-                        store_op.deref_mut(ctx).set_loc(loc);
-                        store_op.insert_after(ctx, offset_op);
+                            let store_op = emit_array_element_store(
+                                ctx,
+                                arr_ptr,
+                                idx_val,
+                                result_value,
+                                element_ty,
+                                address_space,
+                                block_ptr,
+                                Some(load_op),
+                                loc,
+                            );
+                            return Ok(Some(store_op));
+                        }
 
-                        Ok(Some(store_op))
+                        if let InnerShape::Slice(element_ty) = shape {
+                            // `&mut [T]` shape — original behaviour.
+                            let slice_ty: Ptr<pliron::r#type::TypeObj> =
+                                dialect_mir::types::MirSliceType::get(ctx, element_ty).into();
+                            use dialect_mir::ops::MirLoadOp;
+                            let load_op = Operation::new(
+                                ctx,
+                                MirLoadOp::get_concrete_op_info(),
+                                vec![slice_ty],
+                                vec![slot],
+                                vec![],
+                                0,
+                            );
+                            load_op.deref_mut(ctx).set_loc(loc.clone());
+                            load_op.insert_after(ctx, const_op);
+                            let slice_val = Value::OpResult {
+                                op: load_op,
+                                res_idx: 0,
+                            };
+
+                            let data_ptr_ty: Ptr<pliron::r#type::TypeObj> =
+                                dialect_mir::types::MirPtrType::get_generic(
+                                    ctx, element_ty, true,
+                                )
+                                .into();
+                            use dialect_mir::ops::MirExtractFieldOp;
+                            let extract_op = Operation::new(
+                                ctx,
+                                MirExtractFieldOp::get_concrete_op_info(),
+                                vec![data_ptr_ty],
+                                vec![slice_val],
+                                vec![],
+                                0,
+                            );
+                            extract_op.deref_mut(ctx).set_loc(loc.clone());
+                            MirExtractFieldOp::new(extract_op).set_attr_index(
+                                ctx,
+                                dialect_mir::attributes::FieldIndexAttr(0),
+                            );
+                            extract_op.insert_after(ctx, load_op);
+                            let data_ptr = Value::OpResult {
+                                op: extract_op,
+                                res_idx: 0,
+                            };
+
+                            use dialect_mir::ops::MirPtrOffsetOp;
+                            let offset_op = Operation::new(
+                                ctx,
+                                MirPtrOffsetOp::get_concrete_op_info(),
+                                vec![data_ptr_ty],
+                                vec![data_ptr, idx_val],
+                                vec![],
+                                0,
+                            );
+                            offset_op.deref_mut(ctx).set_loc(loc.clone());
+                            offset_op.insert_after(ctx, extract_op);
+                            let elem_ptr = Value::OpResult {
+                                op: offset_op,
+                                res_idx: 0,
+                            };
+
+                            let store_op = Operation::new(
+                                ctx,
+                                MirStoreOp::get_concrete_op_info(),
+                                vec![],
+                                vec![elem_ptr, result_value],
+                                vec![],
+                                0,
+                            );
+                            store_op.deref_mut(ctx).set_loc(loc);
+                            store_op.insert_after(ctx, offset_op);
+                            return Ok(Some(store_op));
+                        }
+
+                        let ty_dbg = format!("{}", slot_ty.disp(ctx));
+                        input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "Deref->ConstantIndex write expects slot of \
+                                 MirPtrType<MirArrayType<T, N>> or \
+                                 MirPtrType<MirSliceType<T>>, got {}",
+                                ty_dbg
+                            ))
+                        )
                     }
                     (
                         mir::ProjectionElem::Deref,
