@@ -45,6 +45,14 @@ pub const CALLEE_SATURATING_ADD: &str = placeholder!("saturating_add");
 /// Placeholder call used for `core::intrinsics::saturating_sub`.
 pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 
+/// Placeholder call used for `core::intrinsics::ptr_offset_from_unsigned`.
+///
+/// Lowers to `udiv(sub(ptrtoint(self), ptrtoint(origin)), sizeof(T))` where
+/// `T` is the pointee, recovered at lowering time via the operand's
+/// most-recent `MirPtrType` (same pattern arithmetic.rs uses to decide
+/// signedness from pointer operands).
+pub const CALLEE_PTR_OFFSET_FROM_UNSIGNED: &str = placeholder!("ptr_offset_from_unsigned");
+
 /// Placeholder call used for `core::intrinsics::sqrtf32`.
 pub const CALLEE_SQRT_F32: &str = placeholder!("sqrtf32");
 /// Placeholder call used for `core::intrinsics::sqrtf64`.

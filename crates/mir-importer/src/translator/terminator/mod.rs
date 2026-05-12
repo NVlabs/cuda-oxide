@@ -1532,6 +1532,22 @@ fn try_dispatch_intrinsic(
         ));
     }
 
+    if let Some(intrinsic) = intrinsics::ptr_arith::RustPtrArithIntrinsic::from_core_path(name) {
+        return Ok(Some(intrinsics::ptr_arith::emit_rust_ptr_arith_intrinsic(
+            ctx,
+            body,
+            intrinsic,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?));
+    }
+
     match name {
         // =================================================================
         // Compiler Hints

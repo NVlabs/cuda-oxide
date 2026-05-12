@@ -61,14 +61,16 @@
 //! callee declaration carried `addrspace(3)`. The verifier rejected the
 //! mismatch.
 
-use crate::convert::types::{convert_function_type, convert_type, is_zero_sized_type};
+use crate::convert::types::{convert_function_type, convert_type, get_type_size, is_zero_sized_type};
 use crate::helpers;
-use dialect_llvm::op_interfaces::CastOpInterface;
+use dialect_llvm::op_interfaces::{BinArithOp, CastOpInterface, IntBinArithOpWithOverflowFlag};
 use dialect_llvm::ops as llvm;
 use dialect_llvm::types as llvm_types;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
 use dialect_mir::rust_intrinsics;
-use dialect_mir::types::{MirDisjointSliceType, MirSliceType, MirStructType, MirTupleType};
+use dialect_mir::types::{
+    MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirTupleType,
+};
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::{CallOpCallable, SymbolOpInterface};
 use pliron::builtin::type_interfaces::FunctionTypeInterface;
@@ -140,6 +142,23 @@ impl RustSaturatingIntrinsic {
         match callee {
             rust_intrinsics::CALLEE_SATURATING_ADD => Some(Self::Add),
             rust_intrinsics::CALLEE_SATURATING_SUB => Some(Self::Sub),
+            _ => None,
+        }
+    }
+}
+
+/// Internal placeholder for rustc pointer-arithmetic intrinsics (no
+/// corresponding `llvm.*` intrinsic — lowers to plain ptrtoint/sub/udiv).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RustPtrArithIntrinsic {
+    OffsetFromUnsigned,
+}
+
+impl RustPtrArithIntrinsic {
+    /// Convert an importer placeholder name back into the intrinsic it represents.
+    fn from_placeholder_callee(callee: &str) -> Option<Self> {
+        match callee {
+            rust_intrinsics::CALLEE_PTR_OFFSET_FROM_UNSIGNED => Some(Self::OffsetFromUnsigned),
             _ => None,
         }
     }
@@ -345,6 +364,10 @@ pub fn convert(
 
     if let Some(intrinsic) = RustFloatMathIntrinsic::from_placeholder_callee(&callee_name) {
         return convert_rust_float_math_intrinsic(ctx, rewriter, op, intrinsic);
+    }
+
+    if let Some(intrinsic) = RustPtrArithIntrinsic::from_placeholder_callee(&callee_name) {
+        return convert_rust_ptr_arith_intrinsic(ctx, rewriter, op, operands_info, intrinsic);
     }
 
     let callee_ident: pliron::identifier::Identifier = {
@@ -689,6 +712,114 @@ fn fabs_libdevice_name(
             "expected f32 or f64 type for Rust float math intrinsic"
         )
     }
+}
+
+/// Lower the placeholder for `core::intrinsics::ptr_offset_from_unsigned`.
+///
+/// `<*const T>::offset_from_unsigned(origin)` returns the number of `T`-sized
+/// elements between `self` and `origin` (callee guarantees `self >= origin`).
+/// The lowering is:
+///
+/// ```text
+///   %self_int  = ptrtoint i8* %self   to i64
+///   %orig_int  = ptrtoint i8* %origin to i64
+///   %byte_diff = sub i64 %self_int, %orig_int
+///   %count     = udiv i64 %byte_diff, sizeof(T)   ; elided when sizeof(T) == 1
+/// ```
+///
+/// `sizeof(T)` is recovered at lowering time by looking up `self`'s
+/// most-recent `MirPtrType` (parallel to how `arithmetic.rs`'s
+/// `is_signed_int_op` decides signedness from pointer operands) and reading
+/// its `pointee`. The MIR pointee is then converted to LLVM and measured via
+/// `get_type_size`.
+fn convert_rust_ptr_arith_intrinsic(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+    intrinsic: RustPtrArithIntrinsic,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    if op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err!(loc, "ptr arithmetic intrinsic call must have one result");
+    }
+    let args: Vec<Value> = op.deref(ctx).operands().collect();
+    if args.len() != 2 {
+        return pliron::input_err!(
+            loc,
+            "ptr arithmetic intrinsic takes 2 args (self, origin); got {}",
+            args.len()
+        );
+    }
+    let (self_ptr, origin_ptr) = (args[0], args[1]);
+
+    // Recover the pointee type from the MIR-side type of `self`. The
+    // operand's *current* type may already be an `llvm.ptr` (the cast op for
+    // it was converted earlier); the value map still remembers the previous
+    // `MirPtrType`. Scope the immutable borrow tightly so subsequent op
+    // construction can take a mutable `ctx`.
+    let pointee = {
+        let mir_ptr_ty = operands_info
+            .lookup_most_recent_of_type::<MirPtrType>(ctx, self_ptr)
+            .ok_or_else(|| {
+                pliron::input_error!(
+                    loc.clone(),
+                    "{}: self operand has no MirPtrType in the type history",
+                    match intrinsic {
+                        RustPtrArithIntrinsic::OffsetFromUnsigned => "ptr_offset_from_unsigned",
+                    }
+                )
+            })?;
+        mir_ptr_ty.pointee
+    };
+    let llvm_pointee = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
+    let pointee_size = get_type_size(ctx, llvm_pointee);
+    if pointee_size == 0 {
+        return pliron::input_err!(
+            loc,
+            "ptr_offset_from_unsigned: pointee type has zero size — undefined for ZST callers"
+        );
+    }
+
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+
+    // ptrtoint(self) and ptrtoint(origin) — both to i64.
+    let self_int = llvm::PtrToIntOp::new(ctx, self_ptr, i64_ty.into());
+    rewriter.insert_operation(ctx, self_int.get_operation());
+    let origin_int = llvm::PtrToIntOp::new(ctx, origin_ptr, i64_ty.into());
+    rewriter.insert_operation(ctx, origin_int.get_operation());
+
+    let self_int_val = self_int.get_operation().deref(ctx).get_result(0);
+    let origin_int_val = origin_int.get_operation().deref(ctx).get_result(0);
+
+    // sub: byte_diff = self_int - origin_int (no overflow flag — Rust's
+    // semantics are wrapping at this point and any `self < origin` is UB
+    // per the intrinsic contract).
+    let zero_flags = dialect_llvm::attributes::IntegerOverflowFlagsAttr::default();
+    let sub_op =
+        llvm::SubOp::new_with_overflow_flag(ctx, self_int_val, origin_int_val, zero_flags);
+    rewriter.insert_operation(ctx, sub_op.get_operation());
+    let byte_diff = sub_op.get_operation().deref(ctx).get_result(0);
+
+    let final_op = if pointee_size == 1 {
+        // sizeof(T) == 1: count == byte_diff, skip the divide.
+        sub_op.get_operation()
+    } else {
+        // Build sizeof(T) as i64 constant, then udiv.
+        let width = NonZeroUsize::new(64).expect("64 is non-zero");
+        let size_apint = APInt::from_u64(pointee_size, width);
+        let size_attr = IntegerAttr::new(i64_ty.into(), size_apint);
+        let size_const = llvm::ConstantOp::new(ctx, size_attr.into());
+        rewriter.insert_operation(ctx, size_const.get_operation());
+        let size_val = size_const.get_operation().deref(ctx).get_result(0);
+
+        let udiv = llvm::UDivOp::new(ctx, byte_diff, size_val);
+        rewriter.insert_operation(ctx, udiv.get_operation());
+        udiv.get_operation()
+    };
+
+    rewriter.replace_operation(ctx, op, final_op);
+    Ok(())
 }
 
 /// Insert the `i1` flag operand used by `llvm.ctlz` and `llvm.cttz`.

@@ -1,7 +1,9 @@
-//! Known-failure reproducer for the missing
-//! `core::intrinsics::ptr_offset_from_unsigned` handler in mir-lower.
+//! Regression test for the `core::intrinsics::ptr_offset_from_unsigned`
+//! lowering in mir-lower.
 //!
-//! ## Expected failure
+//! ## Pre-fix failure
+//!
+//! Without the handler this failed at llc verification:
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -11,77 +13,71 @@
 //!
 //! ## What triggers it
 //!
-//! The kernel calls
-//! `<*const u8>::offset_from_unsigned(other_ptr)`, which after
-//! macro expansion bottoms out at the rustc compiler intrinsic
+//! The kernel calls `<*const u8>::offset_from_unsigned(other_ptr)`,
+//! which bottoms out at the rustc compiler intrinsic
 //! `core::intrinsics::ptr_offset_from_unsigned`. The intrinsic has
-//! no MIR body (it's a compiler-builtin lowered directly by rustc's
-//! codegen backend). The cuda-oxide collector skips bodyless
-//! intrinsics; the call site in the kernel survives into LLVM IR as
-//! a `call.uni` to a symbol nothing defines, and `llc` rejects the
-//! module.
+//! no MIR body — rustc's codegen backend normally lowers it
+//! directly to ptrtoint/sub/udiv. cuda-oxide skips bodyless
+//! callees, so without a handler the call survives into LLVM IR as
+//! an undefined symbol.
 //!
-//! ## What it would take to fix
+//! ## The fix
 //!
-//! Parallel to how `convert_rust_bit_intrinsic` /
-//! `convert_rust_saturating_intrinsic` /
-//! `convert_rust_float_math_intrinsic` are dispatched in
-//! `crates/mir-lower/src/convert/ops/call.rs` (search "from_placeholder_callee"
-//! for the dispatch chain at the top of `convert`).
+//! Lives in three places, mirroring the existing
+//! `convert_rust_bit_intrinsic` / `convert_rust_saturating_intrinsic` /
+//! `convert_rust_float_math_intrinsic` chain:
 //!
-//! The lowering for `ptr_offset_from_unsigned(p, origin)` is:
+//! - `crates/dialect-mir/src/rust_intrinsics.rs`:
+//!   `CALLEE_PTR_OFFSET_FROM_UNSIGNED` placeholder constant.
+//! - `crates/mir-importer/src/translator/terminator/intrinsics/ptr_arith.rs`:
+//!   recognizes `core::intrinsics::ptr_offset_from_unsigned`, emits
+//!   the placeholder `mir.call`.
+//! - `crates/mir-lower/src/convert/ops/call.rs`:
+//!   `convert_rust_ptr_arith_intrinsic` lowers the placeholder to
 //!
-//! ```text
-//! %p_int     = ptrtoint i8* %p     to i64
-//! %orig_int  = ptrtoint i8* %origin to i64
-//! %diff      = sub i64 %p_int, %orig_int
-//! %count     = udiv i64 %diff, <size_of<T>>     ; T is from intrinsic's generic arg
-//! ```
+//!   ```text
+//!   %self_int  = ptrtoint i8* %self   to i64
+//!   %orig_int  = ptrtoint i8* %origin to i64
+//!   %byte_diff = sub i64 %self_int, %orig_int
+//!   %count     = udiv i64 %byte_diff, sizeof(T)   ; elided when sizeof(T) == 1
+//!   ```
 //!
-//! (Or, equivalently, lower to `llvm.usub.sat`-style with explicit
-//! bounds checks; standard rustc lowers via `pointer_arith`.)
-//!
-//! A handler likely lives next to `convert_rust_bit_intrinsic` and
-//! follows the same callee-name placeholder pattern. The trickiest
-//! part is extracting the pointee size: the intrinsic is generic
-//! over `T` (`<*const T>::offset_from_unsigned`), so the handler
-//! needs to read the type argument from the monomorphized symbol
-//! name (or, better, from MIR generic args if the importer
-//! preserves them on the placeholder call).
+//!   `sizeof(T)` is recovered by looking up the operand's
+//!   most-recent `MirPtrType` and walking its pointee through
+//!   `convert_type` + `get_type_size` — same trick
+//!   `arithmetic.rs::is_signed_int_op` uses to recover signedness
+//!   from pointer operands.
 //!
 //! Originally surfaced from `~/vanity-miner-rs/` after the iter
-//! alias-translation fix landed (commit
-//! `Translate IntoIter / Item aliases and stop misclassifying
-//! tuple-result calls as unit`) — `core::slice::iter::ChunksExact::next`
-//! uses `offset_from_unsigned` to compute its `len_remaining`
-//! bookkeeping, so any kernel that consumes a `ChunksExact` ends up
-//! transitively dragging the intrinsic in.
+//! alias-translation fix landed
+//! (commit `Translate IntoIter / Item aliases and stop
+//! misclassifying tuple-result calls as unit`) —
+//! `core::slice::iter::ChunksExact::next` uses
+//! `offset_from_unsigned` for its `len_remaining` bookkeeping, so
+//! any kernel that consumes a `ChunksExact` ends up transitively
+//! dragging the intrinsic in. The repro here exercises the
+//! intrinsic directly so the regression test is self-contained.
 //!
-//! ## Why this is its own example
+//! ## Not yet handled
 //!
-//! The previous walls in this thread —
-//! `examples/cross_crate_pubfn/` (MIR availability cross-crate) and
-//! `examples/iter_zip_chunks_exact/` (alias type translation +
-//! tuple-result call lowering) — are now regression-tested. This
-//! one is the next layer down: a compiler-intrinsic dispatch gap in
-//! mir-lower. Each peeled layer has revealed the next; keeping them
-//! as separate reproducers means a future contributor can flip each
-//! from known-failure to passing independently.
+//! - `core::intrinsics::ptr_offset_from` (signed variant — would
+//!   use `sdiv`). Same shape; add when a workload needs it.
 //!
 //! ## Build with
 //!
 //!     cargo oxide build ptr_offset_intrinsic
 //!
-//! Expected: build error from `llc` —
-//! `Symbol ..ptr_offset_from_unsigned.. not found`.
+//! Expected: green build, PTX containing a real `sub` (and `div`
+//! when pointee size > 1).
 //!
 //! ## What this example is NOT
 //!
-//! - Not about `Iterator::Item` / `IntoIterator::IntoIter` / cross-
-//!   crate MIR. Those are fixed; this fails on a one-file kernel
-//!   that imports nothing beyond `cuda_device`.
+//! - Not about `Iterator::Item` / `IntoIterator::IntoIter` /
+//!   cross-crate MIR. Those land in the previous commits' regression
+//!   tests. This one is a one-file kernel that imports nothing
+//!   beyond `cuda_device`.
 //! - Not about `#[device]` / `#[cuda_module]` annotations. The
-//!   missing symbol is in `core`, not user code.
+//!   intrinsic lives in `core`, not user code.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};

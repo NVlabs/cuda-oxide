@@ -399,7 +399,7 @@ fn make_padding_type(ctx: &mut Context, size: u64) -> Ptr<TypeObj> {
 ///
 /// This is used for computing padding. For most types we know the exact size;
 /// for complex types we make reasonable assumptions.
-fn get_type_size(ctx: &Context, ty: Ptr<TypeObj>) -> u64 {
+pub(crate) fn get_type_size(ctx: &Context, ty: Ptr<TypeObj>) -> u64 {
     let ty_ref = ty.deref(ctx);
 
     // Integer types
