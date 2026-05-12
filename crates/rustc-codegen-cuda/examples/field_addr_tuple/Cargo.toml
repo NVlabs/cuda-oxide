@@ -1,0 +1,21 @@
+[package]
+name = "field_addr_tuple"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for `mir.field_addr` against a pointer to a TUPLE
+# (vs. struct) pointee. Surfaced from `~/vanity-miner-rs/` via
+# k256's lincomb closure in `arithmetic/mul.rs:317:43`, which closes
+# over `&(ProjectivePoint, Scalar)` — `&tuple.0` lowers to a
+# `field_addr` on a tuple-pointee.
+#
+# Build with:
+#   cargo oxide build field_addr_tuple
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
