@@ -1,0 +1,20 @@
+[package]
+name = "closure_struct_arg_mismatch"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for entry-prologue / function-sig disagreement
+# on closure-struct kernel args. Surfaced from `~/vanity-miner-rs/`
+# via Iterator::fold + Enumerate composing closures whose captures
+# include nested closure structs.
+#
+# Build with:
+#   cargo oxide build closure_struct_arg_mismatch
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
