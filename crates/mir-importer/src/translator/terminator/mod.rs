@@ -1516,8 +1516,24 @@ fn extract_func_info(
                     )) => {
                         let pattern_name = fn_def.name().as_str().to_string();
 
+                        // Mirror `compute_export_name` in
+                        // `rustc-codegen-cuda/src/collector.rs`: the def
+                        // side switches to the mangled symbol whenever
+                        // the FQDN contains invalid PTX chars OR has
+                        // generic args. Inherent impls in a different
+                        // module than the type ("<impl X>::method") hit
+                        // the invalid-chars branch on def but stayed on
+                        // FQDN-legalised on call → unresolved symbol at
+                        // link time. Match the def-side logic here.
+                        let has_invalid_chars = pattern_name.contains('<')
+                            || pattern_name.contains('>')
+                            || pattern_name.contains('\'')
+                            || pattern_name.contains(' ')
+                            || pattern_name.contains('{')
+                            || pattern_name.contains('}')
+                            || pattern_name.contains('#');
                         let has_generic_args = !substs.0.is_empty();
-                        let call_name = if has_generic_args {
+                        let call_name = if has_generic_args || has_invalid_chars {
                             use rustc_public::mir::mono::Instance;
                             if let Ok(instance) = Instance::resolve(*fn_def, substs) {
                                 instance.mangled_name()

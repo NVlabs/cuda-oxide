@@ -1,38 +1,43 @@
-//! Known-failure repro for call-site / definition naming mismatch
+//! Regression test for call-site / definition naming agreement
 //! on inherent-impl method calls.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
-//! Symbol curve25519_dalek__field___impl_curve25519_dalek__backend__
-//!   serial__u64__field__FieldElement51___invert not found
+//! Symbol inherent_impl_call__field___impl_inherent_impl_call__
+//!   backend__serial__u64__field__InvertableLimbs___pseudo_invert
+//!   not found
 //!   Failed operation:
 //!     llvm.call @<that_symbol> (...)
 //! ```
 //!
 //! Surfaced from `~/vanity-miner-rs/` via curve25519-dalek's
-//! `FieldElement51::invert`. `k256::FieldElement::invert` (whose FQDN
-//! is plain `k256::arithmetic::field::FieldElement::invert`) resolves
-//! fine; the curve25519 one fails because its FQDN includes
-//! `<impl ...>` from the inherent impl block.
+//! `FieldElement51::invert`. The struct is in
+//! `backend::serial::u64::field` and the inherent `impl` block is in
+//! a sibling `field` module — that produces a FQDN of the form
+//! `<crate>::field::<impl <crate>::backend::serial::u64::field::Foo>::method`,
+//! containing `<` and `>` chars.
 //!
-//! ## Where it diverges
+//! `compute_export_name` (collector / definition side) switched to
+//! the v0-mangled symbol whenever the FQDN had invalid PTX chars or
+//! generic args. `extract_func_info` (translator / call side) only
+//! switched on generic args. Non-generic inherent-impl calls hit the
+//! mismatch.
 //!
-//! `compute_export_name` in `rustc-codegen-cuda/src/collector.rs`
-//! switches to the v0-mangled symbol whenever the FQDN has invalid
-//! PTX chars (`<`, `>`, `'`, ` `, `{`, `}`, `#`). `<impl ...>` paths
-//! hit this branch.
+//! Type-and-impl in the same module (the k256 `FieldElement::invert`
+//! shape) doesn't trigger it — no `<impl ...>` brackets in the FQDN.
 //!
-//! `extract_func_info` in `mir-importer/src/translator/terminator/mod.rs`
-//! only switches to mangled for generic-arg calls. Non-generic
-//! inherent-impl calls stay on the FQDN-legalised name. The two
-//! sides disagree → unresolved symbol.
+//! ## What landed
 //!
-//! ## What a fix needs to do
+//! `extract_func_info` now checks for the same invalid PTX chars
+//! `compute_export_name` uses (`<`, `>`, `'`, ` `, `{`, `}`, `#`).
+//! When present, the call name is taken from
+//! `Instance::resolve(...).mangled_name()` instead of the FQDN —
+//! matching the def side. Both sides now produce the same symbol.
 //!
-//! Mirror `compute_export_name`'s invalid-char check in
-//! `extract_func_info`'s non-generic branch — when the FQDN has any
-//! of those chars, resolve and use the mangled name.
+//! Long-term the check probably belongs in a shared helper between
+//! collector and translator, but the duplicated predicate is a
+//! self-contained patch that doesn't need to plumb a new map.
 //!
 //! ## Build with
 //!
