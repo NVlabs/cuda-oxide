@@ -1,11 +1,11 @@
-//! Known-failure reproducer for struct constants whose field types
-//! are themselves nested ADTs (struct/array/tuple). Real-world
-//! surface: `elliptic_curve::scalar::primitive::ScalarPrimitive<C>`
+//! Regression test for struct constants whose field types are
+//! themselves nested ADTs (struct/array/tuple). Real-world surface:
+//! `elliptic_curve::scalar::primitive::ScalarPrimitive<C>`
 //! (a struct wrapping `C::Uint` = `crypto_bigint::U256` = struct
 //! wrapping `[Limb; 4]`), invoked from `ScalarPrimitive::from_bytes`
 //! when reading `C::ORDER` (a `const` of the nested-struct shape).
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -53,27 +53,28 @@
 //! reference to `C::ORDER`, the const lives in a dependency crate
 //! you don't control.
 //!
-//! ## What would it take to fix
+//! ## What landed
 //!
-//! Refactor `translate_struct_constant` to support nested constants
-//! recursively:
+//! Pulled the field-parse loop out of `translate_struct_constant`
+//! into a recursive helper
+//! `parse_const_value_from_bytes(ctx, ty, &bytes, …) -> (Value, _,
+//! byte_size_consumed)`. The helper handles all field type kinds —
+//! primitives plus nested `MirStructType`, `MirArrayType`,
+//! `MirTupleType` by recursion. Byte sizes for nested types come
+//! from a sibling helper `byte_size_of_dialect_mir_type` that
+//! walks the dialect-mir type tree; struct sizes prefer the
+//! rustc-supplied `total_size` (handles trailing padding), with
+//! field-by-field summation as fallback. Field offsets come from
+//! the struct's `field_offsets()` metadata when available
+//! (handles padding / reordered fields).
 //!
-//! 1. Pull the field-parse loop out into a helper
-//!    `parse_const_value_from_bytes(ctx, ty, &bytes_slice, …) ->
-//!    (Value, byte_size)` that handles all type kinds, including
-//!    nested struct/array/tuple by recursion.
-//! 2. Compute byte sizes for nested types from their dialect-mir
-//!    structural data (struct's `total_size`, array's
-//!    `element_size * len`, tuple's sum-of-field-sizes — recursive).
-//!    Padding handled via the struct's existing `field_offsets`
-//!    table.
-//! 3. The existing `translate_struct_constant` and
-//!    `translate_array_constant` top-level entry points become thin
-//!    wrappers around the helper.
+//! `translate_struct_constant` now calls the helper once per
+//! top-level field instead of inlining the per-type-kind switch.
+//! Enum constants intentionally remain on the unsupported path
+//! (their discriminant + payload layout needs its own design pass).
 //!
-//! Bounded refactor, probably 200-300 lines net. Doesn't depend on
-//! `rustc_public` API gaps; everything we need is already in the
-//! dialect-mir type metadata.
+//! No `rustc_public` API gaps in the way — everything needed was
+//! already in the dialect-mir type metadata.
 //!
 //! Originally surfaced from `~/vanity-miner-rs/`:
 //! `logic::secp256k1_derive_public_key` calling
@@ -83,10 +84,10 @@
 //!
 //! ## Build with
 //!
-//!     cargo oxide build nested_struct_const
+//!     cargo oxide run nested_struct_const
 //!
-//! Expected: build error from the struct-constant translator —
-//! `Struct constant field 0 has unsupported type`.
+//! Expected: kernel runs, each output slot equals the first limb
+//! of `ORDER` (0xFFFF_FFFF_FFFF_FFFF for the secp256k1 mock).
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};

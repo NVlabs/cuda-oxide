@@ -4490,6 +4490,578 @@ fn translate_array_constant(
 ///
 /// - Assumes simple layout without complex padding (works for most structs)
 /// - Nested structs with complex layouts may need refinement
+/// Compute the byte size of a `dialect-mir` type by structural recursion.
+///
+/// Used by [`parse_const_value_from_bytes`] (and any other byte-driven
+/// constant parser) to figure out how many bytes a nested aggregate
+/// field consumes. Uses the same primitive sizes as the array / struct
+/// constant parsers; struct sizes prefer the rustc-supplied
+/// `total_size` (which accounts for padding) and fall back to the sum
+/// of field sizes when no explicit layout is recorded.
+fn byte_size_of_dialect_mir_type(
+    ctx: &pliron::context::Context,
+    ty: Ptr<TypeObj>,
+) -> TranslationResult<usize> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
+
+    let ty_ref = ty.deref(ctx);
+
+    if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+        return Ok((int_ty.width() as usize).div_ceil(8));
+    }
+    if ty_ref.is::<MirFP16Type>() {
+        return Ok(2);
+    }
+    if ty_ref.is::<FP32Type>() {
+        return Ok(4);
+    }
+    if ty_ref.is::<FP64Type>() {
+        return Ok(8);
+    }
+    if ty_ref.is::<dialect_mir::types::MirPtrType>() {
+        return Ok(8);
+    }
+    if let Some(arr_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        let elem_ty = arr_ty.element_type();
+        let n = arr_ty.size() as usize;
+        drop(ty_ref);
+        let elem_size = byte_size_of_dialect_mir_type(ctx, elem_ty)?;
+        return Ok(elem_size * n);
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirStructType>() {
+        // Prefer rustc-supplied size (handles trailing padding).
+        let total = struct_ty.total_size();
+        if total > 0 {
+            return Ok(total as usize);
+        }
+        let field_types: Vec<Ptr<TypeObj>> = struct_ty.field_types().to_vec();
+        drop(ty_ref);
+        let mut sum = 0usize;
+        for ft in field_types {
+            sum += byte_size_of_dialect_mir_type(ctx, ft)?;
+        }
+        return Ok(sum);
+    }
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirTupleType>() {
+        let field_types: Vec<Ptr<TypeObj>> = tuple_ty.get_types().to_vec();
+        drop(ty_ref);
+        let mut sum = 0usize;
+        for ft in field_types {
+            sum += byte_size_of_dialect_mir_type(ctx, ft)?;
+        }
+        return Ok(sum);
+    }
+
+    input_err_noloc!(TranslationErr::unsupported(format!(
+        "byte_size_of_dialect_mir_type: unsupported type {:?}",
+        ty_ref
+    )))
+}
+
+/// Parse a constant value of `ty_ptr` from a slice of raw allocation bytes.
+///
+/// Returns the SSA value representing the constant, the last op inserted
+/// (for chaining), and the number of bytes consumed from `bytes`.
+///
+/// Used by [`translate_struct_constant`] (and any future byte-driven
+/// constant translator) to recurse into nested ADT fields. The recursion
+/// handles:
+///
+/// * Primitives — integer / float / pointer / ZST.
+/// * Nested `MirStructType` — uses the struct's `field_offsets`
+///   metadata when available (for trailing padding / reordered fields),
+///   sequential offsets as fallback.
+/// * `MirArrayType` — N elements at element-size stride.
+/// * `MirTupleType` — sequential field offsets.
+///
+/// Enum constants intentionally remain on the unsupported path; their
+/// discriminant + payload layout needs more thought than the bounded
+/// refactor that pulled this helper out warrants.
+fn parse_const_value_from_bytes(
+    ctx: &mut Context,
+    ty_ptr: Ptr<TypeObj>,
+    bytes: &[u8],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>, usize)> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
+
+    // First classify the type without holding a long-lived borrow on
+    // `ctx` (we need it mutably for op construction).
+    enum K {
+        ZstStruct,
+        ZstTuple,
+        Integer { width: u32, signedness: Signedness },
+        Float16,
+        Float32,
+        Float64,
+        Pointer,
+        NestedStruct {
+            field_types: Vec<Ptr<TypeObj>>,
+            field_offsets: Vec<u64>,
+            total_size: usize,
+        },
+        NestedArray {
+            element_ty: Ptr<TypeObj>,
+            count: usize,
+        },
+        NestedTuple {
+            field_types: Vec<Ptr<TypeObj>>,
+        },
+        Unsupported(String),
+    }
+
+    let kind = {
+        let ty_ref = ty_ptr.deref(ctx);
+        if types::is_zst_type(ctx, ty_ptr) {
+            if ty_ref.is::<dialect_mir::types::MirStructType>() {
+                K::ZstStruct
+            } else {
+                K::ZstTuple
+            }
+        } else if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+            K::Integer {
+                width: int_ty.width(),
+                signedness: int_ty.signedness(),
+            }
+        } else if ty_ref.is::<MirFP16Type>() {
+            K::Float16
+        } else if ty_ref.is::<FP32Type>() {
+            K::Float32
+        } else if ty_ref.is::<FP64Type>() {
+            K::Float64
+        } else if ty_ref.is::<dialect_mir::types::MirPtrType>() {
+            K::Pointer
+        } else if let Some(struct_ty) =
+            ty_ref.downcast_ref::<dialect_mir::types::MirStructType>()
+        {
+            K::NestedStruct {
+                field_types: struct_ty.field_types().to_vec(),
+                field_offsets: struct_ty.field_offsets().to_vec(),
+                total_size: struct_ty.total_size() as usize,
+            }
+        } else if let Some(arr_ty) =
+            ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>()
+        {
+            K::NestedArray {
+                element_ty: arr_ty.element_type(),
+                count: arr_ty.size() as usize,
+            }
+        } else if let Some(tuple_ty) =
+            ty_ref.downcast_ref::<dialect_mir::types::MirTupleType>()
+        {
+            K::NestedTuple {
+                field_types: tuple_ty.get_types().to_vec(),
+            }
+        } else {
+            K::Unsupported(format!("{:?}", ty_ref))
+        }
+    };
+
+    match kind {
+        K::ZstStruct => {
+            let op = Operation::new(
+                ctx,
+                MirConstructStructOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                vec![],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            match prev_op {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), 0))
+        }
+        K::ZstTuple => {
+            let empty_tuple_ty: Ptr<TypeObj> =
+                dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
+            use dialect_mir::ops::MirConstructTupleOp;
+            let op = Operation::new(
+                ctx,
+                MirConstructTupleOp::get_concrete_op_info(),
+                vec![empty_tuple_ty],
+                vec![],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            match prev_op {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), 0))
+        }
+        K::Integer { width, signedness } => {
+            let byte_size = (width as usize).div_ceil(8);
+            if bytes.len() < byte_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Constant integer needs {} bytes, slice has {}",
+                        byte_size,
+                        bytes.len()
+                    ))
+                );
+            }
+            let int_val = read_uint_from_bytes(&bytes[..byte_size]);
+            let width_nz = NonZeroUsize::new(width as usize).unwrap();
+            let apint = APInt::from_u128(int_val, width_nz);
+            let int_attr = pliron::builtin::attributes::IntegerAttr::new(
+                IntegerType::get(ctx, width, signedness),
+                apint,
+            );
+            use dialect_mir::ops::MirConstantOp;
+            let op = Operation::new(
+                ctx,
+                MirConstantOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                vec![],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            MirConstantOp::new(op).set_attr_value(ctx, int_attr);
+            match prev_op {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+        }
+        K::Float16 => {
+            let byte_size = 2;
+            if bytes.len() < byte_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "Constant f16 needs 2 bytes; slice short".to_string(),
+                    )
+                );
+            }
+            let bits = read_uint_from_bytes(&bytes[..byte_size]) as u16;
+            let float_attr = MirFP16Attr::from_bits(bits);
+            use dialect_mir::ops::MirFloatConstantOp;
+            let op = Operation::new(
+                ctx,
+                MirFloatConstantOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                vec![],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            MirFloatConstantOp::new(op).set_attr_float_value_f16(ctx, float_attr);
+            match prev_op {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+        }
+        K::Float32 => {
+            let byte_size = 4;
+            if bytes.len() < byte_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "Constant f32 needs 4 bytes; slice short".to_string(),
+                    )
+                );
+            }
+            let float_val =
+                f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            let float_attr = pliron::builtin::attributes::FPSingleAttr::from(float_val);
+            use dialect_mir::ops::MirFloatConstantOp;
+            let op = Operation::new(
+                ctx,
+                MirFloatConstantOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                vec![],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            MirFloatConstantOp::new(op).set_attr_float_value(ctx, float_attr);
+            match prev_op {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+        }
+        K::Float64 => {
+            let byte_size = 8;
+            if bytes.len() < byte_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "Constant f64 needs 8 bytes; slice short".to_string(),
+                    )
+                );
+            }
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&bytes[..byte_size]);
+            let float_val = f64::from_le_bytes(buf);
+            let float_attr = pliron::builtin::attributes::FPDoubleAttr::from(float_val);
+            use dialect_mir::ops::MirFloatConstantOp;
+            let op = Operation::new(
+                ctx,
+                MirFloatConstantOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                vec![],
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            MirFloatConstantOp::new(op).set_attr_float_value_f64(ctx, float_attr);
+            match prev_op {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+        }
+        K::Pointer => {
+            // Reinterpret the 8-byte address as an integer constant + cast.
+            let byte_size = 8;
+            if bytes.len() < byte_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "Constant pointer needs 8 bytes; slice short".to_string(),
+                    )
+                );
+            }
+            let mut ptr_val: u64 = 0;
+            for (i, &b) in bytes[..byte_size].iter().enumerate() {
+                ptr_val |= (b as u64) << (i * 8);
+            }
+            let i64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+            let apint = APInt::from_u64(ptr_val, NonZeroUsize::new(64).unwrap());
+            let int_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
+            use dialect_mir::ops::MirConstantOp;
+            let const_op_p = Operation::new(
+                ctx,
+                MirConstantOp::get_concrete_op_info(),
+                vec![i64_ty.into()],
+                vec![],
+                vec![],
+                0,
+            );
+            const_op_p.deref_mut(ctx).set_loc(loc.clone());
+            MirConstantOp::new(const_op_p).set_attr_value(ctx, int_attr);
+            match prev_op {
+                Some(prev) => const_op_p.insert_after(ctx, prev),
+                None => const_op_p.insert_at_front(block_ptr, ctx),
+            }
+            let cast_op = Operation::new(
+                ctx,
+                MirCastOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                vec![Value::OpResult {
+                    op: const_op_p,
+                    res_idx: 0,
+                }],
+                vec![],
+                0,
+            );
+            cast_op.deref_mut(ctx).set_loc(loc);
+            MirCastOp::new(cast_op)
+                .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+            cast_op.insert_after(ctx, const_op_p);
+            Ok((Value::OpResult { op: cast_op, res_idx: 0 }, Some(cast_op), byte_size))
+        }
+        K::NestedStruct {
+            field_types,
+            field_offsets,
+            total_size,
+        } => {
+            // Resolve total size (fallback: sum of field sizes).
+            let resolved_total_size = if total_size > 0 {
+                total_size
+            } else {
+                let mut sum = 0usize;
+                for ft in &field_types {
+                    sum += byte_size_of_dialect_mir_type(ctx, *ft)?;
+                }
+                sum
+            };
+            if bytes.len() < resolved_total_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Nested struct constant needs {} bytes, slice has {}",
+                        resolved_total_size,
+                        bytes.len()
+                    ))
+                );
+            }
+            let mut field_values = Vec::with_capacity(field_types.len());
+            let mut current_prev = prev_op;
+            let use_offsets = field_offsets.len() == field_types.len();
+            let mut seq_offset = 0usize;
+            for (i, ft) in field_types.iter().copied().enumerate() {
+                let off = if use_offsets {
+                    field_offsets[i] as usize
+                } else {
+                    seq_offset
+                };
+                let field_size = byte_size_of_dialect_mir_type(ctx, ft)?;
+                let slice_end = off + field_size;
+                if slice_end > bytes.len() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Nested struct field {} slice [{}..{}] out of {} bytes",
+                            i,
+                            off,
+                            slice_end,
+                            bytes.len()
+                        ))
+                    );
+                }
+                let (v, p, _consumed) = parse_const_value_from_bytes(
+                    ctx,
+                    ft,
+                    &bytes[off..slice_end],
+                    block_ptr,
+                    current_prev,
+                    loc.clone(),
+                )?;
+                field_values.push(v);
+                current_prev = p;
+                seq_offset = slice_end;
+            }
+            let (casted, prev_after_casts) = cast_struct_fields_to_expected_types(
+                ctx,
+                field_values,
+                ty_ptr,
+                block_ptr,
+                current_prev,
+                loc.clone(),
+            );
+            let op = Operation::new(
+                ctx,
+                MirConstructStructOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                casted,
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            match prev_after_casts {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), resolved_total_size))
+        }
+        K::NestedArray { element_ty, count } => {
+            let elem_size = byte_size_of_dialect_mir_type(ctx, element_ty)?;
+            let total_size = elem_size * count;
+            if bytes.len() < total_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Nested array constant needs {} bytes ({} x {}), slice has {}",
+                        total_size,
+                        count,
+                        elem_size,
+                        bytes.len()
+                    ))
+                );
+            }
+            let mut elem_values = Vec::with_capacity(count);
+            let mut current_prev = prev_op;
+            for i in 0..count {
+                let start = i * elem_size;
+                let end = start + elem_size;
+                let (v, p, _consumed) = parse_const_value_from_bytes(
+                    ctx,
+                    element_ty,
+                    &bytes[start..end],
+                    block_ptr,
+                    current_prev,
+                    loc.clone(),
+                )?;
+                elem_values.push(v);
+                current_prev = p;
+            }
+            let op = Operation::new(
+                ctx,
+                MirConstructArrayOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                elem_values,
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            match current_prev {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), total_size))
+        }
+        K::NestedTuple { field_types } => {
+            // Tuples have no padding metadata in our dialect; assume
+            // sequential layout (matches Rust's `repr(Rust)` tuples for
+            // primitive fields).
+            let mut field_values = Vec::with_capacity(field_types.len());
+            let mut current_prev = prev_op;
+            let mut offset = 0usize;
+            let mut total_size = 0usize;
+            for (i, ft) in field_types.iter().copied().enumerate() {
+                let field_size = byte_size_of_dialect_mir_type(ctx, ft)?;
+                let slice_end = offset + field_size;
+                if slice_end > bytes.len() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Nested tuple field {} slice [{}..{}] out of {} bytes",
+                            i,
+                            offset,
+                            slice_end,
+                            bytes.len()
+                        ))
+                    );
+                }
+                let (v, p, _consumed) = parse_const_value_from_bytes(
+                    ctx,
+                    ft,
+                    &bytes[offset..slice_end],
+                    block_ptr,
+                    current_prev,
+                    loc.clone(),
+                )?;
+                field_values.push(v);
+                current_prev = p;
+                offset = slice_end;
+                total_size = slice_end;
+            }
+            use dialect_mir::ops::MirConstructTupleOp;
+            let op = Operation::new(
+                ctx,
+                MirConstructTupleOp::get_concrete_op_info(),
+                vec![ty_ptr],
+                field_values,
+                vec![],
+                0,
+            );
+            op.deref_mut(ctx).set_loc(loc);
+            match current_prev {
+                Some(prev) => op.insert_after(ctx, prev),
+                None => op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), total_size))
+        }
+        K::Unsupported(desc) => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Nested constant field has unsupported type: {desc}"
+            ))
+        ),
+    }
+}
+
 fn translate_struct_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -4499,8 +5071,6 @@ fn translate_struct_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
-
     // Get the struct type to access field information
     // Clone field types to avoid borrow conflicts when we need to mutate ctx later
     let field_types: Vec<Ptr<TypeObj>> = {
@@ -4589,335 +5159,63 @@ fn translate_struct_constant(
         }
     };
 
-    // Parse field values from the bytes
+    // Parse field values from the bytes. Each field is parsed via the
+    // recursive helper `parse_const_value_from_bytes`, which handles
+    // nested struct / array / tuple field types in addition to the
+    // primitive cases that used to live inline here. Field offsets come
+    // from the struct's `field_offsets()` metadata when available
+    // (handles padding); otherwise we advance sequentially.
+    let field_offsets_opt: Option<Vec<u64>> = {
+        let ty_obj = const_ty_ptr.deref(ctx);
+        let struct_ty = ty_obj
+            .downcast_ref::<dialect_mir::types::MirStructType>()
+            .expect("checked above");
+        let offsets = struct_ty.field_offsets().to_vec();
+        (offsets.len() == field_types.len()).then_some(offsets)
+    };
     let mut field_values = Vec::with_capacity(field_types.len());
     let mut current_prev_op = prev_op;
-    let mut byte_offset = 0usize;
-
+    let mut seq_offset = 0usize;
     for (field_idx, field_ty_ptr) in field_types.iter().copied().enumerate() {
-        // First, gather type information we need while holding immutable borrow
-        enum FieldTypeKind {
-            ZstStruct, // Struct ZST like PhantomData<T>
-            ZstTuple,  // Tuple ZST like ()
-            Integer { width: u32, signedness: Signedness },
-            Float16,
-            Float32,
-            Pointer,
-            Unsupported,
-        }
-
-        let field_kind = {
-            let field_ty = field_ty_ptr.deref(ctx);
-
-            // Check for ZST
-            if types::is_zst_type(ctx, field_ty_ptr) {
-                // Distinguish between struct ZSTs and tuple ZSTs
-                if field_ty.is::<dialect_mir::types::MirStructType>() {
-                    FieldTypeKind::ZstStruct
-                } else {
-                    FieldTypeKind::ZstTuple
-                }
-            } else if let Some(int_ty) = field_ty.downcast_ref::<IntegerType>() {
-                FieldTypeKind::Integer {
-                    width: int_ty.width(),
-                    signedness: int_ty.signedness(),
-                }
-            } else if field_ty.is::<MirFP16Type>() {
-                FieldTypeKind::Float16
-            } else if field_ty.is::<FP32Type>() {
-                FieldTypeKind::Float32
-            } else if field_ty.is::<dialect_mir::types::MirPtrType>() {
-                FieldTypeKind::Pointer
-            } else {
-                FieldTypeKind::Unsupported
-            }
+        let field_byte_size = byte_size_of_dialect_mir_type(ctx, field_ty_ptr)?;
+        let start = match &field_offsets_opt {
+            Some(offs) => offs[field_idx] as usize,
+            None => seq_offset,
         };
-
-        // Now handle each field type kind with mutable operations
-        match field_kind {
-            FieldTypeKind::ZstStruct => {
-                // Struct ZST fields (like PhantomData<T>) produce empty struct values
-                let op = Operation::new(
-                    ctx,
-                    MirConstructStructOp::get_concrete_op_info(),
-                    vec![field_ty_ptr], // Use the actual struct type
-                    vec![],             // No operands for ZST
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                if let Some(prev) = current_prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(op);
-                field_values.push(op.deref(ctx).get_result(0));
-                // ZST takes no bytes
-            }
-
-            FieldTypeKind::ZstTuple => {
-                // Tuple ZST fields produce empty tuple values
-                let empty_tuple_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
-
-                use dialect_mir::ops::MirConstructTupleOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstructTupleOp::get_concrete_op_info(),
-                    vec![empty_tuple_ty],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                if let Some(prev) = current_prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(op);
-                field_values.push(op.deref(ctx).get_result(0));
-                // ZST takes no bytes
-            }
-
-            FieldTypeKind::Integer { width, signedness } => {
-                let byte_size = (width as usize).div_ceil(8);
-
-                // Extract bytes for this field
-                let field_bytes = if byte_offset + byte_size <= bytes.len() {
-                    &bytes[byte_offset..byte_offset + byte_size]
-                } else {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "Struct constant has insufficient bytes for field {} (need {} bytes at offset {}, have {})",
-                            field_idx,
-                            byte_size,
-                            byte_offset,
-                            bytes.len()
-                        ))
-                    );
-                };
-
-                let int_val = read_uint_from_bytes(field_bytes);
-
-                // Create the constant operation
-                let width_nz = NonZeroUsize::new(width as usize).unwrap();
-                let apint = APInt::from_u128(int_val, width_nz);
-                let int_attr = pliron::builtin::attributes::IntegerAttr::new(
-                    IntegerType::get(ctx, width, signedness),
-                    apint,
-                );
-
-                use dialect_mir::ops::MirConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![field_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                let const_op = MirConstantOp::new(op);
-                const_op.set_attr_value(ctx, int_attr);
-
-                if let Some(prev) = current_prev_op {
-                    const_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    const_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(const_op.get_operation());
-                field_values.push(const_op.get_operation().deref(ctx).get_result(0));
-
-                byte_offset += byte_size;
-            }
-
-            FieldTypeKind::Float16 => {
-                let byte_size = 2;
-
-                let field_bytes = if byte_offset + byte_size <= bytes.len() {
-                    &bytes[byte_offset..byte_offset + byte_size]
-                } else {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "Struct constant has insufficient bytes for f16 field {}",
-                            field_idx
-                        ))
-                    );
-                };
-
-                let bits = read_uint_from_bytes(field_bytes) as u16;
-                let float_attr = MirFP16Attr::from_bits(bits);
-
-                use dialect_mir::ops::MirFloatConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirFloatConstantOp::get_concrete_op_info(),
-                    vec![field_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                let float_op = MirFloatConstantOp::new(op);
-                float_op.set_attr_float_value_f16(ctx, float_attr);
-
-                if let Some(prev) = current_prev_op {
-                    float_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    float_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(float_op.get_operation());
-                field_values.push(float_op.get_operation().deref(ctx).get_result(0));
-
-                byte_offset += byte_size;
-            }
-
-            FieldTypeKind::Float32 => {
-                let byte_size = 4;
-
-                let field_bytes = if byte_offset + byte_size <= bytes.len() {
-                    &bytes[byte_offset..byte_offset + byte_size]
-                } else {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "Struct constant has insufficient bytes for f32 field {} (need {} bytes at offset {}, have {})",
-                            field_idx,
-                            byte_size,
-                            byte_offset,
-                            bytes.len()
-                        ))
-                    );
-                };
-
-                let float_val = f32::from_le_bytes([
-                    field_bytes[0],
-                    field_bytes[1],
-                    field_bytes[2],
-                    field_bytes[3],
-                ]);
-
-                let float_attr = pliron::builtin::attributes::FPSingleAttr::from(float_val);
-
-                use dialect_mir::ops::MirFloatConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirFloatConstantOp::get_concrete_op_info(),
-                    vec![field_ty_ptr],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                let float_op = MirFloatConstantOp::new(op);
-                float_op.set_attr_float_value(ctx, float_attr);
-
-                if let Some(prev) = current_prev_op {
-                    float_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    float_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(float_op.get_operation());
-                field_values.push(float_op.get_operation().deref(ctx).get_result(0));
-
-                byte_offset += byte_size;
-            }
-
-            FieldTypeKind::Pointer => {
-                let byte_size = 8; // 64-bit pointers
-
-                let field_bytes = if byte_offset + byte_size <= bytes.len() {
-                    &bytes[byte_offset..byte_offset + byte_size]
-                } else {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "Struct constant has insufficient bytes for pointer field {} (need {} bytes at offset {}, have {})",
-                            field_idx,
-                            byte_size,
-                            byte_offset,
-                            bytes.len()
-                        ))
-                    );
-                };
-
-                let mut ptr_val: u64 = 0;
-                for (i, &byte) in field_bytes.iter().enumerate() {
-                    ptr_val |= (byte as u64) << (i * 8);
-                }
-
-                // Create integer constant then cast to pointer
-                let i64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
-                let apint = APInt::from_u64(ptr_val, NonZeroUsize::new(64).unwrap());
-                let int_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
-
-                use dialect_mir::ops::MirConstantOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![i64_ty.into()],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                let const_op = MirConstantOp::new(op);
-                const_op.set_attr_value(ctx, int_attr);
-
-                if let Some(prev) = current_prev_op {
-                    const_op.get_operation().insert_after(ctx, prev);
-                } else {
-                    const_op.get_operation().insert_at_front(block_ptr, ctx);
-                }
-
-                // Cast to pointer type
-                use dialect_mir::ops::MirCastOp;
-                let const_value = const_op.get_operation().deref(ctx).get_result(0);
-                let cast_op = Operation::new(
-                    ctx,
-                    MirCastOp::get_concrete_op_info(),
-                    vec![field_ty_ptr],
-                    vec![const_value],
-                    vec![],
-                    0,
-                );
-                cast_op.deref_mut(ctx).set_loc(loc.clone());
-                MirCastOp::new(cast_op)
-                    .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
-                cast_op.insert_after(ctx, const_op.get_operation());
-
-                current_prev_op = Some(cast_op);
-                field_values.push(cast_op.deref(ctx).get_result(0));
-
-                byte_offset += byte_size;
-            }
-
-            FieldTypeKind::Unsupported => {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "Struct constant field {} has unsupported type. \
-                         Consider using inline construction instead of const.",
-                        field_idx
-                    ))
-                );
-            }
+        let end = start + field_byte_size;
+        if end > bytes.len() {
+            // Treat trailing fields whose footprint is past the
+            // allocation as zero-initialized (rustc sometimes elides
+            // trailing padding). Reuse the helper on a zero slice so the
+            // typed value still flows.
+            let zero_pad = vec![0u8; field_byte_size];
+            let (v, p, _consumed) = parse_const_value_from_bytes(
+                ctx,
+                field_ty_ptr,
+                &zero_pad,
+                block_ptr,
+                current_prev_op,
+                loc.clone(),
+            )?;
+            field_values.push(v);
+            current_prev_op = p;
+            seq_offset = end;
+            continue;
         }
+        let (v, p, _consumed) = parse_const_value_from_bytes(
+            ctx,
+            field_ty_ptr,
+            &bytes[start..end],
+            block_ptr,
+            current_prev_op,
+            loc.clone(),
+        )?;
+        field_values.push(v);
+        current_prev_op = p;
+        seq_offset = end;
+        let _ = field_idx; // silence unused-var lint
     }
+
 
     // Cast field values to expected types (address space normalization)
     let (casted_field_values, prev_after_casts) = cast_struct_fields_to_expected_types(
