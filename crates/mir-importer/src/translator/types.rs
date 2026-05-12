@@ -131,9 +131,12 @@ pub fn is_rust_type_zst(rust_ty: &rustc_public::ty::Ty) -> bool {
         }
         // Closures with no captures are ZST, closures with captures are not
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Closure(_, substs)) => {
-            // Check substs[2] which is the tuple of upvar types
-            if substs.0.len() >= 3
-                && let rustc_public::ty::GenericArgKind::Type(upvar_tuple_ty) = &substs.0[2]
+            // Per `ClosureArgs::split` in rustc, a closure's substs end in
+            // [closure_kind_ty, sig_as_fn_ptr_ty, tupled_upvars_ty]. The
+            // upvar tuple is always the **last** slot — for closures inside
+            // generic functions, parent generics are prepended and the
+            // upvar tuple no longer sits at index 2.
+            if let Some(rustc_public::ty::GenericArgKind::Type(upvar_tuple_ty)) = substs.0.last()
                 && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Tuple(
                     upvar_tys,
                 )) = upvar_tuple_ty.kind()
@@ -638,12 +641,15 @@ pub fn translate_type(
         )) => {
             let closure_name = format!("{:?}", closure_def.def_id());
 
-            // Extract upvar types from substs[2] (the tuple of captured types)
+            // Per `ClosureArgs::split` in rustc, a closure's substs end in
+            // [closure_kind_ty, sig_as_fn_ptr_ty, tupled_upvars_ty]. The
+            // upvar tuple is always the **last** slot — for closures inside
+            // generic functions, parent generics are prepended and the
+            // upvar tuple no longer sits at index 2.
             let mut field_names = Vec::new();
             let mut field_types = Vec::new();
 
-            if substs.0.len() >= 3
-                && let rustc_public::ty::GenericArgKind::Type(upvar_tuple_ty) = &substs.0[2]
+            if let Some(rustc_public::ty::GenericArgKind::Type(upvar_tuple_ty)) = substs.0.last()
                 && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Tuple(
                     upvar_tys,
                 )) = upvar_tuple_ty.kind()

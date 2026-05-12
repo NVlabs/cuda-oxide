@@ -1,48 +1,40 @@
-//! Known-failure repro for closure-type capture mismatch.
+//! Regression test for closure-type capture-slot lookup.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
+//!
+//! The closure type translator pulled the upvar tuple from
+//! `substs.0[2]`. That index is correct only when the closure has
+//! no parent generics — the closure-args layout is
+//! `[..parent_generics, closure_kind, sig, tupled_upvars]` and
+//! `tupled_upvars` is always the trailing slot, not index 2.
+//!
+//! For closures defined inside generic functions/methods, the
+//! parent generics push the upvar tuple past `substs[2]`. The
+//! `TyKind::Tuple` match silently failed, `field_types` stayed
+//! empty, and the closure was registered with **0** captures.
+//! Aggregate construction at the call site then passed the actual
+//! captures and the verifier blew up:
 //!
 //! ```text
-//! Verification failed for '...generate::closure#0':
-//! MirConstructStructOp has 2 operands but struct '...generate::closure#0' has 0 fields
+//! MirConstructStructOp has 2 operands but struct '...{closure#0}' has 0 fields
 //! ```
 //!
 //! Surfaced from `~/vanity-miner-rs/` via
 //! `<GenericArray<u8, U33> as GenericSequence>::generate`, whose
-//! body builds a `[MaybeUninit<u8>; N]` then walks it via a closure
-//! that captures the slot pointer and an index pointer.
+//! `for_each` closure inside `generate<F>` captures `f` and a
+//! `position` pointer.
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! `crates/mir-importer/src/translator/types.rs` (line ~641):
-//!
-//! ```ignore
-//! // Extract upvar types from substs[2] (the tuple of captured types)
-//! if substs.0.len() >= 3
-//!     && let GenericArgKind::Type(upvar_tuple_ty) = &substs.0[2]
-//!     && let TyKind::RigidTy(RigidTy::Tuple(upvar_tys)) = upvar_tuple_ty.kind()
-//! { ... }
-//! ```
-//!
-//! This assumes the closure substs are `[closure_kind, sig, upvars]`
-//! with upvars at index 2. That's true for top-level fn-local closures
-//! whose parent has no generics. But for closures defined inside
-//! **generic** functions/methods, the parent generics are *prepended*:
-//!
-//! ```text
-//! substs = [parent_generic_0, ..., parent_generic_N,
-//!           closure_kind, sig, upvars]
-//! ```
-//!
-//! With `parent_generic_N >= 1`, `substs[2]` is no longer the upvar
-//! tuple, the `TyKind::Tuple` match fails, `field_types` stays empty,
-//! and the closure type is shaped with **0** captures. Then the
-//! aggregate construction passes the actual captures and verification
-//! blows up.
-//!
-//! The fix should read the upvar tuple from the **last** element of
-//! `substs.0` (per `ClosureArgs::split` in rustc — closure kind / sig /
-//! upvars are always the trailing three slots), not index 2.
+//! Both upvar lookups in `translator/types.rs` (the ZST predicate
+//! and the closure type construction) now read from
+//! `substs.0.last()` instead of `substs.0[2]`, matching
+//! `ClosureArgs::split`'s definition. Top-level closures still work
+//! because their `substs.0.last()` *is* the upvar tuple
+//! (`[kind, sig, upvars]` — last == [2]). Nested generic closures
+//! now also work because the upvar tuple is wherever it lands at
+//! the end of substs, regardless of how many parent generics
+//! prefix it.
 //!
 //! ## Build with
 //!
