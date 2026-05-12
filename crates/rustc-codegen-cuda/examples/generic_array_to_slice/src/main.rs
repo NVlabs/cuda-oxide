@@ -1,11 +1,11 @@
-//! Known-failure reproducer for `&Container -> &[T]` slice
-//! construction via `unsafe { slice::from_raw_parts(self as *const _
-//! as *const T, N) }` where `Container` has a non-array Rust-level
-//! layout that "lies" about being a contiguous `[T; N]`. Real-world
-//! surface: `generic_array::GenericArray<T, N>`, used pervasively
-//! across the `RustCrypto` / `elliptic-curve` / `k256` stack.
+//! Regression test for `&Container -> &[T]` slice construction via
+//! `unsafe { slice::from_raw_parts(self as *const _ as *const T, N) }`
+//! on a struct whose Rust-level layout has multiple fields but whose
+//! runtime memory layout is a contiguous `[T; N]`. Real-world surface:
+//! `generic_array::GenericArray<T, N>`, used pervasively across the
+//! `RustCrypto` / `elliptic-curve` / `k256` stack.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -52,39 +52,41 @@
 //! `*Container` into a `MirSliceType<u8>`, and the dialect verifier
 //! correctly rejects the type mismatch.
 //!
-//! ## Why this is structurally deeper than the previous walls
+//! ## What landed
 //!
-//! The fix isn't a 5-line matcher arm. Real options:
+//! Synthesize a `MirCastOp::PtrToPtr` in the
+//! `Aggregate(RawPtr(slice<T>))` handler when the data-pointer
+//! operand's pointee type doesn't already match the slice element
+//! type. The cast retypes the pointer to `*T` (preserving mutability
+//! and address space) before it's `insert_field`'d into the slice
+//! fat pointer.
 //!
-//! 1. **Fix `PtrToPtr` cast retyping in mir-importer / mir-lower** —
-//!    Make the cast actually emit a pointer with the new pointee
-//!    type. Probably a moderate dig in `rvalue.rs`'s cast handling.
-//!    Could surface follow-on issues elsewhere (other ops that
-//!    assume cast preserves pointee type).
+//! This is exactly what an opaque-pointer LLVM backend (rust-cuda's
+//! path) does implicitly — `insertvalue { ptr, i64 }` doesn't carry
+//! pointee type info, so the source pointer's prior pointee is
+//! erased silently. Our typed dialect (`MirPtrType<T>`) preserves
+//! the pointee, so we have to issue the retyping cast explicitly to
+//! satisfy the slice's `MirSliceType<T>` element constraint. The
+//! cast lowers to a downstream `bitcast ptr to ptr` in opaque-pointer
+//! LLVM IR (effectively a no-op but type-correct in our dialect).
 //!
-//! 2. **Hardcode `GenericArray<T, N>` → `MirArrayType<T, N>`** —
-//!    Same trick we use for `DisjointSlice`, `SharedArray`,
-//!    `Barrier`, etc. Use `rust_ty.layout()` to compute `N = size /
-//!    sizeof::<T>()`. Doesn't actually fix the underlying PtrToPtr
-//!    issue, but might sidestep this particular wall by giving the
-//!    type translator a saner shape upstream. Risk: `typenum`'s
-//!    `UInt`/`UTerm`/`B0`/`B1` types still appear in other
-//!    `RustCrypto` code paths and would surface their own walls.
+//! Why this gap exists: rustc's MIR optimizer elides no-op pointer
+//! casts (`self as *const Self as *const T`) when both source and
+//! dest are `*const _` shapes, then feeds the un-retyped source
+//! pointer straight into `Aggregate(RawPtr(slice<T>))`. The
+//! optimizer is correct under opaque-pointer semantics; we observe
+//! the elision because we look at MIR after this optimization runs
+//! and we maintain typed pointers.
 //!
-//! 3. **Switch the device-side secp256k1 path entirely** — the
-//!    pragmatic answer for `~/vanity-miner-rs/`. The
-//!    `k256`/`elliptic-curve`/`generic_array` stack is fundamentally
-//!    GPU-hostile by design (`generic_array` is a typenum-encoded
-//!    workaround for the pre-const-generics era; it depends on
-//!    unsafe layout puns that the type system has to look the other
-//!    way on). Production GPU vanity miners (`vanitygen-secp256k1`,
-//!    etc.) hand-roll secp256k1 over raw `[u8; 32]` instead of
-//!    pulling the RustCrypto trait hierarchy.
-//!
-//! Tier 3 is what the `vanity-miner-rs` workload actually wants.
-//! Tier 1 is the principled cuda-oxide fix and would unblock other
-//! pointer-cast-using crates beyond `generic_array`. Tier 2 is a
-//! local sidestep with bounded-but-real follow-on risk.
+//! Note on the broader implication: this fix also helps
+//! `~/vanity-miner-rs/`'s `k256` chain past the
+//! `to_encoded_point().as_bytes()` wall, since
+//! `generic_array::Deref::deref` uses exactly the
+//! `from_raw_parts(self as _, N)` pattern this test exercises. There
+//! may be additional walls deeper in the `k256` /
+//! `elliptic-curve` / `generic_array` type tree (typenum-encoded
+//! `UInt`/`UTerm`/`B0`/`B1` types appear in many code paths), each
+//! resolved one at a time.
 //!
 //! Originally surfaced from `~/vanity-miner-rs/`:
 //! `logic::secp256k1_derive_public_key` calling
@@ -94,11 +96,10 @@
 //!
 //! ## Build with
 //!
-//!     cargo oxide build generic_array_to_slice
+//!     cargo oxide run generic_array_to_slice
 //!
-//! Expected: build error from the dialect verifier:
-//! `MirInsertFieldOp on slice field 0: pointee … does not match
-//! slice element …`.
+//! Expected: kernel runs and emits the XOR-fold of each input
+//! 32-byte window.
 //!
 //! ## What this example is NOT
 //!

@@ -1437,6 +1437,62 @@ pub fn translate_rvalue(
                     let slice_ty: Ptr<TypeObj> =
                         dialect_mir::types::MirSliceType::get(ctx, elem_ty).into();
 
+                    // Synthesize a PtrToPtr cast if the data-pointer
+                    // operand's pointee type doesn't match the slice element
+                    // type.
+                    //
+                    // rustc's MIR optimizer elides no-op pointer casts
+                    // (`self as *const Self as *const T`) when both source
+                    // and dest are `*const _` / `*mut _` shapes — the resulting
+                    // MIR feeds the un-retyped source pointer straight into
+                    // `Aggregate(RawPtr(slice<T>))`, and our typed dialect's
+                    // verifier rejects the pointee mismatch. Opaque-pointer
+                    // LLVM backends (rust-cuda's path) accept this implicitly
+                    // because `insertvalue { ptr, i64 }` doesn't carry pointee
+                    // type info; we have to make the retyping explicit here.
+                    //
+                    // See `examples/generic_array_to_slice/` for the
+                    // reproducer (mirrors `generic_array::GenericArray`'s
+                    // `Deref::deref`, which surfaces from `k256`'s
+                    // `to_encoded_point().as_bytes()` chain in
+                    // `~/vanity-miner-rs/`).
+                    let (src_mutable, src_addrspace) = {
+                        let src_ty = ptr_val.get_type(ctx);
+                        let src_ty_ref = src_ty.deref(ctx);
+                        src_ty_ref
+                            .downcast_ref::<dialect_mir::types::MirPtrType>()
+                            .map(|p| (p.is_mutable, p.address_space))
+                            .unwrap_or((false, 0))
+                    };
+                    let expected_ptr_ty: Ptr<TypeObj> = dialect_mir::types::MirPtrType::get(
+                        ctx,
+                        elem_ty,
+                        src_mutable,
+                        src_addrspace,
+                    )
+                    .into();
+                    let (ptr_val, after_len) = if ptr_val.get_type(ctx) != expected_ptr_ty {
+                        let cast_op = Operation::new(
+                            ctx,
+                            MirCastOp::get_concrete_op_info(),
+                            vec![expected_ptr_ty],
+                            vec![ptr_val],
+                            vec![],
+                            0,
+                        );
+                        cast_op.deref_mut(ctx).set_loc(loc.clone());
+                        MirCastOp::new(cast_op)
+                            .set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+                        match after_len {
+                            Some(prev) => cast_op.insert_after(ctx, prev),
+                            None => cast_op.insert_at_front(block_ptr, ctx),
+                        }
+                        let new_val = Value::OpResult { op: cast_op, res_idx: 0 };
+                        (new_val, Some(cast_op))
+                    } else {
+                        (ptr_val, after_len)
+                    };
+
                     // Build the slice value with undef + two insert_fields.
                     // The caller (translate_statement) will insert the final
                     // returned op, so we insert only the prefix (undef +
