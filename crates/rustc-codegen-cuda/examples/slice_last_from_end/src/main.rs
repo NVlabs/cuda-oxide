@@ -1,6 +1,8 @@
-//! Known-failure repro for `ProjectionElem::ConstantIndex { from_end: true }`.
+//! Regression test for `ProjectionElem::ConstantIndex { from_end: true }`
+//! against a slice — the MIR shape produced by `slice::last()` and the
+//! `[.., last]` slice pattern.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Compilation error: invalid input program.
@@ -9,34 +11,38 @@
 //!
 //! Surfaced from `~/vanity-miner-rs/` via
 //! `sec1::point::Tag::compress_y`, whose body destructures the input
-//! bytes via the `[.., last]` slice pattern (or calls `slice::last()`),
-//! both of which lower to `ConstantIndex { offset: 1, min_length: 1,
-//! from_end: true }`.
+//! bytes via the `[.., last]` slice pattern.
 //!
-//! The `from_end` projection means "count from the back": with
-//! `offset: 1` the index is `len - 1` (the last element). For arrays
-//! `len` is the compile-time `N`. For slices `len` is the runtime
-//! length stored in the fat pointer.
+//! `from_end: true, offset: O` means index `len - O`. The translator's
+//! iterative projection loop hits ConstantIndex AFTER the Deref step
+//! has already extracted just the data pointer from the slice — the
+//! length is gone and the from_end arithmetic can't be done.
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! Three sites in `crates/mir-importer/src/translator/rvalue.rs`:
+//! `translate_place_iterative` now peeks one projection ahead in the
+//! `Deref` arm. If the next projection is
+//! `ConstantIndex { from_end: true }` AND the current value is a
+//! `MirSliceType<T>`, the new helper
+//! `apply_slice_deref_constant_index_from_end` handles both
+//! projections as a unit:
 //!
-//! 1. The single-projection slot path (`local[const_idx_from_end]`)
-//!    around line 2968.
-//! 2. The address-build helper around line 3470 (used by multi-step
-//!    projections lowering to addresses).
-//! 3. The iterative value-materialisation path around line 3808.
+//! 1. extract data pointer (field 0)
+//! 2. extract length (field 1)
+//! 3. emit i64 constant for `offset`
+//! 4. `mir.sub` for `len - offset`
+//! 5. `mir.ptr_offset` for the element address
 //!
-//! All three bail unconditionally on `from_end=true`.
+//! Result is a `MirPtrType<T>` to the element — same shape every other
+//! ConstantIndex transform leaves behind, so downstream projections /
+//! load / store paths see the expected type.
 //!
-//! ## What a fix needs to do
-//!
-//! * Array case (compile-time `N` known from the type): translate
-//!   `from_end: true, offset: O` to a constant index `N - O` and use
-//!   the existing path.
-//! * Slice case: extract the slice's len at runtime (field 1 of the
-//!   fat pointer), subtract `offset`, then GEP and load.
+//! Other from_end bails (single-projection slot path on arrays, the
+//! address-build helper, the non-Deref-prefixed iterative case) are
+//! left as-is — they aren't on the path the user's code hits, and
+//! handling them requires either compile-time-`N` extraction (arrays)
+//! or restructuring the address-build helper to keep slice length
+//! around.
 //!
 //! ## Build with
 //!

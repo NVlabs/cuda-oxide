@@ -3524,10 +3524,45 @@ pub fn translate_place_iterative(
     // Type inferred from ProjectionElem::Downcast pattern
     let mut pending_downcast = None;
 
-    // Process each projection element iteratively
-    for projection in &place.projection {
+    // Process each projection element iteratively. Indexed iteration so we
+    // can peek-ahead one slot — `Deref → ConstantIndex { from_end: true }`
+    // on a slice is handled as a unit because the regular `Deref` step
+    // discards the slice's runtime length, which the `from_end` arithmetic
+    // (`len - offset`) needs.
+    let projections = &place.projection;
+    let mut proj_i = 0usize;
+    while proj_i < projections.len() {
+        let projection = &projections[proj_i];
         match projection {
             ProjectionElem::Deref => {
+                // Peek the next projection. For the
+                // `Deref → ConstantIndex { from_end: true }` combo on a
+                // slice value (`MirSliceType<T>`), handle both projections
+                // as a unit so we can use the slice's len before the
+                // data-pointer extraction throws it away.
+                if let Some(next) = projections.get(proj_i + 1)
+                    && let ProjectionElem::ConstantIndex {
+                        offset,
+                        min_length: _,
+                        from_end: true,
+                    } = next
+                    && let Some((element_ty, _)) =
+                        slice_element_ty(ctx, current_value.get_type(ctx))
+                {
+                    (current_value, current_prev_op) = apply_slice_deref_constant_index_from_end(
+                        ctx,
+                        current_value,
+                        element_ty,
+                        *offset,
+                        block_ptr,
+                        current_prev_op,
+                        loc.clone(),
+                    )?;
+                    pending_downcast = None;
+                    proj_i += 2;
+                    continue;
+                }
+
                 (current_value, current_prev_op) = apply_deref_projection(
                     ctx,
                     current_value,
@@ -3876,9 +3911,147 @@ pub fn translate_place_iterative(
                 );
             }
         }
+        proj_i += 1;
     }
 
     Ok((current_value, current_prev_op))
+}
+
+/// If `ty` is a `MirSliceType<T>`, return `(T, ())`. Used to peek at the
+/// current value's element type in the iterative projection loop without
+/// holding a context borrow across the operation-creation calls below.
+fn slice_element_ty(
+    ctx: &Context,
+    ty: Ptr<TypeObj>,
+) -> Option<(Ptr<TypeObj>, ())> {
+    let ty_ref = ty.deref(ctx);
+    ty_ref
+        .downcast_ref::<dialect_mir::types::MirSliceType>()
+        .map(|s| (s.element_type(), ()))
+}
+
+/// Translate the combo `Deref → ConstantIndex { from_end: true, offset: O }`
+/// against a slice value (`MirSliceType<T>`). The combo means "the element
+/// at index `len - O`", which needs the slice's runtime length — extracted
+/// here before the data pointer is taken in isolation.
+///
+/// Emits, in order: `extractvalue` for data ptr, `extractvalue` for len,
+/// `mir.constant` for `offset`, `mir.sub` for `len - offset`, and
+/// `mir.ptr_offset` for the element address. The result is a thin
+/// `MirPtrType<T>` to the element — same shape any other ConstantIndex
+/// transform leaves behind.
+fn apply_slice_deref_constant_index_from_end(
+    ctx: &mut Context,
+    slice_value: Value,
+    element_ty: Ptr<TypeObj>,
+    offset: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    // Field 0: data pointer. Match the addrspace/mutability convention
+    // `apply_deref_projection`'s slice branch uses (immutable, generic
+    // addrspace) so downstream consumers see the same shape.
+    let data_ptr_ty: Ptr<TypeObj> =
+        dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into();
+    let extract_ptr_op = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![data_ptr_ty],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    extract_ptr_op.deref_mut(ctx).set_loc(loc.clone());
+    MirExtractFieldOp::new(extract_ptr_op)
+        .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(0));
+    match prev_op {
+        Some(p) => extract_ptr_op.insert_after(ctx, p),
+        None => extract_ptr_op.insert_at_front(block_ptr, ctx),
+    }
+    let data_ptr = Value::OpResult {
+        op: extract_ptr_op,
+        res_idx: 0,
+    };
+
+    // Field 1: length. The slice fat pointer's len is i64 (see
+    // `MirSliceType` lowering's `{ ptr, i64 }`).
+    let i64_int_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let i64_ty: Ptr<TypeObj> = i64_int_ty.into();
+    let extract_len_op = Operation::new(
+        ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![i64_ty],
+        vec![slice_value],
+        vec![],
+        0,
+    );
+    extract_len_op.deref_mut(ctx).set_loc(loc.clone());
+    MirExtractFieldOp::new(extract_len_op)
+        .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+    extract_len_op.insert_after(ctx, extract_ptr_op);
+    let len_val = Value::OpResult {
+        op: extract_len_op,
+        res_idx: 0,
+    };
+
+    // Constant `offset` as an i64 to match `len`'s type.
+    use dialect_mir::ops::MirConstantOp;
+    use pliron::builtin::attributes::IntegerAttr;
+    let offset_apint = APInt::from_u64(offset, NonZeroUsize::new(64).unwrap());
+    let offset_attr = IntegerAttr::new(i64_int_ty, offset_apint);
+    let offset_const_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![i64_ty],
+        vec![],
+        vec![],
+        0,
+    );
+    offset_const_op.deref_mut(ctx).set_loc(loc.clone());
+    MirConstantOp::new(offset_const_op).set_attr_value(ctx, offset_attr);
+    offset_const_op.insert_after(ctx, extract_len_op);
+    let offset_val = Value::OpResult {
+        op: offset_const_op,
+        res_idx: 0,
+    };
+
+    // `len - offset` → element index.
+    let sub_op = Operation::new(
+        ctx,
+        MirSubOp::get_concrete_op_info(),
+        vec![i64_ty],
+        vec![len_val, offset_val],
+        vec![],
+        0,
+    );
+    sub_op.deref_mut(ctx).set_loc(loc.clone());
+    sub_op.insert_after(ctx, offset_const_op);
+    let index_val = Value::OpResult {
+        op: sub_op,
+        res_idx: 0,
+    };
+
+    // GEP data_ptr + index → element pointer.
+    let elem_ptr_ty = data_ptr.get_type(ctx);
+    let ptr_offset_op = Operation::new(
+        ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![elem_ptr_ty],
+        vec![data_ptr, index_val],
+        vec![],
+        0,
+    );
+    ptr_offset_op.deref_mut(ctx).set_loc(loc);
+    ptr_offset_op.insert_after(ctx, sub_op);
+
+    Ok((
+        Value::OpResult {
+            op: ptr_offset_op,
+            res_idx: 0,
+        },
+        Some(ptr_offset_op),
+    ))
 }
 
 /// Translate a pointer-to-array constant to MIR operations.
