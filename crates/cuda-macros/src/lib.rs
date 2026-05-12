@@ -2007,6 +2007,7 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
 
     let fn_name = input.sig.ident.clone();
     let vis = input.vis.clone();
+    let unsafety = input.sig.unsafety;
     let new_name = format_ident!("{}{}", DEVICE_PREFIX, fn_name);
 
     // Check if the function has type parameters
@@ -2073,28 +2074,44 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
             })
             .collect();
 
+        // Body call honors the inner fn's unsafety. The wrapper signature
+        // mirrors the original via `#unsafety`; the body wraps the call
+        // in `unsafe { … }` when needed because Rust 2024 no longer
+        // grants an implicit unsafe block inside `unsafe fn` bodies.
+        let body_call = if unsafety.is_some() {
+            quote! { unsafe { #new_name::<#(#type_param_names),*>(#(#params),*) } }
+        } else {
+            quote! { #new_name::<#(#type_param_names),*>(#(#params),*) }
+        };
+
         let expanded = quote! {
             #[inline(never)]
             #input
 
             /// Wrapper for the generic device function with the original name.
             #[inline(always)]
-            #vis fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
-                #new_name::<#(#type_param_names),*>(#(#params),*)
+            #vis #unsafety fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
+                #body_call
             }
         };
 
         TokenStream::from(expanded)
     } else {
         // Non-generic device function: simple case.
+        let body_call = if unsafety.is_some() {
+            quote! { unsafe { #new_name(#(#params),*) } }
+        } else {
+            quote! { #new_name(#(#params),*) }
+        };
+
         let expanded = quote! {
             #[unsafe(no_mangle)]
             #input
 
             /// Wrapper for the device function with the original name.
             #[inline(always)]
-            #vis fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
-                #new_name(#(#params),*)
+            #vis #unsafety fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
+                #body_call
             }
         };
 

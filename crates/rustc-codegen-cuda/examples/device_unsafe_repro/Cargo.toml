@@ -1,0 +1,19 @@
+[package]
+name = "device_unsafe_repro"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Regression test for the cuda-macros `#[device]` wrapper drop-`unsafe` bug.
+# Pre-fix: `pub unsafe fn` annotated `#[device]` failed with E0133 inside
+# the macro-generated wrapper. Post-fix: compiles and runs.
+#
+# Build with:
+#   cargo oxide build device_unsafe_repro
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
