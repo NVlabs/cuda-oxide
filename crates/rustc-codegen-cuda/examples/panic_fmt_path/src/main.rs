@@ -1,7 +1,7 @@
-//! Reproducer for the `RigidTy(FnPtr(... std::fmt::Formatter ...))`
-//! limitation in mir-importer's type translator.
+//! Regression test for the `RigidTy(FnPtr(... std::fmt::Formatter ...))`
+//! codegen path.
 //!
-//! Observed diagnostic on current `main`:
+//! Pre-fix diagnostic was:
 //!
 //!   Unsupported construct: Type translation not yet implemented for:
 //!   RigidTy(FnPtr(Binder { value: FnSig { inputs_and_output: [
@@ -25,20 +25,21 @@
 //!
 //! The brief framed #1 as "fixing `RigidTy(Str)` unlocks every panic
 //! message, every `.unwrap`, every slice/array bounds check." Fixing
-//! #1 gets the type translator past `Str`, but `assert!` / `panic!` /
+//! #1 got the type translator past `Str`, but `assert!` / `panic!` /
 //! `.unwrap` then hit this `FnPtr` arm next — a deeper layer. The
 //! `str_panic_path` reproducer for #1 carefully avoids this by using
 //! `"abc".len()` rather than a panic path, so #1 can be exercised in
-//! isolation.
+//! isolation. Together the two fixes close the brief's "unlock every
+//! panic" claim.
 //!
 //! ## Relationship to limitation #4 (helper #[inline])
 //!
-//! The same `FnPtr` shows up when a helper inside `#[cuda_module]` is
-//! marked `#[inline]` and its body wraps `cuda_device::thread::index_1d()`.
-//! See `helper_no_inline/src/main.rs` for the second independent
-//! trigger. Two independent paths converging on the same FnPtr suggests
-//! the issue is the importer's type translator missing a function-pointer
-//! arm, not anything specific to panics.
+//! The same `FnPtr` used to show up when a helper inside `#[cuda_module]`
+//! was marked `#[inline]` and its body wrapped
+//! `cuda_device::thread::index_1d()`. With this fix the `#[inline]`
+//! workaround for `helper_no_inline`'s bug B now compiles cleanly.
+//! Bug B itself (non-inline helpers losing their bodies) is still
+//! open.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};

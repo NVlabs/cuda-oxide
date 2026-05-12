@@ -407,6 +407,70 @@ fn emit_pointer_cast(
         Ok(llvm::PtrToIntOp::new(ctx, val, llvm_ty).get_operation())
     } else if val_ty.deref(ctx).is::<IntegerType>() && dst_is_ptr {
         Ok(llvm::IntToPtrOp::new(ctx, val, llvm_ty).get_operation())
+    } else if val_ty.deref(ctx).is::<IntegerType>() && dst_is_struct {
+        // Integer -> struct: LLVM forbids a direct `bitcast`. This shape
+        // arises on panic-edge `core::fmt::Arguments` transmute paths
+        // where rustc reinterprets a tag-encoded `usize` as a 1-field
+        // `{ ptr }` struct (the Argument value slot). The panic block
+        // terminates in `unreachable` so the bytes are never observed.
+        //
+        // When the struct's first field is a pointer, lower to
+        // `inttoptr` + `insertvalue undef, ptr, 0`, which matches the
+        // existing `ptr → struct` arm above. Otherwise (non-pointer
+        // first field, multi-field structs we can't model directly),
+        // fall back to a memory round-trip: alloca {val} typed, store
+        // the int, load as the struct type.
+        let first_field_is_ptr = {
+            let dst_ref = llvm_ty.deref(ctx);
+            let st = dst_ref
+                .downcast_ref::<dialect_llvm::types::StructType>()
+                .unwrap();
+            st.fields()
+                .next()
+                .map(|f| f.deref(ctx).is::<dialect_llvm::types::PointerType>())
+                .unwrap_or(false)
+        };
+
+        if first_field_is_ptr {
+            let first_field_ty = {
+                let dst_ref = llvm_ty.deref(ctx);
+                let st = dst_ref
+                    .downcast_ref::<dialect_llvm::types::StructType>()
+                    .unwrap();
+                st.fields().next().unwrap()
+            };
+            let i2p = llvm::IntToPtrOp::new(ctx, val, first_field_ty);
+            rewriter.insert_operation(ctx, i2p.get_operation());
+            let ptr_val = i2p.get_operation().deref(ctx).get_result(0);
+
+            let undef = llvm::UndefOp::new(ctx, llvm_ty);
+            rewriter.insert_operation(ctx, undef.get_operation());
+            let undef_val = undef.get_operation().deref(ctx).get_result(0);
+            Ok(llvm::InsertValueOp::new(ctx, undef_val, ptr_val, vec![0]).get_operation())
+        } else {
+            // Memory round-trip: alloca with the dst struct type, store
+            // an integer-typed value into it (LLVM accepts mixed-type
+            // store-then-load for same-size types), reload as the struct.
+            let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+            let one = {
+                let apint = pliron::utils::apint::APInt::from_i64(
+                    1,
+                    std::num::NonZeroUsize::new(64).unwrap(),
+                );
+                let attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
+                let c = llvm::ConstantOp::new(ctx, attr.into());
+                rewriter.insert_operation(ctx, c.get_operation());
+                c.get_operation().deref(ctx).get_result(0)
+            };
+            let alloca = llvm::AllocaOp::new(ctx, llvm_ty, one);
+            rewriter.insert_operation(ctx, alloca.get_operation());
+            let ptr = alloca.get_operation().deref(ctx).get_result(0);
+
+            let store = llvm::StoreOp::new(ctx, val, ptr);
+            rewriter.insert_operation(ctx, store.get_operation());
+
+            Ok(llvm::LoadOp::new(ctx, ptr, llvm_ty).get_operation())
+        }
     } else if src_is_struct && dst_is_struct {
         // struct → struct: LLVM forbids bitcast between aggregates with
         // different field layouts. Go through memory: alloca + store + load.

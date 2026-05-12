@@ -20,6 +20,7 @@
 //! | `*const T`, `*mut T`| `MirPtrType` (generic addrspace)    |
 //! | `[T]`, `&[T]`       | `MirSliceType`                      |
 //! | `str`, `&str`       | `MirSliceType<u8>`                  |
+//! | `fn(..) -> ..`      | `MirPtrType<()>` (opaque, never called) |
 //! | `struct S { .. }`   | `MirStructType`                     |
 //! | `enum E { .. }`     | `MirEnumType`                       |
 //! | Closures            | `MirStructType` (captures as fields)|
@@ -418,6 +419,27 @@ pub fn translate_type(
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(ty, mutability)) => {
             let is_mutable = mutability == Mutability::Mut;
             translate_pointer_like(ctx, &ty, is_mutable)
+        }
+        // Function pointers (`fn(...) -> ...`). The most common kernel-reachable
+        // source is `core::fmt::Arguments`, which embeds vtable-style
+        // `fn(NonNull<()>, &mut Formatter) -> Result<(), Error>` entries for
+        // each formatting placeholder. Any `panic!` / `assert!` / `.unwrap()`
+        // / `.expect()` lowers through `panic_fmt(format_args!(...))` and
+        // brings those FnPtr slots into the kernel's MIR.
+        //
+        // We model FnPtr as an opaque generic pointer because in practice no
+        // kernel-reachable FnPtr is actually called at runtime — they appear
+        // inside `core::fmt::Arguments` constants on panic edges, and the
+        // panic block ends in `unreachable` so the values are never observed.
+        // Modelling them this way lets the type flow through stores, loads,
+        // and aggregate fields. Constants of FnPtr type are handled in
+        // `translate_constant` (emits `mir.undef`).
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnPtr(_)) => {
+            // Opaque generic-addrspace pointer; pointee type is unit since
+            // we don't model the signature.
+            let unit_ty: Ptr<TypeObj> =
+                dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
+            Ok(dialect_mir::types::MirPtrType::get_generic(ctx, unit_ty, false).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(
             _region,

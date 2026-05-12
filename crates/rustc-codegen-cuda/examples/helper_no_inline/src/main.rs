@@ -22,21 +22,18 @@
 //! relies on this exact attribute for its `device_helper` but the
 //! `#[cuda_module]` macro README doesn't surface that requirement.
 //!
-//! ## Side-effect: adding `#[inline]` exposes a different bug
+//! ## Workaround is currently functional
 //!
-//! Reproducing locally on current `main`: adding `#[inline]` here flips
-//! the diagnostic to:
-//!
-//!   Unsupported construct: Type translation not yet implemented for:
-//!   RigidTy(FnPtr(... std::fmt::Formatter ...))
-//!
-//! Inlining the helper pulls `thread::index_1d()`'s body into the
-//! kernel's own MIR, where the importer trips over a `FnPtr` referencing
-//! `<_ as Display>::fmt`. The non-inline path quietly avoids this by
-//! keeping the offending body in a separate function the importer
-//! never visits. So even when bug B's `#[inline]` workaround is
-//! applied, real kernels that wrap intrinsics still hit a deeper
-//! limitation. Worth flagging in the upstream issue.
+//! The `#[inline]` workaround compiles cleanly as of the FnPtr fix
+//! (translate_type's `RigidTy::FnPtr` arm + emit_pointer_cast's
+//! `i -> {ptr}` arm). An earlier rev had a side effect where adding
+//! `#[inline]` here flipped the diagnostic to
+//! `RigidTy(FnPtr(... std::fmt::Formatter ...))` because inlining
+//! pulled `thread::index_1d()`'s formatter-bearing body into the
+//! kernel's own MIR. That secondary failure is no longer reachable.
+//! Bug B itself — the non-inline helper losing its body during
+//! codegen — is still open and is what this example continues to
+//! reproduce.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};

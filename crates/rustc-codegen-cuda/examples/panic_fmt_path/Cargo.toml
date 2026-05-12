@@ -6,7 +6,7 @@ license = "Apache-2.0"
 
 [workspace]
 
-# Reproducer for the `RigidTy(FnPtr(... std::fmt::Formatter ...))`
+# Regression test for the `RigidTy(FnPtr(... std::fmt::Formatter ...))`
 # limitation in mir-importer's type translator.
 #
 # Triggered by any kernel-reachable path that goes through
@@ -19,10 +19,6 @@ license = "Apache-2.0"
 #
 # Build with:
 #   cargo oxide run panic_fmt_path
-#
-# This example is expected to FAIL until the importer learns to handle
-# the `fn(NonNull<()>, &mut Formatter) -> Result<(), Error>` function
-# pointer type that `core::fmt::Arguments` builds vtable-style.
 
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }
