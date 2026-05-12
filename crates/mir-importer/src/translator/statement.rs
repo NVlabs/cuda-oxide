@@ -610,6 +610,138 @@ pub fn translate_statement(
                         Ok(Some(store_op))
                     }
                     (
+                        mir::ProjectionElem::Field(field_idx, field_ty),
+                        mir::ProjectionElem::Index(index_local),
+                    ) => {
+                        // `_local.field[i] = value` — write into a fixed-size
+                        // array nested in a struct/tuple field. Surfaced from
+                        // curve25519-dalek's `FieldElement51(pub [u64; 5])`,
+                        // where inline limb arithmetic does
+                        // `self.0[i] = ...` against a local FieldElement51.
+                        //
+                        // Composes the building blocks from sibling arms:
+                        // `mir.field_addr` to get a pointer to the inner
+                        // array, then `emit_array_element_store` (the same
+                        // helper the single-level Index path uses) for the
+                        // GEP + store.
+
+                        let mut current_prev = prev_op;
+                        if let Some(rvalue_op) = rvalue_op_opt {
+                            if let Some(prev) = last_inserted {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else if let Some(prev) = prev_op {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else {
+                                rvalue_op.insert_at_front(block_ptr, ctx);
+                                current_prev = Some(rvalue_op);
+                            }
+                        } else if let Some(prev) = last_inserted {
+                            current_prev = Some(prev);
+                        }
+
+                        let Some(slot) = value_map.get_slot(place.local) else {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "Local {} has no alloca slot for Field->Index(local) write",
+                                    Into::<usize>::into(place.local)
+                                ))
+                            );
+                        };
+                        let slot_mutable = pointer_is_mutable(ctx, slot);
+                        let slot_addr_space = pointer_address_space(ctx, slot);
+
+                        // `field_addr(slot, field_idx)` — pointer to the
+                        // field. Field type is the inner array.
+                        let field_type = types::translate_type(ctx, field_ty)?;
+                        let field_ptr_ty = dialect_mir::types::MirPtrType::get(
+                            ctx,
+                            field_type,
+                            slot_mutable,
+                            slot_addr_space,
+                        )
+                        .into();
+
+                        use dialect_mir::ops::MirFieldAddrOp;
+                        let field_addr_op = Operation::new(
+                            ctx,
+                            MirFieldAddrOp::get_concrete_op_info(),
+                            vec![field_ptr_ty],
+                            vec![slot],
+                            vec![],
+                            0,
+                        );
+                        field_addr_op.deref_mut(ctx).set_loc(loc.clone());
+                        MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                        );
+                        if let Some(prev) = current_prev {
+                            field_addr_op.insert_after(ctx, prev);
+                        } else {
+                            field_addr_op.insert_at_front(block_ptr, ctx);
+                        }
+                        current_prev = Some(field_addr_op);
+                        let field_ptr = Value::OpResult {
+                            op: field_addr_op,
+                            res_idx: 0,
+                        };
+
+                        // Translate the index local.
+                        let index_place = mir::Place {
+                            local: *index_local,
+                            projection: vec![],
+                        };
+                        let (index_value, prev_op_after_index) = rvalue::translate_place(
+                            ctx,
+                            body,
+                            &index_place,
+                            value_map,
+                            block_ptr,
+                            current_prev,
+                            loc.clone(),
+                        )?;
+                        current_prev = prev_op_after_index;
+
+                        // Pull the array element type out of the field's
+                        // pointee. The field's translated type must be a
+                        // MirArrayType for this projection sequence to make
+                        // sense — anything else is a structural mismatch.
+                        let element_ty = {
+                            let field_type_ref = field_type.deref(ctx);
+                            match field_type_ref
+                                .downcast_ref::<dialect_mir::types::MirArrayType>()
+                            {
+                                Some(arr_ty) => arr_ty.element_type(),
+                                None => {
+                                    return input_err!(
+                                        loc,
+                                        TranslationErr::unsupported(format!(
+                                            "Field->Index(local) write expects field of \
+                                             MirArrayType, got {}",
+                                            field_type.disp(ctx)
+                                        ))
+                                    );
+                                }
+                            }
+                        };
+
+                        let store_op = emit_array_element_store(
+                            ctx,
+                            field_ptr,
+                            index_value,
+                            result_value,
+                            element_ty,
+                            slot_addr_space,
+                            block_ptr,
+                            current_prev,
+                            loc,
+                        );
+                        Ok(Some(store_op))
+                    }
+                    (
                         mir::ProjectionElem::Deref,
                         mir::ProjectionElem::ConstantIndex {
                             offset,

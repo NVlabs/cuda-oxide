@@ -1,8 +1,8 @@
-//! Known-failure repro for the 2-projection `[Field(idx), Index(_i)]`
+//! Regression test for the 2-projection `[Field(idx), Index(_i)]`
 //! writer arm — `_local.field[i] = value` against a tuple struct
 //! whose field is a fixed-size array.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Compilation error: invalid input program.
@@ -12,26 +12,26 @@
 //!
 //! Surfaced from `~/vanity-miner-rs/` via
 //! `<curve25519_dalek::backend::serial::curve_models::EdwardsPoint as
-//!   Add<&AffineNielsPoint>>::add` at
-//! `field.rs:61:13: 61:35` — `FieldElement51` is a tuple struct
-//! `pub struct FieldElement51(pub(crate) [u64; 5])`. Inline arithmetic
-//! over its limbs writes `self.0[i] = ...` directly.
+//!   Add<&AffineNielsPoint>>::add` at `field.rs:61:13: 61:35` —
+//! `FieldElement51` is `pub struct FieldElement51(pub(crate) [u64; 5])`.
+//! Inline arithmetic writes `self.0[i] = ...` against a local
+//! `FieldElement51`, lowering to a 2-projection assign-to-place with
+//! `[Field(0), Index(_)]`.
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! `crates/mir-importer/src/translator/statement.rs` — the
-//! 2-level-projection match in the assignment handler covers
-//! `(Deref, Field)`, `(Field, Field)`, `(Deref, ConstantIndex)`, and
-//! `(Deref, Index(local))`, but not `(Field, Index(local))`. The
-//! catch-all bails with the "not yet implemented for assignment"
-//! message.
+//! New 2-level-projection assignment arm in
+//! `translator/statement.rs`:
 //!
-//! The shape needed: take the slot, `mir.field_addr` to get a
-//! pointer to the inner field (the array), translate the index,
-//! `mir.array_element_addr` to get the element pointer, then
-//! `mir.store`. Same building blocks as the existing
-//! `(Deref, Index(local))` array branch, just with a `field_addr`
-//! prefix instead of a load.
+//! 1. `mir.field_addr(slot, field_idx)` → pointer to the field (the
+//!    inner array)
+//! 2. translate the index local
+//! 3. `emit_array_element_store(field_ptr, index, value, ...)` —
+//!    the same helper the single-level `arr[i] = ...` Index path
+//!    uses for the GEP + store.
+//!
+//! The field's translated type must be a `MirArrayType`; anything
+//! else is a structural mismatch and hard-errors with a clear message.
 //!
 //! ## Build with
 //!
