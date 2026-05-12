@@ -1,7 +1,12 @@
-//! Known-failure repro for `Aggregate(Adt(<union>, ...))` — the MIR
-//! shape produced by `core::mem::MaybeUninit::uninit()`.
+//! Regression test for `Aggregate(Adt(<union>, ...))` translation —
+//! the MIR shape produced by `core::mem::MaybeUninit::uninit()`.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
+//!
+//! Before the fix, the `mir::Rvalue::Aggregate` arm in
+//! `crates/mir-importer/src/translator/rvalue.rs` dispatched
+//! `AggregateKind::Adt` on `adt_def.kind()` and the `AdtKind::Union`
+//! branch was a hard `unsupported` bail:
 //!
 //! ```text
 //! Compilation error: invalid input program.
@@ -11,8 +16,7 @@
 //! Surfaced from `~/vanity-miner-rs/` via
 //! `<GenericArray<u8, U33> as GenericSequence>::generate`, whose
 //! `Default::default` closure builds a `[MaybeUninit<u8>; N]` by
-//! calling `MaybeUninit::uninit()` per element. The body of
-//! `MaybeUninit::uninit()` is a single rvalue:
+//! calling `MaybeUninit::uninit()` per element:
 //!
 //! ```ignore
 //! pub const fn uninit() -> MaybeUninit<T> {
@@ -20,28 +24,34 @@
 //! }
 //! ```
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! `crates/mir-importer/src/translator/rvalue.rs` — the
-//! `mir::Rvalue::Aggregate` arm dispatches `AggregateKind::Adt` on
-//! `adt_def.kind()` and the `AdtKind::Union` branch is a hard
-//! `unsupported` bail. Structs and enums have full handlers; unions
-//! have nothing.
+//! Unions diverge from struct/enum aggregates in two ways: they have
+//! a single operand initializing the *active* field (whose declaration
+//! index is the 5th tuple element of `AggregateKind::Adt`), and the
+//! fields all overlap at offset 0. The struct/enum field-walk in
+//! `translate_adt_aggregate_field_values` tries to align operands to
+//! non-ZST fields in declaration order, which mis-assigns when the
+//! active field is itself ZST.
 //!
-//! ## What a fix needs to do
+//! `translate_union_aggregate` (new helper) handles unions directly:
+//! it pulls the active-field index from the aggregate kind, translates
+//! the single operand, and synthesizes `MirUndefOp` of the appropriate
+//! type for each inactive field. The resulting `MirConstructStructOp`
+//! then lowers the same way the struct path does — ZST fields are
+//! skipped, non-ZST fields become a single `insertvalue` chain.
 //!
-//! Unions have one variant with overlapping fields and a single
-//! "active" field at construction. The aggregate's `operands` should
-//! have exactly one initializing operand for that active field. The
-//! lowered representation needs to write that operand into a union
-//! storage value of the union's translated type — most likely by
-//! treating the union as opaque bag-of-bits storage and storing the
-//! initializer at offset 0 (or wherever rustc says the active
-//! field lives, but for `repr(Rust)` unions the offset is 0).
+//! Covers both:
+//! * `MaybeUninit::uninit()` — `MaybeUninit { uninit: () }`, active
+//!   operand is `()` (ZST). Lowers to a bare `undef` of the storage.
+//! * `MaybeUninit::new(x)` — `MaybeUninit { value: ManuallyDrop::new(x) }`,
+//!   active operand is non-ZST. Lowers to `insertvalue undef, %x, [0]`.
 //!
-//! For the `MaybeUninit { uninit: () }` shape specifically, the
-//! initializer is a ZST `()`, so the union storage just needs to
-//! be allocated/poisoned to the right size with no actual store.
+//! Unions with multiple non-ZST overlapping fields would still
+//! mis-lower at the type level (`build_struct_with_explicit_padding`
+//! lays them out sequentially, not overlapping). Nothing in
+//! `vanity-miner-rs` hits that case; a future fix can add
+//! union-as-byte-storage type translation when something does.
 //!
 //! ## Build with
 //!
