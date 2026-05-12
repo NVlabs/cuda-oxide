@@ -1370,6 +1370,128 @@ pub fn translate_rvalue(
                         Ok((Some(op), result, prev_after_casts))
                     }
                 }
+                mir::AggregateKind::RawPtr(pointee_ty, _mutability) => {
+                    // Fat raw pointer construction: `*const [T]` / `*mut [T]`
+                    // / `*const str` / `*mut str`. The MIR aggregate has two
+                    // operands: a thin data pointer and the length. Pack
+                    // them into a `MirSliceType<element>` value via undef +
+                    // two insert_fields. We model both reference and raw
+                    // pointer fat slices as `MirSliceType` (see types.rs),
+                    // so the result type is identical for both `Slice` and
+                    // `Str` pointees.
+                    //
+                    // Other fat-pointer pointees (`dyn Trait`) are not yet
+                    // modelled and fall through to the unsupported arm.
+                    let elem_ty = match pointee_ty.kind() {
+                        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(
+                            elem,
+                        )) => types::translate_type(ctx, &elem)?,
+                        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Str) => {
+                            pliron::builtin::types::IntegerType::get(
+                                ctx,
+                                8,
+                                pliron::builtin::types::Signedness::Unsigned,
+                            )
+                            .into()
+                        }
+                        _ => {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "Aggregate kind RawPtr with non-slice/str pointee not yet supported: {:?}",
+                                    pointee_ty.kind()
+                                ))
+                            );
+                        }
+                    };
+
+                    if operands.len() != 2 {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "Aggregate(RawPtr) expects 2 operands (ptr, len), got {}",
+                                operands.len()
+                            ))
+                        );
+                    }
+
+                    let (ptr_val, after_ptr) = translate_operand(
+                        ctx,
+                        body,
+                        &operands[0],
+                        value_map,
+                        block_ptr,
+                        prev_op,
+                        loc.clone(),
+                    )?;
+                    let (len_val, after_len) = translate_operand(
+                        ctx,
+                        body,
+                        &operands[1],
+                        value_map,
+                        block_ptr,
+                        after_ptr,
+                        loc.clone(),
+                    )?;
+
+                    let slice_ty: Ptr<TypeObj> =
+                        dialect_mir::types::MirSliceType::get(ctx, elem_ty).into();
+
+                    // Build the slice value with undef + two insert_fields.
+                    // The caller (translate_statement) will insert the final
+                    // returned op, so we insert only the prefix (undef +
+                    // first insert_field) and leave the second insert_field
+                    // un-linked.
+                    use dialect_mir::ops::{MirInsertFieldOp, MirUndefOp};
+
+                    let undef = MirUndefOp::new(ctx, slice_ty);
+                    let undef_op = undef.get_operation();
+                    undef_op.deref_mut(ctx).set_loc(loc.clone());
+                    match after_len {
+                        Some(prev) => undef_op.insert_after(ctx, prev),
+                        None => undef_op.insert_at_front(block_ptr, ctx),
+                    }
+                    let undef_val = Value::OpResult {
+                        op: undef_op,
+                        res_idx: 0,
+                    };
+
+                    let insert_ptr_op = Operation::new(
+                        ctx,
+                        MirInsertFieldOp::get_concrete_op_info(),
+                        vec![slice_ty],
+                        vec![undef_val, ptr_val],
+                        vec![],
+                        0,
+                    );
+                    insert_ptr_op.deref_mut(ctx).set_loc(loc.clone());
+                    MirInsertFieldOp::new(insert_ptr_op)
+                        .set_attr_insert_index(ctx, dialect_mir::attributes::FieldIndexAttr(0));
+                    insert_ptr_op.insert_after(ctx, undef_op);
+                    let with_ptr = Value::OpResult {
+                        op: insert_ptr_op,
+                        res_idx: 0,
+                    };
+
+                    let insert_len_op = Operation::new(
+                        ctx,
+                        MirInsertFieldOp::get_concrete_op_info(),
+                        vec![slice_ty],
+                        vec![with_ptr, len_val],
+                        vec![],
+                        0,
+                    );
+                    insert_len_op.deref_mut(ctx).set_loc(loc.clone());
+                    MirInsertFieldOp::new(insert_len_op)
+                        .set_attr_insert_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
+
+                    let result = Value::OpResult {
+                        op: insert_len_op,
+                        res_idx: 0,
+                    };
+
+                    Ok((Some(insert_len_op), result, Some(insert_ptr_op)))
+                }
                 _ => {
                     input_err!(
                         loc,

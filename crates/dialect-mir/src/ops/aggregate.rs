@@ -389,10 +389,44 @@ impl Verify for MirInsertFieldOp {
                     new_value_ty.disp(ctx)
                 );
             }
+        } else if let Some(slice_ty) = aggregate_ty_obj.downcast_ref::<MirSliceType>() {
+            // Slice is a 2-field fat pointer: { ptr: *T, len: usize }.
+            // Used by `Aggregate(RawPtr(Slice|Str, _))` in mir-importer to
+            // build a slice value from its raw parts.
+            match index {
+                0 => {
+                    let nv_ty_obj = new_value_ty.deref(ctx);
+                    let Some(ptr_ty) = nv_ty_obj.downcast_ref::<MirPtrType>() else {
+                        return verify_err!(
+                            op.loc(),
+                            "MirInsertFieldOp on slice field 0 expects a pointer value"
+                        );
+                    };
+                    if ptr_ty.pointee != slice_ty.element_ty {
+                        return verify_err!(
+                            op.loc(),
+                            "MirInsertFieldOp on slice field 0: pointee {} does not match slice element {}",
+                            ptr_ty.pointee.disp(ctx),
+                            slice_ty.element_ty.disp(ctx)
+                        );
+                    }
+                }
+                1 => {
+                    if !new_value_ty.deref(ctx).is::<IntegerType>() {
+                        return verify_err!(
+                            op.loc(),
+                            "MirInsertFieldOp on slice field 1 (len) expects an integer value"
+                        );
+                    }
+                }
+                _ => {
+                    return verify_err!(op.loc(), "MirInsertFieldOp index out of bounds for slice");
+                }
+            }
         } else {
             return verify_err!(
                 op.loc(),
-                "MirInsertFieldOp aggregate operand must be tuple, struct, or array"
+                "MirInsertFieldOp aggregate operand must be tuple, struct, array, or slice"
             );
         }
 
