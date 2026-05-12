@@ -1155,6 +1155,38 @@ fn translate_call(
         return Ok(op);
     }
 
+    // Guardrail: detect unhandled bodyless `#[rustc_intrinsic]` calls.
+    //
+    // Items under `core::intrinsics::*` / `std::intrinsics::*` are
+    // `#[rustc_intrinsic]` declarations with no MIR body. The collector
+    // skips them, so falling through to `emit_function_call` here would
+    // emit a `mir.call` to a symbol nothing defines — surfacing later
+    // as a cryptic "Symbol _RIN... not found" failure during LLVM
+    // verification. Bail with a clear codegen-time error pointing at
+    // the source so the next missing intrinsic is fast to triage.
+    //
+    // Note: the diverging-call path above already absorbs intrinsics
+    // that return `!` (e.g. `core::intrinsics::unreachable`,
+    // `core::intrinsics::abort`) as `mir.unreachable` — those don't
+    // reach this guardrail.
+    //
+    // Intrinsics that should be supported on GPU need an explicit arm
+    // in `try_dispatch_intrinsic` (or `intrinsics::atomic` /
+    // `intrinsics::float_math` for those tables).
+    if let Some(ref name) = pattern_name
+        && (name.starts_with("core::intrinsics::")
+            || name.starts_with("std::intrinsics::"))
+    {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "unhandled core intrinsic: `{name}` (bodyless `#[rustc_intrinsic]`, no MIR body). \
+                 Add a dispatch arm in `crates/mir-importer/src/translator/terminator/mod.rs` \
+                 (or `intrinsics::atomic` / `intrinsics::float_math`) if this should be supported on GPU."
+            ))
+        );
+    }
+
     // Not an intrinsic - emit regular function call
     let raw_name = call_name.unwrap_or_else(|| "unknown_function".to_string());
     let legal_name = legaliser.legalise(&raw_name);
