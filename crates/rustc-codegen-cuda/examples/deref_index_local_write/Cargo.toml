@@ -1,0 +1,19 @@
+[package]
+name = "deref_index_local_write"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for `(*place)[local_idx] = value` writes
+# (2-level MIR projection `Deref -> Index(local)`) on `&mut [T; N]`
+# array references and `&mut [T]` slice references.
+#
+# Build with:
+#   cargo oxide build deref_index_local_write
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
