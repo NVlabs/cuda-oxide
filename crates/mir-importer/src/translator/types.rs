@@ -744,13 +744,30 @@ pub fn translate_type(
                 // The self type is the first generic argument
                 let args = &alias_ty.args.0;
                 if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
-                    // For primitive types implementing arithmetic traits, Output = Self
+                    // For primitive types implementing arithmetic traits,
+                    // `Output = Self` by definition (every stdlib `impl` does this).
+                    //
+                    // For user-defined structs (`Adt`), the overwhelmingly common
+                    // pattern is also `impl Mul for T { type Output = T; … }` —
+                    // every numeric type in `num`, every curve-point type in
+                    // `ed25519` / `curve25519-dalek` / `k256` / `secp256k1`, every
+                    // vector/matrix type in `nalgebra`, etc. Mismatched-Output
+                    // impls (e.g. `impl Mul<Scalar> for Point { type Output =
+                    // Vec3; … }`) exist but are rare; if one reaches device
+                    // codegen the call-site argument/return mismatch surfaces
+                    // a different (loud) error one layer down. Without
+                    // `TyCtxt::normalize_erasing_regions` access (rustc_public
+                    // doesn't expose it) this is the best we can do here, and
+                    // it mirrors the `IntoIterator::IntoIter` recursion below.
+                    //
+                    // See `examples/mul_output_adt/` for the ADT-self regression.
                     if let rustc_public::ty::TyKind::RigidTy(
                         rustc_public::ty::RigidTy::Int(_)
                         | rustc_public::ty::RigidTy::Uint(_)
                         | rustc_public::ty::RigidTy::Float(_)
                         | rustc_public::ty::RigidTy::Bool
-                        | rustc_public::ty::RigidTy::Char,
+                        | rustc_public::ty::RigidTy::Char
+                        | rustc_public::ty::RigidTy::Adt(_, _),
                     ) = self_ty.kind()
                     {
                         return translate_type(ctx, self_ty);

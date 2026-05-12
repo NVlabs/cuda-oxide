@@ -1,8 +1,8 @@
-//! Known-failure reproducer for `<T as core::ops::Mul>::Output` (and
-//! related arithmetic-trait Output aliases) surviving the type
-//! translator when `T` is a user-defined struct.
+//! Regression test for `<T as core::ops::Mul>::Output` (and related
+//! arithmetic-trait Output aliases) surviving the type translator
+//! when `T` is a user-defined struct.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -56,38 +56,36 @@
 //! `Not::Output` on a user struct hits this. Same for `Mul<RHS, …>`
 //! with a different `RHS` if the impl declares `type Output = Self`.
 //!
-//! ## What it would take to fix
+//! ## What landed
 //!
-//! Extend the `is_arith_output` arm to recurse on ADT self types in
-//! the same shape as the `IntoIterator::IntoIter` handler immediately
-//! below it. The blanket pattern for arithmetic traits on user types
-//! is `impl Mul for T { type Output = T; … }` — the Output associated
-//! type is `Self`. Recursing on the first generic arg covers it:
+//! Added `RigidTy::Adt(_, _)` to the matcher in the `is_arith_output`
+//! branch of the alias arm, alongside the existing primitive cases:
 //!
 //! ```rust,ignore
-//! if is_arith_output {
-//!     let args = &alias_ty.args.0;
-//!     if let Some(GenericArgKind::Type(self_ty)) = args.first() {
-//!         if matches!(self_ty.kind(),
-//!             TyKind::RigidTy(RigidTy::Int(_) | RigidTy::Uint(_) | …
-//!                             | RigidTy::Adt(_, _))) {
-//!             return translate_type(ctx, self_ty);
-//!         }
-//!     }
+//! if let TyKind::RigidTy(
+//!     RigidTy::Int(_) | RigidTy::Uint(_) | RigidTy::Float(_)
+//!     | RigidTy::Bool | RigidTy::Char
+//!     | RigidTy::Adt(_, _),       // ← new
+//! ) = self_ty.kind() {
+//!     return translate_type(ctx, self_ty);
 //! }
 //! ```
 //!
-//! Risk: an impl like `impl Mul<Scalar> for Point { type Output =
-//! Vec3; … }` declares `Output != Self`. We'd silently substitute
-//! Self and produce wrong types. Without normalization access
-//! (`rustc_middle::ty::TyCtxt::normalize_erasing_regions`), there's
-//! no perfectly safe move. Pragmatic stance: the overwhelming
-//! majority of `impl Mul/Add/Sub/Div/Rem for T` declare `type Output
-//! = T` (every standard numeric type in `num`, `nalgebra`, every
-//! curve-point type in `ed25519` / `curve25519-dalek` / `k256` /
-//! `secp256k1`). Mismatched-Output impls are rare. If they surface
-//! we hard-error one layer down (return-type vs call-site mismatch)
-//! rather than producing wrong PTX.
+//! Same recursion shape the `IntoIterator::IntoIter` handler
+//! immediately below it has used since `iter_zip_chunks_exact/`.
+//!
+//! Risk acknowledged but accepted: an impl like `impl Mul<Scalar>
+//! for Point { type Output = Vec3; … }` declares `Output != Self`,
+//! and we'd silently substitute `Self`. Without normalization access
+//! (`rustc_middle::ty::TyCtxt::normalize_erasing_regions` — not
+//! exposed by `rustc_public`) there's no perfectly safe move. The
+//! overwhelming majority of `impl Mul/Add/Sub/Div/Rem for T` declare
+//! `type Output = T` (every numeric type in `num`, every curve-point
+//! type in `ed25519` / `curve25519-dalek` / `k256` / `secp256k1`,
+//! every vector/matrix type in `nalgebra`). When a mismatched-Output
+//! impl reaches device codegen we hard-error one layer down on the
+//! call-site argument/return mismatch rather than producing wrong
+//! PTX.
 //!
 //! Originally surfaced from `~/vanity-miner-rs/`: the
 //! `logic::ed25519_derive_public_key` path multiplies curve-point
@@ -96,11 +94,10 @@
 //!
 //! ## Build with
 //!
-//!     cargo oxide build mul_output_adt
+//!     cargo oxide run mul_output_adt
 //!
-//! Expected: build error from the mir-importer's type translator —
-//! `Alias type not yet supported: AliasDef(DefId { … name:
-//! "std::ops::Mul::Output" })`.
+//! Expected: kernel runs, output matches `(a_lo * b_lo) ^ (a_hi *
+//! b_hi)` per thread.
 //!
 //! ## What this example is NOT
 //!
