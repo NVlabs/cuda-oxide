@@ -1,0 +1,22 @@
+[package]
+name = "deref_field_index_write"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for assignment to a 3-level projection
+# `[Deref, Field, Index(local)]` — `(*ref).field[i] = value` against
+# a tuple/named struct whose field is a fixed-size array.
+#
+# Surfaced from `~/vanity-miner-rs/` via crypto-bigint's
+# `Uint::neg_mod` at `uint/neg_mod.rs:15`.
+#
+# Build with:
+#   cargo oxide build deref_field_index_write
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
