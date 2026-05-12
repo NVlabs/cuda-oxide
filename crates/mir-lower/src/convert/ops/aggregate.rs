@@ -732,18 +732,24 @@ pub(crate) fn convert_field_addr(
                 }
             };
 
+        // Both struct and tuple pointees are supported — they're both
+        // positionally-indexed aggregates. Tuples have no `mem_to_decl`
+        // reordering (declaration order == memory order), so we
+        // synthesize the identity mapping for them.
         let pointee_ref = mir_ptr_pointee.deref(ctx);
-        match pointee_ref.downcast_ref::<MirStructType>() {
-            Some(struct_ty) => {
-                let ft = struct_ty.field_types.clone();
-                let mtd = struct_ty.memory_order();
-                (ft, mtd, mir_ptr_pointee)
-            }
-            None => {
-                return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to struct type"
-                );
-            }
+        if let Some(struct_ty) = pointee_ref.downcast_ref::<MirStructType>() {
+            let ft = struct_ty.field_types.clone();
+            let mtd = struct_ty.memory_order();
+            (ft, mtd, mir_ptr_pointee)
+        } else if let Some(tuple_ty) = pointee_ref.downcast_ref::<dialect_mir::types::MirTupleType>()
+        {
+            let ft: Vec<_> = tuple_ty.get_types().to_vec();
+            let mtd: Vec<usize> = (0..ft.len()).collect();
+            (ft, mtd, mir_ptr_pointee)
+        } else {
+            return pliron::input_err_noloc!(
+                "MirFieldAddrOp pointer must point to struct or tuple type"
+            );
         }
     };
 

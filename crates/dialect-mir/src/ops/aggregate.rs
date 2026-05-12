@@ -19,7 +19,7 @@ use pliron::{
     operation::Operation,
     printable::Printable,
     result::Error,
-    r#type::Typed,
+    r#type::{TypeObj, Typed},
     verify_err,
 };
 use pliron_derive::pliron_op;
@@ -938,31 +938,34 @@ impl Verify for MirFieldAddrOp {
             }
         };
 
-        // Pointee must be a struct type
+        // Pointee must be a struct or tuple type — both are
+        // positionally-indexed aggregates. Tuples surface from MIR
+        // patterns like `&pair.0` on a captured `&(A, B)` (k256's
+        // `lincomb` closure walks `&[(ProjectivePoint, Scalar)]`).
         let pointee_ty = ptr_type.pointee;
         let pointee_ty_obj = pointee_ty.deref(ctx);
-        let struct_ty = match pointee_ty_obj.downcast_ref::<MirStructType>() {
-            Some(s) => s,
-            None => {
+        let field_types: Vec<Ptr<TypeObj>> =
+            if let Some(struct_ty) = pointee_ty_obj.downcast_ref::<MirStructType>() {
+                struct_ty.field_types().to_vec()
+            } else if let Some(tuple_ty) = pointee_ty_obj.downcast_ref::<MirTupleType>() {
+                tuple_ty.get_types().to_vec()
+            } else {
                 return verify_err!(
                     op.loc(),
-                    "MirFieldAddrOp pointer must point to a struct type, got: {}",
+                    "MirFieldAddrOp pointer must point to a struct or tuple type, got: {}",
                     pointee_ty.disp(ctx)
                 );
-            }
-        };
+            };
 
         let index = match self.get_attr_field_index(ctx) {
             Some(attr) => attr.0 as usize,
             None => return verify_err!(op.loc(), "MirFieldAddrOp missing field_index attribute"),
         };
 
-        // Index must be valid
-        let field_types = struct_ty.field_types();
         if index >= field_types.len() {
             return verify_err!(
                 op.loc(),
-                "MirFieldAddrOp field_index {} out of bounds for struct with {} fields",
+                "MirFieldAddrOp field_index {} out of bounds for aggregate with {} fields",
                 index,
                 field_types.len()
             );

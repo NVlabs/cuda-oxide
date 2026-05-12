@@ -1,6 +1,7 @@
-//! Known-failure repro for `mir.field_addr` rejecting tuple-pointee.
+//! Regression test for `mir.field_addr` accepting tuple pointees,
+//! not just struct pointees.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Verification failed:
@@ -13,22 +14,25 @@
 //! `mul.rs:317:43`, which closes over `&[(ProjectivePoint, Scalar)]`.
 //! Inside the closure body, `&pair.0` (taking the address of the
 //! first tuple element) lowers to a `mir.field_addr` whose pointee
-//! is the tuple `(ProjectivePoint, Scalar)`. The verifier accepts
-//! `MirStructType` pointees but not `MirTupleType`, even though
-//! both are positionally-indexed and structurally identical.
+//! is the tuple `(ProjectivePoint, Scalar)`. Both `MirStructType`
+//! and `MirTupleType` are positionally-indexed aggregates; rejecting
+//! tuples was a structural omission, not a semantic distinction.
 //!
-//! ## What a fix needs to do
+//! ## What landed
 //!
 //! Two coupled changes:
 //!
 //! 1. `dialect-mir/src/ops/aggregate.rs` — `MirFieldAddrOp::verify`
-//!    must accept `MirTupleType` pointees as well as `MirStructType`.
+//!    now accepts `MirTupleType` pointees in addition to
+//!    `MirStructType`. Index bounds and result-type checks share
+//!    the same code path because the field-types list is computed
+//!    once from whichever aggregate matched.
 //!
 //! 2. `mir-lower/src/convert/ops/aggregate.rs` — `convert_field_addr`
-//!    must dispatch on tuple vs struct: tuples have no `mem_to_decl`
-//!    reordering (declaration order == memory order) and their fields
-//!    flow through `MirTupleType::get_types()` instead of
-//!    `MirStructType::field_types`.
+//!    dispatches on tuple vs struct. Tuples have no `mem_to_decl`
+//!    reordering (declaration order == memory order), so we
+//!    synthesize the identity mapping and reuse the existing
+//!    GEP-emission path.
 //!
 //! ## Build with
 //!
