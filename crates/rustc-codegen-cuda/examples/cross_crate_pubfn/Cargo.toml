@@ -1,0 +1,32 @@
+[package]
+name = "cross_crate_pubfn"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+members = ["shallenge-logic"]
+
+# Regression test for cross-crate `pub fn` codegen.
+#
+# Same shape as ~/vanity-miner-rs: a GPU-agnostic logic crate
+# (`shallenge-logic` here, `logic` there) exposes pure-arithmetic
+# functions via `pub fn`, and a kernel crate calls them from
+# inside `#[cuda_module]`. The logic crate carries no cuda-oxide
+# annotations and no `#[inline]` — exactly the shape any
+# general-purpose no_std crate naturally has.
+#
+# Pre-fix this failed at `llc` with `Symbol ... not found` because
+# rustc doesn't encode MIR cross-crate for non-generic non-inline
+# items by default. The fix is `-Z always-encode-mir=yes` in
+# cuda-oxide's RUSTFLAGS (commands.rs::build_rustflags).
+#
+# Build with:
+#   cargo oxide build cross_crate_pubfn
+
+[dependencies]
+shallenge-logic = { path = "shallenge-logic" }
+
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

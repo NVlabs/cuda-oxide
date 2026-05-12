@@ -798,9 +798,21 @@ fn resolve_example_dir(ctx: &Context, example: &str) -> PathBuf {
 /// Construct the `RUSTFLAGS` string that configures rustc to use our backend.
 ///
 /// Always includes `-Z codegen-backend`, `-C opt-level=3`, disabled debug
-/// assertions, suppressed JumpThreading (prevents barrier duplication), and
-/// v0 symbol mangling. Appends `-C debuginfo=2` when `debug` is true, then
-/// appends any existing user-provided `RUSTFLAGS`.
+/// assertions, suppressed JumpThreading (prevents barrier duplication),
+/// v0 symbol mangling, and forced MIR encoding for every reachable item.
+/// Appends `-C debuginfo=2` when `debug` is true, then appends any
+/// existing user-provided `RUSTFLAGS`.
+///
+/// `-Z always-encode-mir=yes` is what makes cross-crate `pub fn` calls
+/// work: rustc otherwise only encodes MIR cross-crate for generic /
+/// `#[inline]` items, which means a non-generic non-inline `pub fn` in
+/// a dep crate has no body available to the codegen backend. The
+/// collector silently drops the call (until the dependency author adds
+/// `#[inline]`), and `llc` later fails with `Symbol … not found`.
+/// Forcing MIR encoding makes every reachable item visible to
+/// cuda-oxide regardless of where it lives. Cost: ~10-30% larger
+/// intermediate rmetas in `target/`; no impact on emitted PTX or
+/// host-side binary size.
 fn build_rustflags(backend_so: &Path, debug: bool) -> String {
     let existing = std::env::var("RUSTFLAGS").ok();
     build_rustflags_with_existing(backend_so, debug, existing.as_deref())
@@ -812,7 +824,7 @@ fn build_rustflags_with_existing(
     existing_rustflags: Option<&str>,
 ) -> String {
     let mut flags = format!(
-        "-Z codegen-backend={} -C opt-level=3 -C debug-assertions=off -Z mir-enable-passes=-JumpThreading -Csymbol-mangling-version=v0",
+        "-Z codegen-backend={} -C opt-level=3 -C debug-assertions=off -Z mir-enable-passes=-JumpThreading -Csymbol-mangling-version=v0 -Z always-encode-mir=yes",
         backend_so.display()
     );
     if debug {

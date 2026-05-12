@@ -1,0 +1,17 @@
+[package]
+name = "shallenge-logic"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# Deliberately GPU-agnostic. No `cuda-device`, no `cuda-macros`,
+# no `cuda-core`. Pure no_std Rust. Compiles on stable for any
+# host target. This is the shape of the `logic` crate in
+# vanity-miner-rs and the kind of dependency a kernel author
+# would naturally reach for.
+#
+# Note the absence of any `#[device]` / `#[cuda_module]` /
+# `#[inline]` annotations on the public surface — that's exactly
+# what makes this fail today.
+
+[dependencies]
