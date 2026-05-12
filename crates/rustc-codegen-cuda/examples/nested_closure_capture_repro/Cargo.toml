@@ -1,0 +1,19 @@
+[package]
+name = "nested_closure_capture_repro"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for nested closure capture: an outer closure that
+# captures another closure by move and calls it via FnMut::call_mut.
+# Mirrors the shape that `Iterator::find`'s `check` helper creates.
+#
+# Build with:
+#   cargo oxide build nested_closure_capture_repro
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
