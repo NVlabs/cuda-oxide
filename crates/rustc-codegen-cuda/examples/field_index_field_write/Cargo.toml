@@ -1,0 +1,24 @@
+[package]
+name = "field_index_field_write"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for the 3-projection writer arm
+# `[Field, Index, Field]` — `_local.outer_field[i].inner_field = value`
+# against an array of newtype-wrapped limbs.
+#
+# Surfaced from `~/vanity-miner-rs/` via crypto-bigint's
+# `Uint::neg_mod` at `uint/neg_mod.rs:15`:
+#   ret.limbs[i].0 = z.if_true(ret.limbs[i].0);
+# `Limb` is `pub struct Limb(pub Word)`, so `.0` is the inner Word.
+#
+# Build with:
+#   cargo oxide build field_index_field_write
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
