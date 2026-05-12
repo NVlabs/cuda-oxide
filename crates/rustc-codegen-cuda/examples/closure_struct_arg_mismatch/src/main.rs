@@ -1,44 +1,43 @@
-//! Known-failure repro for the entry-prologue / call-site / function-sig
-//! disagreement on ZST function args. Surfaced from `~/vanity-miner-rs/`
-//! as a closure-struct mismatch where MIR arg slot 1 was the empty
-//! tuple `()` and every subsequent struct arg's reconstruction
-//! drifted off by one:
+//! Regression test for ZST kernel-arg slot handling across the three
+//! lowering paths that classify function args. Surfaced from
+//! `~/vanity-miner-rs/` via the `<GenericArray<u8, U33> as
+//! GenericSequence>::generate` → `Iterator::for_each` → `Iterator::fold`
+//! → `Enumerate` chain.
+//!
+//! ## Pre-fix walls
 //!
 //! ```text
 //! Entry block arg mismatch: struct arg expects 2 non-ZST fields
-//! but only 1 LLVM args remain at idx 3/4. MIR struct type:
-//!   mir.struct <DefId{...fold::enumerate::{closure#0}},
-//!     [capture_0, capture_1],
-//!     [mir.struct <DefId{...for_each::call::{closure#0}}, ...>,
-//!      builtin.integer ui64], [], [], 0>
+//! but only 1 LLVM args remain at idx 3/4
 //! ```
 //!
-//! ## What's happening
+//! followed (after fixing the entry-prologue side) by:
+//!
+//! ```text
+//! Function call has incorrect type:
+//!   expected llvm.func<i64(struct<{i64,i64}>)>,
+//!   got      llvm.func<i64(struct<{}>, struct<{i64,i64}>)>
+//! ```
+//!
+//! ## What landed
 //!
 //! Three lowering paths classify kernel arg types and must stay in
-//! lockstep:
+//! lockstep. `convert_function_type` (callee signature) skipped ZST
+//! args silently in its `FlattenKind::None` arm. The two consumers
+//! didn't:
 //!
-//! * `convert_function_type` (callee LLVM signature) — `FlattenKind::None`
-//!   arm: convert the type, push the LLVM type if non-ZST, **skip
-//!   silently if ZST**.
-//! * `flatten_arguments` (call site) — `FlattenKind::None` arm:
-//!   pushes the arg unconditionally (no ZST check).
-//! * `classify_argument_type` (callee entry-prologue reconstruction) —
-//!   `ReconstructKind::None`: always reads exactly 1 LLVM arg.
+//! * `classify_argument_type` (entry-prologue) gained a new
+//!   `ReconstructKind::Skip` variant. When the converted LLVM type
+//!   is ZST, the prologue synthesizes an `undef` of the original
+//!   MIR type and **doesn't advance** `llvm_arg_idx`.
+//! * `flatten_arguments` (call site) — `FlattenKind::None` arm
+//!   `continue`s if the arg's type is ZST, matching the signature's
+//!   skip behavior.
 //!
-//! When a top-level arg is ZST (`()`, `PhantomData`, capture-less
-//! closures), the signature emits 0 LLVM args while the call-site
-//! and the entry-prologue still consume 1 each. The signature/prologue
-//! disagreement trips the entry-prologue's "arg mismatch" verifier;
-//! the signature/call-site disagreement trips the call-site's
-//! "Function call has incorrect type" verifier.
-//!
-//! ## Repro shape
-//!
-//! `with_unit_then_struct(_unit: (), stuff: (u64, u64))` — `()` at a
-//! non-final slot followed by a non-trivial tuple. `#[inline(never)]`
-//! keeps the function in its own MIR signature so the entry-prologue
-//! and call-site both run against it.
+//! All three paths now agree: ZST top-level args contribute zero
+//! LLVM args. `()` / `PhantomData` / capture-less closure values
+//! still flow through MIR-level uses correctly because the entry
+//! prologue feeds an `undef` of the right type.
 //!
 //! ## Build with
 //!

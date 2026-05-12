@@ -1235,6 +1235,15 @@ fn flatten_arguments(
                 }
             }
             FlattenKind::None => {
+                // Mirror `convert_function_type`'s skip-if-ZST behavior
+                // (see crates/mir-lower/src/convert/types.rs FlattenKind::None
+                // arm). Without this, callers pass an extra arg for ZSTs
+                // like `()` / `PhantomData` / capture-less closures, while
+                // the callee's signature has none — verifier blows up
+                // with "Function call has incorrect type".
+                if is_zero_sized_type(ctx, arg_ty) {
+                    continue;
+                }
                 let (final_arg, final_ty) = coerce_arg_to_param_ty(
                     ctx,
                     rewriter,

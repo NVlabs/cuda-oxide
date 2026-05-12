@@ -45,6 +45,7 @@ use pliron::{
     linked_list::ContainsLinkedList,
     op::Op,
     operation::Operation,
+    printable::Printable,
     result::Result,
     r#type::TypeObj,
     value::Value,
@@ -223,8 +224,14 @@ fn build_entry_prologue(
             ReconstructKind::Struct(num_fields) => {
                 if llvm_arg_idx + num_fields > llvm_args.len() {
                     return Err(anyhow::anyhow!(
-                        "Entry block arg mismatch: need {} more LLVM args for struct",
-                        num_fields
+                        "Entry block arg mismatch: struct arg expects {} non-ZST fields \
+                         but only {} LLVM args remain at idx {}/{}. \
+                         MIR struct type: {}",
+                        num_fields,
+                        llvm_args.len() - llvm_arg_idx,
+                        llvm_arg_idx,
+                        llvm_args.len(),
+                        mir_ty.disp(ctx)
                     ));
                 }
                 let field_vals: Vec<Value> = (0..num_fields)
@@ -246,6 +253,21 @@ fn build_entry_prologue(
                 result_args.push(llvm_args[llvm_arg_idx]);
                 llvm_arg_idx += 1;
             }
+            ReconstructKind::Skip => {
+                // ZST arg — `convert_function_type` emitted no LLVM arg
+                // for it. Synthesize an undef of the original MIR type
+                // so the MIR entry block still receives the value it
+                // expects, without advancing `llvm_arg_idx`.
+                let llvm_ty = convert_type(ctx, mir_ty).map_err(|e| {
+                    anyhow::anyhow!("Failed to convert ZST MIR arg type: {}", e)
+                })?;
+                let undef = llvm::UndefOp::new(ctx, llvm_ty);
+                let undef_op = undef.get_operation();
+                insert_op_sequentially(undef_op, llvm_entry, last_op, ctx);
+                last_op = Some(undef_op);
+                let undef_val = undef_op.deref(ctx).get_result(0);
+                result_args.push(undef_val);
+            }
         }
     }
 
@@ -262,12 +284,22 @@ enum ReconstructKind {
     Slice,
     /// A struct type with N non-ZST fields, flattened to N separate arguments.
     Struct(usize),
-    /// A simple type that passes through without reconstruction.
+    /// A simple non-ZST type that passes through as a single LLVM arg.
     None,
+    /// A ZST arg that `convert_function_type` skipped entirely.
+    /// Reconstruction must synthesize an `undef` of the original MIR type
+    /// without consuming an LLVM arg slot — otherwise every subsequent arg
+    /// is off by one.
+    Skip,
 }
 
 /// Classify an argument type to determine how to reconstruct it from
 /// flattened LLVM entry block arguments.
+///
+/// Must stay in lockstep with `convert_function_type`'s flattening logic
+/// — any kind that the signature lowering handles specially (or skips
+/// entirely) needs a matching arm here, otherwise `build_entry_prologue`
+/// reads the wrong slots and downstream args drift off by one.
 fn classify_argument_type(ctx: &mut Context, arg_ty: Ptr<TypeObj>) -> ReconstructKind {
     let (is_slice, struct_fields) = {
         let arg_ty_ref = arg_ty.deref(ctx);
@@ -291,7 +323,18 @@ fn classify_argument_type(ctx: &mut Context, arg_ty: Ptr<TypeObj>) -> Reconstruc
             .count();
         ReconstructKind::Struct(non_zst_count)
     } else {
-        ReconstructKind::None
+        // `convert_function_type`'s `FlattenKind::None` arm calls
+        // `convert_type` and then *skips* if ZST (see types.rs:285-291).
+        // Mirror that here so `()` / ZST closures / `PhantomData` /
+        // any other top-level ZST arg doesn't consume an LLVM arg slot.
+        let is_zst = convert_type(ctx, arg_ty)
+            .map(|llvm_ty| is_zero_sized_type(ctx, llvm_ty))
+            .unwrap_or(false);
+        if is_zst {
+            ReconstructKind::Skip
+        } else {
+            ReconstructKind::None
+        }
     }
 }
 
