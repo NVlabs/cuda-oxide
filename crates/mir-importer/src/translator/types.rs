@@ -441,6 +441,26 @@ pub fn translate_type(
                 dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
             Ok(dialect_mir::types::MirPtrType::get_generic(ctx, unit_ty, false).into())
         }
+        // Trait objects (`dyn Trait`). Same threat model as FnPtr above: the
+        // only kernel-reachable source of `&dyn Trait` is the panic-formatting
+        // path — `Result::unwrap` / `.expect()` build `&dyn fmt::Debug` to
+        // hand to `core::result::unwrap_failed`, which calls into
+        // `core::panicking::panic_fmt` (SkipIntentional). The dyn value is
+        // never actually dispatched at runtime because the panic block ends
+        // in `unreachable`. Modelling the bare `dyn Trait` as an opaque
+        // unit-pointee lets `&dyn Trait` flow as a thin pointer through
+        // Unsize coercions and call args without us having to synthesize a
+        // vtable.
+        //
+        // Layout caveat: real `&dyn Trait` is a 16-byte fat pointer
+        // (data + vtable); our model is 8 bytes. Acceptable as long as the
+        // value never participates in a size-dependent op (memcpy, fixed
+        // struct offset) — which, on panic-only edges, it doesn't.
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Dynamic(_, _)) => {
+            let unit_ty: Ptr<TypeObj> =
+                dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
+            Ok(dialect_mir::types::MirPtrType::get_generic(ctx, unit_ty, false).into())
+        }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(
             _region,
             ty,
