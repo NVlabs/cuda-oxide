@@ -1,0 +1,20 @@
+[package]
+name = "mul_output_adt"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for `<T as Mul>::Output` surviving the type
+# translator when `T` is an ADT (user-defined struct), not a primitive.
+# The existing alias arm handles primitives only; non-primitive
+# arithmetic-trait outputs fall through and hit the catch-all error.
+#
+# Build with:
+#   cargo oxide build mul_output_adt
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
