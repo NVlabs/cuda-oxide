@@ -53,6 +53,22 @@ pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 /// signedness from pointer operands).
 pub const CALLEE_PTR_OFFSET_FROM_UNSIGNED: &str = placeholder!("ptr_offset_from_unsigned");
 
+/// Placeholder call used for `core::intrinsics::copy_nonoverlapping`.
+///
+/// `copy_nonoverlapping::<T>(src: *const T, dst: *mut T, count: usize)` is
+/// the user-visible memcpy that backs `<[T]>::copy_from_slice`, `Vec::copy_*`,
+/// and friends. The MIR shape is
+/// `StatementKind::Intrinsic(NonDivergingIntrinsic::CopyNonOverlapping(_))` —
+/// a *statement* with three operands, not a `Terminator::Call`. The importer
+/// reshapes it into a void `mir.call` carrying this placeholder name and
+/// `(src, dst, count)` operands.
+///
+/// Lowers to `@llvm.memcpy.p0.p0.i64(dst, src, count * sizeof(T), false)`.
+/// `T`'s size is recovered at lowering time from the `dst` operand's
+/// most-recent `MirPtrType` (same mechanism `ptr_offset_from_unsigned`
+/// uses). NVPTX legalizes the call into byte / vector ld/st sequences.
+pub const CALLEE_COPY_NONOVERLAPPING: &str = placeholder!("copy_nonoverlapping");
+
 /// Placeholder call used for `core::intrinsics::raw_eq`.
 ///
 /// `raw_eq::<T>(a: &T, b: &T) -> bool` is a compiler intrinsic that compares

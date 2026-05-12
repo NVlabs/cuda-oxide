@@ -374,6 +374,10 @@ pub fn convert(
         return convert_rust_raw_eq(ctx, rewriter, op, operands_info);
     }
 
+    if callee_name == rust_intrinsics::CALLEE_COPY_NONOVERLAPPING {
+        return convert_rust_copy_nonoverlapping(ctx, rewriter, op, operands_info);
+    }
+
     let callee_ident: pliron::identifier::Identifier = {
         let resolved_name = resolve_device_extern_symbol(&callee_name);
 
@@ -919,6 +923,145 @@ fn convert_rust_raw_eq(
     );
     rewriter.insert_operation(ctx, cmp.get_operation());
     rewriter.replace_operation(ctx, op, cmp.get_operation());
+    Ok(())
+}
+
+/// Convert a placeholder call for `core::intrinsics::copy_nonoverlapping`
+/// into a call to `@llvm.memcpy.p0.p0.i64`.
+///
+/// `copy_nonoverlapping::<T>(src: *const T, dst: *mut T, count: usize)` is
+/// the user-visible memcpy that backs `<[T]>::copy_from_slice` and friends.
+/// The importer reshapes the MIR statement into a void `mir.call` carrying
+/// `(src, dst, count)` operands; here we:
+///
+/// 1. Recover `sizeof(T)` from the `dst` operand's most-recent `MirPtrType`
+///    (same trick used by `convert_rust_raw_eq` / `_ptr_arith_intrinsic`).
+/// 2. Compute `byte_count = count * sizeof(T)` (eliding the multiply when
+///    `sizeof(T) == 1`).
+/// 3. Declare `@llvm.memcpy.p0.p0.i64` if not already declared in the module
+///    and emit a void call.
+///
+/// NVPTX legalizes the memcpy intrinsic into byte / vector ld+st sequences,
+/// honoring the `align 1` default we leave on the call (sufficient because
+/// `<[T]>::copy_from_slice` only guarantees `T`'s natural alignment, which
+/// for `[u8; N]` is 1).
+fn convert_rust_copy_nonoverlapping(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    if op.deref(ctx).get_num_results() != 0 {
+        return pliron::input_err!(
+            loc,
+            "copy_nonoverlapping call must have zero results (void)"
+        );
+    }
+    let args: Vec<Value> = op.deref(ctx).operands().collect();
+    if args.len() != 3 {
+        return pliron::input_err!(
+            loc,
+            "copy_nonoverlapping takes 3 args (src, dst, count); got {}",
+            args.len()
+        );
+    }
+    let (src_ptr, dst_ptr, count_val) = (args[0], args[1], args[2]);
+
+    // Recover `sizeof(T)` via the `dst` operand's MIR pointer type. `src`
+    // would work too; both are `*const/mut T` to the same `T`.
+    let pointee = {
+        let mir_ptr_ty = operands_info
+            .lookup_most_recent_of_type::<MirPtrType>(ctx, dst_ptr)
+            .ok_or_else(|| {
+                pliron::input_error!(
+                    loc.clone(),
+                    "copy_nonoverlapping: dst operand has no MirPtrType in the type history"
+                )
+            })?;
+        mir_ptr_ty.pointee
+    };
+    let llvm_pointee = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
+    let pointee_size = get_type_size(ctx, llvm_pointee);
+
+    // ZST: `copy_nonoverlapping::<()>` is a no-op regardless of `count`.
+    // Just delete the call.
+    if pointee_size == 0 {
+        rewriter.erase_operation(ctx, op);
+        return Ok(());
+    }
+
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+
+    // byte_count = count * sizeof(T). MIR's `count` may already be i64
+    // (usize on the device) but we don't assume — let the multiplier handle
+    // it. When sizeof(T) == 1, count is the byte count directly.
+    let byte_count = if pointee_size == 1 {
+        count_val
+    } else {
+        let width = NonZeroUsize::new(64).expect("64 is non-zero");
+        let size_apint = APInt::from_u64(pointee_size, width);
+        let size_attr = IntegerAttr::new(i64_ty.into(), size_apint);
+        let size_const = llvm::ConstantOp::new(ctx, size_attr.into());
+        rewriter.insert_operation(ctx, size_const.get_operation());
+        let size_val = size_const.get_operation().deref(ctx).get_result(0);
+
+        let zero_flags = dialect_llvm::attributes::IntegerOverflowFlagsAttr::default();
+        let mul_op =
+            llvm::MulOp::new_with_overflow_flag(ctx, count_val, size_val, zero_flags);
+        rewriter.insert_operation(ctx, mul_op.get_operation());
+        mul_op.get_operation().deref(ctx).get_result(0)
+    };
+
+    // `is_volatile = false` — `copy_nonoverlapping` is non-volatile by
+    // definition; rustc's intrinsic lowering on host targets passes the
+    // same flag.
+    let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+    let i1_width = NonZeroUsize::new(1).expect("1 is non-zero");
+    let false_apint = APInt::from_u64(0, i1_width);
+    let false_attr = IntegerAttr::new(i1_ty, false_apint);
+    let is_volatile = llvm::ConstantOp::new(ctx, false_attr.into());
+    rewriter.insert_operation(ctx, is_volatile.get_operation());
+    let is_volatile_val = is_volatile.get_operation().deref(ctx).get_result(0);
+
+    // Declare and call `@llvm.memcpy.p0.p0.i64(ptr dst, ptr src, i64 len, i1 vol)`.
+    // pliron identifiers can't contain dots, so use underscores in the
+    // symbol name — the LLVM exporter converts `llvm_*` underscores back
+    // to dots when emitting textual IR (see `dialect-llvm/src/export.rs`).
+    let memcpy_name = "llvm_memcpy_p0_p0_i64";
+    let void_ty: Ptr<TypeObj> = llvm_types::VoidType::get(ctx).into();
+    let dst_ty = dst_ptr.get_type(ctx);
+    let src_ty = src_ptr.get_type(ctx);
+    let func_ty = llvm_types::FuncType::get(
+        ctx,
+        void_ty,
+        vec![dst_ty, src_ty, i64_ty.into(), i1_ty.into()],
+        false,
+    );
+
+    let parent_block = op.deref(ctx).get_parent_block().ok_or_else(|| {
+        pliron::input_error!(loc.clone(), "copy_nonoverlapping call has no parent block")
+    })?;
+    helpers::ensure_intrinsic_declared(ctx, parent_block, memcpy_name, func_ty)
+        .map_err(|e| pliron::input_error!(loc.clone(), "Failed to declare memcpy: {e}"))?;
+
+    let sym_name: pliron::identifier::Identifier = memcpy_name
+        .try_into()
+        .map_err(|e| pliron::input_error!(loc.clone(), "Invalid intrinsic name: {:?}", e))?;
+    let memcpy_call = llvm::CallOp::new(
+        ctx,
+        CallOpCallable::Direct(sym_name),
+        func_ty,
+        vec![dst_ptr, src_ptr, byte_count, is_volatile_val],
+    );
+    rewriter.insert_operation(ctx, memcpy_call.get_operation());
+    // The original `mir.call` was emitted from a MIR statement (void), so it
+    // has 0 results — but `llvm::CallOp::new` always installs a single result
+    // (of `void` type when the callee returns void). `replace_operation`'s
+    // arity check would panic on the 0-vs-1 mismatch even though there's
+    // nothing to redirect. Just erase the original.
+    rewriter.erase_operation(ctx, op);
+
     Ok(())
 }
 

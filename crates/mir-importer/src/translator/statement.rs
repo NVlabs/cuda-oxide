@@ -862,20 +862,16 @@ pub fn translate_statement(
         // `Assume` is an optimisation hint with no observable effect; safe to skip.
         mir::StatementKind::Intrinsic(mir::NonDivergingIntrinsic::Assume(_)) => Ok(prev_op),
 
-        // Statements with observable runtime effect that are not yet lowered.
-        // Returning a hard error here converts what was previously a silent
-        // miscompile (the catch-all `Ok(prev_op)`) into a clear build failure.
         // `Intrinsic(CopyNonOverlapping)` is the user-visible memcpy emitted by
-        // `core::ptr::copy_nonoverlapping`; `SetDiscriminant` mutates an enum's
-        // discriminant. Both must be implemented before they can be accepted.
-        mir::StatementKind::Intrinsic(mir::NonDivergingIntrinsic::CopyNonOverlapping(_)) => {
-            input_err!(
-                loc,
-                TranslationErr::unsupported(
-                    "core::ptr::copy_nonoverlapping is not yet supported on the device; \
-                     until it is lowered, the call would be silently dropped from the PTX",
-                )
-            )
+        // `core::ptr::copy_nonoverlapping` (and its `<[T]>::copy_from_slice` /
+        // `ptr::write_bytes` wrappers). It surfaces as a *statement* with
+        // `(src, dst, count)` operands — not a `Terminator::Call` — so we
+        // reshape it into a void `mir.call` carrying the
+        // `CALLEE_COPY_NONOVERLAPPING` placeholder. mir-lower replaces the
+        // placeholder with `@llvm.memcpy.p0.p0.i64` and recovers `sizeof(T)`
+        // from the `dst` operand's `MirPtrType`.
+        mir::StatementKind::Intrinsic(mir::NonDivergingIntrinsic::CopyNonOverlapping(copy)) => {
+            translate_copy_nonoverlapping(ctx, body, copy, value_map, block_ptr, prev_op, loc)
         }
         mir::StatementKind::SetDiscriminant { .. } => input_err!(
             loc,
@@ -885,6 +881,89 @@ pub fn translate_statement(
             )
         ),
     }
+}
+
+/// Lower `NonDivergingIntrinsic::CopyNonOverlapping` into a void `mir.call`
+/// carrying the [`CALLEE_COPY_NONOVERLAPPING`] placeholder name.
+///
+/// The MIR statement carries three operands `(src, dst, count)`. We translate
+/// each operand, then construct a `mir.call` with zero results. mir-lower
+/// recognizes the placeholder and replaces the call with
+/// `@llvm.memcpy.p0.p0.i64(dst, src, count * sizeof(T), false)` —
+/// `sizeof(T)` recovered from the `dst` operand's `MirPtrType`.
+///
+/// [`CALLEE_COPY_NONOVERLAPPING`]: dialect_mir::rust_intrinsics::CALLEE_COPY_NONOVERLAPPING
+fn translate_copy_nonoverlapping(
+    ctx: &mut Context,
+    body: &mir::Body,
+    copy: &mir::CopyNonOverlapping,
+    value_map: &mut ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<Ptr<Operation>>> {
+    use dialect_mir::ops::MirCallOp;
+    use dialect_mir::rust_intrinsics;
+    use pliron::builtin::attributes::StringAttr;
+
+    let mut last_op = prev_op;
+
+    let (src_val, prev_after_src) = rvalue::translate_operand(
+        ctx,
+        body,
+        &copy.src,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = prev_after_src;
+
+    let (dst_val, prev_after_dst) = rvalue::translate_operand(
+        ctx,
+        body,
+        &copy.dst,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = prev_after_dst;
+
+    let (count_val, prev_after_count) = rvalue::translate_operand(
+        ctx,
+        body,
+        &copy.count,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = prev_after_count;
+
+    let call_op = Operation::new(
+        ctx,
+        MirCallOp::get_concrete_op_info(),
+        vec![], // void: zero results
+        vec![src_val, dst_val, count_val],
+        vec![],
+        0,
+    );
+    call_op.deref_mut(ctx).set_loc(loc);
+
+    let callee_attr = StringAttr::new(rust_intrinsics::CALLEE_COPY_NONOVERLAPPING.into());
+    call_op.deref_mut(ctx).attributes.0.insert(
+        pliron::identifier::Identifier::try_from("callee").unwrap(),
+        callee_attr.into(),
+    );
+
+    if let Some(prev) = last_op {
+        call_op.insert_after(ctx, prev);
+    } else {
+        call_op.insert_at_front(block_ptr, ctx);
+    }
+
+    Ok(Some(call_op))
 }
 
 /// Extract the element type and address space from a pointer that points
