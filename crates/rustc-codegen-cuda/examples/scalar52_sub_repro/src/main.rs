@@ -1,47 +1,45 @@
-//! Known-failure repro for translator structural bug: a `mir.goto`
-//! terminator landing not-last in its basic block.
+//! Regression test for an orphan-op leak from `translate_place_addr_from_slot`
+//! that produced "terminator not last" verifier failures on tuple-struct
+//! `IndexMut` writes inside loops.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Verification failed for '...::Scalar52::sub':
 //! Basic block "block2953v1" has a terminator that is not the last
 //! operation in the block
 //!   Failed operation:
-//!     mir.goto () [^block2943v1] []: <() -> ()> !0
+//!     mir.goto () [^block2943v1] []
 //! ```
 //!
 //! Surfaced from `~/vanity-miner-rs/` via
 //! `curve25519_dalek::backend::serial::u64::scalar::Scalar52::sub` at
-//! `scalar.rs:190:9: 193:10`. The shape is a borrow-chain subtraction
-//! loop:
+//! `scalar.rs:190:9: 193:10`. `Scalar52` is a tuple struct wrapping
+//! `[u64; 5]` with custom `Index` / `IndexMut` impls; inside the
+//! borrow-chain loop, `&mut difference[i] = ...` translated to a
+//! reference of a place with projections `[Field(0), Index(_i)]`
+//! against the slot.
 //!
-//! ```ignore
-//! let mut borrow: u64 = 0;
-//! for i in 0..5 {
-//!     borrow = a[i].wrapping_sub(b[i] + (borrow >> 63));
-//!     difference[i] = borrow & mask;
-//! }
-//! ```
+//! ## What was happening
 //!
-//! `a` / `b` are `&Scalar52` (== `&[u64; 5]`); `difference` is
-//! `&mut Scalar52`. The loop body has both `a[i]` reads through a
-//! reference and `difference[i] = ...` writes through a `&mut` ref —
-//! the latter goes through the `Deref → Index(local)` writer arm.
+//! `Rvalue::Ref` Case 4 calls `translate_place_addr_from_slot` to
+//! compute the in-memory address. The helper walks projections
+//! emitting ops as it goes — `Field(0)` produced a `mir.field_addr`,
+//! then it hit `Index(_i)` which the catch-all arm bailed on with
+//! `Ok(None)`. The `mir.field_addr` was already in the block.
+//! The caller saw `None` and fell back to Case 5 (materialise +
+//! `mir.ref`), which doesn't know about the orphan. Subsequent
+//! statements chained against the original `prev_op`, so the
+//! orphaned `field_addr` floated to the bottom of the block —
+//! after the loop's back-edge `mir.goto`.
 //!
-//! ## Where to look
+//! ## What landed
 //!
-//! `mir.goto` is only emitted in `translator/terminator/mod.rs`
-//! (`translate_goto`, `translate_drop`'s trivial-drop arm) and in
-//! `translator/terminator/helpers.rs` (`emit_goto`). The verifier
-//! complains the goto isn't last, which means *something later in
-//! statement translation appended an op to the same block AFTER the
-//! terminator was emitted* — the `prev_op` chaining must be off by
-//! one somewhere when the loop's back-edge or the borrow-chain
-//! iteration emits its sequence.
-//!
-//! Best approach: build this repro and dump the LLVM/MIR for the
-//! failing block to see exactly which op landed after the goto.
+//! `translate_place_addr_from_slot` now pre-validates the projection
+//! list before inserting any ops. If anything other than `Field` or
+//! `ConstantIndex { from_end: false }` is present, it returns
+//! `Ok(None)` immediately — no half-built op chain leaks into the
+//! block. The caller's fallback path stays as the only emitter.
 //!
 //! ## Build with
 //!

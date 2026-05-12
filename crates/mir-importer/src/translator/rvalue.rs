@@ -3348,6 +3348,25 @@ fn translate_place_addr_from_slot(
 ) -> TranslationResult<Option<(Value, Option<Ptr<Operation>>)>> {
     use dialect_mir::ops::{MirArrayElementAddrOp, MirConstantOp, MirFieldAddrOp};
 
+    // Pre-validate: bail with `Ok(None)` BEFORE inserting any ops if the
+    // projection list contains anything we can't lower. This function
+    // mutates the block as it walks; bailing partway through used to
+    // leave orphan ops that the caller's fallback path didn't know about,
+    // and they ended up landing after the block's eventual terminator,
+    // breaking verification (see `examples/scalar52_sub_repro/`).
+    for elem in projection {
+        match elem {
+            mir::ProjectionElem::Field(_, _) => {}
+            mir::ProjectionElem::ConstantIndex {
+                from_end: false, ..
+            } => {}
+            // Everything else (ConstantIndex with from_end=true, Deref,
+            // Index(runtime), Downcast, Subslice, ...) is handled by the
+            // caller's value-materialisation fallback, not here.
+            _ => return Ok(None),
+        }
+    }
+
     let mut current = slot;
     let mut current_prev_op = prev_op;
 
