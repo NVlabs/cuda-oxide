@@ -1,7 +1,9 @@
-//! Known-failure reproducer for `core::intrinsics::raw_eq` reaching
-//! the mir-importer without an intrinsic handler.
+//! Regression test for translating `core::intrinsics::raw_eq` through
+//! the mir-importer + mir-lower pipeline.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
+//!
+//! Before the handler landed, the build failed with:
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -40,38 +42,38 @@
 //! is only used when the operand is wider than a register-sized
 //! primitive.
 //!
-//! ## What it would take to fix
+//! ## What landed
 //!
-//! Add a `raw_eq` arm in
-//! `crates/mir-importer/src/translator/terminator/intrinsics/`,
-//! analogous to the existing `convert_rust_bit_intrinsic` /
-//! `ptr_offset_from_unsigned` handlers. `raw_eq::<T>(a, b) -> bool`
-//! has a known operand layout — both `a` and `b` are `&T` — and the
-//! body is a fixed-size byte comparison whose length is known from
-//! `T`'s size. Two reasonable lowerings:
+//! Added `raw_eq` as a placeholder-call bridge mirroring the
+//! `ptr_offset_from_unsigned` mechanism:
 //!
-//! 1. **Bitcast + scalar compare** for power-of-two sizes ≤ 16 bytes:
-//!    `bitcast &T -> *u128 / *u64 / *u32 / *u16 / *u8`, load both
-//!    sides, integer compare. Cheapest, no loop, optimal codegen for
-//!    the common case (`[u8; 16]` keys, `[u8; 32]` digests).
+//! * `crates/dialect-mir/src/rust_intrinsics.rs` — `CALLEE_RAW_EQ`
+//!   placeholder string.
+//! * `crates/mir-importer/src/translator/terminator/intrinsics/raw_eq.rs`
+//!   — recognizes `core::intrinsics::raw_eq` in MIR and emits a
+//!   placeholder `mir.call`.
+//! * `crates/mir-lower/src/convert/ops/call.rs::convert_rust_raw_eq`
+//!   — replaces the placeholder with `load iN + load iN + icmp eq`
+//!   where `N = 8 * size_of::<T>()`. `T`'s size is recovered from
+//!   the operand's most-recent `MirPtrType` (same trick as
+//!   `ptr_offset_from_unsigned`). NVPTX legalization splits the wide
+//!   integer load + compare into per-64-bit chunks automatically, so
+//!   the lowering works for any pointee size — the cryptographic
+//!   sizes (16, 20, 32, 64) that motivated this all fall out for free.
 //!
-//! 2. **Element-wise loop** for arbitrary sizes: emit a `for k in
-//!    0..size_of::<T>()` byte-by-byte loop with early exit. Slower
-//!    but unconditionally correct.
-//!
-//! Tier 1 covers the cryptographic-key sizes that motivated this
-//! reproducer (16, 20, 32, 64). Tier 2 is the principled fallback.
+//! ZST pointee (`raw_eq::<()>`) short-circuits to `i1 1` since two
+//! zero-sized values are trivially byte-equal.
 //!
 //! Originally surfaced from `~/vanity-miner-rs/`: SHA-256 / ed25519
-//! key matching uses `[u8; 16]` and `[u8; 32]` equality on the
-//! device side.
+//! key matching uses `[u8; 16]` and `[u8; 32]` equality on the device
+//! side.
 //!
 //! ## Build with
 //!
-//!     cargo oxide build array_eq_raw
+//!     cargo oxide run array_eq_raw
 //!
-//! Expected: build error from llc — undefined symbol
-//! `core::intrinsics::raw_eq::<[u8; 16]>`.
+//! Expected: kernel runs, thread 3's slot is `1` (chunk matches the
+//! target), all other slots are `0`.
 //!
 //! ## What this example is NOT
 //!
@@ -90,9 +92,10 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 pub mod kernels {
     use super::*;
 
-    /// FAILS: the `a == b` line is the trigger. `<[u8; 16] as
-    /// PartialEq>::eq` calls `core::intrinsics::raw_eq::<[u8; 16]>`,
-    /// which has no handler in the mir-importer.
+    /// Trigger: `a == b` calls `<[u8; 16] as PartialEq>::eq`, which
+    /// uses `core::intrinsics::raw_eq::<[u8; 16]>` as the bytewise-
+    /// equality fast path. Pre-fix, that intrinsic had no handler
+    /// and llc bailed with an undefined symbol.
     #[kernel]
     pub fn array_eq_raw(input: &[u8], target: &[u8], mut out: DisjointSlice<u8>) {
         let idx = thread::index_1d();

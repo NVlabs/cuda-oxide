@@ -44,6 +44,7 @@ pub mod float_math;
 pub mod indexing;
 pub mod memory;
 pub mod ptr_arith;
+pub mod raw_eq;
 pub mod saturating;
 pub mod sync;
 pub mod tcgen05;

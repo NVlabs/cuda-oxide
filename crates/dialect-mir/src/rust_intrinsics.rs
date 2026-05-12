@@ -53,6 +53,20 @@ pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 /// signedness from pointer operands).
 pub const CALLEE_PTR_OFFSET_FROM_UNSIGNED: &str = placeholder!("ptr_offset_from_unsigned");
 
+/// Placeholder call used for `core::intrinsics::raw_eq`.
+///
+/// `raw_eq::<T>(a: &T, b: &T) -> bool` is a compiler intrinsic that compares
+/// `size_of::<T>()` bytes of memory for bytewise equality. It's the fast-path
+/// `<[T; N] as PartialEq>::eq` falls into when `T: BytewiseEq`, and shows up
+/// from any direct `[u8; N] == [u8; N]` etc. comparison.
+///
+/// Lowers to `icmp eq` on a `i{8 * size_of::<T>()}` load from each pointer.
+/// `T`'s size is recovered at lowering time via the same `MirPtrType` lookup
+/// as `ptr_offset_from_unsigned` above. NVPTX legalizes wide-integer loads
+/// and compares into the correct sequence of native loads + per-chunk
+/// compares automatically.
+pub const CALLEE_RAW_EQ: &str = placeholder!("raw_eq");
+
 /// Placeholder call used for `core::intrinsics::sqrtf32`.
 pub const CALLEE_SQRT_F32: &str = placeholder!("sqrtf32");
 /// Placeholder call used for `core::intrinsics::sqrtf64`.

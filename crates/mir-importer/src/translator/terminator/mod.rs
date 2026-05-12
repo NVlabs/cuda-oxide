@@ -1548,6 +1548,21 @@ fn try_dispatch_intrinsic(
         )?));
     }
 
+    if intrinsics::raw_eq::is_raw_eq(name) {
+        return Ok(Some(intrinsics::raw_eq::emit_rust_raw_eq(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?));
+    }
+
     match name {
         // =================================================================
         // Compiler Hints

@@ -370,6 +370,10 @@ pub fn convert(
         return convert_rust_ptr_arith_intrinsic(ctx, rewriter, op, operands_info, intrinsic);
     }
 
+    if callee_name == rust_intrinsics::CALLEE_RAW_EQ {
+        return convert_rust_raw_eq(ctx, rewriter, op, operands_info);
+    }
+
     let callee_ident: pliron::identifier::Identifier = {
         let resolved_name = resolve_device_extern_symbol(&callee_name);
 
@@ -819,6 +823,102 @@ fn convert_rust_ptr_arith_intrinsic(
     };
 
     rewriter.replace_operation(ctx, op, final_op);
+    Ok(())
+}
+
+/// Convert a `mir.call` to `core::intrinsics::raw_eq` into an integer compare.
+///
+/// `raw_eq::<T>(a: *const T, b: *const T) -> bool` is the bytewise-equality
+/// primitive that `<[T; N] as PartialEq>::eq` uses as a memcmp-style fast
+/// path when `T: BytewiseEq`. We lower it as:
+///
+/// ```llvm
+/// %a_val = load iN, ptr %a, align 1
+/// %b_val = load iN, ptr %b, align 1
+/// %eq    = icmp eq iN %a_val, %b_val
+/// ```
+///
+/// where `N = 8 * size_of::<T>()`. `T`'s size is recovered from the operand's
+/// most-recent `MirPtrType`, the same mechanism used by
+/// `convert_rust_ptr_arith_intrinsic`. NVPTX legalization splits wide iN
+/// loads/compares into per-chunk native ops automatically, so this works
+/// for any `T` size — including the cryptographic sizes (16, 20, 32, 64)
+/// that motivated the handler.
+fn convert_rust_raw_eq(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let loc = op.deref(ctx).loc();
+    if op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err!(loc, "raw_eq call must have one result");
+    }
+    let args: Vec<Value> = op.deref(ctx).operands().collect();
+    if args.len() != 2 {
+        return pliron::input_err!(loc, "raw_eq takes 2 args (a, b); got {}", args.len());
+    }
+    let (a_ptr, b_ptr) = (args[0], args[1]);
+
+    // Recover the pointee type from the MIR-side type of `a`. The operand's
+    // *current* type may already be an `llvm.ptr` (the cast op for it was
+    // converted earlier); the value map still remembers the previous
+    // `MirPtrType`. Same pattern as `convert_rust_ptr_arith_intrinsic`.
+    let pointee = {
+        let mir_ptr_ty = operands_info
+            .lookup_most_recent_of_type::<MirPtrType>(ctx, a_ptr)
+            .ok_or_else(|| {
+                pliron::input_error!(
+                    loc.clone(),
+                    "raw_eq: a operand has no MirPtrType in the type history"
+                )
+            })?;
+        mir_ptr_ty.pointee
+    };
+    let llvm_pointee = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
+    let pointee_size = get_type_size(ctx, llvm_pointee);
+
+    // ZST: `raw_eq::<()>` is trivially true.
+    if pointee_size == 0 {
+        let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+        let width = NonZeroUsize::new(1).expect("1 is non-zero");
+        let one_apint = APInt::from_u64(1, width);
+        let one_attr = IntegerAttr::new(i1_ty, one_apint);
+        let const_op = llvm::ConstantOp::new(ctx, one_attr.into());
+        rewriter.insert_operation(ctx, const_op.get_operation());
+        rewriter.replace_operation(ctx, op, const_op.get_operation());
+        return Ok(());
+    }
+
+    // iN load + icmp eq. `N = 8 * size_of::<T>()`.
+    let bits: u32 = u32::try_from(pointee_size)
+        .ok()
+        .and_then(|n| n.checked_mul(8))
+        .ok_or_else(|| {
+            pliron::input_error!(
+                loc.clone(),
+                "raw_eq: pointee size {} bytes exceeds supported integer width",
+                pointee_size
+            )
+        })?;
+    let int_ty = IntegerType::get(ctx, bits, Signedness::Signless);
+
+    let a_load = llvm::LoadOp::new(ctx, a_ptr, int_ty.into());
+    rewriter.insert_operation(ctx, a_load.get_operation());
+    let a_val = a_load.get_operation().deref(ctx).get_result(0);
+
+    let b_load = llvm::LoadOp::new(ctx, b_ptr, int_ty.into());
+    rewriter.insert_operation(ctx, b_load.get_operation());
+    let b_val = b_load.get_operation().deref(ctx).get_result(0);
+
+    let cmp = llvm::ICmpOp::new(
+        ctx,
+        dialect_llvm::attributes::ICmpPredicateAttr::EQ,
+        a_val,
+        b_val,
+    );
+    rewriter.insert_operation(ctx, cmp.get_operation());
+    rewriter.replace_operation(ctx, op, cmp.get_operation());
     Ok(())
 }
 
