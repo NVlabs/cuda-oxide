@@ -36,10 +36,15 @@
 //!
 //! The same `FnPtr` used to show up when a helper inside `#[cuda_module]`
 //! was marked `#[inline]` and its body wrapped
-//! `cuda_device::thread::index_1d()`. With this fix the `#[inline]`
-//! workaround for `helper_no_inline`'s bug B now compiles cleanly.
-//! Bug B itself (non-inline helpers losing their bodies) is still
-//! open.
+//! `cuda_device::thread::index_1d()`. This fix makes that case build
+//! without a diagnostic — but the resulting PTX kernel body is just
+//! `exit;`, because rustc's optimizer collapses the inlined
+//! `unreachable!` stub up into the kernel. The `#[inline]` "workaround"
+//! for bug B doesn't fix the bug, it just makes it silent. The real
+//! fix is to mark intrinsic-wrapping helpers `#[device]`; see
+//! `helper_no_inline` and the Layer-1 collector check in
+//! `crates/rustc-codegen-cuda/src/collector.rs` for diagnosis +
+//! defensive detection.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};

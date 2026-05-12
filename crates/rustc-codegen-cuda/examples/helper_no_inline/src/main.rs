@@ -22,18 +22,51 @@
 //! relies on this exact attribute for its `device_helper` but the
 //! `#[cuda_module]` macro README doesn't surface that requirement.
 //!
-//! ## Workaround is currently functional
+//! ## The `#[inline]` "workaround" doesn't actually work
 //!
-//! The `#[inline]` workaround compiles cleanly as of the FnPtr fix
-//! (translate_type's `RigidTy::FnPtr` arm + emit_pointer_cast's
-//! `i -> {ptr}` arm). An earlier rev had a side effect where adding
-//! `#[inline]` here flipped the diagnostic to
-//! `RigidTy(FnPtr(... std::fmt::Formatter ...))` because inlining
-//! pulled `thread::index_1d()`'s formatter-bearing body into the
-//! kernel's own MIR. That secondary failure is no longer reachable.
-//! Bug B itself — the non-inline helper losing its body during
-//! codegen — is still open and is what this example continues to
-//! reproduce.
+//! We previously thought adding `#[inline]` here was a clean workaround
+//! because the build succeeded. It isn't. With `#[inline]`, this
+//! example builds successfully BUT the kernel's PTX body collapses
+//! to a single `exit;` — the kernel does nothing at runtime.
+//!
+//! ### Root cause (current understanding)
+//!
+//! `cuda_device::thread::index_1d()` is an intrinsic with a host-side
+//! `unreachable!("thread::index_1d called outside #[kernel] / #[device]
+//! — the macro rewrites real call sites; the public item is a stub")`
+//! body. The `#[cuda_module]`/`#[kernel]` macros rewrite intrinsic
+//! call sites at expansion time, but **only inside `#[kernel]` items**
+//! — non-kernel helpers in the same mod retain the stub body.
+//!
+//! - Without `#[inline]`: the kernel's call site references a function
+//!   whose body is the unreachable stub. The collector skips bodies
+//!   that are just panic calls (`is_unreachable_body` in
+//!   `collector.rs:1142`), so the symbol is declared but never
+//!   defined. LLVM verification fails with `Symbol ... not found`.
+//!   This is the loud failure this example reproduces.
+//!
+//! - With `#[inline]`: rustc inlines the stub into the kernel's body.
+//!   The optimizer sees `unreachable!` at the top of the kernel and
+//!   collapses everything after it. The kernel body reduces to
+//!   `panic_fmt("...stub message...")` and the importer lowers that
+//!   to LLVM `unreachable`, which llc renders as `exit;`. Silent
+//!   empty PTX.
+//!
+//! ### Real fix
+//!
+//! Annotate the intrinsic-wrapping helper with `#[device]`. The
+//! `#[device]` proc-macro (already exported from `cuda_device`) runs
+//! the same `inject_thread_index_scope` hook `#[kernel]` uses, so the
+//! `thread::index_1d()` call inside gets rewritten to its
+//! `__internal::*` form and the public stub body never executes.
+//!
+//! A defensive Layer-1 check in
+//! `crates/rustc-codegen-cuda/src/collector.rs` now errors out when a
+//! kernel body collapses to `panic_fmt(...)`, so the silent
+//! empty-PTX failure mode is detected at build time even when a user
+//! forgets `#[device]`. This example reproduces the loud "Symbol not
+//! found" form (no `#[inline]`); adding `#[inline]` triggers the new
+//! Layer-1 diagnostic instead.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
@@ -47,7 +80,20 @@ mod kernels {
     /// PTX module ends up with a call site to
     /// `helper_no_inline__kernels__get_thread_idx` but no body.
     ///
-    /// (To make this example compile cleanly, add `#[inline]` here.)
+    /// **WARNING:** adding `#[inline]` to this function does NOT fix the
+    /// bug. With `#[inline]`, rustc's optimizer collapses the inlined
+    /// `unreachable!` stub up into the kernel body, the resulting PTX
+    /// kernel body becomes a single `exit;`, and the build reports
+    /// success — a silent no-op kernel.
+    ///
+    /// The Layer-1 collector check in `crates/rustc-codegen-cuda/src/collector.rs`
+    /// now hard-errors when a kernel body collapses to `panic_fmt(...)`,
+    /// converting that silent failure into a build error.
+    ///
+    /// The real fix is to annotate this helper with `#[device]`. That
+    /// attribute runs the same `inject_thread_index_scope` hook
+    /// `#[kernel]` uses, which rewrites the `thread::index_1d()` call
+    /// site to its `__internal::*` form so the stub body never runs.
     pub fn get_thread_idx() -> usize {
         thread::index_1d().get()
     }

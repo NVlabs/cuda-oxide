@@ -650,6 +650,38 @@ impl<'tcx> DeviceCollector<'tcx> {
                     );
                 }
 
+                // A kernel whose body has collapsed to "just a panic_fmt" is
+                // almost always a sign that a helper it called wrapped a
+                // `cuda_device` intrinsic without being annotated `#[device]`
+                // / `#[kernel]`. The intrinsic call sites only get rewritten
+                // by those macros; in unannotated helpers the public stub
+                // body (`unreachable!("…called outside #[kernel] / #[device]…")`)
+                // remains, and `#[inline]` lets rustc's optimizer collapse
+                // the entire kernel body into `panic_fmt(...)`. cuda-oxide
+                // would then faithfully translate that to LLVM `unreachable`
+                // → PTX `exit;` — a "successful build" with a no-op kernel.
+                //
+                // Bail loudly instead.
+                if func.is_kernel && self.is_unreachable_body(def_id) {
+                    self.tcx.dcx().fatal(format!(
+                        "[rustc_codegen_cuda] kernel `{}` collapsed to a panic — \
+                         its MIR body is just `core::panicking::panic_fmt(...)`.\n\n\
+                         This usually means a helper called from the kernel wraps \
+                         a `cuda_device` intrinsic (e.g. `thread::index_1d`) \
+                         without being annotated `#[device]`. Intrinsic call sites \
+                         are only rewritten inside `#[kernel]` / `#[device]` items; \
+                         a plain `pub fn` helper keeps the public `unreachable!` \
+                         stub body, and `#[inline]` lets rustc's optimizer collapse \
+                         everything after it. The resulting PTX kernel body would \
+                         be a single `exit;`.\n\n\
+                         Fix: annotate the helper with `#[device]`, or inline the \
+                         intrinsic call directly into the `#[kernel]` body. See \
+                         `crates/rustc-codegen-cuda/examples/helper_no_inline/` \
+                         for a reduced reproducer.",
+                        func.export_name
+                    ));
+                }
+
                 // Walk all basic blocks looking for calls.
                 // Pass the caller's instance so we can substitute its args into callees.
                 for bb_data in mir.basic_blocks.iter() {
