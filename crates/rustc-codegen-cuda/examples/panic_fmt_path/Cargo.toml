@@ -1,0 +1,30 @@
+[package]
+name = "panic_fmt_path"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Reproducer for the `RigidTy(FnPtr(... std::fmt::Formatter ...))`
+# limitation in mir-importer's type translator.
+#
+# Triggered by any kernel-reachable path that goes through
+# `core::panicking::panic_fmt(format_args!(...))`:
+#   - `assert!(cond, "msg")`
+#   - `panic!("msg")`
+#   - `unreachable!("msg")`
+#   - `Option::expect("msg")` / `Result::expect("msg")`
+#   - `Option::unwrap()` / `Result::unwrap()` (lower through `panic_fmt`)
+#
+# Build with:
+#   cargo oxide run panic_fmt_path
+#
+# This example is expected to FAIL until the importer learns to handle
+# the `fn(NonNull<()>, &mut Formatter) -> Result<(), Error>` function
+# pointer type that `core::fmt::Arguments` builds vtable-style.
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
