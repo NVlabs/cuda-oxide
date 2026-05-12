@@ -1,0 +1,18 @@
+[package]
+name = "slice_const_idx_write"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Reproducer + regression test for mir-importer limitation:
+# `Deref -> ConstantIndex` 2-level projection on the LHS of an assignment.
+#
+# Build with:
+#   cargo oxide run slice_const_idx_write
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

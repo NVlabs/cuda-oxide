@@ -25,6 +25,7 @@
 //! - `s.field` → Field-address from the slot, then `mir.store`
 //! - `(*ptr).field` → Load pointer, compute field address, store
 //! - `s.outer.inner` → Chained field-address from the slot, then store
+//! - `(*slice)[k] = v` → Load slice fat ptr, extract data ptr, GEP offset, store
 
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
@@ -38,6 +39,7 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::printable::Printable;
 use pliron::r#type::Typed;
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
@@ -604,6 +606,186 @@ pub fn translate_statement(
                         );
                         store_op.deref_mut(ctx).set_loc(loc);
                         store_op.insert_after(ctx, inner_addr_op);
+
+                        Ok(Some(store_op))
+                    }
+                    (
+                        mir::ProjectionElem::Deref,
+                        mir::ProjectionElem::ConstantIndex {
+                            offset,
+                            min_length: _,
+                            from_end,
+                        },
+                    ) => {
+                        // `(*slice_local)[const_idx] = value`, where the
+                        // local is a `&mut [T]` (or `*mut [T]`). The slot
+                        // holds the slice fat pointer; we load it, take
+                        // the data-pointer half, GEP to the constant
+                        // offset, and store.
+                        if *from_end {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(
+                                    "Deref->ConstantIndex with from_end=true not yet supported for writes"
+                                )
+                            );
+                        }
+
+                        let mut current_prev = prev_op;
+                        if let Some(rvalue_op) = rvalue_op_opt {
+                            if let Some(prev) = last_inserted {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else if let Some(prev) = prev_op {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else {
+                                rvalue_op.insert_at_front(block_ptr, ctx);
+                                current_prev = Some(rvalue_op);
+                            }
+                        } else if let Some(prev) = last_inserted {
+                            current_prev = Some(prev);
+                        }
+
+                        let Some(slot) = value_map.get_slot(place.local) else {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "Local {:?} has no alloca slot for Deref->ConstantIndex write",
+                                    place.local
+                                ))
+                            );
+                        };
+
+                        // The slot's pointee must be a slice. Anything else
+                        // (e.g. a thin `*mut T` would only be a single Deref)
+                        // is a structural mismatch.
+                        let element_ty = {
+                            let slot_ty = slot.get_type(ctx);
+                            let slot_ty_ref = slot_ty.deref(ctx);
+                            let slot_ptr =
+                                slot_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>();
+                            let slice_ty = slot_ptr.and_then(|p| {
+                                p.pointee
+                                    .deref(ctx)
+                                    .downcast_ref::<dialect_mir::types::MirSliceType>()
+                                    .map(|s| s.element_type())
+                            });
+                            match slice_ty {
+                                Some(elem) => elem,
+                                None => {
+                                    let ty_dbg = format!("{}", slot_ty.disp(ctx));
+                                    return input_err!(
+                                        loc,
+                                        TranslationErr::unsupported(format!(
+                                            "Deref->ConstantIndex write expects slot of MirPtrType<MirSliceType<T>>, got {}",
+                                            ty_dbg
+                                        ))
+                                    );
+                                }
+                            }
+                        };
+
+                        // Load slot -> MirSliceType<T> value.
+                        let slice_ty: Ptr<pliron::r#type::TypeObj> =
+                            dialect_mir::types::MirSliceType::get(ctx, element_ty).into();
+                        use dialect_mir::ops::MirLoadOp;
+                        let load_op = Operation::new(
+                            ctx,
+                            MirLoadOp::get_concrete_op_info(),
+                            vec![slice_ty],
+                            vec![slot],
+                            vec![],
+                            0,
+                        );
+                        load_op.deref_mut(ctx).set_loc(loc.clone());
+                        if let Some(prev) = current_prev {
+                            load_op.insert_after(ctx, prev);
+                        } else {
+                            load_op.insert_at_front(block_ptr, ctx);
+                        }
+                        let slice_val = Value::OpResult {
+                            op: load_op,
+                            res_idx: 0,
+                        };
+
+                        // Extract data pointer (field 0 of the fat pointer).
+                        // Mutable + generic addrspace matches how the
+                        // intrinsic and rvalue paths model slice data ptrs.
+                        let data_ptr_ty: Ptr<pliron::r#type::TypeObj> =
+                            dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, true)
+                                .into();
+                        use dialect_mir::ops::MirExtractFieldOp;
+                        let extract_op = Operation::new(
+                            ctx,
+                            MirExtractFieldOp::get_concrete_op_info(),
+                            vec![data_ptr_ty],
+                            vec![slice_val],
+                            vec![],
+                            0,
+                        );
+                        extract_op.deref_mut(ctx).set_loc(loc.clone());
+                        MirExtractFieldOp::new(extract_op).set_attr_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(0),
+                        );
+                        extract_op.insert_after(ctx, load_op);
+                        let data_ptr = Value::OpResult {
+                            op: extract_op,
+                            res_idx: 0,
+                        };
+
+                        // Constant offset (i64 signless).
+                        use dialect_mir::ops::MirConstantOp;
+                        use pliron::builtin::attributes::IntegerAttr;
+                        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+                        let idx_apint =
+                            APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+                        let idx_attr = IntegerAttr::new(i64_ty, idx_apint);
+                        let const_op = Operation::new(
+                            ctx,
+                            MirConstantOp::get_concrete_op_info(),
+                            vec![i64_ty.into()],
+                            vec![],
+                            vec![],
+                            0,
+                        );
+                        const_op.deref_mut(ctx).set_loc(loc.clone());
+                        MirConstantOp::new(const_op).set_attr_value(ctx, idx_attr);
+                        const_op.insert_after(ctx, extract_op);
+                        let idx_val = Value::OpResult {
+                            op: const_op,
+                            res_idx: 0,
+                        };
+
+                        // GEP: data_ptr + offset -> element pointer.
+                        use dialect_mir::ops::MirPtrOffsetOp;
+                        let offset_op = Operation::new(
+                            ctx,
+                            MirPtrOffsetOp::get_concrete_op_info(),
+                            vec![data_ptr_ty],
+                            vec![data_ptr, idx_val],
+                            vec![],
+                            0,
+                        );
+                        offset_op.deref_mut(ctx).set_loc(loc.clone());
+                        offset_op.insert_after(ctx, const_op);
+                        let elem_ptr = Value::OpResult {
+                            op: offset_op,
+                            res_idx: 0,
+                        };
+
+                        // Store value through element pointer.
+                        let store_op = Operation::new(
+                            ctx,
+                            MirStoreOp::get_concrete_op_info(),
+                            vec![],
+                            vec![elem_ptr, result_value],
+                            vec![],
+                            0,
+                        );
+                        store_op.deref_mut(ctx).set_loc(loc);
+                        store_op.insert_after(ctx, offset_op);
 
                         Ok(Some(store_op))
                     }
