@@ -19,6 +19,7 @@
 //! | `[T; N]`            | `ArrayType`                         |
 //! | `*const T`, `*mut T`| `MirPtrType` (generic addrspace)    |
 //! | `[T]`, `&[T]`       | `MirSliceType`                      |
+//! | `str`, `&str`       | `MirSliceType<u8>`                  |
 //! | `struct S { .. }`   | `MirStructType`                     |
 //! | `enum E { .. }`     | `MirEnumType`                       |
 //! | Closures            | `MirStructType` (captures as fields)|
@@ -168,6 +169,18 @@ fn translate_pointer_like(
             // interconvertible.
             let elem = translate_type(ctx, &elem_ty)?;
             Ok(MirSliceType::get(ctx, elem).into())
+        }
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Str) => {
+            // `&str` / `*const str` is layout-identical to `&[u8]`. Same
+            // reasoning as the `Slice` arm above: pick the fat-pointer slice
+            // type so loads/stores against the alloca slot agree.
+            let u8_ty = pliron::builtin::types::IntegerType::get(
+                ctx,
+                8,
+                pliron::builtin::types::Signedness::Unsigned,
+            )
+            .into();
+            Ok(MirSliceType::get(ctx, u8_ty).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs))
             if adt_def.trimmed_name() == "SharedArray" =>
@@ -384,6 +397,23 @@ pub fn translate_type(
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(elem_ty)) => {
             let elem = translate_type(ctx, &elem_ty)?;
             Ok(MirSliceType::get(ctx, elem).into())
+        }
+        // `str` has the same runtime layout as `[u8]` (a fat pointer: data ptr
+        // + byte length). It shows up in kernels through panic-path machinery
+        // — `assert!`/`panic!`/`unwrap`/`expect` all pass a `&'static str` to
+        // `core::panicking::panic`, and slice/array bounds-check failures call
+        // `panic_bounds_check(file: &'static str, ...)`. Modelling `str` as a
+        // `MirSliceType<u8>` lets these panic-edge values flow through the
+        // dialect; the panic blocks themselves are terminated by `unreachable`
+        // so the bytes are never observed at runtime.
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Str) => {
+            let u8_ty = pliron::builtin::types::IntegerType::get(
+                ctx,
+                8,
+                pliron::builtin::types::Signedness::Unsigned,
+            )
+            .into();
+            Ok(MirSliceType::get(ctx, u8_ty).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(ty, mutability)) => {
             let is_mutable = mutability == Mutability::Mut;

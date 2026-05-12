@@ -2211,6 +2211,32 @@ pub fn translate_operand(
                 let ptr_val_result = cast_op.deref(ctx).get_result(0);
 
                 Ok((ptr_val_result, Some(cast_op)))
+            } else if const_ty_ptr
+                .deref(ctx)
+                .is::<dialect_mir::types::MirSliceType>()
+            {
+                // Slice-typed constant. In practice these are `&'static str`
+                // literals threaded into the panic helpers reachable from
+                // `assert!`/`panic!`/bounds-check fallouts: the value is a fat
+                // pointer (data ptr + length) into a static allocation, never
+                // observed at runtime because the panic block terminates in
+                // `unreachable`. Materialising the static bytes would require
+                // a slice-construction op the dialect doesn't have yet, so
+                // emit `mir.undef` for the slot — DCE removes it along with
+                // the unreachable panic block in mir-lower.
+                use dialect_mir::ops::MirUndefOp;
+                let undef = MirUndefOp::new(ctx, const_ty_ptr);
+                undef.get_operation().deref_mut(ctx).set_loc(loc);
+                if let Some(prev) = prev_op {
+                    undef.get_operation().insert_after(ctx, prev);
+                } else {
+                    undef.get_operation().insert_at_front(block_ptr, ctx);
+                }
+                let val = Value::OpResult {
+                    op: undef.get_operation(),
+                    res_idx: 0,
+                };
+                Ok((val, Some(undef.get_operation())))
             } else if const_ty_ptr.deref(ctx).is::<IntegerType>() {
                 // Integer constant
                 let (width_val, signedness) = {

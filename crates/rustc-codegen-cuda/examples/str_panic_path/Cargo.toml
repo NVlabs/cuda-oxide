@@ -1,0 +1,20 @@
+[package]
+name = "str_panic_path"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# Mark as standalone crate (not part of parent workspace)
+[workspace]
+
+# Reproduces a mir-importer limitation: `RigidTy(Str)` in `translate_type()`.
+# Any path in a kernel that types-out a `&str` (panic messages, .unwrap, the
+# implicit panic_bounds_check helper) trips the catch-all "unsupported" arm.
+#
+# Build with:
+#   cargo oxide run str_panic_path
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
