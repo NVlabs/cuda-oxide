@@ -1349,6 +1349,94 @@ fn emit_typed_swap_nonoverlapping(
     }
 }
 
+/// Lower `core::intrinsics::volatile_load<T>(src: *const T) -> T` as a
+/// plain `mir.load`.
+///
+/// `#[rustc_intrinsic]` with no MIR body. Surfaces from any
+/// `core::ptr::read_volatile` call (its public wrapper). On GPU there
+/// is no meaningful "volatile" semantics — these calls come from
+/// defensive library code where a normal load is correct.
+#[allow(clippy::too_many_arguments)]
+fn emit_volatile_load(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::MirLoadOp;
+
+    if args.len() != 1 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "volatile_load expects 1 arg (src), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (src_ptr, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let pointee_ty = {
+        let src_ty = src_ptr.get_type(ctx);
+        let src_ty_ref = src_ty.deref(ctx);
+        match src_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
+            Some(p) => p.pointee,
+            None => {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "volatile_load src arg is not a MirPtrType: {}",
+                        src_ty.disp(ctx)
+                    ))
+                );
+            }
+        }
+    };
+
+    let load_op = Operation::new(
+        ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![pointee_ty],
+        vec![src_ptr],
+        vec![],
+        0,
+    );
+    load_op.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, load_op, block_ptr, last_op);
+    let loaded = Value::OpResult {
+        op: load_op,
+        res_idx: 0,
+    };
+
+    helpers::emit_store_result_and_goto(
+        ctx,
+        destination,
+        loaded,
+        target,
+        block_ptr,
+        load_op,
+        value_map,
+        block_map,
+        loc,
+        "volatile_load call without target not supported",
+    )
+}
+
 /// Handle closure trait method calls (FnOnce::call_once, FnMut::call_mut, Fn::call).
 ///
 /// These calls pass arguments as a tuple, but the closure body expects unpacked args:
@@ -1887,6 +1975,27 @@ fn try_dispatch_intrinsic(
         "core::intrinsics::typed_swap_nonoverlapping"
         | "std::intrinsics::typed_swap_nonoverlapping" => Ok(Some(
             emit_typed_swap_nonoverlapping(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?,
+        )),
+
+        // =================================================================
+        // volatile_load<T>(src: *const T) -> T
+        // Bodyless `#[rustc_intrinsic]`. Surfaces from
+        // `core::ptr::read_volatile`. GPU has no meaningful "volatile"
+        // semantics — lower as a plain `mir.load`.
+        // =================================================================
+        "core::intrinsics::volatile_load" | "std::intrinsics::volatile_load" => Ok(Some(
+            emit_volatile_load(
                 ctx,
                 body,
                 args,
