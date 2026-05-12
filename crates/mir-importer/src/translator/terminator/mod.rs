@@ -715,26 +715,36 @@ fn translate_switch(
 
 /// Translates a MIR `Drop` terminator.
 ///
-/// rustc emits `TerminatorKind::Drop` only for places whose type has drop
-/// glue. cuda-oxide does not yet emit device-side `drop_in_place` calls,
-/// so any drop-glued type reaching codegen would have its destructor
-/// silently skipped. Rather than lower to a goto and produce a silent
-/// miscompile, we surface a hard error with the dropped place's type so
-/// the user can diagnose and restructure the kernel.
+/// rustc emits `TerminatorKind::Drop` for every owned local going out of
+/// scope, *regardless* of whether the type actually has drop glue —
+/// pre-codegen MIR doesn't pre-elide drops of `Copy` types. The optimizer
+/// (and rustc's own backend) drops them later by checking `needs_drop`.
 ///
-/// Suppressing drop glue on a Copy-shaped value (e.g. wrapping in
-/// `core::mem::ManuallyDrop`) prevents the Drop terminator from being
-/// emitted in the first place and lets the kernel compile.
+/// cuda-oxide does not yet emit device-side `drop_in_place` calls, so we
+/// have to make a structural call here:
+///
+/// * If the dropped type has no drop glue (Copy primitives, refs, raw
+///   pointers, fn pointers, and arrays / tuples of those), lower the
+///   terminator to a plain `mir.goto target`. The drop edge is a
+///   semantic no-op.
+/// * Otherwise hard-error so the user can diagnose. Silently skipping a
+///   non-trivial drop would be a miscompile.
+///
+/// The conservative check stays well clear of ADTs (`Adt`, closures with
+/// captures): an `impl Drop` somewhere in the field tree would be exactly
+/// the silent miscompile this branch is here to prevent. `rustc_public`
+/// (stable MIR) doesn't expose rustc's `needs_drop` query directly; the
+/// shape-check below is the principled fallback.
 #[allow(clippy::too_many_arguments)]
 fn translate_drop(
-    _ctx: &mut Context,
+    ctx: &mut Context,
     body: &mir::Body,
     place: &mir::Place,
-    _target: mir::BasicBlockIdx,
+    target: mir::BasicBlockIdx,
     _unwind: &mir::UnwindAction,
-    _block_ptr: Ptr<BasicBlock>,
-    _prev_op: Option<Ptr<Operation>>,
-    _block_map: &[Ptr<BasicBlock>],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     let dropped_ty = place.ty(body.locals()).map_err(|e| {
@@ -745,6 +755,29 @@ fn translate_drop(
             ))
         )
     })?;
+
+    if has_no_drop_glue(&dropped_ty) {
+        // No drop glue → drop terminator is a semantic no-op. Lower as a
+        // direct branch to `target`. Mirror the `Unreachable` arm above
+        // for the empty-block case: insert at front if `prev_op` is None.
+        let target_block = block_map[target];
+        let goto_op = Operation::new(
+            ctx,
+            dialect_mir::ops::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![target_block],
+            0,
+        );
+        goto_op.deref_mut(ctx).set_loc(loc);
+        if let Some(prev) = prev_op {
+            goto_op.insert_after(ctx, prev);
+        } else {
+            goto_op.insert_at_front(block_ptr, ctx);
+        }
+        return Ok(goto_op);
+    }
+
     input_err!(
         loc,
         TranslationErr::unsupported(format!(
@@ -755,6 +788,44 @@ fn translate_drop(
             dropped_ty.kind()
         ))
     )
+}
+
+/// Returns `true` when the type is guaranteed to have no drop glue —
+/// i.e. dropping it at runtime is a semantic no-op.
+///
+/// Conservative recursive shape-check covering:
+/// * Primitives (`Int`, `Uint`, `Float`, `Bool`, `Char`, `Never`).
+/// * Indirection (`Ref`, `RawPtr`, `FnPtr`) — drops never deallocate
+///   pointees in Rust; only owning types do.
+/// * Aggregates of trivial-drop types (`Array(T, N)`, `Tuple(Ts)`).
+///
+/// Deliberately returns `false` for `Adt` (an `impl Drop` somewhere in
+/// the type tree must keep the hard-error path), `Closure` /
+/// `CoroutineClosure` (capture types are unknown without deeper
+/// inspection), `Slice` / `Str` / `Dynamic` (unsized; shouldn't appear as
+/// owned drop places, but err on the safe side), and `Alias` (would need
+/// normalization to decide).
+fn has_no_drop_glue(ty: &rustc_public::ty::Ty) -> bool {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    match ty.kind() {
+        TyKind::RigidTy(rigid) => match rigid {
+            RigidTy::Int(_)
+            | RigidTy::Uint(_)
+            | RigidTy::Float(_)
+            | RigidTy::Bool
+            | RigidTy::Char
+            | RigidTy::Never
+            | RigidTy::Ref(_, _, _)
+            | RigidTy::RawPtr(_, _)
+            | RigidTy::FnPtr(_)
+            | RigidTy::FnDef(_, _) => true,
+            RigidTy::Array(elem_ty, _) => has_no_drop_glue(&elem_ty),
+            RigidTy::Tuple(elem_tys) => elem_tys.iter().all(has_no_drop_glue),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 // ============================================================================

@@ -1,6 +1,8 @@
-//! Known-failure reproducer for `Drop` terminators on `Copy` primitives.
+//! Regression test for `Drop` terminators on `Copy` primitives.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
+//!
+//! Before the fix, `translate_drop` rejected every drop terminator with:
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -9,9 +11,7 @@
 //!        input program.
 //!        Unsupported construct: drop of `RigidTy(Uint(Usize))` is not
 //!        supported on the device; cuda-oxide does not yet emit
-//!        device-side `drop_in_place` calls. Restructure the kernel to
-//!        use only `Copy` types, or wrap the value in
-//!        `core::mem::ManuallyDrop` to suppress drop glue.
+//!        device-side `drop_in_place` calls.
 //! ```
 //!
 //! Decoded mangled name: `<usize as core::cmp::Ord>::min`.
@@ -45,29 +45,29 @@
 //! `.clamp()`, `core::cmp::min(a, b)`, ternary-style `if cond { a }
 //! else { b }` where both branches own a primitive.
 //!
-//! ## What it would take to fix
+//! ## What landed
 //!
-//! `translate_drop` already has a `place.ty(...)` lookup that gives
-//! the dropped type. The right move is to detect "no drop glue
-//! needed" cases and lower the drop terminator to a plain `goto
-//! target` instead of erroring. The conservative set covers all of:
+//! `translate_drop` now consults a recursive `has_no_drop_glue` shape
+//! check on the dropped place's type. When the type is guaranteed to
+//! have no drop glue, the terminator lowers to a plain `mir.goto
+//! target` instead of erroring. The covered set:
 //!
 //! 1. **Primitives**: `Int`, `Uint`, `Float`, `Bool`, `Char`, `Never`.
-//! 2. **References, raw pointers, function pointers**: `Ref`, `RawPtr`,
-//!    `FnPtr` — none of these own anything that needs running.
+//! 2. **References, raw pointers, function pointers, fn-defs**: `Ref`,
+//!    `RawPtr`, `FnPtr`, `FnDef` — none own anything that needs
+//!    running.
 //! 3. **Arrays of trivial types**: `[T; N]` where `T` is itself
-//!    trivial-drop.
+//!    trivial-drop (recursive).
 //! 4. **Tuples of trivial types**: same recursion.
 //!
 //! ADTs (`Adt(_, _)`) and closures with captures stay on the
-//! hard-error path, since an `impl Drop` somewhere in the tree would
-//! be a real silent miscompile if elided. That keeps the safety
-//! guarantee `translate_drop`'s comment was written to preserve.
+//! hard-error path. An `impl Drop` somewhere in the field tree would
+//! be exactly the silent miscompile the original error message was
+//! written to prevent.
 //!
-//! A more principled fix would use rustc's `needs_drop` query, but
-//! `rustc_public` (stable MIR) doesn't expose it directly — and the
-//! recursive shape-check above is enough to unblock the common
-//! Copy-only kernels.
+//! `rustc_public` (stable MIR) doesn't expose rustc's `needs_drop`
+//! query directly — the recursive shape check is the principled
+//! fallback for this layer.
 //!
 //! Originally surfaced from `~/vanity-miner-rs/`: the SHA-256 inner
 //! loop uses `cmp::min` to clamp a digest comparison length, which
@@ -75,11 +75,10 @@
 //!
 //! ## Build with
 //!
-//!     cargo oxide build drop_copy_primitive
+//!     cargo oxide run drop_copy_primitive
 //!
-//! Expected: build error from the mir-importer's drop terminator
-//! handler: `drop of `RigidTy(Uint(Usize))` is not supported on the
-//! device`.
+//! Expected: kernel runs, each output slot equals the corresponding
+//! input.
 //!
 //! ## What this example is NOT
 //!
@@ -97,11 +96,12 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 pub mod kernels {
     use super::*;
 
-    /// FAILS: the `.min(N)` call is the trigger. `<usize as Ord>::min`
-    /// takes `self: usize` and `other: usize` by value, and rustc
-    /// emits a `Drop(_unused)` terminator on whichever the match
-    /// didn't return. The drop is semantically a no-op (`usize`'s
-    /// drop glue is empty), but `translate_drop` rejects it anyway.
+    /// Trigger: `.min(N)` on a `usize`. `<usize as Ord>::min` takes
+    /// `self: usize` and `other: usize` by value, and rustc emits a
+    /// `Drop(_unused)` terminator on whichever the match didn't
+    /// return. Pre-fix, `translate_drop` hard-errored on the drop;
+    /// post-fix, `has_no_drop_glue` recognizes `usize` and lowers the
+    /// terminator to a plain `mir.goto`.
     #[kernel]
     pub fn min_clamp(input: &[u32], mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
