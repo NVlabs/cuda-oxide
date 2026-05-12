@@ -917,6 +917,103 @@ pub fn translate_type(
                 }
             }
 
+            // Universal fallback: resolve the projection by going through
+            // the parent trait's monomorphized method signature.
+            //
+            // For an alias `<Self as Trait<…>>::AssocType`:
+            //   1. Walk `all_trait_decls()` to find the trait whose
+            //      `associated_items()` contains `alias_ty.def_id`.
+            //   2. Pick any method (`AssocKind::Fn`) on that trait.
+            //   3. Rewrap the method's `AssocDef` as a `FnDef` (the
+            //      macro generates `pub struct _(pub DefId)` for both —
+            //      structurally identical, rustc's queries are
+            //      def-id-driven).
+            //   4. `Instance::resolve(fn_def, alias_ty.args)` —
+            //      monomorphizes the method against the alias's args,
+            //      which forces rustc to look up the matching impl and
+            //      resolve `Self::AssocType`.
+            //   5. Walk the resolved instance's signature for the type.
+            //
+            // Why not just call `def_ty_with_args(alias_ty.def_id.0, args)`
+            // directly via the same wrapper trick? Because the alias's
+            // `def_id` points at the *trait-level* `Output` declaration,
+            // which has no RHS (`type Output;`). The query panics with
+            // "computing type of `…::Output`". The instance-resolve path
+            // goes through rustc's monomorphization machinery, which IS
+            // what does the impl matching.
+            //
+            // Why not patch rustc_public to add `impl CrateDefType for
+            // AssocDef {}`? It'd be a one-line upstream change but
+            // `def_ty_with_args` on a trait-level AssocDef has the same
+            // panic problem (rustc has nothing to look up). Real
+            // normalization needs `tcx.normalize_erasing_regions`, which
+            // rustc_public doesn't expose at all. The instance-resolve
+            // shortcut is the cheapest equivalent.
+            //
+            // Caveat: this assumes the trait has at least one method, and
+            // that monomorphizing any method will reveal the same
+            // resolved associated type. True for `Mul`, `Add`,
+            // `GenericSequence`, `ToEncodedPoint`, etc. — every trait
+            // we've hit walls with. Marker traits without methods
+            // (`Sized`, `Copy`) have no associated types, so they don't
+            // surface here. Exotic traits with methods that don't
+            // mention `Self::AssocType` in their signature would fall
+            // back to the structured error below.
+            //
+            // The early-arm matchers above (FnOnce::Output, Index::Output
+            // on SharedArray, arith-output, IntoIterator::IntoIter,
+            // Iterator::Item, GenericSequence::Sequence) remain in place:
+            // they handle this without the `all_trait_decls` walk, which
+            // is faster and works without `Instance::resolve`'s
+            // monomorphization preconditions.
+            {
+                use rustc_public::mir::mono::Instance;
+                use rustc_public::ty::{AssocKind, FnDef};
+
+                let target_assoc_id = alias_ty.def_id.0;
+                // Find the trait whose `associated_items()` contains our
+                // alias's def_id. AssocDef has `pub DefId` so we compare
+                // inner DefIds directly.
+                let parent_trait = rustc_public::all_trait_decls()
+                    .into_iter()
+                    .find(|trait_def| {
+                        trait_def
+                            .associated_items()
+                            .iter()
+                            .any(|item| item.def_id.0 == target_assoc_id)
+                    });
+
+                let resolved_output = parent_trait.and_then(|trait_def| {
+                    let method_assoc = trait_def
+                        .associated_items()
+                        .into_iter()
+                        .find(|item| {
+                            matches!(item.kind, AssocKind::Fn { has_self: true, .. })
+                        })?;
+                    // Rewrap the method's `AssocDef` (which holds a
+                    // `pub DefId`) as a `FnDef`. rustc's queries are
+                    // def-id-driven; the wrapper type doesn't matter to
+                    // the underlying `Instance::resolve` machinery.
+                    let method_fn_def = FnDef(method_assoc.def_id.0);
+                    let instance = Instance::resolve(method_fn_def, &alias_ty.args).ok()?;
+                    // The instance's `ty()` is a `FnDef` type with the
+                    // resolved generic args baked in. Pull the
+                    // post-normalization signature off it and read the
+                    // return type. The most common shape is
+                    // "method returns `Self::Output` directly" —
+                    // covered by reading the signature's output.
+                    let inst_ty = instance.ty();
+                    let sig = inst_ty.kind().fn_sig()?.skip_binder();
+                    let output = sig.output();
+                    // Don't return the same alias back — that'd loop.
+                    if output == *rust_ty { None } else { Some(output) }
+                });
+
+                if let Some(ty) = resolved_output {
+                    return translate_type(ctx, &ty);
+                }
+            }
+
             input_err_noloc!(TranslationErr::unsupported(format!(
                 "Alias type not yet supported: {:?}",
                 alias_ty.def_id

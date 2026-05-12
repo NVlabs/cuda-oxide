@@ -1,11 +1,8 @@
-//! Known-failure reproducer for `impl Mul<RHS> for LHS where type
-//! Output != Self`. The follow-on to `examples/mul_output_adt/` —
-//! that example's fix recurses on `self_ty` for ADT Self, which is
-//! only correct when the impl declares `Output = Self`. This
-//! reproducer exercises the *other* shape: `Output` is a different
-//! ADT than `Self`.
+//! Regression test for `impl Mul<RHS> for LHS where type Output !=
+//! Self` — the mismatched-Output trait projection shape. Sibling of
+//! `examples/mul_output_adt/`, which covers `Output = Self`.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -37,81 +34,70 @@
 //! }
 //! ```
 //!
-//! ## Why the `mul_output_adt` fix doesn't catch this
+//! ## Why the hand-rolled matchers can't catch this
 //!
-//! The fix matcher (in
-//! `crates/mir-importer/src/translator/types.rs:743`):
+//! The arith-output arm (`mul_output_adt/`'s fix) recurses on
+//! `self_ty` when Self is an ADT and `args[0] == args[1]`. That
+//! correctly handles `impl Mul for T { type Output = T; … }` but
+//! deliberately refuses `impl Mul<U> for T { type Output = V; … }`
+//! because substituting Self would be a real miscompile. Same shape
+//! every other hand-rolled matcher used to bail on:
+//! `IntoIterator::IntoIter`, `GenericSequence::Sequence`, etc. — all
+//! premised on `Output = Self`. Mismatched-Output projections
+//! genuinely need real normalization.
 //!
-//! ```rust,ignore
-//! if let TyKind::RigidTy(
-//!     RigidTy::Int(_) | RigidTy::Uint(_) | … | RigidTy::Adt(_, _),
-//! ) = self_ty.kind() {
-//!     return translate_type(ctx, self_ty);
-//! }
-//! ```
+//! ## What landed
 //!
-//! recurses on `self_ty` — but `self_ty` here is `&Lhs` (i.e.
-//! `RigidTy::Ref(_, Lhs, _)`), not `RigidTy::Adt(...)` directly, so
-//! the matcher correctly falls through. Even if it caught `Ref`,
-//! recursing would yield a pointer-to-`Lhs` type — completely wrong
-//! for the actual `Output = Rhs`. The previous fix's docstring
-//! flagged this exact case as "mismatched-Output impls are rare but
-//! exist" and chose to hard-error rather than silently miscompile.
+//! A universal fallback at the bottom of the alias arm, replacing
+//! the open-ended "every new third-party trait needs its own arm
+//! here" treadmill. Instead of pattern-matching trait names, we
+//! resolve any unhandled projection by going through
+//! `Instance::resolve` on the parent trait's method:
 //!
-//! ## What would it take to fix
+//! 1. Walk `all_trait_decls()` and find the trait whose
+//!    `associated_items()` contains the alias's `def_id`. Compare
+//!    inner `DefId`s directly — `AssocDef` wraps `pub DefId`.
+//! 2. Pick any method on that trait
+//!    (`AssocKind::Fn { has_self: true }`).
+//! 3. Rewrap the method's `AssocDef` as a `FnDef`. The macros that
+//!    generate both expose `pub DefId`; rustc's queries are
+//!    def-id-driven, so the wrapper type doesn't matter to
+//!    `Instance::resolve`.
+//! 4. `Instance::resolve(method_fn_def, alias_ty.args)`. rustc looks
+//!    up the matching impl and monomorphizes `Self::Output`.
+//! 5. Read the resolved instance's signature output type and recurse
+//!    into `translate_type`.
 //!
-//! Real trait-impl resolution. Given the alias type
-//! `<&Lhs as Mul<&Scalar>>::Output`, look up the impl whose Self
-//! type matches `&Lhs` and whose trait `Args` match `&Scalar`, then
-//! read the impl's `type Output = X;` declaration. `rustc_public`
-//! exposes `ImplDef::associated_items` and `ImplDef::trait_impl`,
-//! but no direct "find the impl that monomorphizes this projection"
-//! query — the rustc-internal equivalent is
-//! `TyCtxt::normalize_erasing_regions`, not surfaced in stable MIR.
+//! Why this works without `TyCtxt::normalize_erasing_regions`:
+//! `Instance::resolve` already triggers rustc's impl resolution
+//! machinery internally. The monomorphized instance carries
+//! post-normalization types in its signature. We fish the resolved
+//! type out of the signature rather than calling `normalize_*`
+//! directly.
 //!
-//! Building it in-tree would require enumerating impls of `Mul`,
-//! matching each impl's Self type against `self_ty` and its trait
-//! args against the projection's args, then reading the matched
-//! impl's `Output`. Doable but non-trivial — type unification is
-//! exactly what's missing from `rustc_public`'s API for cases like
-//! this.
+//! The pre-existing hand-rolled matchers (FnOnce::Output,
+//! Index::Output on SharedArray, arith-output, IntoIterator::IntoIter,
+//! Iterator::Item, GenericSequence::Sequence) remain above the
+//! fallback because they handle their cases without the
+//! `all_trait_decls` walk and without requiring `Instance::resolve`'s
+//! monomorphization preconditions — faster path for the common
+//! cases.
 //!
-//! ## User-side workaround
-//!
-//! Replace the operator with the explicit method call. Every
-//! mismatched-Output `Mul` impl in practice has a named-method
-//! sibling that takes concrete types:
-//!
-//! ```rust,ignore
-//! // before:
-//! let point = ED25519_BASEPOINT_TABLE * &scalar;
-//! // after:
-//! let point = EdwardsPoint::mul_base(&scalar);
-//! ```
-//!
-//! The named-method API is the recommended path for device code in
-//! curve25519-dalek's docs anyway (the operator desugar drags in
-//! more machinery via the trait method's blanket return type than
-//! the direct method needs).
-//!
-//! Same root cause — any `impl Mul<Rhs> for Lhs where type Output =
-//! Other` trips this. Common across crypto:
+//! Bonus catch: this same fallback should also resolve any future
+//! mismatched-Output trait reaching device codegen without needing a
+//! new matcher arm. Common cases:
 //!
 //! * `&EdwardsBasepointTable * &Scalar -> EdwardsPoint`
-//!   (curve25519-dalek).
-//! * `&ProjectivePoint * &Scalar -> ProjectivePoint`
-//!   (k256 / p256 — here Output happens to be Self,
-//!   `mul_output_adt`'s fix covers it).
+//!   (curve25519-dalek, the original trigger).
 //! * `&Matrix3 * &Vector3 -> Vector3` (nalgebra).
 //! * `Duration * u32 -> Duration` (std — primitive RHS).
 //!
 //! ## Build with
 //!
-//!     cargo oxide build mul_output_mismatched
+//!     cargo oxide run mul_output_mismatched
 //!
-//! Expected: build error from the mir-importer's type translator —
-//! `Alias type not yet supported: AliasDef(DefId { … name:
-//! "std::ops::Mul::Output" })`.
+//! Expected: kernel runs, output matches the host-side
+//! `(k.wrapping_mul(k+7)) ^ (k.wrapping_add(k+7))` per thread.
 //!
 //! ## What this example is NOT
 //!
