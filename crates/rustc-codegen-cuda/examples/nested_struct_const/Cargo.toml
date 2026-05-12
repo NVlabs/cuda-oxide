@@ -1,0 +1,21 @@
+[package]
+name = "nested_struct_const"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for struct constants whose fields are
+# themselves nested ADTs (struct/array/tuple). The current
+# `translate_struct_constant` classifier in
+# `crates/mir-importer/src/translator/rvalue.rs` only handles
+# primitive field types (integers, floats, pointers, ZSTs).
+#
+# Build with:
+#   cargo oxide build nested_struct_const
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
