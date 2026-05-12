@@ -723,18 +723,26 @@ fn translate_switch(
 /// cuda-oxide does not yet emit device-side `drop_in_place` calls, so we
 /// have to make a structural call here:
 ///
-/// * If the dropped type has no drop glue (Copy primitives, refs, raw
-///   pointers, fn pointers, and arrays / tuples of those), lower the
-///   terminator to a plain `mir.goto target`. The drop edge is a
-///   semantic no-op.
+/// * If the dropped type has no drop glue, lower the terminator to a
+///   plain `mir.goto target`. The drop edge is a semantic no-op.
 /// * Otherwise hard-error so the user can diagnose. Silently skipping a
 ///   non-trivial drop would be a miscompile.
 ///
-/// The conservative check stays well clear of ADTs (`Adt`, closures with
-/// captures): an `impl Drop` somewhere in the field tree would be exactly
-/// the silent miscompile this branch is here to prevent. `rustc_public`
-/// (stable MIR) doesn't expose rustc's `needs_drop` query directly; the
-/// shape-check below is the principled fallback.
+/// Triviality is decided by two checks in order:
+///
+/// 1. The cheap shape recursion (`has_no_drop_glue`) — covers
+///    primitives, references, raw pointers, fn pointers, and aggregates
+///    of those. Doesn't touch rustc monomorphization.
+/// 2. The authoritative empty-shim query
+///    (`Instance::resolve_drop_in_place(ty).is_empty_shim()`) — rustc
+///    has already computed which drop shims are no-ops; we ask. This
+///    catches ADTs without `impl Drop` whose fields are all
+///    trivial-drop (`crypto_bigint::Uint<U4>`, `Wrapping<T>`,
+///    `#[repr(transparent)]` newtypes over `Copy` types, every
+///    user-defined struct/enum-of-primitives, etc.).
+///
+/// Doing the shape check first avoids the monomorphization-machinery
+/// trip for the primitive cases that dominate kernel bodies.
 #[allow(clippy::too_many_arguments)]
 fn translate_drop(
     ctx: &mut Context,
@@ -756,7 +764,30 @@ fn translate_drop(
         )
     })?;
 
-    if has_no_drop_glue(&dropped_ty) {
+    // Two-stage check: the cheap shape-based recursion first
+    // (`has_no_drop_glue`), then the authoritative rustc query
+    // (`Instance::resolve_drop_in_place(ty).is_empty_shim()`).
+    //
+    // Why both: the shape check is fast and covers the common cases
+    // (primitives, references, arrays/tuples of primitives) without
+    // touching rustc's monomorphization machinery. The empty-shim
+    // query handles everything else, including ADTs that wrap
+    // primitives (`crypto_bigint::Uint<U4>`, `wrapping::Wrapping<T>`,
+    // newtype-`#[repr(transparent)]` structs over `Copy` types,
+    // any user struct/enum without an `impl Drop` whose fields are
+    // all trivial-drop) — rustc has already computed which drop
+    // shims are empty, we just have to ask.
+    //
+    // The empty-shim query may itself trigger non-trivial work
+    // (resolve_drop_in_place + the is_empty_drop_shim cx query). Doing
+    // the cheap shape check first avoids hitting that path for the
+    // primitive cases that dominate kernel bodies.
+    let is_trivial_drop = has_no_drop_glue(&dropped_ty) || {
+        use rustc_public::mir::mono::Instance;
+        Instance::resolve_drop_in_place(dropped_ty).is_empty_shim()
+    };
+
+    if is_trivial_drop {
         // No drop glue → drop terminator is a semantic no-op. Lower as a
         // direct branch to `target`. Mirror the `Unreachable` arm above
         // for the empty-block case: insert at front if `prev_op` is None.

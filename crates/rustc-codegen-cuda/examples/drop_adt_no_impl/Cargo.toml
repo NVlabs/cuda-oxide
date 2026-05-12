@@ -1,0 +1,21 @@
+[package]
+name = "drop_adt_no_impl"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Regression test for `Drop` terminator elision on ADTs that have no
+# user-defined `impl Drop` and whose fields are all trivial-drop.
+# Sibling of:
+#   * `drop_copy_primitive/` — primitive locals (`usize`, etc.).
+#   * `drop_adt_with_impl/`  — ADTs WITH `impl Drop` (still hard-errors).
+#
+# Build with:
+#   cargo oxide build drop_adt_no_impl
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
