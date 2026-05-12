@@ -1,8 +1,8 @@
-//! Known-failure repro for the 3-projection writer arm
+//! Regression test for the 3-projection writer arm
 //! `[Field, Index, Field]` — `_local.outer[i].inner = value` against
 //! a local struct whose array field holds newtype-wrapped scalars.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Compilation error: invalid input program.
@@ -16,14 +16,25 @@
 //! ret.limbs[i].0 = z.if_true(ret.limbs[i].0);
 //! ```
 //!
-//! `Uint<LIMBS>(pub [Limb; LIMBS])` and `Limb(pub Word)`. The
-//! 3-projection LHS is `[Field(0=limbs), Index(_i), Field(0=Limb.0)]`.
+//! `Uint<LIMBS>(pub [Limb; LIMBS])` and `Limb(pub Word)`; `ret` is a
+//! LOCAL Uint, so the LHS projection list is
+//! `[Field(0=limbs), Index(_i), Field(0=Limb.0)]` — no Deref.
+//! The previous `[Deref, Field, Index]` arm doesn't cover it.
 //!
-//! ## What a fix needs to do
+//! ## What landed
 //!
-//! Compose the existing 2-level building blocks: `field_addr` for the
-//! outer field, `array_element_addr` for the index, then `field_addr`
-//! again for the inner field, then `mir.store`.
+//! New 3-level-projection assignment arm in
+//! `translator/statement.rs` for `[Field, Index(local), Field]`,
+//! composing the existing primitives:
+//!
+//!   1. `field_addr(slot, outer_field_idx)` → ptr to inner array
+//!   2. translate index local
+//!   3. `array_element_addr(arr_ptr, index)` → ptr to element
+//!   4. `field_addr(elem_ptr, inner_field_idx)` → ptr to inner field
+//!   5. `mir.store(inner_ptr, value)`
+//!
+//! Hard-errors clearly if the outer field's translated type isn't
+//! `MirArrayType` (a structural mismatch, not a missing case).
 //!
 //! ## Build with
 //!
