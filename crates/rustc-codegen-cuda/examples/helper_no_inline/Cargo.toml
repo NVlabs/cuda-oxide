@@ -1,0 +1,24 @@
+[package]
+name = "helper_no_inline"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Reproducer for bug B of cuda-oxide limitation #4 (helpers inside
+# `#[cuda_module]` still silently require `#[inline]`).
+#
+# After moving a helper *inside* the `#[cuda_module]` mod (the
+# workaround for bug A), the same intrinsic-wrapping helper STILL
+# fails to codegen unless marked `#[inline]`. This catches users who
+# follow the brief's "move inside the mod" advice but stop short of
+# the second half.
+#
+# Build with:
+#   cargo oxide run helper_no_inline
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
