@@ -10,9 +10,9 @@
 //! ```
 //!
 //! The error was inside the macro's generated wrapper — not at the
-//! user's call site. `cuda-macros/src/lib.rs:2090-2102` (the
-//! non-generic arm of `generate_device_function`) expanded
-//! `#[device] pub unsafe fn foo` into roughly:
+//! user's call site. Both arms of `generate_device_function` in
+//! `crates/cuda-macros/src/lib.rs` (the non-generic arm and the
+//! generic arm) expanded `#[device] pub unsafe fn foo` into roughly:
 //!
 //! ```rust,ignore
 //! #[unsafe(no_mangle)]
@@ -27,16 +27,16 @@
 //! The wrapper line `#vis fn #fn_name #generics …` had no
 //! `#unsafety` token, so it was always safe regardless of the
 //! user's modifier. Calling the unsafe inner from the safe wrapper
-//! body then hit E0133. The generic arm at lines 2076-2087 had the
-//! same bug.
+//! body then hit E0133.
 //!
 //! ## Fix
 //!
-//! Capture `input.sig.unsafety` and splice it into both arms'
-//! wrapper signatures: `#vis #unsafety fn #fn_name …`. Rust 2024
-//! removed implicit unsafe blocks inside `unsafe fn` bodies, so
-//! the wrapper body conditionally wraps the inner call in
-//! `unsafe { … }` when the inner is unsafe.
+//! Capture `input.sig.unsafety` (the `Option<Token![unsafe]>` on the
+//! parsed signature) once at the top of `generate_device_function`
+//! and splice it into both arms' wrapper signatures:
+//! `#vis #unsafety fn #fn_name …`. Rust 2024 removed implicit unsafe
+//! blocks inside `unsafe fn` bodies, so the wrapper body conditionally
+//! wraps the inner call in `unsafe { … }` when the inner is unsafe.
 //!
 //! ## What this example tests
 //!
@@ -55,8 +55,8 @@ use cuda_device::{
 mod kernels {
     use super::*;
 
-    /// FAILS today: the macro-generated wrapper drops `unsafe` and
-    /// then calls the unsafe inner from a safe context (E0133).
+    /// Pre-fix wall: the macro-generated wrapper dropped `unsafe` and
+    /// then called the unsafe inner from a safe context (E0133).
     #[device]
     pub unsafe fn atomic_add_u32(addr: &mut u32, val: u32) -> u32 {
         unsafe { DeviceAtomicU32::from_ptr(addr as *mut u32).fetch_add(val, AtomicOrdering::Relaxed) }
