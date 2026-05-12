@@ -1,0 +1,26 @@
+[package]
+name = "closure_zero_captures_repro"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for closure-type capture mismatch:
+# `MirConstructStructOp has 2 operands but struct '...{closure#0}' has 0 fields`.
+#
+# Triggered from `~/vanity-miner-rs/` via
+#   <GenericArray<u8, U33> as GenericSequence>::generate::{closure#0}
+# — a closure defined inside a generic associated method. The parent
+# generics (T, N) shift the upvar tuple in the substs array, so
+# `substs.0[2]` no longer points to the upvars and the closure type
+# is registered with 0 captures. The aggregate construction at the
+# call site still passes the actual captures, blowing up the verifier.
+#
+# Build with:
+#   cargo oxide build closure_zero_captures_repro
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
