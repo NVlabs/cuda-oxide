@@ -1,0 +1,25 @@
+[package]
+name = "array_const_repro"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Reproducer + regression test for the mir-importer limitation:
+# `MirArrayType`-typed by-value constants don't have a dispatch arm
+# in translate_constant. Surfaces whenever a kernel indexes into a
+# `const ARR: [T; N]` defined at crate or module scope — rustc's
+# const-evaluator substitutes the whole array literal at each use
+# site rather than emitting a pointer to a static, so the indexing
+# op's first operand is the entire array as a const.
+#
+# Build with:
+#   cargo oxide build array_const_repro
+#
+# Until the fix lands: known-failure with the documented diagnostic.
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

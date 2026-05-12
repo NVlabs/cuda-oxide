@@ -1944,12 +1944,29 @@ pub fn translate_operand(
                 })
                 .unwrap_or(false);
 
+            // Check if this is an array-by-value constant (e.g. `const TABLE: [u32; N]`).
+            let is_array = const_ty_ptr
+                .deref(ctx)
+                .is::<dialect_mir::types::MirArrayType>();
+
             // Parse constant value from debug string (HACK for prototype)
             let const_str = format!("{:?}", constant.const_);
 
             // Handle pointer-to-array constants (byte strings, typed arrays like [f64; 3], etc.)
             if is_ptr_to_array {
                 return translate_ptr_to_array_constant(
+                    ctx,
+                    constant,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                );
+            }
+
+            // Handle by-value array constants (e.g. `const TABLE: [u32; 8] = [...]`).
+            if is_array {
+                return translate_array_constant(
                     ctx,
                     constant,
                     const_ty_ptr,
@@ -2426,7 +2443,7 @@ pub fn translate_operand(
                      \n  pliron type: {}\
                      \n  const repr : {}\
                      \n\
-                     \nThe type dispatch (ZST -> ptr_to_array -> struct -> enum -> float -> pointer -> integer)\n\
+                     \nThe type dispatch (ZST -> ptr_to_array -> array -> struct -> tuple -> enum -> float -> pointer -> slice -> integer)\n\
                      did not match this constant. A new handler may need to be added.",
                     rust_ty, pliron_ty_dbg, const_str
                 ))))
@@ -4140,6 +4157,269 @@ fn translate_ptr_to_array_constant(
     let ptr_val = ref_op.deref(ctx).get_result(0);
 
     Ok((ptr_val, Some(ref_op)))
+}
+
+/// Translate an array-typed by-value constant (e.g. `const TABLE: [u32; N]`)
+/// to MIR operations.
+///
+/// Unlike `translate_ptr_to_array_constant`, the constant's pliron type is
+/// itself `MirArrayType` (not `MirPtrType<MirArrayType>`), so the allocation
+/// bytes are the array contents directly — no provenance follow-through —
+/// and the result is the array value, not a pointer to it. We emit per-element
+/// typed constants and one `MirConstructArrayOp`.
+fn translate_array_constant(
+    ctx: &mut Context,
+    constant: &mir::ConstOperand,
+    array_ty: Ptr<TypeObj>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
+
+    let (element_ty_ptr, element_count) = {
+        let arr_ty_obj = array_ty.deref(ctx);
+        let arr_ty = arr_ty_obj
+            .downcast_ref::<dialect_mir::types::MirArrayType>()
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(
+                    "translate_array_constant: expected MirArrayType"
+                ))
+            })?;
+        (arr_ty.element_type(), arr_ty.size())
+    };
+
+    let element_byte_size: usize = {
+        let elem_obj = element_ty_ptr.deref(ctx);
+        if let Some(int_ty) = elem_obj.downcast_ref::<IntegerType>() {
+            (int_ty.width() as usize).div_ceil(8)
+        } else if elem_obj.is::<MirFP16Type>() {
+            2
+        } else if elem_obj.is::<FP32Type>() {
+            4
+        } else if elem_obj.is::<FP64Type>() {
+            8
+        } else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "translate_array_constant: unsupported element type: {:?}",
+                    elem_obj
+                ))
+            );
+        }
+    };
+
+    let bytes = constant_bytes(constant, "array", loc.clone())?;
+    let expected_bytes = element_count as usize * element_byte_size;
+    if bytes.len() < expected_bytes {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Array constant has {} bytes but expected {} ({} elements x {} bytes each)",
+                bytes.len(),
+                expected_bytes,
+                element_count,
+                element_byte_size
+            ))
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum ElemKind {
+        F64,
+        F32,
+        F16,
+        Int { width: u32, signedness: Signedness },
+    }
+    let elem_kind = {
+        let elem_obj = element_ty_ptr.deref(ctx);
+        if elem_obj.is::<FP64Type>() {
+            ElemKind::F64
+        } else if elem_obj.is::<FP32Type>() {
+            ElemKind::F32
+        } else if elem_obj.is::<MirFP16Type>() {
+            ElemKind::F16
+        } else if let Some(int_ty) = elem_obj.downcast_ref::<IntegerType>() {
+            ElemKind::Int {
+                width: int_ty.width(),
+                signedness: int_ty.signedness(),
+            }
+        } else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "translate_array_constant: unsupported element type: {:?}",
+                    elem_obj
+                ))
+            );
+        }
+    };
+
+    let mut element_values = Vec::with_capacity(element_count as usize);
+    let mut last_op = prev_op;
+
+    for i in 0..element_count as usize {
+        let chunk = &bytes[i * element_byte_size..(i + 1) * element_byte_size];
+
+        let (elem_val, elem_last_op) = match elem_kind {
+            ElemKind::F64 => {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(chunk);
+                let float_val = f64::from_le_bytes(buf);
+                let float_attr = pliron::builtin::attributes::FPDoubleAttr::from(float_val);
+
+                use dialect_mir::ops::MirFloatConstantOp;
+                let op = Operation::new(
+                    ctx,
+                    MirFloatConstantOp::get_concrete_op_info(),
+                    vec![element_ty_ptr],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                op.deref_mut(ctx).set_loc(loc.clone());
+                let float_op = MirFloatConstantOp::new(op);
+                float_op.set_attr_float_value_f64(ctx, float_attr);
+
+                if let Some(prev) = last_op {
+                    float_op.get_operation().insert_after(ctx, prev);
+                } else {
+                    float_op.get_operation().insert_at_front(block_ptr, ctx);
+                }
+                (
+                    Value::OpResult {
+                        op: float_op.get_operation(),
+                        res_idx: 0,
+                    },
+                    Some(float_op.get_operation()),
+                )
+            }
+            ElemKind::F32 => {
+                let mut buf = [0u8; 4];
+                buf.copy_from_slice(chunk);
+                let float_val = f32::from_le_bytes(buf);
+                let float_attr = pliron::builtin::attributes::FPSingleAttr::from(float_val);
+
+                use dialect_mir::ops::MirFloatConstantOp;
+                let op = Operation::new(
+                    ctx,
+                    MirFloatConstantOp::get_concrete_op_info(),
+                    vec![element_ty_ptr],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                op.deref_mut(ctx).set_loc(loc.clone());
+                let float_op = MirFloatConstantOp::new(op);
+                float_op.set_attr_float_value(ctx, float_attr);
+
+                if let Some(prev) = last_op {
+                    float_op.get_operation().insert_after(ctx, prev);
+                } else {
+                    float_op.get_operation().insert_at_front(block_ptr, ctx);
+                }
+                (
+                    Value::OpResult {
+                        op: float_op.get_operation(),
+                        res_idx: 0,
+                    },
+                    Some(float_op.get_operation()),
+                )
+            }
+            ElemKind::F16 => {
+                let bits = read_uint_from_bytes(chunk) as u16;
+                let float_attr = MirFP16Attr::from_bits(bits);
+
+                use dialect_mir::ops::MirFloatConstantOp;
+                let op = Operation::new(
+                    ctx,
+                    MirFloatConstantOp::get_concrete_op_info(),
+                    vec![element_ty_ptr],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                op.deref_mut(ctx).set_loc(loc.clone());
+                let float_op = MirFloatConstantOp::new(op);
+                float_op.set_attr_float_value_f16(ctx, float_attr);
+
+                if let Some(prev) = last_op {
+                    float_op.get_operation().insert_after(ctx, prev);
+                } else {
+                    float_op.get_operation().insert_at_front(block_ptr, ctx);
+                }
+                (
+                    Value::OpResult {
+                        op: float_op.get_operation(),
+                        res_idx: 0,
+                    },
+                    Some(float_op.get_operation()),
+                )
+            }
+            ElemKind::Int { width, signedness } => {
+                let val = read_uint_from_bytes(chunk);
+                let apint = APInt::from_u128(val, NonZeroUsize::new(width as usize).unwrap());
+                let int_attr = pliron::builtin::attributes::IntegerAttr::new(
+                    IntegerType::get(ctx, width, signedness),
+                    apint,
+                );
+
+                use dialect_mir::ops::MirConstantOp;
+                let op = Operation::new(
+                    ctx,
+                    MirConstantOp::get_concrete_op_info(),
+                    vec![element_ty_ptr],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                op.deref_mut(ctx).set_loc(loc.clone());
+                let const_op = MirConstantOp::new(op);
+                const_op.set_attr_value(ctx, int_attr);
+
+                if let Some(prev) = last_op {
+                    const_op.get_operation().insert_after(ctx, prev);
+                } else {
+                    const_op.get_operation().insert_at_front(block_ptr, ctx);
+                }
+                (
+                    Value::OpResult {
+                        op: const_op.get_operation(),
+                        res_idx: 0,
+                    },
+                    Some(const_op.get_operation()),
+                )
+            }
+        };
+
+        element_values.push(elem_val);
+        last_op = elem_last_op;
+    }
+
+    use dialect_mir::ops::MirConstructArrayOp;
+    let construct_op = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty],
+        element_values,
+        vec![],
+        0,
+    );
+    construct_op.deref_mut(ctx).set_loc(loc);
+
+    if let Some(prev) = last_op {
+        construct_op.insert_after(ctx, prev);
+    } else {
+        construct_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let array_val = Value::OpResult {
+        op: construct_op,
+        res_idx: 0,
+    };
+
+    Ok((array_val, Some(construct_op)))
 }
 
 /// ## How it works
