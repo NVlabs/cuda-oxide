@@ -40,6 +40,7 @@
 //! | ptr → integer                  | `ptrtoint`                        |
 //! | integer → ptr                  | `inttoptr`                        |
 //! | struct → struct (transmute)    | `alloca` + `store` + `load`       |
+//! | array ↔ scalar / array (xmute) | `alloca` + `store` + `load`       |
 //! | ptr → ptr (diff addrspace)     | `addrspacecast`                   |
 //! | otherwise                      | `bitcast`                         |
 
@@ -383,6 +384,8 @@ fn emit_pointer_cast(
 ) -> Result<Ptr<Operation>> {
     let src_is_struct = val_ty.deref(ctx).is::<dialect_llvm::types::StructType>();
     let dst_is_struct = llvm_ty.deref(ctx).is::<dialect_llvm::types::StructType>();
+    let src_is_array = val_ty.deref(ctx).is::<dialect_llvm::types::ArrayType>();
+    let dst_is_array = llvm_ty.deref(ctx).is::<dialect_llvm::types::ArrayType>();
     let src_as = val_ty
         .deref(ctx)
         .downcast_ref::<dialect_llvm::types::PointerType>()
@@ -497,6 +500,31 @@ fn emit_pointer_cast(
         } else {
             Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation())
         }
+    } else if src_is_array || dst_is_array {
+        // LLVM forbids `bitcast` involving aggregate `[N x T]` types — same
+        // constraint that ruled out struct↔scalar bitcasts above. This shape
+        // arises on `u32::from_be_bytes` / `from_le_bytes` and the SHA-256
+        // message-schedule byte-shuffle, where MIR emits
+        // `Cast(Transmute) : [i8; 4] → u32`. Go through memory: alloca the
+        // source type, store the source value, load typed as the destination.
+        // Sizes are guaranteed to match by transmute's invariants.
+        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+        let one = {
+            let apint =
+                pliron::utils::apint::APInt::from_i64(1, std::num::NonZeroUsize::new(64).unwrap());
+            let attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
+            let c = llvm::ConstantOp::new(ctx, attr.into());
+            rewriter.insert_operation(ctx, c.get_operation());
+            c.get_operation().deref(ctx).get_result(0)
+        };
+        let alloca = llvm::AllocaOp::new(ctx, val_ty, one);
+        rewriter.insert_operation(ctx, alloca.get_operation());
+        let ptr = alloca.get_operation().deref(ctx).get_result(0);
+
+        let store = llvm::StoreOp::new(ctx, val, ptr);
+        rewriter.insert_operation(ctx, store.get_operation());
+
+        Ok(llvm::LoadOp::new(ctx, ptr, llvm_ty).get_operation())
     } else {
         Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation())
     }
