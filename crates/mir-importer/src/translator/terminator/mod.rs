@@ -970,9 +970,20 @@ fn translate_call(
     //
     // MIR shows: <{closure} as FnMut<(u32,)>>::call_mut(self_ref, tuple_args)
     // But the closure body expects: fn(self_ref, unpacked_arg1, unpacked_arg2, ...)
+    //
+    // The receiver-shape check excludes calls through the `&mut F` /
+    // `&F` blanket impls (e.g. `<&mut Predicate as FnMut>::call_mut`,
+    // surfaced via `Filter::next` → `Iterator::find(&mut self.predicate)`).
+    // Those go to a trait shim whose signature keeps the args
+    // tuple-wrapped — unpacking would mismatch
+    // (`expected i1(ptr, struct{ptr}), got i1(ptr, ptr)` at PTX
+    // verification). Letting them fall through to the regular call
+    // path emits the call to the shim with the tuple intact.
     if let Some(ref name) = pattern_name
         && (name.contains("call_once") || name.contains("call_mut") || name.ends_with("::call"))
         && substs_contains("Closure")
+        && !args.is_empty()
+        && is_direct_closure_receiver(&args[0], body)
     {
         return translate_closure_call(
             ctx,
@@ -1701,6 +1712,37 @@ fn translate_closure_call(
     } else {
         Ok(call_op)
     }
+}
+
+/// Returns `true` iff `arg` is the self-receiver of a *direct* closure call:
+/// either a `Closure(..)` value (call_once by value) or `&Closure` /
+/// `&mut Closure` (call_mut / call by one level of reference).
+///
+/// Returns `false` for any deeper reference (`&&Closure`, `&mut &mut Closure`)
+/// or other receiver shapes — those are calls through a trait blanket
+/// impl such as `impl<F: FnMut> FnMut for &mut F`. Those calls must
+/// reach the trait shim with the args tuple still wrapped; the
+/// translation in [`translate_closure_call`] would unpack the tuple
+/// and produce a signature mismatch against the shim.
+///
+/// Uses `place.ty(body.locals())` so projections (e.g. `(*self).field`)
+/// resolve to the projected type rather than the raw local's type.
+fn is_direct_closure_receiver(arg: &mir::Operand, body: &mir::Body) -> bool {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let ty = match arg {
+        mir::Operand::Copy(place) | mir::Operand::Move(place) => match place.ty(body.locals()) {
+            Ok(t) => t,
+            Err(_) => return false,
+        },
+        mir::Operand::Constant(c) => c.const_.ty(),
+        _ => return false,
+    };
+    let stripped = match ty.kind() {
+        TyKind::RigidTy(RigidTy::Ref(_, inner, _)) => inner,
+        _ => ty,
+    };
+    matches!(stripped.kind(), TyKind::RigidTy(RigidTy::Closure(..)))
 }
 
 /// Extracts the closure body's mangled name from a closure operand.
