@@ -1,7 +1,8 @@
-//! Known-failure repro for the 3-projection writer arm
-//! `[Deref, Field, Index(local)]` — `(*ref).field[i] = value`.
+//! Regression test for the 3-projection writer arm
+//! `[Deref, Field, Index(local)]` — `(*ref).field[i] = value`
+//! against a tuple/named struct whose field is a fixed-size array.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Compilation error: invalid input program.
@@ -14,15 +15,25 @@
 //! the `&mut Self` ADC loop, `(*ret).limbs[i] = ...` lowers to a
 //! 3-projection assign-to-place with `[Deref, Field(0), Index(_i)]`.
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! `crates/mir-importer/src/translator/statement.rs` — the
-//! 2-level-projection match is exhaustive for assignments, but
-//! anything 3+ falls through to a "Complex places" catch-all that
-//! hard-errors. Sibling 2-level arms exist for both `(Deref, Index)`
-//! and `(Field, Index)`; the 3-level case just needs to compose
-//! them (`field_addr` after the load of the deref) on top of the
-//! existing `emit_array_element_store` helper.
+//! New 3-level-projection assignment arm in
+//! `translator/statement.rs` for `[Deref, Field, Index(local)]`,
+//! composing the existing 2-level building blocks:
+//!
+//!   1. load the slot — peels the outer pointer to get a `*Self`
+//!   2. `mir.field_addr(struct_ptr, field_idx)` → pointer to the
+//!      inner array
+//!   3. translate the index local
+//!   4. `emit_array_element_store(field_ptr, index, value, ...)`
+//!      — the same helper the single-level Index path uses
+//!
+//! Hard-errors clearly if the field's translated type isn't
+//! `MirArrayType` (a structural mismatch, not a missing case).
+//!
+//! Other 3-projection shapes (`[Deref, Field, ConstantIndex]`,
+//! `[Deref, Deref, Field]`, etc.) still fall through to the
+//! catch-all and can be added when something hits them.
 //!
 //! ## Build with
 //!

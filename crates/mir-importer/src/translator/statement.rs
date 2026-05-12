@@ -1301,6 +1301,170 @@ pub fn translate_statement(
                         ))
                     ),
                 }
+            } else if place.projection.len() == 3
+                && let mir::ProjectionElem::Deref = &place.projection[0]
+                && let mir::ProjectionElem::Field(field_idx, field_ty) = &place.projection[1]
+                && let mir::ProjectionElem::Index(index_local) = &place.projection[2]
+            {
+                // `(*ref_local).field[i] = value` — write into a fixed-size
+                // array nested in a struct/tuple field, accessed through a
+                // reference. Surfaced from crypto-bigint's `Uint::neg_mod`
+                // ADC loop, which writes `(*ret).limbs[i] = ...` against a
+                // `&mut Self` parameter.
+                //
+                // Composition of the existing 2-level building blocks:
+                //   * `(Deref, Index(local))` — load the ref, then GEP+store
+                //   * `(Field, Index(local))` — field_addr, then GEP+store
+                // Here we do all three: load the ref to get a `*Self`,
+                // `field_addr` to get a pointer to the inner array, then
+                // `emit_array_element_store` for the GEP + store.
+
+                let mut current_prev = prev_op;
+                if let Some(rvalue_op) = rvalue_op_opt {
+                    if let Some(prev) = last_inserted {
+                        rvalue_op.insert_after(ctx, prev);
+                        current_prev = Some(rvalue_op);
+                    } else if let Some(prev) = prev_op {
+                        rvalue_op.insert_after(ctx, prev);
+                        current_prev = Some(rvalue_op);
+                    } else {
+                        rvalue_op.insert_at_front(block_ptr, ctx);
+                        current_prev = Some(rvalue_op);
+                    }
+                } else if let Some(prev) = last_inserted {
+                    current_prev = Some(prev);
+                }
+
+                let Some(slot) = value_map.get_slot(place.local) else {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Local {} has no alloca slot for Deref->Field->Index(local) write",
+                            Into::<usize>::into(place.local)
+                        ))
+                    );
+                };
+
+                // Load the slot — peels the outer pointer to get a
+                // `MirPtrType<Struct>` value (the `&mut Self`).
+                let slot_pointee_ty = {
+                    let slot_ty = slot.get_type(ctx);
+                    let slot_ty_ref = slot_ty.deref(ctx);
+                    slot_ty_ref
+                        .downcast_ref::<dialect_mir::types::MirPtrType>()
+                        .map(|p| p.pointee)
+                };
+                let Some(struct_ptr_ty) = slot_pointee_ty else {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Deref->Field->Index(local) write: slot {:?} is not a MirPtrType",
+                            place.local
+                        ))
+                    );
+                };
+
+                use dialect_mir::ops::MirLoadOp;
+                let load_op = Operation::new(
+                    ctx,
+                    MirLoadOp::get_concrete_op_info(),
+                    vec![struct_ptr_ty],
+                    vec![slot],
+                    vec![],
+                    0,
+                );
+                load_op.deref_mut(ctx).set_loc(loc.clone());
+                if let Some(prev) = current_prev {
+                    load_op.insert_after(ctx, prev);
+                } else {
+                    load_op.insert_at_front(block_ptr, ctx);
+                }
+                let struct_ptr = Value::OpResult {
+                    op: load_op,
+                    res_idx: 0,
+                };
+
+                let struct_ptr_mutable = pointer_is_mutable(ctx, struct_ptr);
+                let struct_ptr_addr_space = pointer_address_space(ctx, struct_ptr);
+
+                // `field_addr(struct_ptr, field_idx)` — pointer to the
+                // field. Field type is the inner array.
+                let field_type = types::translate_type(ctx, field_ty)?;
+                let field_ptr_ty = dialect_mir::types::MirPtrType::get(
+                    ctx,
+                    field_type,
+                    struct_ptr_mutable,
+                    struct_ptr_addr_space,
+                )
+                .into();
+
+                use dialect_mir::ops::MirFieldAddrOp;
+                let field_addr_op = Operation::new(
+                    ctx,
+                    MirFieldAddrOp::get_concrete_op_info(),
+                    vec![field_ptr_ty],
+                    vec![struct_ptr],
+                    vec![],
+                    0,
+                );
+                field_addr_op.deref_mut(ctx).set_loc(loc.clone());
+                MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
+                    ctx,
+                    dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                );
+                field_addr_op.insert_after(ctx, load_op);
+                current_prev = Some(field_addr_op);
+                let field_ptr = Value::OpResult {
+                    op: field_addr_op,
+                    res_idx: 0,
+                };
+
+                // Translate the index local.
+                let index_place = mir::Place {
+                    local: *index_local,
+                    projection: vec![],
+                };
+                let (index_value, prev_op_after_index) = rvalue::translate_place(
+                    ctx,
+                    body,
+                    &index_place,
+                    value_map,
+                    block_ptr,
+                    current_prev,
+                    loc.clone(),
+                )?;
+                current_prev = prev_op_after_index;
+
+                // Pull the array element type out of the field's pointee.
+                let element_ty = {
+                    let field_type_ref = field_type.deref(ctx);
+                    match field_type_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+                        Some(arr_ty) => arr_ty.element_type(),
+                        None => {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "Deref->Field->Index(local) write expects field of \
+                                     MirArrayType, got {}",
+                                    field_type.disp(ctx)
+                                ))
+                            );
+                        }
+                    }
+                };
+
+                let store_op = emit_array_element_store(
+                    ctx,
+                    field_ptr,
+                    index_value,
+                    result_value,
+                    element_ty,
+                    struct_ptr_addr_space,
+                    block_ptr,
+                    current_prev,
+                    loc,
+                );
+                Ok(Some(store_op))
             } else {
                 input_err!(
                     loc,
