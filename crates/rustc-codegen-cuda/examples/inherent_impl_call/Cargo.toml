@@ -1,0 +1,20 @@
+[package]
+name = "inherent_impl_call"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for call-site / definition naming mismatch on
+# inherent-impl methods whose FQDN includes `<impl ...>` (which has
+# invalid PTX chars). Definition switches to mangled name; call site
+# stays on the FQDN-legalised name → unresolved symbol at link time.
+#
+# Build with:
+#   cargo oxide build inherent_impl_call
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
