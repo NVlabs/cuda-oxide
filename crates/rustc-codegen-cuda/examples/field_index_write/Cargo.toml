@@ -1,0 +1,20 @@
+[package]
+name = "field_index_write"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for `_local.field[i] = value` — the 2-projection
+# `[Field(idx), Index(_)]` writer combo. Surfaced from
+# `~/vanity-miner-rs/` via curve25519-dalek's `FieldElement51` /
+# `EdwardsPoint::add` path (field.rs:61).
+#
+# Build with:
+#   cargo oxide build field_index_write
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
