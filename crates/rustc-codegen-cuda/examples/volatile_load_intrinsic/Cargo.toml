@@ -1,0 +1,19 @@
+[package]
+name = "volatile_load_intrinsic"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for unhandled `core::intrinsics::volatile_load`.
+# The collector skips intrinsics (no body) and the translator emits a
+# regular call to a symbol nothing defines.
+#
+# Build with:
+#   cargo oxide build volatile_load_intrinsic
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
