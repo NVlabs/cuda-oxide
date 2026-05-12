@@ -1,35 +1,47 @@
-//! Known-failure repro for the type translator's missing `FnDef` arm.
+//! Regression test for the type translator's `FnDef` arm and the
+//! cast lowering's empty-struct→ptr edge case.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix walls (two)
 //!
-//! ```text
-//! Compilation error: invalid input program.
-//! Unsupported construct: Type translation not yet implemented for:
-//!   RigidTy(FnDef(FnDef(DefId { ..., name: "std::fmt::Display::fmt" }),
-//!     GenericArgs([Type(Ty { ..., kind: RigidTy(Uint(Usize)) })])))
-//! ```
+//! 1. Type translator bailed on `RigidTy::FnDef`:
+//!
+//!    ```text
+//!    Unsupported construct: Type translation not yet implemented for:
+//!      RigidTy(FnDef(FnDef(DefId { ..., name: "std::fmt::Display::fmt" }),
+//!        GenericArgs([Type(Ty { ..., kind: RigidTy(Uint(Usize)) })])))
+//!    ```
+//!
+//! 2. After modelling `FnDef` as the empty tuple, the
+//!    `PointerCoercionReifyFnPointer` cast (`FnDef → fn(...)`) hit the
+//!    cast lowering's `struct → ptr` arm, which always emits
+//!    `extractvalue field 0` — invalid on an empty struct:
+//!
+//!    ```text
+//!    pointer cast ExtractValueOp:
+//!      Invalid indices on insert/extract value instruction
+//!    ```
 //!
 //! Surfaced from `~/vanity-miner-rs/` via
 //! `curve25519_dalek::scalar::read_le_u64_into`, whose body calls
 //! `assert!(src.len() == 8 * dst.len())`. The assert's panic edge
-//! materializes `Display::fmt::<usize>` as a `FnDef` value to embed
-//! in `core::fmt::Arguments`.
+//! materializes `Display::fmt::<usize>` as a `FnDef` value and
+//! coerces it to a function pointer for embedding in
+//! `core::fmt::Arguments`.
 //!
-//! `RigidTy::FnDef` is a per-function-definition ZST. Rustc carries
-//! it everywhere a "specific function" is named (vs. erased
-//! function-pointer / closure types). Layout is zero bytes; semantically
-//! it's just a marker that uniquely identifies the function and can
-//! coerce to a `fn(...)` pointer. The type translator has arms for
-//! `FnPtr` and `Dynamic` (both modelled as opaque generic pointers
-//! since they only appear on panic edges) but no arm for `FnDef`.
+//! ## What landed
 //!
-//! ## What a fix needs to do
-//!
-//! Add a `RigidTy::FnDef` arm that returns the empty tuple type
-//! `MirTupleType::get(ctx, vec![])` — the same shape `is_rust_type_zst`
-//! already treats as zero-sized. That lets `FnDef` flow through stores,
-//! loads, and aggregate fields the way other ZSTs (`PhantomData`, unit
-//! structs) do.
+//! * `translator/types.rs`: new `RigidTy::FnDef` arm returns the
+//!   empty tuple — same as `is_rust_type_zst`'s view, so `FnDef`
+//!   values flow through stores / loads / aggregate fields the way
+//!   other ZSTs (`PhantomData`, unit structs) already do.
+//! * `mir-lower/.../cast.rs`: the `struct → ptr` arm of
+//!   `emit_pointer_cast` checks for an empty source struct first
+//!   and emits `undef` of the destination pointer type instead of
+//!   trying to extract a non-existent field 0. Same model as the
+//!   existing `FnPtr` translation: kernel-reachable FnPtr values
+//!   only appear on panic edges that terminate in `unreachable`,
+//!   so an undef pointer is correct — the value is never observed
+//!   at runtime.
 //!
 //! ## Build with
 //!

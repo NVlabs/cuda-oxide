@@ -398,6 +398,19 @@ fn emit_pointer_cast(
     let src_is_ptr = src_as.is_some();
 
     if src_is_struct && dst_is_ptr {
+        // ZST source struct (e.g. `FnDef → FnPtr` coercion, where the
+        // `FnDef` is modelled as the empty tuple) has no field 0 to
+        // extract. Emit `undef` of the destination pointer type — the
+        // only kernel-reachable source of FnDef→FnPtr is the panic-fmt
+        // path (`format_args!`'s embedded `Display::fmt::<T>` slots),
+        // which terminates in `unreachable` and is never observed.
+        let src_is_empty_struct = val_ty
+            .deref(ctx)
+            .downcast_ref::<dialect_llvm::types::StructType>()
+            .is_some_and(|s| s.num_fields() == 0);
+        if src_is_empty_struct {
+            return Ok(llvm::UndefOp::new(ctx, llvm_ty).get_operation());
+        }
         Ok(llvm::ExtractValueOp::new(ctx, val, vec![0])
             .map_err(|e| pliron::input_error_noloc!("pointer cast ExtractValueOp: {e}"))?
             .get_operation())

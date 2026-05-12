@@ -444,6 +444,21 @@ pub fn translate_type(
                 dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
             Ok(dialect_mir::types::MirPtrType::get_generic(ctx, unit_ty, false).into())
         }
+        // `FnDef(<def_id>, <substs>)` — the per-function-definition ZST that
+        // rustc materializes wherever a *specific* function is named (vs. an
+        // erased fn pointer / closure). The most common kernel-reachable
+        // source is `format_args!("{}", value)`, which embeds
+        // `<T as Display>::fmt` as a `FnDef` value inside
+        // `core::fmt::Arguments` so panic-fmt can dispatch the right impl.
+        //
+        // Layout is genuinely zero bytes — a `FnDef` is a unit marker that
+        // can coerce to a `fn(...)` pointer. Modelling it as the empty tuple
+        // (`MirTupleType` with no fields) matches `is_rust_type_zst`'s view
+        // of ZSTs and lets it flow through stores, loads, and aggregate
+        // fields the way `PhantomData` and unit structs already do.
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(_, _)) => {
+            Ok(dialect_mir::types::MirTupleType::get(ctx, vec![]).into())
+        }
         // Trait objects (`dyn Trait`). Same threat model as FnPtr above: the
         // only kernel-reachable source of `&dyn Trait` is the panic-formatting
         // path — `Result::unwrap` / `.expect()` build `&dyn fmt::Debug` to
