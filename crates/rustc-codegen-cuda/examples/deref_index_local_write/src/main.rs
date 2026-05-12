@@ -1,9 +1,10 @@
-//! Known-failure reproducer for `(*place)[local_idx] = value` writes
-//! — 2-level MIR projection `Deref -> Index(local)` — to a `&mut [T; N]`
-//! (array reference). Sibling of the existing
-//! `Deref -> ConstantIndex` handler, but with a runtime index.
+//! Regression test for `(*place)[local_idx] = value` writes —
+//! 2-level MIR projection `Deref -> Index(local)` — through a
+//! `&mut [T; N]` array reference (and the slice equivalent).
+//! Sibling of the existing `Deref -> ConstantIndex` handler, but
+//! with a runtime index.
 //!
-//! ## Expected failure
+//! ## Pre-fix wall
 //!
 //! ```text
 //! error: [rustc_codegen_cuda] Device codegen failed: PTX generation
@@ -56,6 +57,27 @@
 //!    `&mut [u8; 64]` for the output buffer, and that's the actual
 //!    in-the-wild trigger.
 //!
+//! ## What landed
+//!
+//! Added the `Deref -> Index(local)` arm in
+//! `crates/mir-importer/src/translator/statement.rs`'s 2-level
+//! projection switch. The new arm classifies the slot's inner type
+//! once:
+//!
+//! * `&mut [T; N]` → slot is `MirPtrType<MirPtrType<MirArrayType<T, N>>>`.
+//!   Load to a thin pointer to the array, then `mir.array_element_addr`
+//!   + `mir.store` — the same shape the single-level `arr[i] = value`
+//!   path uses.
+//! * `&mut [T]` → slot is `MirPtrType<MirSliceType<T>>`. Load the fat
+//!   slice value, extract the data pointer, `mir.ptr_offset`, store —
+//!   identical to the existing `Deref -> ConstantIndex` arm but with
+//!   the offset coming from the translated index local instead of a
+//!   freshly emitted `MirConstantOp`.
+//!
+//! Anything else (e.g. a thin `*mut T` with an Index projection — a
+//! structural mismatch that shouldn't occur in well-formed MIR) hard-
+//! errors with the actual slot type in the diagnostic.
+//!
 //! Originally surfaced from `~/vanity-miner-rs/`:
 //! `logic::base58_encode_32` at `logic/src/base58.rs:80`:
 //!
@@ -72,11 +94,10 @@
 //!
 //! ## Build with
 //!
-//!     cargo oxide build deref_index_local_write
+//!     cargo oxide run deref_index_local_write
 //!
-//! Expected: build error from the mir-importer's statement translator —
-//! `2-level projection Deref -> Index(_) not yet implemented for
-//! assignment`.
+//! Expected: kernel runs, each output slot equals the corresponding
+//! `(i & 0xff)`.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
