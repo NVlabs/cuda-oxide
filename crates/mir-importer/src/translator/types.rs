@@ -738,6 +738,87 @@ pub fn translate_type(
                 }
             }
 
+            // For `IntoIterator::IntoIter`. Falls out of `Iterator::zip`'s
+            // return type `Zip<Self, U::IntoIter>` after monomorphization,
+            // and any `for x in iter` desugar that names the IntoIter type.
+            //
+            // The blanket `impl<I: Iterator> IntoIterator for I` gives
+            // `IntoIter = Self` for every type that already implements
+            // `Iterator` — which is everything you reach through
+            // `core::iter` / `core::slice::iter` adapters (ChunksExact,
+            // IterMut, Iter, Range, Map, Filter, Take, Skip, Enumerate,
+            // Zip, …). Recursing on `self_ty` is therefore correct for
+            // every adapter that survives device codegen.
+            //
+            // Pathological case (`.zip(some_vec)`) would resolve to a
+            // different IntoIter type, but `Vec` isn't device-allocatable
+            // so it fails downstream regardless. If a future workload
+            // genuinely needs non-`Iterator` `IntoIterator` impls we'd
+            // need real type normalization (drop down to
+            // `rustc_middle::ty::TyCtxt::normalize_erasing_regions` —
+            // requires threading `TyCtxt` through `translate_type`).
+            //
+            // See `examples/iter_zip_chunks_exact/` for the regression
+            // test.
+            if def_name.contains("IntoIterator::IntoIter") {
+                let args = &alias_ty.args.0;
+                if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first()
+                    && matches!(
+                        self_ty.kind(),
+                        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_, _))
+                    )
+                {
+                    return translate_type(ctx, self_ty);
+                }
+            }
+
+            // For `Iterator::Item`. Unlike the other associated types
+            // handled above, `Item` is *not* `Self`: each iterator
+            // adapter has its own element type that depends on the
+            // adapter's substs. Hand-rolled per adapter; `Vec`-style
+            // iterators are excluded because `Vec` isn't device-
+            // allocatable and never reaches translation.
+            if def_name.contains("Iterator::Item") && !def_name.contains("IntoIterator") {
+                let args = &alias_ty.args.0;
+                if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first()
+                    && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(
+                        adt_def,
+                        substs,
+                    )) = self_ty.kind()
+                {
+                    use rustc_public::ty::{
+                        GenericArgKind, Region, RegionKind, RigidTy, Ty as PublicTy,
+                    };
+                    let name = adt_def.trimmed_name();
+                    let elem_ty = substs.0.iter().find_map(|arg| match arg {
+                        GenericArgKind::Type(t) => Some(*t),
+                        _ => None,
+                    });
+                    if let Some(t) = elem_ty {
+                        let erased = Region { kind: RegionKind::ReErased };
+                        let item_ty = match name.as_str() {
+                            "Iter" => Some(PublicTy::new_ref(erased, t, Mutability::Not)),
+                            "IterMut" => Some(PublicTy::new_ref(erased, t, Mutability::Mut)),
+                            "ChunksExact" | "Chunks" | "Windows" => Some(PublicTy::new_ref(
+                                erased,
+                                PublicTy::from_rigid_kind(RigidTy::Slice(t)),
+                                Mutability::Not,
+                            )),
+                            "ChunksExactMut" | "ChunksMut" => Some(PublicTy::new_ref(
+                                erased,
+                                PublicTy::from_rigid_kind(RigidTy::Slice(t)),
+                                Mutability::Mut,
+                            )),
+                            "Range" | "RangeInclusive" | "RangeFrom" => Some(t),
+                            _ => None,
+                        };
+                        if let Some(ty) = item_ty {
+                            return translate_type(ctx, &ty);
+                        }
+                    }
+                }
+            }
+
             input_err_noloc!(TranslationErr::unsupported(format!(
                 "Alias type not yet supported: {:?}",
                 alias_ty.def_id

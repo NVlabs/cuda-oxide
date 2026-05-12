@@ -365,7 +365,17 @@ pub fn convert(
     };
 
     let result_type = if let Some(mir_ty) = mir_result_ty_ptr {
-        let is_unit = mir_ty.deref(ctx).is::<MirTupleType>();
+        // Unit means the *empty* tuple `()`, not "any tuple". A 2-tuple
+        // result like `(&[u8], &[u8])` (e.g. `split_at_unchecked`) is a
+        // real value whose use sites read `.0` / `.1`; treating it as
+        // void here would set up `llvm.call` with no result, then the
+        // erase-vs-replace branch below would erase the MIR op while
+        // its result is still in use → pliron asserts
+        // "Operation with use(s) being erased".
+        let is_unit = mir_ty
+            .deref(ctx)
+            .downcast_ref::<MirTupleType>()
+            .is_some_and(|tt| tt.get_types().is_empty());
         if is_unit {
             llvm_types::VoidType::get(ctx).into()
         } else {
