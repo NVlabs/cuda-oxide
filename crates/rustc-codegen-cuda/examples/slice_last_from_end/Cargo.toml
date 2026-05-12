@@ -1,0 +1,19 @@
+[package]
+name = "slice_last_from_end"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for `ProjectionElem::ConstantIndex { from_end: true, .. }`
+# on a slice — the MIR shape produced by `slice::last()` /
+# `if let [.., last] = self`.
+#
+# Build with:
+#   cargo oxide build slice_last_from_end
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
