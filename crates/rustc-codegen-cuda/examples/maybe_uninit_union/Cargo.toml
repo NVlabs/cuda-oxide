@@ -1,0 +1,23 @@
+[package]
+name = "maybe_uninit_union"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for `Aggregate(Adt(union, ...))` — specifically
+# `core::mem::MaybeUninit::uninit()` at maybe_uninit.rs:430:9, which
+# constructs the `MaybeUninit { uninit: () }` union aggregate.
+#
+# Triggered from `~/vanity-miner-rs/` via
+#   <GenericArray<u8, U33> as GenericSequence>::generate
+# which materializes a `[MaybeUninit<u8>; 33]` then writes each slot.
+#
+# Build with:
+#   cargo oxide build maybe_uninit_union
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
