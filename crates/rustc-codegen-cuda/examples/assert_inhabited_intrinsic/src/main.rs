@@ -1,27 +1,25 @@
-//! Known-failure repro for unhandled
-//! `core::intrinsics::assert_inhabited`.
+//! Regression test for `core::intrinsics::assert_inhabited`
+//! lowering as a no-op.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Symbol _RINvNtCsbBDxv2Oq2Kj_4core10intrinsics16assert_inhabitedI...E not found
 //! ```
 //!
 //! Surfaced from `~/vanity-miner-rs/` via
-//! `MaybeUninit::<GenericArray<u8, U33>>::assume_init()`. The intrinsic
-//! is a `#[rustc_intrinsic]` with no MIR body — the collector skips
-//! bodyless intrinsics, the translator emits a regular call to a
-//! symbol nothing defines.
+//! `MaybeUninit::<GenericArray<u8, U33>>::assume_init()`. The
+//! intrinsic is a `#[rustc_intrinsic]` with no MIR body — collector
+//! skipped it, translator emitted a regular call to a symbol nothing
+//! defined.
 //!
-//! At runtime `assert_inhabited::<T>()` is a no-op: the check that
-//! `T` has at least one valid value (i.e., isn't `!` or an empty
-//! enum) is purely a compile-time guarantee. On the device side we
-//! can drop it like `cold_path`.
+//! ## What landed
 //!
-//! ## What a fix needs to do
-//!
-//! Route the intrinsic through `helpers::emit_unit_noop_intrinsic`
-//! in `try_dispatch_intrinsic`, mirroring the `cold_path` arm.
+//! `try_dispatch_intrinsic`'s `cold_path` arm now also matches
+//! `core::intrinsics::assert_inhabited` (and `std::intrinsics::...`).
+//! Both route through `helpers::emit_unit_noop_intrinsic` — runtime
+//! no-op (the check that T isn't `!` / empty enum is purely
+//! compile-time).
 //!
 //! ## Build with
 //!

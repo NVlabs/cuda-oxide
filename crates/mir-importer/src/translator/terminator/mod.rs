@@ -1857,7 +1857,14 @@ fn try_dispatch_intrinsic(
         // Compiler Hints
         // These intrinsics only guide optimization and do not affect semantics.
         // =================================================================
-        "core::intrinsics::cold_path" | "std::intrinsics::cold_path" => {
+        "core::intrinsics::cold_path"
+        | "std::intrinsics::cold_path"
+        // `assert_inhabited<T>()` — `#[rustc_intrinsic]` runtime
+        // no-op (the check that T isn't `!` / an empty enum is
+        // purely compile-time). Surfaces from
+        // `MaybeUninit::assume_init` on non-trivial generic T.
+        | "core::intrinsics::assert_inhabited"
+        | "std::intrinsics::assert_inhabited" => {
             Ok(Some(helpers::emit_unit_noop_intrinsic(
                 ctx,
                 destination,
