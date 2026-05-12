@@ -1,0 +1,22 @@
+[package]
+name = "scalar52_sub_repro"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for "Basic block has a terminator that is not the
+# last operation in the block" — surfaced from
+# `curve25519_dalek::backend::serial::u64::scalar::Scalar52::sub` at
+# `scalar.rs:190:9: 193:10`. Mirrors the structural shape: borrow-chain
+# subtraction loop over fixed-size arrays, with both `a[i]` reads and
+# `difference[i]` writes inside the loop body.
+#
+# Build with:
+#   cargo oxide build scalar52_sub_repro
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
