@@ -1,10 +1,28 @@
 # Examples
 
-Each crate in this directory is a regression test for one specific codegen
-bug. The `//!` doc block at the top of `src/main.rs` names the pre-fix
-wall, the fix that landed (or notes "no fix yet"), and what triggers the
-case. Anything that passes today is expected to keep passing — the crate
-list doubles as a contract.
+This directory holds **two different kinds of crates** that share a build
+harness and a directory but serve different purposes. Both kinds matter
+for regression coverage, but a future agent looking around shouldn't
+assume one shape is "the right shape."
+
+**1. Regression tests for codegen bugs** (the 43 crates added on the
+`reproduce-errors` branch — 37 passing, 6 documented known-failures).
+Each one has a `//!` doc block at the top of `src/main.rs` naming the
+pre-fix wall, the fix that landed (or "no fix yet — documents an
+unsupported construct"), and what triggers the case. The doc block is
+load-bearing: it's the contract for what the example proves.
+
+**2. Demos and feature showcases** (the 49 crates that existed on `main`
+before this branch). These exercise specific cuda-oxide features
+(intrinsics, dialect ops, launch APIs, subsystem demos like wgmma/tcgen05/
+tma) rather than locking down a specific bug. Most don't carry a
+`//!`-block in the regression-test format, and that's fine — they're
+working sample code, not regression-test contracts. They still build and
+break the same way the regression tests do, so they participate in the
+codegen-regression sweep.
+
+The contract that holds for both: **anything passing today must keep
+passing.** The sweep loop below treats all 92 crates uniformly.
 
 ## Building
 
@@ -148,3 +166,80 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * str_panic_path
 * typed_swap_intrinsic
 * volatile_load_intrinsic
+
+## 49 pre-existing demos and feature showcases
+
+These crates pre-date the `reproduce-errors` branch and were not
+written as regression tests. Most don't have a `//!` block in the
+"pre-fix wall / what landed" format — they're demos of specific
+cuda-oxide features (warp/block/cluster primitives, shared memory,
+tensor cores, dialect ops, host APIs). All 49 build today; if any
+of them break, a recent change has regressed previously-shipping
+functionality.
+
+A future agent extending this directory should:
+
+- **Treat them as covered by the regression sweep** (they're part of
+  the 92/92 expected pass-rate when we don't count the 6 documented
+  known-failures, i.e. 86/92). Don't delete or move them just because
+  they don't match the regression-test docstring convention.
+- **Not retrofit them into the `//!` format** unless you're also
+  reframing one as a regression test for a specific bug it locks
+  down. They're working samples; turning a sample into a contract is
+  a separate intentional act.
+- **Read them before writing new regression tests in adjacent areas.**
+  If you're testing a warp intrinsic, look at `warp_reduce` first;
+  for tcgen05, look at `tcgen05_matmul`; etc. They show the canonical
+  pattern.
+
+Alphabetical:
+
+* abi_hmm
+* array_index
+* async_mlp
+* async_vecadd
+* atomics
+* barrier
+* cast_tests
+* clc
+* cluster
+* compiler_features
+* coop_groups_demo
+* cpp_consumes_rust_device
+* cross_crate_kernel
+* cuda_module_contract
+* debug
+* device_closures
+* device_ffi_test
+* device_global
+* dynamic_smem
+* error
+* f16_stress
+* future_apis
+* gemm
+* gemm_sol
+* generic
+* hashmap
+* hashmap_v2
+* hashmap_v3
+* hello_constant
+* helper_fn
+* host_closure
+* index2d_const
+* manual_launch_generic
+* mathdx_ffi_test
+* mcast_barrier_test
+* numeric_stress
+* primitive_stress
+* printf
+* rustlantis-smoke
+* sharedmem
+* standalone_device_fn
+* tcgen05
+* tcgen05_matmul
+* tiled_gemm
+* tma_copy
+* tma_multicast
+* vecadd
+* warp_reduce
+* wgmma
