@@ -52,7 +52,7 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
     // 2. Local repo
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
-        let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+        let so_path = codegen_target_dir(&codegen_crate).join("debug/librustc_codegen_cuda.so");
         build_backend_from_source(&codegen_crate);
         return so_path;
     }
@@ -91,12 +91,31 @@ pub fn build_backend_from_source(codegen_crate: &Path) {
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+    let so_path = codegen_target_dir(codegen_crate).join("debug/librustc_codegen_cuda.so");
     if so_path.exists() {
         println!("✓ Backend built: {}", so_path.display());
     } else {
         eprintln!("Warning: Expected .so not found at {}", so_path.display());
     }
+}
+
+/// Resolves the cargo target directory for the codegen-cuda crate.
+///
+/// Honors `CARGO_TARGET_DIR` (and `CARGO_BUILD_TARGET_DIR`) — when set, the
+/// child `cargo build` writes artifacts there instead of `<crate>/target`,
+/// so the `.so` discovery has to follow.
+fn codegen_target_dir(codegen_crate: &Path) -> PathBuf {
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    if let Ok(dir) = std::env::var("CARGO_BUILD_TARGET_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    codegen_crate.join("target")
 }
 
 /// Returns the cache directory for cuda-oxide artifacts: `~/.cargo/cuda-oxide/`.
@@ -157,7 +176,7 @@ fn auto_fetch_and_build() -> PathBuf {
     let codegen_crate = src_dir.join("crates/rustc-codegen-cuda");
     build_backend_from_source(&codegen_crate);
 
-    let built_so = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+    let built_so = codegen_target_dir(&codegen_crate).join("debug/librustc_codegen_cuda.so");
     if built_so.exists() {
         std::fs::copy(&built_so, &so_path).expect("Failed to copy backend to cache");
         eprintln!("✓ Backend cached at {}", so_path.display());
