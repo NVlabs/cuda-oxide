@@ -39,3 +39,6 @@ crates/rustc-codegen-cuda/examples/gemm_sol/bench/venv/
 __pycache__/
 **/__pycache__/
 *.pyc
+
+# nix
+.direnv/
