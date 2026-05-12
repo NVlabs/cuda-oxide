@@ -77,6 +77,8 @@ use pliron::linked_list::ContainsLinkedList;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::printable::Printable;
+use pliron::value::Value;
 use pliron::r#type::Typed;
 use pliron::{input_err, input_error};
 use rustc_public::CrateDef;
@@ -1178,6 +1180,175 @@ fn translate_call(
     )
 }
 
+/// Lower `core::intrinsics::typed_swap_nonoverlapping<T>(x, y)` inline.
+///
+/// `#[rustc_intrinsic]` with no MIR body. Surfaces from any
+/// `core::mem::swap` call. Semantics:
+///
+/// ```ignore
+/// let tmp = read(x);
+/// write(x, read(y));
+/// write(y, tmp);
+/// ```
+///
+/// Emits `mir.load × 2` + `mir.store × 2`. After the swap, materializes
+/// a unit value, stores it to the destination's slot (if non-ZST), and
+/// emits a `mir.goto` to the success target — same epilogue
+/// `emit_unit_noop_intrinsic` uses for `()`-returning calls.
+#[allow(clippy::too_many_arguments)]
+fn emit_typed_swap_nonoverlapping(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::{MirLoadOp, MirStoreOp};
+    use pliron::r#type::Typed;
+
+    if args.len() != 2 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "typed_swap_nonoverlapping expects 2 args (x, y), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    // Translate the two pointer args.
+    let (x_ptr, prev_after_x) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (y_ptr, mut last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        prev_after_x,
+        loc.clone(),
+    )?;
+
+    // Recover the pointee type T from x's MIR pointer type.
+    let pointee_ty = {
+        let x_ty = x_ptr.get_type(ctx);
+        let x_ty_ref = x_ty.deref(ctx);
+        match x_ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
+            Some(p) => p.pointee,
+            None => {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "typed_swap_nonoverlapping x arg is not a MirPtrType: {}",
+                        x_ty.disp(ctx)
+                    ))
+                );
+            }
+        }
+    };
+
+    // tmp_x = mir.load(x)
+    let load_x = Operation::new(
+        ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![pointee_ty],
+        vec![x_ptr],
+        vec![],
+        0,
+    );
+    load_x.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, load_x, block_ptr, last_op);
+    last_op = Some(load_x);
+    let tmp_x = Value::OpResult {
+        op: load_x,
+        res_idx: 0,
+    };
+
+    // tmp_y = mir.load(y)
+    let load_y = Operation::new(
+        ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![pointee_ty],
+        vec![y_ptr],
+        vec![],
+        0,
+    );
+    load_y.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, load_y, block_ptr, last_op);
+    last_op = Some(load_y);
+    let tmp_y = Value::OpResult {
+        op: load_y,
+        res_idx: 0,
+    };
+
+    // mir.store(x, tmp_y)
+    let store_x = Operation::new(
+        ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![x_ptr, tmp_y],
+        vec![],
+        0,
+    );
+    store_x.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, store_x, block_ptr, last_op);
+    last_op = Some(store_x);
+
+    // mir.store(y, tmp_x)
+    let store_y = Operation::new(
+        ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![y_ptr, tmp_x],
+        vec![],
+        0,
+    );
+    store_y.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, store_y, block_ptr, last_op);
+    last_op = Some(store_y);
+
+    // Materialize unit, store to destination slot (if any), goto target.
+    // Same epilogue as `emit_unit_noop_intrinsic`.
+    let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
+    let unit_op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirConstructTupleOp::get_concrete_op_info(),
+        vec![unit_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    unit_op.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, unit_op, block_ptr, last_op);
+    let unit_val = unit_op.deref(ctx).get_result(0);
+    let goto_prev = value_map
+        .store_local(ctx, destination.local, unit_val, block_ptr, Some(unit_op))
+        .unwrap_or(unit_op);
+
+    if let Some(target_idx) = target {
+        Ok(helpers::emit_goto(ctx, *target_idx, goto_prev, block_map, loc))
+    } else {
+        input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "typed_swap_nonoverlapping call without target not supported".to_string(),
+            )
+        )
+    }
+}
+
 /// Handle closure trait method calls (FnOnce::call_once, FnMut::call_mut, Fn::call).
 ///
 /// These calls pass arguments as a tuple, but the closure body expects unpacked args:
@@ -1699,6 +1870,28 @@ fn try_dispatch_intrinsic(
                 name,
             )?))
         }
+
+        // =================================================================
+        // typed_swap_nonoverlapping<T>(x: *mut T, y: *mut T)
+        // Bodyless `#[rustc_intrinsic]`. Surfaces from any
+        // `core::mem::swap` call. Lower inline as load/load/store/store
+        // — no mir-lower placeholder needed.
+        // =================================================================
+        "core::intrinsics::typed_swap_nonoverlapping"
+        | "std::intrinsics::typed_swap_nonoverlapping" => Ok(Some(
+            emit_typed_swap_nonoverlapping(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?,
+        )),
 
         // =================================================================
         // Thread/Block Position Intrinsics

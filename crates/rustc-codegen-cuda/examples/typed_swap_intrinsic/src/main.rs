@@ -1,7 +1,7 @@
-//! Known-failure repro for unhandled
-//! `core::intrinsics::typed_swap_nonoverlapping`.
+//! Regression test for `core::intrinsics::typed_swap_nonoverlapping`
+//! lowering.
 //!
-//! ## Wall (current state)
+//! ## Pre-fix wall
 //!
 //! ```text
 //! Symbol _RINvNtCsbBDxv2Oq2Kj_4core10intrinsics25typed_swap_nonoverlappinghE
@@ -10,29 +10,23 @@
 //!
 //! Surfaced from `~/vanity-miner-rs/` via any `core::mem::swap` call,
 //! which lowers to `typed_swap_nonoverlapping<T>(x: *mut T, y: *mut T)`.
-//! The collector skips intrinsics (no body), and the translator emits
-//! a regular call to a symbol nothing defines.
+//! The intrinsic has no MIR body, so the collector skipped it; the
+//! translator emitted a regular call to a symbol nothing defined.
 //!
-//! ## Where it bails
+//! ## What landed
 //!
-//! `crates/mir-importer/src/translator/terminator/mod.rs::try_dispatch_intrinsic`
-//! has matchers for `RustBitIntrinsic`, `RustSaturatingIntrinsic`,
-//! `RustFloatMathIntrinsic`, `RustPtrArithIntrinsic`, `raw_eq`, and a
-//! big match block for various other intrinsics. None of them match
-//! `core::intrinsics::typed_swap_nonoverlapping`.
+//! New inline handler `emit_typed_swap_nonoverlapping` in
+//! `terminator/mod.rs` registered in `try_dispatch_intrinsic`'s
+//! match block. Lowers the call as:
 //!
-//! ## What a fix needs to do
+//!   - `tmp_x = mir.load(x)` (T)
+//!   - `tmp_y = mir.load(y)` (T)
+//!   - `mir.store(x, tmp_y)`
+//!   - `mir.store(y, tmp_x)`
+//!   - unit-store + goto epilogue (same as `emit_unit_noop_intrinsic`)
 //!
-//! The semantics are equivalent to:
-//!
-//! ```ignore
-//! let tmp = read(x);
-//! write(x, read(y));
-//! write(y, tmp);
-//! ```
-//!
-//! Lower inline at the MIR level via `mir.load` × 2, `mir.store` × 2.
-//! No mir-lower placeholder needed — all ops already exist.
+//! No mir-lower placeholder needed — all ops already exist. T is
+//! recovered from the x arg's `MirPtrType` pointee.
 //!
 //! ## Build with
 //!
