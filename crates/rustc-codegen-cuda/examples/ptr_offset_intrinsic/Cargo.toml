@@ -1,0 +1,20 @@
+[package]
+name = "ptr_offset_intrinsic"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for the missing `ptr_offset_from_unsigned`
+# compiler-intrinsic handler in mir-lower. Triggered by anything that
+# calls `<*const T>::offset_from_unsigned`, including (transitively)
+# the `core::slice::iter` adapters' bookkeeping for `len_remaining`.
+#
+# Build with:
+#   cargo oxide build ptr_offset_intrinsic
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
