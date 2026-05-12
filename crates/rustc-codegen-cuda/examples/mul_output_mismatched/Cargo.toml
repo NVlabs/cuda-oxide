@@ -1,0 +1,21 @@
+[package]
+name = "mul_output_mismatched"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for `impl Mul<RHS> for LHS` where
+# `type Output != Self`. The `mul_output_adt` fix recurses on
+# `self_ty` for ADTs — correct when `Output = Self` (the common
+# case), but wrong here, so the matcher correctly *does not* catch
+# this case and the alias arm falls through to the catch-all error.
+#
+# Build with:
+#   cargo oxide build mul_output_mismatched
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

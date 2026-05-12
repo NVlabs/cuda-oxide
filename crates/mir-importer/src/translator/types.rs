@@ -741,35 +741,63 @@ pub fn translate_type(
                     || def_name.contains("Not::Output"));
 
             if is_arith_output {
-                // The self type is the first generic argument
+                // The self type is the first generic argument.
                 let args = &alias_ty.args.0;
                 if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
-                    // For primitive types implementing arithmetic traits,
-                    // `Output = Self` by definition (every stdlib `impl` does this).
+                    let self_kind = self_ty.kind();
+
+                    // Primitive Self: stdlib only defines `impl Mul for T`
+                    // (RHS = Self) for primitives — no cross-width arithmetic
+                    // impls. `Output = Self` is invariant. Always safe to
+                    // recurse.
+                    let is_primitive_self = matches!(
+                        self_kind,
+                        rustc_public::ty::TyKind::RigidTy(
+                            rustc_public::ty::RigidTy::Int(_)
+                                | rustc_public::ty::RigidTy::Uint(_)
+                                | rustc_public::ty::RigidTy::Float(_)
+                                | rustc_public::ty::RigidTy::Bool
+                                | rustc_public::ty::RigidTy::Char,
+                        )
+                    );
+
+                    // ADT Self: only the `impl Mul for T { Output = T; … }`
+                    // shape is safe to assume. Distinguishing that shape from
+                    // `impl Mul<U> for T { Output = V; … }` (mismatched-Output)
+                    // matters because the latter is a real miscompile if we
+                    // silently substitute Self.
                     //
-                    // For user-defined structs (`Adt`), the overwhelmingly common
-                    // pattern is also `impl Mul for T { type Output = T; … }` —
-                    // every numeric type in `num`, every curve-point type in
-                    // `ed25519` / `curve25519-dalek` / `k256` / `secp256k1`, every
-                    // vector/matrix type in `nalgebra`, etc. Mismatched-Output
-                    // impls (e.g. `impl Mul<Scalar> for Point { type Output =
-                    // Vec3; … }`) exist but are rare; if one reaches device
-                    // codegen the call-site argument/return mismatch surfaces
-                    // a different (loud) error one layer down. Without
-                    // `TyCtxt::normalize_erasing_regions` access (rustc_public
-                    // doesn't expose it) this is the best we can do here, and
-                    // it mirrors the `IntoIterator::IntoIter` recursion below.
+                    // Binary arithmetic traits (`Mul`, `Add`, …, `Shr`) carry
+                    // `args = [Self, RHS]` on the alias. The `impl Mul for T`
+                    // surface form desugars to `impl Mul<T> for T`, so
+                    // `args[0] == args[1]` exactly when RHS = Self. That's the
+                    // discriminator: same → recurse, different → fall through
+                    // to the catch-all error.
                     //
-                    // See `examples/mul_output_adt/` for the ADT-self regression.
-                    if let rustc_public::ty::TyKind::RigidTy(
-                        rustc_public::ty::RigidTy::Int(_)
-                        | rustc_public::ty::RigidTy::Uint(_)
-                        | rustc_public::ty::RigidTy::Float(_)
-                        | rustc_public::ty::RigidTy::Bool
-                        | rustc_public::ty::RigidTy::Char
-                        | rustc_public::ty::RigidTy::Adt(_, _),
-                    ) = self_ty.kind()
-                    {
+                    // Unary arithmetic traits (`Neg`, `Not`) carry `args =
+                    // [Self]` (length 1). `Output = Self` holds for every
+                    // canonical impl; recurse unconditionally.
+                    //
+                    // See `examples/mul_output_adt/` (Output = Self, fixed) and
+                    // `examples/mul_output_mismatched/` (Output != Self,
+                    // intentionally kept on the hard-error path).
+                    let is_adt_self = matches!(
+                        self_kind,
+                        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(_, _))
+                    );
+                    let adt_self_with_matching_rhs = is_adt_self
+                        && match args.get(1) {
+                            // Binary trait: require Self == RHS.
+                            Some(rustc_public::ty::GenericArgKind::Type(rhs_ty)) => {
+                                rhs_ty == self_ty
+                            }
+                            // Unary trait (`Neg::Output` / `Not::Output`) or
+                            // no second type arg: Output = Self holds by
+                            // convention.
+                            _ => true,
+                        };
+
+                    if is_primitive_self || adt_self_with_matching_rhs {
                         return translate_type(ctx, self_ty);
                     }
                 }
