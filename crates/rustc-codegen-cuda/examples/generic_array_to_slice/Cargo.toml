@@ -1,0 +1,22 @@
+[package]
+name = "generic_array_to_slice"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for `&Container -> &[T]` slice construction
+# via `unsafe { slice::from_raw_parts(self as *const _ as *const T, N) }`
+# where `Container` has a non-array Rust-level layout that "lies"
+# about being a contiguous `[T; N]`. Real-world surface:
+# `generic_array::GenericArray<T, N>` (used pervasively across
+# `RustCrypto` / `elliptic-curve` / `k256`).
+#
+# Build with:
+#   cargo oxide build generic_array_to_slice
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
