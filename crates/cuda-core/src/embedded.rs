@@ -149,10 +149,7 @@ impl std::error::Error for EmbeddedModuleError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxide_artifacts::{
-        ArtifactBundleSpec, ArtifactPayloadSpec, OwnedArtifactPayload, build_artifact_blob,
-        build_host_object_for_target,
-    };
+    use oxide_artifacts::OwnedArtifactPayload;
 
     #[test]
     fn embedded_module_filters_unloadable_bundles() {
