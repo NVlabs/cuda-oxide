@@ -1,0 +1,25 @@
+[package]
+name = "drop_adt_with_impl"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for `TerminatorKind::Drop` on an ADT whose
+# field tree contains an `impl Drop` (zeroization-style destructor).
+#
+# The previous fix (`Translate Drop terminators on trivial-drop types
+# as plain gotos`) deliberately kept ADTs on the hard-error path
+# because an `impl Drop` somewhere in the tree means the drop is
+# semantically observable and silently eliding it would be a
+# miscompile. This repro exercises that branch directly with a
+# minimal `impl Drop`.
+#
+# Build with:
+#   cargo oxide build drop_adt_with_impl
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
