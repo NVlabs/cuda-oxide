@@ -1,0 +1,21 @@
+[package]
+name = "deref_const_index_array_write"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for `Place(Deref -> ConstantIndex)` write where
+# the slot is a pointer-to-array (`&mut [T; N]`), not a pointer-to-slice.
+# Sibling of `deref_index_local_write/` which already handles BOTH
+# array and slice for runtime-index writes; the constant-index handler
+# was slice-only.
+#
+# Build with:
+#   cargo oxide build deref_const_index_array_write
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
