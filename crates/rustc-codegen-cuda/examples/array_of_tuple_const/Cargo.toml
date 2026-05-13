@@ -1,0 +1,33 @@
+[package]
+name = "array_of_tuple_const"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for unsupported `const ARR: [(T, U, ...); N]`.
+#
+# `translate_array_constant` in mir-importer's rvalue.rs only knows
+# how to extract integer / float / FP16 leaves from an array
+# constant's raw bytes. Tuple element types fall into the
+# unsupported branch and the build fails at codegen with:
+#
+#     translate_array_constant: unsupported element type:
+#       MirTupleType { types: [Ptr<i64>, Ptr<i64>, Ptr<i64>] }
+#
+# Surfaced from vanity-miner-rs's `check_arith_divrem_by_58_pow_5`
+# bisection slot, which used `const CASES: [(u64, u64, u64); 6] = [..]`
+# to bundle (input, expected_q, expected_r) per test case. Common
+# Rust idiom; downstream consumers will keep hitting this.
+#
+# Workaround (mechanical): split the tuple-of-N into N parallel
+# arrays of homogeneous primitives, e.g.
+#   const A: [u64; 6] = [..]; const B: [u64; 6] = [..]; etc.
+#
+# Build with:
+#   cargo oxide build array_of_tuple_const
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
