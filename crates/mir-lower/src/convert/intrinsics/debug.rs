@@ -149,21 +149,20 @@ pub(crate) fn convert_black_box(
     let input_val = operands[0];
     let value_ty = input_val.get_type(ctx);
 
-    let int_width = {
+    let int_width_opt = {
         let ty_obj = value_ty.deref(ctx);
-        match ty_obj.downcast_ref::<IntegerType>() {
-            Some(int_ty) => int_ty.width(),
-            None => {
-                return pliron::input_err_noloc!(
-                    "nvvm.black_box of non-integer type not yet supported"
-                );
-            }
-        }
+        ty_obj.downcast_ref::<IntegerType>().map(|int_ty| int_ty.width())
     };
 
-    match int_width {
-        1 | 8 | 16 | 32 | 64 => {
-            let constraint_letter = if int_width == 64 { "l" } else { "r" };
+    match int_width_opt {
+        Some(1 | 8 | 16 | 32) => {
+            let constraints = "=r,0,~{memory}".to_string();
+            let asm_op =
+                inline_asm_convergent(ctx, rewriter, value_ty, vec![input_val], "", &constraints);
+            rewriter.replace_operation(ctx, op, asm_op);
+            Ok(())
+        }
+        Some(64) => {
             // Output tied to input via `0` (operand-0 reference) — same physical
             // register on both sides, so the empty asm template doesn't need to
             // emit a copy. `~{memory}` matches rustc's standard black_box shape
@@ -171,18 +170,76 @@ pub(crate) fn convert_black_box(
             // the barrier. The earlier untied `=l,l` / `=r,r` shape left the
             // output register undefined because the empty template emits no
             // mov, silently producing garbage downstream.
-            let constraints = format!("={c},0,~{{memory}}", c = constraint_letter);
+            let constraints = "=l,0,~{memory}".to_string();
             let asm_op =
                 inline_asm_convergent(ctx, rewriter, value_ty, vec![input_val], "", &constraints);
             rewriter.replace_operation(ctx, op, asm_op);
             Ok(())
         }
-        128 => convert_black_box_i128(ctx, rewriter, op, input_val),
-        w => pliron::input_err_noloc!(
+        Some(128) => convert_black_box_i128(ctx, rewriter, op, input_val),
+        Some(w) => pliron::input_err_noloc!(
             "nvvm.black_box of i{w} not yet supported \
              (split into 32/64/128-bit halves or extend convert_black_box)"
         ),
+        // Non-integer (aggregate, float, pointer). Route through memory:
+        // alloca a stack slot, store the input, run an `asm sideeffect ""
+        // "r,~{memory}"` over the slot pointer, then load the slot back.
+        // The memory clobber tells LLVM the slot's contents are opaque
+        // after the asm — same property rustc's standard black_box gives.
+        // PTX output is just the alloca + ld/st; the asm template is
+        // empty, so no actual instructions emerge for the barrier itself.
+        None => convert_black_box_aggregate(ctx, rewriter, op, input_val, value_ty),
     }
+}
+
+/// Memory-routed black_box for any non-integer type.
+fn convert_black_box_aggregate(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    input_val: pliron::value::Value,
+    value_ty: Ptr<pliron::r#type::TypeObj>,
+) -> Result<()> {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    // `alloca <T>, i64 1` — single-element stack slot of the value's type.
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let one_attr = IntegerAttr::new(
+        i64_ty,
+        APInt::from_i64(1, NonZeroUsize::new(64).unwrap()),
+    );
+    let one_const = llvm::ConstantOp::new(ctx, one_attr.into());
+    rewriter.insert_operation(ctx, one_const.get_operation());
+    let one_val = one_const.get_operation().deref(ctx).get_result(0);
+
+    let alloca = llvm::AllocaOp::new(ctx, value_ty, one_val);
+    rewriter.insert_operation(ctx, alloca.get_operation());
+    let slot_ptr = alloca.get_operation().deref(ctx).get_result(0);
+
+    let store = llvm::StoreOp::new(ctx, input_val, slot_ptr);
+    rewriter.insert_operation(ctx, store.get_operation());
+
+    // Inline asm with the slot pointer as a register-class input and a
+    // memory clobber. The asm template is empty — its job is only to
+    // tell LLVM "after this point, treat the slot's memory contents as
+    // potentially mutated, so don't fold loads against earlier stores".
+    let void_ty = llvm_types::VoidType::get(ctx).into();
+    let _asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty,
+        vec![slot_ptr],
+        "",
+        "r,~{memory}",
+    );
+
+    let load = llvm::LoadOp::new(ctx, slot_ptr, value_ty);
+    rewriter.insert_operation(ctx, load.get_operation());
+
+    rewriter.replace_operation(ctx, op, load.get_operation());
+    Ok(())
 }
 
 /// Split an i128 black_box into two i64 barriers and recombine.

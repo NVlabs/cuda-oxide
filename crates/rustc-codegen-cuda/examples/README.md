@@ -150,7 +150,6 @@ emits. If any of these *starts* building, the doc block is stale
 hiding the path).
 
 * `array_of_tuple_const` — `translate_array_constant: unsupported element type: MirTupleType { … }`
-* `black_box_aggregate` — `nvvm.black_box of non-integer type not yet supported`
 * `drop_adt_with_impl` — drop of `'...Secret'` is not supported
 * `error_drop_glue` — drop glue diagnostic
 * `error_set_discriminant_unhandled` — `SetDiscriminant` statements are not yet supported
@@ -197,6 +196,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * array_eq_raw
 * array_to_int_cast
 * assert_inhabited_intrinsic
+* black_box_aggregate
 * black_box_intrinsic
 * closure_struct_arg_mismatch
 * closure_zero_captures_repro
