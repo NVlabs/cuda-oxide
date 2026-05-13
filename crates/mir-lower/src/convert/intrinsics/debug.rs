@@ -164,7 +164,14 @@ pub(crate) fn convert_black_box(
     match int_width {
         1 | 8 | 16 | 32 | 64 => {
             let constraint_letter = if int_width == 64 { "l" } else { "r" };
-            let constraints = format!("={c},{c}", c = constraint_letter);
+            // Output tied to input via `0` (operand-0 reference) — same physical
+            // register on both sides, so the empty asm template doesn't need to
+            // emit a copy. `~{memory}` matches rustc's standard black_box shape
+            // and blocks LLVM from reasoning about memory side-effects across
+            // the barrier. The earlier untied `=l,l` / `=r,r` shape left the
+            // output register undefined because the empty template emits no
+            // mov, silently producing garbage downstream.
+            let constraints = format!("={c},0,~{{memory}}", c = constraint_letter);
             let asm_op =
                 inline_asm_convergent(ctx, rewriter, value_ty, vec![input_val], "", &constraints);
             rewriter.replace_operation(ctx, op, asm_op);
@@ -185,8 +192,8 @@ pub(crate) fn convert_black_box(
 /// %lo      = trunc i128 %x to i64
 /// %hi_raw  = lshr i128 %x, 64
 /// %hi      = trunc i128 %hi_raw to i64
-/// %lo_bb   = call i64 asm sideeffect "", "=l,l"(i64 %lo)
-/// %hi_bb   = call i64 asm sideeffect "", "=l,l"(i64 %hi)
+/// %lo_bb   = call i64 asm sideeffect "", "=l,0,~{memory}"(i64 %lo)
+/// %hi_bb   = call i64 asm sideeffect "", "=l,0,~{memory}"(i64 %hi)
 /// %lo_z    = zext i64 %lo_bb to i128
 /// %hi_z    = zext i64 %hi_bb to i128
 /// %hi_shl  = shl  i128 %hi_z, 64
@@ -229,14 +236,14 @@ fn convert_black_box_i128(
     rewriter.insert_operation(ctx, hi_trunc);
     let hi_val = hi_trunc.deref(ctx).get_result(0);
 
-    // %lo_bb = call i64 asm sideeffect "", "=l,l"(i64 %lo)
+    // %lo_bb = call i64 asm sideeffect "", "=l,0,~{memory}"(i64 %lo)
     let lo_bb_op =
-        inline_asm_convergent(ctx, rewriter, i64_ty.into(), vec![lo_val], "", "=l,l");
+        inline_asm_convergent(ctx, rewriter, i64_ty.into(), vec![lo_val], "", "=l,0,~{memory}");
     let lo_bb_val = lo_bb_op.deref(ctx).get_result(0);
 
-    // %hi_bb = call i64 asm sideeffect "", "=l,l"(i64 %hi)
+    // %hi_bb = call i64 asm sideeffect "", "=l,0,~{memory}"(i64 %hi)
     let hi_bb_op =
-        inline_asm_convergent(ctx, rewriter, i64_ty.into(), vec![hi_val], "", "=l,l");
+        inline_asm_convergent(ctx, rewriter, i64_ty.into(), vec![hi_val], "", "=l,0,~{memory}");
     let hi_bb_val = hi_bb_op.deref(ctx).get_result(0);
 
     let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
