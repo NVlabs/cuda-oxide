@@ -241,90 +241,186 @@ pub(crate) fn convert_rem(
 // Checked operations (GPU: no overflow checking, just return (result, false))
 // ============================================================================
 
-/// Convert `mir.checked_add` to regular addition returning `(result, false)`.
+/// Convert `mir.checked_add` to `(lhs + rhs, overflow)` where the
+/// overflow flag is computed from the actual operation, not hardcoded.
 ///
-/// GPU kernels don't perform overflow checking for performance. The overflow
-/// flag is always `false`. Returns a struct `{ result: T, overflow: i1 }`.
+/// Rust's `u64::overflowing_add` / `i64::overflowing_add` return the
+/// real carry-out; multi-limb carry chains (dalek 5×u52, k256 4×u64,
+/// base58_encode's byte loop) depend on it. An earlier version pinned
+/// the flag to `i1 0` which silently dropped the carry between limbs.
+///
+/// For unsigned: `carry = (sum < lhs)` — wraparound implies sum
+/// underflows below either operand.
+/// For signed: overflow happens when `lhs` and `rhs` share a sign and
+/// `sum`'s sign differs — `((sum ^ lhs) & (sum ^ rhs)) >> (width - 1)`.
 pub(crate) fn convert_checked_add(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let (lhs, rhs) = get_binary_operands(op, ctx)?;
-    convert_checked_binop(ctx, rewriter, op, lhs, rhs, |ctx, l, r| {
-        let flags = IntegerOverflowFlagsAttr::default();
-        llvm::AddOp::new_with_overflow_flag(ctx, l, r, flags).get_operation()
-    })
+    let signed = is_signed_int_op(ctx, op, operands_info)?;
+    convert_checked_binop(ctx, rewriter, op, lhs, rhs, CheckedKind::Add, signed)
 }
 
-/// Convert `mir.checked_mul` to regular multiplication returning `(result, false)`.
+/// Convert `mir.checked_sub` to `(lhs - rhs, borrow)` with real borrow.
 ///
-/// GPU kernels don't perform overflow checking for performance. The overflow
-/// flag is always `false`. Returns a struct `{ result: T, overflow: i1 }`.
-pub(crate) fn convert_checked_mul(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let (lhs, rhs) = get_binary_operands(op, ctx)?;
-    convert_checked_binop(ctx, rewriter, op, lhs, rhs, |ctx, l, r| {
-        let flags = IntegerOverflowFlagsAttr::default();
-        llvm::MulOp::new_with_overflow_flag(ctx, l, r, flags).get_operation()
-    })
-}
-
-/// Convert `mir.checked_sub` to regular subtraction returning `(result, false)`.
-///
-/// GPU kernels don't perform overflow checking for performance. The overflow
-/// flag is always `false`. Returns a struct `{ result: T, overflow: i1 }`.
+/// For unsigned: `borrow = (lhs < rhs)` — underflow when subtrahend
+/// exceeds minuend.
+/// For signed: overflow when `lhs` and `rhs` have different signs and
+/// `diff`'s sign differs from `lhs` —
+/// `((lhs ^ rhs) & (lhs ^ diff)) >> (width - 1)`.
 pub(crate) fn convert_checked_sub(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let (lhs, rhs) = get_binary_operands(op, ctx)?;
-    convert_checked_binop(ctx, rewriter, op, lhs, rhs, |ctx, l, r| {
-        let flags = IntegerOverflowFlagsAttr::default();
-        llvm::SubOp::new_with_overflow_flag(ctx, l, r, flags).get_operation()
-    })
+    let signed = is_signed_int_op(ctx, op, operands_info)?;
+    convert_checked_binop(ctx, rewriter, op, lhs, rhs, CheckedKind::Sub, signed)
 }
 
-/// Shared implementation for checked binary ops: compute result, pack with `false` overflow flag.
-fn convert_checked_binop<F>(
+/// Convert `mir.checked_mul` to `(lhs * rhs, false)`.
+///
+/// The overflow flag is still hardcoded to `false` here — a correct
+/// detection would need `umul.with.overflow` / `smul.with.overflow`
+/// intrinsics or a widening-multiply followed by a high-bits check.
+/// The downstream carry-chain consumers don't use `checked_mul`, so
+/// leaving this as-is until a repro motivates the fuller fix.
+pub(crate) fn convert_checked_mul(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let (lhs, rhs) = get_binary_operands(op, ctx)?;
+    let signed = is_signed_int_op(ctx, op, operands_info)?;
+    convert_checked_binop(ctx, rewriter, op, lhs, rhs, CheckedKind::Mul, signed)
+}
+
+#[derive(Clone, Copy)]
+enum CheckedKind {
+    Add,
+    Sub,
+    Mul,
+}
+
+/// Shared implementation: compute the result and the real overflow flag.
+fn convert_checked_binop(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     lhs: Value,
     rhs: Value,
-    build_arith: F,
-) -> Result<()>
-where
-    F: FnOnce(&mut Context, Value, Value) -> Ptr<Operation>,
-{
-    let arith_op = build_arith(ctx, lhs, rhs);
+    kind: CheckedKind,
+    signed: bool,
+) -> Result<()> {
+    let flags = IntegerOverflowFlagsAttr::default();
+    let arith_op = match kind {
+        CheckedKind::Add => {
+            llvm::AddOp::new_with_overflow_flag(ctx, lhs, rhs, flags).get_operation()
+        }
+        CheckedKind::Sub => {
+            llvm::SubOp::new_with_overflow_flag(ctx, lhs, rhs, flags).get_operation()
+        }
+        CheckedKind::Mul => {
+            llvm::MulOp::new_with_overflow_flag(ctx, lhs, rhs, flags).get_operation()
+        }
+    };
     rewriter.insert_operation(ctx, arith_op);
     let result_value = arith_op.deref(ctx).get_result(0);
 
-    // Create false constant for overflow flag (GPU doesn't check overflow)
-    let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-    let false_attr = pliron::builtin::attributes::IntegerAttr::new(
-        i1_ty,
-        pliron::utils::apint::APInt::from_u32(0, std::num::NonZeroUsize::new(1).unwrap()),
-    );
-    let false_const = llvm::ConstantOp::new(ctx, false_attr.into());
-    rewriter.insert_operation(ctx, false_const.get_operation());
-    let overflow_flag = false_const.get_operation().deref(ctx).get_result(0);
+    let overflow_flag = match kind {
+        CheckedKind::Add | CheckedKind::Sub if !signed => {
+            // Unsigned add: carry = (sum < lhs).
+            // Unsigned sub: borrow = (lhs < rhs).
+            let (cmp_lhs, cmp_rhs) = match kind {
+                CheckedKind::Add => (result_value, lhs),
+                CheckedKind::Sub => (lhs, rhs),
+                CheckedKind::Mul => unreachable!(),
+            };
+            let icmp = llvm::ICmpOp::new(ctx, ICmpPredicateAttr::ULT, cmp_lhs, cmp_rhs);
+            rewriter.insert_operation(ctx, icmp.get_operation());
+            icmp.get_operation().deref(ctx).get_result(0)
+        }
+        CheckedKind::Add | CheckedKind::Sub => {
+            // Signed overflow detection via sign-bit XOR pattern.
+            //
+            // Add: overflow when lhs and rhs share a sign but sum's
+            //      sign differs → `((sum ^ lhs) & (sum ^ rhs)) < 0`.
+            // Sub: overflow when lhs and rhs have different signs and
+            //      diff's sign differs from lhs →
+            //      `((lhs ^ rhs) & (lhs ^ diff)) < 0`.
+            let lhs_ty = lhs.get_type(ctx);
+            let int_width = {
+                let ty_obj = lhs_ty.deref(ctx);
+                ty_obj
+                    .downcast_ref::<IntegerType>()
+                    .ok_or_else(|| {
+                        pliron::input_error_noloc!(
+                            "checked op signed-overflow detection: lhs is not an integer"
+                        )
+                    })?
+                    .width()
+            };
 
-    // Get result type and convert
+            let (a, b, c) = match kind {
+                CheckedKind::Add => (result_value, lhs, rhs),
+                CheckedKind::Sub => (lhs, rhs, result_value),
+                CheckedKind::Mul => unreachable!(),
+            };
+            let xor1 = llvm::XorOp::new(ctx, a, b).get_operation();
+            rewriter.insert_operation(ctx, xor1);
+            let xor1_val = xor1.deref(ctx).get_result(0);
+
+            let xor2 = llvm::XorOp::new(ctx, a, c).get_operation();
+            rewriter.insert_operation(ctx, xor2);
+            let xor2_val = xor2.deref(ctx).get_result(0);
+
+            let and_op = llvm::AndOp::new(ctx, xor1_val, xor2_val).get_operation();
+            rewriter.insert_operation(ctx, and_op);
+            let and_val = and_op.deref(ctx).get_result(0);
+
+            // Compare the AND result against zero — if its sign bit is
+            // set the operation overflowed. icmp slt … 0 == true iff
+            // top bit is 1.
+            let zero_attr = pliron::builtin::attributes::IntegerAttr::new(
+                IntegerType::get(ctx, int_width, Signedness::Signless),
+                pliron::utils::apint::APInt::from_u128(
+                    0,
+                    std::num::NonZeroUsize::new(int_width as usize).unwrap(),
+                ),
+            );
+            let zero_const = llvm::ConstantOp::new(ctx, zero_attr.into());
+            rewriter.insert_operation(ctx, zero_const.get_operation());
+            let zero_val = zero_const.get_operation().deref(ctx).get_result(0);
+
+            let icmp = llvm::ICmpOp::new(ctx, ICmpPredicateAttr::SLT, and_val, zero_val);
+            rewriter.insert_operation(ctx, icmp.get_operation());
+            icmp.get_operation().deref(ctx).get_result(0)
+        }
+        CheckedKind::Mul => {
+            // checked_mul overflow detection not yet implemented; stay
+            // with the hardcoded `false` until a downstream consumer
+            // demands the real flag.
+            let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+            let false_attr = pliron::builtin::attributes::IntegerAttr::new(
+                i1_ty,
+                pliron::utils::apint::APInt::from_u32(0, std::num::NonZeroUsize::new(1).unwrap()),
+            );
+            let false_const = llvm::ConstantOp::new(ctx, false_attr.into());
+            rewriter.insert_operation(ctx, false_const.get_operation());
+            false_const.get_operation().deref(ctx).get_result(0)
+        }
+    };
+
     let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let loc = op.deref(ctx).loc();
     let llvm_result_ty =
         convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error!(loc, "{e}"))?;
 
-    // Create tuple struct: {result, overflow_flag}
     let undef = llvm::UndefOp::new(ctx, llvm_result_ty);
     rewriter.insert_operation(ctx, undef.get_operation());
     let struct_val = undef.get_operation().deref(ctx).get_result(0);
