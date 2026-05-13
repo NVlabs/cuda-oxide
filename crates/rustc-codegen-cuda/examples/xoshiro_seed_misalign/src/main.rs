@@ -1,33 +1,19 @@
-//! Known-failure reproducer for `ld.local.v2.b64` being emitted
-//! against an 8-byte-aligned local depot.
+//! Regression test for `ld.local.v2.b64` being emitted against a
+//! local depot with alignment less than the wide load requires.
 //!
-//! ## Status
+//! ## Pre-fix wall
 //!
-//! `cargo oxide build` succeeds today. The emitted PTX contains
+//! `cargo oxide build` succeeded, but the emitted PTX contained
 //! `ld.local.v2.b64 {%rd, %rd}, [...]` reading from a `.local .align 1`
-//! depot (in vanity-miner-rs the equivalent depot is `.align 8`; either
-//! way it's < 16, which is what the wide load needs).
+//! depot (vanity-miner-rs equivalent: `.align 8`). Wide local loads
+//! need 16-byte natural alignment; the depot didn't have it.
 //!
-//! The runtime fault is **nondeterministic**: it depends on whether the
-//! depot's runtime address happens to be 16-byte aligned. Shallow
-//! kernels (this repro, `array_eq_raw`) tend to land 16-aligned and run
-//! fine; deep kernels (vanity-miner-rs slot 0) reliably get a depot at
-//! `0x...8` and fault with `CUDA_ERROR_ILLEGAL_ADDRESS` (700).
-//!
-//! Verify the bad PTX shape:
-//!
-//! ```sh
-//! cargo oxide build xoshiro_seed_misalign
-//! grep -B1 'ld\.local\.v2\.b64' \
-//!     crates/rustc-codegen-cuda/examples/xoshiro_seed_misalign/xoshiro_seed_misalign.ptx
-//! ```
-//!
-//! Bug present today: `ld.local.v2.b64` reads from a register that
-//! points into `__local_depot? : .local .align N` where `N < 16`.
-//! After the fix: either the depot is bumped to `.align 16`, or the
-//! wide load is split into two `ld.local.b64`s.
-//!
-//! ## Pre-fix wall (compute-sanitizer on real GPU)
+//! The fault was **nondeterministic**: it depended on whether the
+//! depot's runtime address happened to be 16-byte aligned. Shallow
+//! kernels (this repro, `array_eq_raw`) tended to land 16-aligned and
+//! ran fine. Deep kernels (vanity-miner-rs slot 0) reliably got a
+//! depot at `0x...8` and faulted with `CUDA_ERROR_ILLEGAL_ADDRESS`
+//! (700). compute-sanitizer on the surfacing kernel:
 //!
 //! ```text
 //! Invalid __local__ read of size 16 bytes
@@ -72,56 +58,62 @@
 //! that may or may not also be 16-byte. When the runtime address
 //! ends in `0x8`, the wide load faults.
 //!
-//! ## What we expect to land
+//! ## What landed
 //!
-//! In `crates/mir-lower/src/convert/ops/`:
+//! `crates/dialect-llvm/src/export.rs::conservative_alloca_align`:
+//! the LLVM exporter now emits `alloca <type>, align N` where
+//! `N = min(16, next_pow2(byte_size_of(type)))`. NVPTX wide ops cap
+//! at 16-byte natural alignment (`b128`, `v2.b64`, `v4.b32`), so 16
+//! is sufficient. `next_pow2(size)` caps the cost — a 4-byte alloca
+//! stays `.align 4`; only 16-byte-or-larger storage gets bumped to
+//! 16.
 //!
-//! 1. **Either** when lowering a vector / wide load whose source
-//!    pointer's underlying alloca has alignment smaller than the
-//!    load's natural alignment, split the load into element-sized
-//!    loads honouring the alloca's alignment, **or**
-//! 2. when lowering an alloca that has any wide load against it,
-//!    bump the alloca's alignment up to
-//!    `max(declared_align, natural_align_of_widest_load)`.
+//! Deliberately a blunt instrument. The more surgical fix is to
+//! thread pointer alignment through mir-lower's load/store emission
+//! and attach `align N` metadata to each load/store, letting NVPTX
+//! backend pick the right lowering instead of forcing storage to
+//! satisfy the worst-case consumer. That's a real refactor; the
+//! conservative bump unblocks the bug class as a one-locality fix
+//! and wastes at most ~7 bytes of stack per under-aligned alloca.
+//! See the TODO on `conservative_alloca_align` for the longer plan.
 //!
-//! Option 2 is simpler but costs stack space; option 1 is more
-//! surgical. Either flips this repro (and `array_eq_raw`) from
-//! "PTX may fault depending on stack offset" to "PTX is alignment-
-//! safe regardless of runtime address."
+//! Post-fix PTX shape:
 //!
-//! ## Why a fresh hardware run of this repro may pass
-//!
-//! Single-kernel, shallow-stack workloads land the depot at a
-//! 16-aligned address by luck. Confirming the fix is in place is
-//! a PTX-text check, not a hardware run:
-//!
-//! - Before fix: PTX has `ld.local.v2.b64` against `.align 8` depot.
-//! - After fix: PTX has either `.align 16` depot or two
-//!   `ld.local.b64`s (no wide local load against under-aligned source).
+//! - `ld.local.v2.b64` here now reads from `.local .align 16`
+//!   depots. The wide load itself isn't gone — it's operating on
+//!   correctly-aligned storage.
+//! - `array_eq_raw`'s identical-shape latent bug fixed by the same
+//!   change (depot went `.align 8` -> `.align 16`).
+//! - `abi_hmm`'s `st.local.v2.b64` against its `.align 8` depot
+//!   fixed by the same change (depot bumped to 16).
+//! - `cross_crate_pubfn` no longer emits any wide local ops at all
+//!   — the bumped allocas let NVPTX make better lowering choices
+//!   end-to-end.
 //!
 //! ## Relationship to other repros
 //!
 //! - `array_eq_raw` -- introduced the `raw_eq` intrinsic handler
-//!   that emits the wide load. That fix is correct in isolation;
-//!   this repro proves that the wide-load shape it produces is
-//!   not alignment-safe.
+//!   that emits the wide load. That fix was correct in isolation;
+//!   this repro surfaced that the wide-load shape it produces was
+//!   not alignment-safe against its source storage.
 //! - `nested_struct_const`, `slice_const_idx_write`, etc. -- unrelated
-//!   bugs at codegen-failure time. This bug is at runtime.
+//!   bugs at codegen-failure time. This bug was at runtime.
 //!
 //! ## Build with
 //!
-//!     cargo oxide build xoshiro_seed_misalign   # codegen check (passes today)
-//!     cargo oxide run   xoshiro_seed_misalign   # passes on shallow stacks; faults on deep
+//!     cargo oxide build xoshiro_seed_misalign   # codegen check
+//!     cargo oxide run   xoshiro_seed_misalign   # full hardware run
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 /// Mirrors `Xoroshiro128StarStar::from_seed`'s `deal_with_zero_seed!`
 /// macro: take the seed by value, compare against `[0u8; 16]`. The
-/// `==` here is what triggers the `ld.local.v2.b64` against the
-/// callee's `.align 8` stack alloca. `#[inline(never)]` keeps the
-/// by-value parameter from being collapsed into a borrow of the
-/// caller's alloca.
+/// `==` triggers `ld.local.v2.b64` against the callee's stack alloca.
+/// Pre-fix that alloca was `.align 8`, mismatching the load's 16-byte
+/// requirement; post-fix the exporter bumps it to `.align 16`.
+/// `#[inline(never)]` keeps the by-value parameter from being
+/// collapsed into a borrow of the caller's alloca.
 #[inline(never)]
 fn from_seed_repro(seed: [u8; 16]) -> u64 {
     // Trigger: `==` on `[u8; 16]` lowers via `raw_eq`, emitting a
@@ -142,8 +134,8 @@ pub mod kernels {
 
     /// Stages a `[u8; 16]` onto the kernel's stack, then passes it
     /// by value into `from_seed_repro`. The callee's own stack
-    /// alloca is the 8-byte-aligned storage that the wide load
-    /// reads from.
+    /// alloca is what the wide load reads from; pre-fix that alloca
+    /// was under-aligned for the load width.
     #[kernel]
     pub fn xoshiro_seed_misalign(input: &[u8], mut out: DisjointSlice<u64>) {
         let idx = thread::index_1d();

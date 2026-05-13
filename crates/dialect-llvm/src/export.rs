@@ -1621,7 +1621,7 @@ impl<'a> ModuleExportState<'a> {
             }
 
             id if id == ops::AllocaOp::get_opid_static() => {
-                // %res = alloca <type>
+                // %res = alloca <type>, align <N>
                 let res = op_ref.get_result(0);
                 let res_name = value_names.get(&res).unwrap();
 
@@ -1632,9 +1632,14 @@ impl<'a> ModuleExportState<'a> {
                     .expect("Missing alloca_element_type");
                 let elem_ty_ptr = elem_ty.get_type(self.ctx);
 
+                // Conservatively over-align the alloca so wider-than-natural
+                // loads/stores against this storage stay aligned. See doc
+                // on `conservative_alloca_align` for the tradeoff + TODO.
+                let align = self.conservative_alloca_align(elem_ty_ptr);
+
                 write!(output, "  {res_name} = alloca ").unwrap();
                 self.export_type(elem_ty_ptr, output)?;
-                writeln!(output).unwrap();
+                writeln!(output, ", align {align}").unwrap();
             }
             id if id == ops::GetElementPtrOp::get_opid_static() => {
                 // %res = getelementptr inbounds TYPE, ptr addrspace(N) %ptr, i32 %idx...
@@ -2282,6 +2287,72 @@ impl<'a> ModuleExportState<'a> {
             // Default: 8 bytes (conservative for pointers, etc.)
             8
         }
+    }
+
+    /// Compute byte size of an LLVM type. Used for picking an alloca
+    /// alignment that won't fault when the storage is later accessed
+    /// via a wider load/store than its natural type suggests.
+    fn byte_size_of_type(&self, ty: Ptr<TypeObj>) -> u64 {
+        let ty_ref = ty.deref(self.ctx);
+        if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+            return (int_ty.width() as u64).div_ceil(8);
+        }
+        if ty_ref.is::<HalfType>() {
+            return 2;
+        }
+        if ty_ref.is::<FP32Type>() {
+            return 4;
+        }
+        if ty_ref.is::<FP64Type>() {
+            return 8;
+        }
+        if ty_ref.is::<PointerType>() {
+            return 8;
+        }
+        if let Some(arr_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
+            let elem_ty = arr_ty.elem_type();
+            let n = arr_ty.size();
+            drop(ty_ref);
+            return self.byte_size_of_type(elem_ty) * n;
+        }
+        if let Some(vec_ty) = ty_ref.downcast_ref::<crate::types::VectorType>() {
+            let elem_ty = vec_ty.elem_type();
+            let n = vec_ty.size();
+            drop(ty_ref);
+            return self.byte_size_of_type(elem_ty) * n;
+        }
+        if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
+            let fields: Vec<Ptr<TypeObj>> = struct_ty.fields().collect();
+            drop(ty_ref);
+            // Sum of field sizes — ignores padding. Safe for our use
+            // (over-sizing only over-aligns, which is conservative).
+            return fields.iter().map(|f| self.byte_size_of_type(*f)).sum();
+        }
+        // Unknown: claim 1 so the caller falls back to natural-by-element.
+        1
+    }
+
+    /// Pick a conservative alignment for a stack alloca of `elem_ty`.
+    ///
+    /// Rule: `min(16, next_pow2(byte_size))`. NVPTX wide ops cap at
+    /// 16-byte natural alignment (`b128`, `v2.b64`, `v4.b32`), so 16
+    /// is sufficient. `next_pow2(size)` caps the cost — a 4-byte
+    /// alloca only gets aligned to 4, not 16.
+    ///
+    /// TODO: this is a blunt instrument. The "right" fix is to thread
+    /// pointer alignment through mir-lower's load/store emission so we
+    /// can attach `align N` metadata to each load/store, letting NVPTX
+    /// backend pick the right lowering instead of forcing the storage
+    /// to satisfy the worst-case consumer. That's a bigger refactor;
+    /// this rule eliminates the bug class as a one-locality fix and
+    /// wastes at most ~7 bytes of stack per under-aligned alloca.
+    /// See `examples/xoshiro_seed_misalign/` for the surfacing context.
+    fn conservative_alloca_align(&self, elem_ty: Ptr<TypeObj>) -> u64 {
+        let size = self.byte_size_of_type(elem_ty);
+        if size == 0 {
+            return 1;
+        }
+        size.next_power_of_two().min(16)
     }
 
     fn export_type(&self, ty: Ptr<TypeObj>, output: &mut String) -> Result<(), String> {
