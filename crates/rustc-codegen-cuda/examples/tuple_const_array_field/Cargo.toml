@@ -1,0 +1,37 @@
+[package]
+name = "tuple_const_array_field"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for unsupported `const T: (Array, _) = (..)`.
+#
+# Symmetric counterpart to `array_of_tuple_const`. The mir-importer's
+# `translate_tuple_constant` uses `constant_storage_size`, which only
+# knows the byte sizes of integer / float / FP16 / pointer leaves.
+# When a tuple field is `[T; N]` (or any aggregate), the size lookup
+# returns `None` and translation aborts with:
+#
+#     Tuple constant field 0 has unsupported type
+#       MirArrayType { element_ty: ..., size: N }
+#
+# Surfaced from vanity-miner-rs's `check_dynamic_index_write`
+# self-test slot, which bundled `(limbs: [u32; 10], count: usize)`
+# as the const-evaluated baseline for a base58-divrem growth loop.
+# Common Rust idiom: any `const fn` returning multiple values
+# naturally produces a tuple, and any of those values being an
+# array tickles this path.
+#
+# Workaround (mechanical): split the tuple-of-(A, B) const into
+# two parallel consts of A and B individually, e.g.
+#   const EXPECTED_LIMBS: [u32; 10] = ..;
+#   const EXPECTED_COUNT: usize = ..;
+#
+# Build with:
+#   cargo oxide build tuple_const_array_field
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

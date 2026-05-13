@@ -147,6 +147,7 @@ hiding the path).
 * `error_wgmma_mma_unimplemented` — `wgmma.mma_async` lowering is not yet implemented
 * `helper_no_inline` — `Symbol helper_no_inline__kernels__get_thread_idx not found`
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
+* `tuple_const_array_field` — `Tuple constant field 0 has unsupported type MirArrayType { … }`
 
 ## Runtime known-failures (build passes, PTX is wrong)
 
