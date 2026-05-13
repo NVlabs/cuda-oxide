@@ -1,0 +1,32 @@
+[package]
+name = "xoshiro_seed_misalign"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for a wide `ld.local.v2.u64` PTX load
+# being emitted against an under-aligned stack alloca.
+#
+# Surfaced from `~/vanity-miner-rs/` self-test
+# (`kernel_self_test_solana_priv` slot 0). compute-sanitizer:
+#
+#   Invalid __local__ read of size 16 bytes
+#       at ...Xoroshiro128StarStar::from_seed+0x70c0
+#       Access to 0xffee08 is misaligned
+#
+# Builds cleanly today — the miscompile is at runtime, not codegen.
+# Inspect the emitted PTX after build:
+#
+#   cargo oxide build xoshiro_seed_misalign
+#   grep -n 'ld.local.v2\|ld.local.b128' \
+#       target/oxide/.../xoshiro_seed_misalign.ptx
+#
+# A surviving `ld.local.v2.u64` whose source alloca was created with
+# `.align 8` (instead of `.align 16`) is the bug.
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
