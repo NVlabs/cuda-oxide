@@ -58,6 +58,22 @@ pub mod kernels {
             *slot = a.wrapping_mul(mixed);
         }
     }
+
+    /// Same shape but on u128, to cover the i128 split-and-recombine
+    /// lowering path. NVPTX has no native i128 register class, so the
+    /// black_box lowers to two 64-bit barriers plus trunc/shl/or
+    /// recombination. Output is the low 64 bits of the u128 multiply.
+    #[kernel]
+    pub fn run_u128(mut out: DisjointSlice<u64>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if let Some(slot) = out.get_mut(idx) {
+            let a: u128 = core::hint::black_box(0xDEADBEEFCAFEBABE_123456789ABCDEF0_u128);
+            let b: u128 = core::hint::black_box(0x0FEDCBA987654321_FEDCBA9876543210_u128);
+            let mixed = b ^ (i as u128);
+            *slot = a.wrapping_mul(mixed) as u64;
+        }
+    }
 }
 
 fn main() {
@@ -79,7 +95,20 @@ fn main() {
         let a: u64 = 0xDEADBEEFCAFEBABE;
         let b: u64 = 0x123456789ABCDEF0;
         let expected = a.wrapping_mul(b ^ (i as u64));
-        assert_eq!(result[i], expected, "thread {} mismatch", i);
+        assert_eq!(result[i], expected, "thread {} mismatch (u64)", i);
     }
-    println!("SUCCESS: black_box intrinsic lowered to inline-asm barrier");
+
+    let mut out_u128 = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
+    module
+        .run_u128(&stream, LaunchConfig::for_num_elems(N as u32), &mut out_u128)
+        .expect("kernel launch (u128)");
+    let result_u128 = out_u128.to_host_vec(&stream).unwrap();
+    for i in 0..N {
+        let a: u128 = 0xDEADBEEFCAFEBABE_123456789ABCDEF0;
+        let b: u128 = 0x0FEDCBA987654321_FEDCBA9876543210;
+        let expected = a.wrapping_mul(b ^ (i as u128)) as u64;
+        assert_eq!(result_u128[i], expected, "thread {} mismatch (u128)", i);
+    }
+
+    println!("SUCCESS: black_box intrinsic lowered to inline-asm barrier (u64 + u128)");
 }
