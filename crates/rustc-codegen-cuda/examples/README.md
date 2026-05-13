@@ -161,38 +161,6 @@ exit code.
 (None currently. `static_ref_relocation` and `xoshiro_seed_misalign`
 were here pre-fix and have moved to the passing list.)
 
-## Candidate repros (hardware verification pending)
-
-These build cleanly today and emit a PTX shape that's *plausibly* a
-codegen bug — chosen to discriminate between competing hypotheses
-surfaced by downstream consumers (currently vanity-miner-rs's
-self-test). Until a `cargo oxide run` on real hardware (or an
-equivalent downstream run) confirms the kernel actually returns
-wrong values, they sit here. Each one's `//!` block documents the
-specific PTX shape it targets and which hypothesis it confirms or
-refutes.
-
-Lifecycle: a hardware run promotes each one to either Runtime
-known-failures (if it returns wrong values pre-fix) or Passing
-regression tests (if it returns the right values, ruling out its
-hypothesis). Don't let them linger here indefinitely — once we know,
-move them.
-
-* `base58_limb_divrem` — `mul.hi.u64` against a `shl + add`-derived
-  multiplicand (vs. `divrem_large_const`'s clean register source)
-* `divrem_large_const` — `x / 656_356_768` magic-multiply with a
-  30-bit divisor (vs. slot 59's `x / 58` 7-bit case)
-* `i128_add_carry_chain` — `u128 + u128 + u128 + u128` chain forcing
-  low→high carry propagation across `add.cc.u64 / addc.cc.u64`
-* `runtime_index_write` — dynamic-grow stack-array writes
-  (`limbs[limb_count] = …; limb_count += 1`) matching base58's
-  failing loop shape; covers runtime-index writes that slot 60's
-  read-side bisect doesn't
-* `widening_mul_chain` — dalek/k256-shape partial-product
-  accumulation: three widening `u64 × u64 → u128` mults summed via
-  `u128 +`; composes ops that pass in isolation (slots 40, 49) to
-  trip a register-pressure / scheduling bug
-
 ## Passing regression tests
 
 Each one's `//!` block describes the bug it locked down and the fix
