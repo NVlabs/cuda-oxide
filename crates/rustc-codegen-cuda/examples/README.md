@@ -172,7 +172,8 @@ Each one's `//!` block describes:
 * the **observed** wrong shape (e.g. plain `add.u64` with no carry)
 * the **grep** that verifies a fix
 
-* `u128_ne_early_return` — `if sum != const_u128 { return 0; }`: expect `xor.b64 …, E.hi` for each high-half-nonzero E
+(None currently. `u128_ne_early_return` was here pre-fix and has
+moved to the passing list.)
 
 ## Runtime known-failures (hardware required to verify)
 
@@ -231,6 +232,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * static_ref_relocation
 * str_panic_path
 * typed_swap_intrinsic
+* u128_ne_early_return
 * volatile_load_intrinsic
 * xoshiro_seed_misalign
 

@@ -506,9 +506,15 @@ fn translate_switch(
                     (64, Signedness::Unsigned) // Default to 64-bit unsigned if we can't determine
                 };
 
-            // Create constant for val with SAME type as discriminant
+            // Create constant for val with SAME type as discriminant.
+            // SwitchTargets.branches() yields u128 target values; use
+            // APInt::from_u128 so 128-bit switch discriminants (e.g.
+            // `match _: u128`) keep their high half. The earlier
+            // `val as u64` truncated 2^64+ targets to their low limb,
+            // turning `switch sum [2^64 => continue]` into the wrong
+            // `switch sum [0 => continue]`.
             let width_nz = NonZeroUsize::new(width).unwrap();
-            let apint = APInt::from_u64(val as u64, width_nz);
+            let apint = APInt::from_u128(val, width_nz);
             let int_attr = pliron::builtin::attributes::IntegerAttr::new(
                 IntegerType::get(ctx, width as u32, signedness),
                 apint,
@@ -634,9 +640,11 @@ fn translate_switch(
             block_map[otherwise_idx]
         };
 
-        // Create constant for comparison with SAME type as discriminant
+        // Create constant for comparison with SAME type as discriminant.
+        // Use APInt::from_u128 — see the single-branch path above for
+        // the i128 truncation case this guards against.
         let width_nz = NonZeroUsize::new(width).unwrap();
-        let apint = APInt::from_u64(*val as u64, width_nz);
+        let apint = APInt::from_u128(*val, width_nz);
         let int_attr = pliron::builtin::attributes::IntegerAttr::new(
             IntegerType::get(ctx, width as u32, signedness),
             apint,
