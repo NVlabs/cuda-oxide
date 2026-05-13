@@ -2502,25 +2502,170 @@ pub fn translate_operand(
                 .deref(ctx)
                 .is::<dialect_mir::types::MirSliceType>()
             {
-                // Slice-typed constant. In practice these are `&'static str`
-                // literals threaded into the panic helpers reachable from
-                // `assert!`/`panic!`/bounds-check fallouts: the value is a fat
-                // pointer (data ptr + length) into a static allocation, never
-                // observed at runtime because the panic block terminates in
-                // `unreachable`. Materialising the static bytes would require
-                // a slice-construction op the dialect doesn't have yet, so
-                // emit `mir.undef` for the slot — DCE removes it along with
-                // the unreachable panic block in mir-lower.
-                use dialect_mir::ops::MirUndefOp;
-                let undef = MirUndefOp::new(ctx, const_ty_ptr);
-                undef.get_operation().deref_mut(ctx).set_loc(loc);
-                if let Some(prev) = prev_op {
-                    undef.get_operation().insert_after(ctx, prev);
+                // Slice-typed constant: `const FOO: &[T] = ...;` or any literal
+                // like `b"..."` flowing in as `&[u8]`. The constant's allocation
+                // is a fat pointer (data-ptr placeholder + length); provenance
+                // on the data-ptr points to the actual byte/element data.
+                //
+                // Earlier this path emitted `mir.undef`, on the load-bearing
+                // assumption that slice constants only appear in panic-helper
+                // dead code. Real-world consumers index slice constants at
+                // runtime (e.g. comparing against a `&[u8]` known-answer
+                // baseline), and the undef would materialise as a wild
+                // pointer dereferenced on hardware. Now we materialise the
+                // referenced bytes via `MirGlobalAllocOp` and build the
+                // (ptr, len) fat pointer with the same undef + 2×insert_field
+                // pattern used by `Aggregate(RawPtr(Slice|Str, _))`.
+                use dialect_mir::ops::{
+                    MirCastOp, MirConstantOp, MirGlobalAllocOp, MirInsertFieldOp, MirUndefOp,
+                };
+                use pliron::builtin::attributes::{StringAttr, TypeAttr};
+
+                let element_ty = {
+                    let ty_obj = const_ty_ptr.deref(ctx);
+                    ty_obj
+                        .downcast_ref::<dialect_mir::types::MirSliceType>()
+                        .expect("already checked is::<MirSliceType>()")
+                        .element_ty
+                };
+                let elem_byte_size =
+                    byte_size_of_dialect_mir_type(ctx, element_ty)?;
+
+                let bytes = constant_bytes(constant, "slice", loc.clone())?;
+                let len_elems = if elem_byte_size == 0 {
+                    0
                 } else {
-                    undef.get_operation().insert_at_front(block_ptr, ctx);
+                    bytes.len() / elem_byte_size
+                };
+
+                let arr_ty: pliron::context::Ptr<pliron::r#type::TypeObj> =
+                    dialect_mir::types::MirArrayType::get(
+                        ctx,
+                        element_ty,
+                        len_elems as u64,
+                    )
+                    .into();
+                // The MirGlobalAllocOp result lives in `global` (addrspace 1);
+                // the slice's field-0 type is generic (addrspace 0) per
+                // `make_slice_struct` in mir-lower. Cast handles both the
+                // pointee-type change (*[T;N] → *T) and the addrspace
+                // narrowing via `addrspacecast` at the LLVM level.
+                let arr_ptr_ty: pliron::context::Ptr<pliron::r#type::TypeObj> =
+                    dialect_mir::types::MirPtrType::get_global(ctx, arr_ty, false).into();
+                let elem_ptr_ty: pliron::context::Ptr<pliron::r#type::TypeObj> =
+                    dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into();
+
+                // Deterministic global symbol name from the byte contents so
+                // identical literals share storage.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hasher::write(&mut hasher, &bytes);
+                std::hash::Hasher::write_usize(&mut hasher, len_elems);
+                let global_name = format!(
+                    "__cuda_oxide_slice_const_{:016x}",
+                    std::hash::Hasher::finish(&hasher)
+                );
+
+                let global_op = Operation::new(
+                    ctx,
+                    MirGlobalAllocOp::get_concrete_op_info(),
+                    vec![arr_ptr_ty],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                global_op.deref_mut(ctx).set_loc(loc.clone());
+                let global_alloc = MirGlobalAllocOp::new(global_op);
+                global_alloc.set_attr_global_type(ctx, TypeAttr::new(arr_ty));
+                global_alloc.set_attr_global_key(ctx, StringAttr::new(global_name));
+                let bytes_hex = hex_encode_bytes(&bytes);
+                global_alloc.set_attr_initializer_bytes(ctx, StringAttr::new(bytes_hex));
+                global_alloc
+                    .set_attr_initializer_relocations(ctx, StringAttr::new(String::new()));
+
+                if let Some(prev) = prev_op {
+                    global_op.insert_after(ctx, prev);
+                } else {
+                    global_op.insert_at_front(block_ptr, ctx);
                 }
-                let val = undef.get_operation().deref(ctx).get_result(0);
-                Ok((val, Some(undef.get_operation())))
+                let arr_ptr_val = global_op.deref(ctx).get_result(0);
+
+                // Cast `*[T; N]` to `*T` so the slice's field-0 type matches
+                // its element type.
+                let cast_op = Operation::new(
+                    ctx,
+                    MirCastOp::get_concrete_op_info(),
+                    vec![elem_ptr_ty],
+                    vec![arr_ptr_val],
+                    vec![],
+                    0,
+                );
+                cast_op.deref_mut(ctx).set_loc(loc.clone());
+                MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+                cast_op.insert_after(ctx, global_op);
+                let elem_ptr_val = cast_op.deref(ctx).get_result(0);
+
+                // Length constant (usize = i64 on the device).
+                let i64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+                let len_apint =
+                    APInt::from_u64(len_elems as u64, NonZeroUsize::new(64).unwrap());
+                let len_attr =
+                    pliron::builtin::attributes::IntegerAttr::new(i64_ty, len_apint);
+                let len_const_op = Operation::new(
+                    ctx,
+                    MirConstantOp::get_concrete_op_info(),
+                    vec![i64_ty.into()],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                len_const_op.deref_mut(ctx).set_loc(loc.clone());
+                MirConstantOp::new(len_const_op).set_attr_value(ctx, len_attr);
+                len_const_op.insert_after(ctx, cast_op);
+                let len_val = len_const_op.deref(ctx).get_result(0);
+
+                // Build the slice: undef of slice type → insert ptr at 0 →
+                // insert len at 1.
+                let undef_op = {
+                    let u = MirUndefOp::new(ctx, const_ty_ptr);
+                    u.get_operation().deref_mut(ctx).set_loc(loc.clone());
+                    u.get_operation().insert_after(ctx, len_const_op);
+                    u.get_operation()
+                };
+                let undef_val = undef_op.deref(ctx).get_result(0);
+
+                let insert_ptr_op = Operation::new(
+                    ctx,
+                    MirInsertFieldOp::get_concrete_op_info(),
+                    vec![const_ty_ptr],
+                    vec![undef_val, elem_ptr_val],
+                    vec![],
+                    0,
+                );
+                insert_ptr_op.deref_mut(ctx).set_loc(loc.clone());
+                MirInsertFieldOp::new(insert_ptr_op).set_attr_insert_index(
+                    ctx,
+                    dialect_mir::attributes::FieldIndexAttr(0),
+                );
+                insert_ptr_op.insert_after(ctx, undef_op);
+                let with_ptr = insert_ptr_op.deref(ctx).get_result(0);
+
+                let insert_len_op = Operation::new(
+                    ctx,
+                    MirInsertFieldOp::get_concrete_op_info(),
+                    vec![const_ty_ptr],
+                    vec![with_ptr, len_val],
+                    vec![],
+                    0,
+                );
+                insert_len_op.deref_mut(ctx).set_loc(loc);
+                MirInsertFieldOp::new(insert_len_op).set_attr_insert_index(
+                    ctx,
+                    dialect_mir::attributes::FieldIndexAttr(1),
+                );
+                insert_len_op.insert_after(ctx, insert_ptr_op);
+                let slice_val = insert_len_op.deref(ctx).get_result(0);
+
+                Ok((slice_val, Some(insert_len_op)))
             } else if const_ty_ptr.deref(ctx).is::<IntegerType>() {
                 // Integer constant
                 let (width_val, signedness) = {
