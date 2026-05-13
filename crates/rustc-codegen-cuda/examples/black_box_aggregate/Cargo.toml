@@ -1,0 +1,26 @@
+[package]
+name = "black_box_aggregate"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for `core::hint::black_box` on aggregate
+# types (arrays, structs, tuples). mir-lower's `convert_black_box`
+# special-cases integer widths (1/8/16/32/64/128) and bails on
+# anything else:
+#
+#     Lowering failed: Compilation error: invalid input program.
+#     nvvm.black_box of non-integer type not yet supported
+#
+# Surfaced from vanity-miner-rs slot 84+ where the dalek bisection
+# slots do `let bytes = black_box(bytes); …` with `bytes: [u8; 32]`
+# (and similar for `[u128; 9]`, `Scalar52([u64; 5])`, etc.).
+#
+# Build with:
+#   cargo oxide build black_box_aggregate
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
