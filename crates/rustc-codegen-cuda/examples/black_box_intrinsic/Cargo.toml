@@ -1,0 +1,19 @@
+[package]
+name = "black_box_intrinsic"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for unhandled `core::hint::black_box`.
+# `core::hint::black_box` is `#[rustc_intrinsic]` with no MIR body. The
+# importer's guardrail rejects it as an unsupported core intrinsic.
+#
+# Build with:
+#   cargo oxide build black_box_intrinsic
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
