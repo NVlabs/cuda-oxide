@@ -1,0 +1,38 @@
+[package]
+name = "static_u64_array_load"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Regression test for orphan AddressOfOp SSA reference on
+# runtime-indexed `&'static [T; N]` reads. Symptom (pre-fix):
+#
+#     llc: error: ... use of undefined value '%vN'
+#       %v8 = load [5 x i64], ptr addrspace(1) %vN
+#
+# The IR emitted the static's global at module scope correctly
+# (`@__device_global_0`), but the in-function load referenced an
+# SSA value that no operation defined. Root cause: AddressOfOp's
+# export is "virtual" (no instruction text, just remap result to
+# `@global_name`), but unlike ConstantOp it wasn't pre-passed in
+# `export_function`. When mir-importer placed the AddressOfOp's
+# source `MirGlobalAllocOp` near the use site (in a block visited
+# AFTER the use's block during export), the use printed a stale
+# `%vN` placeholder.
+#
+# Fix: add an AddressOfOp arm to the pre-pass that runs before
+# instruction text emission, mirroring the ConstantOp special case.
+#
+# Surfaced from vanity-miner-rs's slot 76 — the minimal probe for
+# the static-multi-byte-element family that took down slots
+# 2/3/11/12/41/42/71/72 (dalek Scalar52 reads, base58 DIVISORS,
+# their cascades).
+#
+# Build with:
+#   cargo oxide build static_u64_array_load
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
