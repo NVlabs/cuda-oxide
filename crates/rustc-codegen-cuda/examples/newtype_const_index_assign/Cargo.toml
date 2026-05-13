@@ -1,0 +1,32 @@
+[package]
+name = "newtype_const_index_assign"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Regression test for `place.0[const_idx] = value` codegen.
+# rustc's MIR encodes `s.0[0] = ...` (newtype field + constant
+# array-index) as a 2-level place projection
+# `[Field(0), ConstantIndex { offset: 0, ... }]`. mir-importer's
+# `translate_statement` had arms for every other 2-level
+# projection-pair (Deref->Field, Field->Field, Field->Index(local),
+# Deref->ConstantIndex, Deref->Index(local)) but was missing
+# Field->ConstantIndex, surfacing as:
+#
+#     Unsupported construct: 2-level projection
+#       Field(0, [u64; 5]) -> ConstantIndex { offset: 0, ... }
+#       not yet implemented for assignment
+#
+# Surfaced from vanity-miner-rs's bisection slot mirroring dalek's
+# `Scalar52::from_bytes`. The pattern is endemic to newtypes that
+# wrap an array and are constructed limb-by-limb: dalek
+# Scalar52/FieldElement51, k256 FieldElement5x52, etc.
+#
+# Build with:
+#   cargo oxide build newtype_const_index_assign
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
