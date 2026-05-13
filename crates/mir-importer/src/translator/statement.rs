@@ -739,6 +739,145 @@ pub fn translate_statement(
                         Ok(Some(store_op))
                     }
                     (
+                        mir::ProjectionElem::Field(field_idx, field_ty),
+                        mir::ProjectionElem::ConstantIndex {
+                            offset,
+                            min_length: _,
+                            from_end,
+                        },
+                    ) => {
+                        // `_local.field[const_idx] = value` — compile-time
+                        // sibling of `(Field, Index(local))`. Surfaced from
+                        // dalek's `Scalar52::from_bytes` (and any newtype-
+                        // wrapping-array `from_bytes`/`from_limbs`/`new`-style
+                        // constructor that fills its inner array slot-by-slot).
+                        //
+                        // Composes the same building blocks the runtime-index
+                        // sibling does: `mir.field_addr` to get a pointer to
+                        // the inner array, then `emit_array_element_store` for
+                        // the GEP + store. The only difference is the index
+                        // value: a `mir.constant` instead of a translated
+                        // local.
+                        if *from_end {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(
+                                    "Field->ConstantIndex with from_end=true not yet supported for writes"
+                                )
+                            );
+                        }
+
+                        let mut current_prev = prev_op;
+                        if let Some(rvalue_op) = rvalue_op_opt {
+                            if let Some(prev) = last_inserted {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else if let Some(prev) = prev_op {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else {
+                                rvalue_op.insert_at_front(block_ptr, ctx);
+                                current_prev = Some(rvalue_op);
+                            }
+                        } else if let Some(prev) = last_inserted {
+                            current_prev = Some(prev);
+                        }
+
+                        let Some(slot) = value_map.get_slot(place.local) else {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "Local {} has no alloca slot for Field->ConstantIndex write",
+                                    Into::<usize>::into(place.local)
+                                ))
+                            );
+                        };
+                        let slot_mutable = pointer_is_mutable(ctx, slot);
+                        let slot_addr_space = pointer_address_space(ctx, slot);
+
+                        let field_type = types::translate_type(ctx, field_ty)?;
+                        let field_ptr_ty = dialect_mir::types::MirPtrType::get(
+                            ctx,
+                            field_type,
+                            slot_mutable,
+                            slot_addr_space,
+                        )
+                        .into();
+
+                        use dialect_mir::ops::MirFieldAddrOp;
+                        let field_addr_op = Operation::new(
+                            ctx,
+                            MirFieldAddrOp::get_concrete_op_info(),
+                            vec![field_ptr_ty],
+                            vec![slot],
+                            vec![],
+                            0,
+                        );
+                        field_addr_op.deref_mut(ctx).set_loc(loc.clone());
+                        MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                        );
+                        if let Some(prev) = current_prev {
+                            field_addr_op.insert_after(ctx, prev);
+                        } else {
+                            field_addr_op.insert_at_front(block_ptr, ctx);
+                        }
+                        let field_ptr = field_addr_op.deref(ctx).get_result(0);
+
+                        let element_ty = {
+                            let field_type_ref = field_type.deref(ctx);
+                            match field_type_ref
+                                .downcast_ref::<dialect_mir::types::MirArrayType>()
+                            {
+                                Some(arr_ty) => arr_ty.element_type(),
+                                None => {
+                                    return input_err!(
+                                        loc,
+                                        TranslationErr::unsupported(format!(
+                                            "Field->ConstantIndex write expects field of \
+                                             MirArrayType, got {}",
+                                            field_type.disp(ctx)
+                                        ))
+                                    );
+                                }
+                            }
+                        };
+
+                        // Build an i64 constant for the offset.
+                        use dialect_mir::ops::MirConstantOp;
+                        use pliron::builtin::attributes::IntegerAttr;
+                        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+                        let idx_apint =
+                            APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+                        let idx_attr = IntegerAttr::new(i64_ty, idx_apint);
+                        let const_op = Operation::new(
+                            ctx,
+                            MirConstantOp::get_concrete_op_info(),
+                            vec![i64_ty.into()],
+                            vec![],
+                            vec![],
+                            0,
+                        );
+                        const_op.deref_mut(ctx).set_loc(loc.clone());
+                        MirConstantOp::new(const_op).set_attr_value(ctx, idx_attr);
+                        const_op.insert_after(ctx, field_addr_op);
+                        let idx_val = const_op.deref(ctx).get_result(0);
+
+                        let store_op = emit_array_element_store(
+                            ctx,
+                            field_ptr,
+                            idx_val,
+                            result_value,
+                            element_ty,
+                            slot_addr_space,
+                            block_ptr,
+                            Some(const_op),
+                            loc,
+                        );
+                        Ok(Some(store_op))
+                    }
+                    (
                         mir::ProjectionElem::Deref,
                         mir::ProjectionElem::ConstantIndex {
                             offset,

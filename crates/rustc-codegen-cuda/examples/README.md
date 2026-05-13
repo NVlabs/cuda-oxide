@@ -156,7 +156,6 @@ hiding the path).
 * `error_wgmma_mma_unimplemented` — `wgmma.mma_async` lowering is not yet implemented
 * `helper_no_inline` — `Symbol helper_no_inline__kernels__get_thread_idx not found`
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
-* `newtype_const_index_assign` — `2-level projection Field(0, [u64; N]) -> ConstantIndex { … } not yet implemented for assignment`
 * `tuple_const_array_field` — `Tuple constant field 0 has unsupported type MirArrayType { … }`
 
 ## PTX-shape known-failures (build passes, emitted PTX is wrong)
@@ -221,6 +220,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * mul_output_mismatched
 * nested_closure_capture_repro
 * nested_struct_const
+* newtype_const_index_assign
 * overflowing_arith_carry
 * panic_fmt_path
 * ptr_offset_intrinsic
