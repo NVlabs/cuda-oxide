@@ -1357,6 +1357,22 @@ impl<'a> ModuleExportState<'a> {
                         continue;
                     }
 
+                    // CRITICAL: AddressOfOp is also "virtual" — its export emits no
+                    // instruction text and just remaps its result to `@global_name`.
+                    // If the AddressOfOp lives in a block exported AFTER its uses
+                    // (e.g. mir-importer's static-translation path inserts it deep
+                    // in a conditional chain whose block comes later in the
+                    // iteration), the uses get the stale `%vN` fallback before the
+                    // export pass overwrites with the global name. Pre-pass the
+                    // mapping the same way ConstantOp does.
+                    if op_id == ops::AddressOfOp::get_opid_static() {
+                        let address_of = Operation::get_op::<ops::AddressOfOp>(op, self.ctx).unwrap();
+                        let global_name = address_of.get_global_name(self.ctx);
+                        let res = op_ref.get_result(0);
+                        value_names.insert(res, format!("@{global_name}"));
+                        continue;
+                    }
+
                     for res in op_ref.results() {
                         let name = format!("%v{next_value_id}");
                         next_value_id += 1;

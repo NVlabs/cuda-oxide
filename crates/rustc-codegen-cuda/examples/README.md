@@ -156,7 +156,6 @@ hiding the path).
 * `error_wgmma_mma_unimplemented` — `wgmma.mma_async` lowering is not yet implemented
 * `helper_no_inline` — `Symbol helper_no_inline__kernels__get_thread_idx not found`
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
-* `static_u64_array_load` — `llc: use of undefined value '%vN'` on `load [N x T], ptr addrspace(1) %vN`
 * `tuple_const_array_field` — `Tuple constant field 0 has unsupported type MirArrayType { … }`
 
 ## PTX-shape known-failures (build passes, emitted PTX is wrong)
@@ -231,6 +230,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * slice_last_from_end
 * slice_range
 * static_ref_relocation
+* static_u64_array_load
 * str_panic_path
 * typed_swap_intrinsic
 * u128_ne_early_return
