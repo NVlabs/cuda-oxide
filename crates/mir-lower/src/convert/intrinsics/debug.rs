@@ -17,6 +17,7 @@
 
 use crate::convert::intrinsics::common::*;
 use crate::helpers;
+use dialect_llvm::op_interfaces::{BinArithOp, CastOpInterface};
 use dialect_llvm::ops as llvm;
 use dialect_llvm::types as llvm_types;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -128,9 +129,10 @@ pub(crate) fn convert_pm_event(
 /// * 8 / 16 / 32-bit → `r` (32-bit register, NVPTX promotes narrower)
 /// * 64-bit → `l` (64-bit register)
 ///
-/// Wider integers (e.g. i128) and non-integer types are not supported
-/// yet; lower them by splitting on the caller side or extend this
-/// match.
+/// i128 is split into hi/lo i64 halves, each run through its own
+/// barrier, and recombined via shl/or. NVPTX has no native i128
+/// register class for inline asm, but splitting matches what the
+/// backend would do for ordinary i128 arithmetic anyway.
 pub(crate) fn convert_black_box(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -147,19 +149,10 @@ pub(crate) fn convert_black_box(
     let input_val = operands[0];
     let value_ty = input_val.get_type(ctx);
 
-    let constraint_letter = {
+    let int_width = {
         let ty_obj = value_ty.deref(ctx);
         match ty_obj.downcast_ref::<IntegerType>() {
-            Some(int_ty) => match int_ty.width() {
-                1 | 8 | 16 | 32 => "r",
-                64 => "l",
-                w => {
-                    return pliron::input_err_noloc!(
-                        "nvvm.black_box of i{w} not yet supported \
-                         (split into 32/64-bit halves or extend convert_black_box)"
-                    );
-                }
-            },
+            Some(int_ty) => int_ty.width(),
             None => {
                 return pliron::input_err_noloc!(
                     "nvvm.black_box of non-integer type not yet supported"
@@ -168,9 +161,131 @@ pub(crate) fn convert_black_box(
         }
     };
 
-    let constraints = format!("={c},{c}", c = constraint_letter);
-    let asm_op = inline_asm_convergent(ctx, rewriter, value_ty, vec![input_val], "", &constraints);
-    rewriter.replace_operation(ctx, op, asm_op);
+    match int_width {
+        1 | 8 | 16 | 32 | 64 => {
+            let constraint_letter = if int_width == 64 { "l" } else { "r" };
+            let constraints = format!("={c},{c}", c = constraint_letter);
+            let asm_op =
+                inline_asm_convergent(ctx, rewriter, value_ty, vec![input_val], "", &constraints);
+            rewriter.replace_operation(ctx, op, asm_op);
+            Ok(())
+        }
+        128 => convert_black_box_i128(ctx, rewriter, op, input_val),
+        w => pliron::input_err_noloc!(
+            "nvvm.black_box of i{w} not yet supported \
+             (split into 32/64/128-bit halves or extend convert_black_box)"
+        ),
+    }
+}
+
+/// Split an i128 black_box into two i64 barriers and recombine.
+///
+/// Emits:
+/// ```text
+/// %lo      = trunc i128 %x to i64
+/// %hi_raw  = lshr i128 %x, 64
+/// %hi      = trunc i128 %hi_raw to i64
+/// %lo_bb   = call i64 asm sideeffect "", "=l,l"(i64 %lo)
+/// %hi_bb   = call i64 asm sideeffect "", "=l,l"(i64 %hi)
+/// %lo_z    = zext i64 %lo_bb to i128
+/// %hi_z    = zext i64 %hi_bb to i128
+/// %hi_shl  = shl  i128 %hi_z, 64
+/// %result  = or   i128 %hi_shl, %lo_z
+/// ```
+fn convert_black_box_i128(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    input_val: pliron::value::Value,
+) -> Result<()> {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let i128_ty = IntegerType::get(ctx, 128, Signedness::Signless);
+
+    // %lo = trunc i128 %x to i64
+    let lo_trunc = llvm::TruncOp::new(ctx, input_val, i64_ty.into()).get_operation();
+    rewriter.insert_operation(ctx, lo_trunc);
+    let lo_val = lo_trunc.deref(ctx).get_result(0);
+
+    // %shift64 = i128 64
+    let shift64_attr = IntegerAttr::new(
+        i128_ty,
+        APInt::from_u128(64, NonZeroUsize::new(128).unwrap()),
+    );
+    let shift64_const = llvm::ConstantOp::new(ctx, shift64_attr.into()).get_operation();
+    rewriter.insert_operation(ctx, shift64_const);
+    let shift64_val = shift64_const.deref(ctx).get_result(0);
+
+    // %hi_raw = lshr i128 %x, 64
+    let hi_lshr = llvm::LShrOp::new(ctx, input_val, shift64_val).get_operation();
+    rewriter.insert_operation(ctx, hi_lshr);
+    let hi_raw_val = hi_lshr.deref(ctx).get_result(0);
+
+    // %hi = trunc i128 %hi_raw to i64
+    let hi_trunc = llvm::TruncOp::new(ctx, hi_raw_val, i64_ty.into()).get_operation();
+    rewriter.insert_operation(ctx, hi_trunc);
+    let hi_val = hi_trunc.deref(ctx).get_result(0);
+
+    // %lo_bb = call i64 asm sideeffect "", "=l,l"(i64 %lo)
+    let lo_bb_op =
+        inline_asm_convergent(ctx, rewriter, i64_ty.into(), vec![lo_val], "", "=l,l");
+    let lo_bb_val = lo_bb_op.deref(ctx).get_result(0);
+
+    // %hi_bb = call i64 asm sideeffect "", "=l,l"(i64 %hi)
+    let hi_bb_op =
+        inline_asm_convergent(ctx, rewriter, i64_ty.into(), vec![hi_val], "", "=l,l");
+    let hi_bb_val = hi_bb_op.deref(ctx).get_result(0);
+
+    let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
+    let nneg_false = || pliron::builtin::attributes::BoolAttr::new(false).into();
+
+    // %lo_z = zext i64 %lo_bb to i128
+    let lo_zext_struct = llvm::ZExtOp::new(ctx, lo_bb_val, i128_ty.into());
+    lo_zext_struct
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .0
+        .insert(nneg_key.clone(), nneg_false());
+    let lo_zext = lo_zext_struct.get_operation();
+    rewriter.insert_operation(ctx, lo_zext);
+    let lo_zext_val = lo_zext.deref(ctx).get_result(0);
+
+    // %hi_z = zext i64 %hi_bb to i128
+    let hi_zext_struct = llvm::ZExtOp::new(ctx, hi_bb_val, i128_ty.into());
+    hi_zext_struct
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .0
+        .insert(nneg_key, nneg_false());
+    let hi_zext = hi_zext_struct.get_operation();
+    rewriter.insert_operation(ctx, hi_zext);
+    let hi_zext_val = hi_zext.deref(ctx).get_result(0);
+
+    // %hi_shl = shl i128 %hi_z, 64
+    let hi_shl_struct = llvm::ShlOp::new(ctx, hi_zext_val, shift64_val);
+    let iof_flags = dialect_llvm::attributes::IntegerOverflowFlagsAttr::default();
+    hi_shl_struct
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .set(
+            dialect_llvm::op_interfaces::ATTR_KEY_INTEGER_OVERFLOW_FLAGS.clone(),
+            iof_flags,
+        );
+    let hi_shl = hi_shl_struct.get_operation();
+    rewriter.insert_operation(ctx, hi_shl);
+    let hi_shl_val = hi_shl.deref(ctx).get_result(0);
+
+    // %result = or i128 %hi_shl, %lo_z
+    let or_op = llvm::OrOp::new(ctx, hi_shl_val, lo_zext_val).get_operation();
+    rewriter.insert_operation(ctx, or_op);
+
+    rewriter.replace_operation(ctx, op, or_op);
     Ok(())
 }
 
