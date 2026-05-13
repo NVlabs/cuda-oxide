@@ -1509,7 +1509,7 @@ pub fn translate_rvalue(
                             Some(prev) => cast_op.insert_after(ctx, prev),
                             None => cast_op.insert_at_front(block_ptr, ctx),
                         }
-                        let new_val = Value::OpResult { op: cast_op, res_idx: 0 };
+                        let new_val = cast_op.deref(ctx).get_result(0);
                         (new_val, Some(cast_op))
                     } else {
                         (ptr_val, after_len)
@@ -1529,10 +1529,7 @@ pub fn translate_rvalue(
                         Some(prev) => undef_op.insert_after(ctx, prev),
                         None => undef_op.insert_at_front(block_ptr, ctx),
                     }
-                    let undef_val = Value::OpResult {
-                        op: undef_op,
-                        res_idx: 0,
-                    };
+                    let undef_val = undef_op.deref(ctx).get_result(0);
 
                     let insert_ptr_op = Operation::new(
                         ctx,
@@ -1546,10 +1543,7 @@ pub fn translate_rvalue(
                     MirInsertFieldOp::new(insert_ptr_op)
                         .set_attr_insert_index(ctx, dialect_mir::attributes::FieldIndexAttr(0));
                     insert_ptr_op.insert_after(ctx, undef_op);
-                    let with_ptr = Value::OpResult {
-                        op: insert_ptr_op,
-                        res_idx: 0,
-                    };
+                    let with_ptr = insert_ptr_op.deref(ctx).get_result(0);
 
                     let insert_len_op = Operation::new(
                         ctx,
@@ -1563,10 +1557,7 @@ pub fn translate_rvalue(
                     MirInsertFieldOp::new(insert_len_op)
                         .set_attr_insert_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
 
-                    let result = Value::OpResult {
-                        op: insert_len_op,
-                        res_idx: 0,
-                    };
+                    let result = insert_len_op.deref(ctx).get_result(0);
 
                     Ok((Some(insert_len_op), result, Some(insert_ptr_op)))
                 }
@@ -2449,10 +2440,7 @@ pub fn translate_operand(
                 } else {
                     undef.get_operation().insert_at_front(block_ptr, ctx);
                 }
-                let val = Value::OpResult {
-                    op: undef.get_operation(),
-                    res_idx: 0,
-                };
+                let val = undef.get_operation().deref(ctx).get_result(0);
                 Ok((val, Some(undef.get_operation())))
             } else if const_ty_ptr.deref(ctx).is::<IntegerType>() {
                 // Integer constant
@@ -3988,10 +3976,7 @@ fn apply_slice_deref_constant_index_from_end(
         Some(p) => extract_ptr_op.insert_after(ctx, p),
         None => extract_ptr_op.insert_at_front(block_ptr, ctx),
     }
-    let data_ptr = Value::OpResult {
-        op: extract_ptr_op,
-        res_idx: 0,
-    };
+    let data_ptr = extract_ptr_op.deref(ctx).get_result(0);
 
     // Field 1: length. The slice fat pointer's len is i64 (see
     // `MirSliceType` lowering's `{ ptr, i64 }`).
@@ -4009,10 +3994,7 @@ fn apply_slice_deref_constant_index_from_end(
     MirExtractFieldOp::new(extract_len_op)
         .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(1));
     extract_len_op.insert_after(ctx, extract_ptr_op);
-    let len_val = Value::OpResult {
-        op: extract_len_op,
-        res_idx: 0,
-    };
+    let len_val = extract_len_op.deref(ctx).get_result(0);
 
     // Constant `offset` as an i64 to match `len`'s type.
     use dialect_mir::ops::MirConstantOp;
@@ -4030,10 +4012,7 @@ fn apply_slice_deref_constant_index_from_end(
     offset_const_op.deref_mut(ctx).set_loc(loc.clone());
     MirConstantOp::new(offset_const_op).set_attr_value(ctx, offset_attr);
     offset_const_op.insert_after(ctx, extract_len_op);
-    let offset_val = Value::OpResult {
-        op: offset_const_op,
-        res_idx: 0,
-    };
+    let offset_val = offset_const_op.deref(ctx).get_result(0);
 
     // `len - offset` → element index.
     let sub_op = Operation::new(
@@ -4046,10 +4025,7 @@ fn apply_slice_deref_constant_index_from_end(
     );
     sub_op.deref_mut(ctx).set_loc(loc.clone());
     sub_op.insert_after(ctx, offset_const_op);
-    let index_val = Value::OpResult {
-        op: sub_op,
-        res_idx: 0,
-    };
+    let index_val = sub_op.deref(ctx).get_result(0);
 
     // GEP data_ptr + index → element pointer.
     let elem_ptr_ty = data_ptr.get_type(ctx);
@@ -4065,10 +4041,7 @@ fn apply_slice_deref_constant_index_from_end(
     ptr_offset_op.insert_after(ctx, sub_op);
 
     Ok((
-        Value::OpResult {
-            op: ptr_offset_op,
-            res_idx: 0,
-        },
+        ptr_offset_op.deref(ctx).get_result(0),
         Some(ptr_offset_op),
     ))
 }
@@ -4558,10 +4531,7 @@ fn translate_array_constant(
                     float_op.get_operation().insert_at_front(block_ptr, ctx);
                 }
                 (
-                    Value::OpResult {
-                        op: float_op.get_operation(),
-                        res_idx: 0,
-                    },
+                    float_op.get_operation().deref(ctx).get_result(0),
                     Some(float_op.get_operation()),
                 )
             }
@@ -4590,10 +4560,7 @@ fn translate_array_constant(
                     float_op.get_operation().insert_at_front(block_ptr, ctx);
                 }
                 (
-                    Value::OpResult {
-                        op: float_op.get_operation(),
-                        res_idx: 0,
-                    },
+                    float_op.get_operation().deref(ctx).get_result(0),
                     Some(float_op.get_operation()),
                 )
             }
@@ -4620,10 +4587,7 @@ fn translate_array_constant(
                     float_op.get_operation().insert_at_front(block_ptr, ctx);
                 }
                 (
-                    Value::OpResult {
-                        op: float_op.get_operation(),
-                        res_idx: 0,
-                    },
+                    float_op.get_operation().deref(ctx).get_result(0),
                     Some(float_op.get_operation()),
                 )
             }
@@ -4654,10 +4618,7 @@ fn translate_array_constant(
                     const_op.get_operation().insert_at_front(block_ptr, ctx);
                 }
                 (
-                    Value::OpResult {
-                        op: const_op.get_operation(),
-                        res_idx: 0,
-                    },
+                    const_op.get_operation().deref(ctx).get_result(0),
                     Some(const_op.get_operation()),
                 )
             }
@@ -4684,10 +4645,7 @@ fn translate_array_constant(
         construct_op.insert_at_front(block_ptr, ctx);
     }
 
-    let array_val = Value::OpResult {
-        op: construct_op,
-        res_idx: 0,
-    };
+    let array_val = construct_op.deref(ctx).get_result(0);
 
     Ok((array_val, Some(construct_op)))
 }
@@ -4888,7 +4846,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), 0))
+            Ok((op.deref(ctx).get_result(0), Some(op), 0))
         }
         K::ZstTuple => {
             let empty_tuple_ty: Ptr<TypeObj> =
@@ -4907,7 +4865,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), 0))
+            Ok((op.deref(ctx).get_result(0), Some(op), 0))
         }
         K::Integer { width, signedness } => {
             let byte_size = (width as usize).div_ceil(8);
@@ -4943,7 +4901,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), byte_size))
         }
         K::Float16 => {
             let byte_size = 2;
@@ -4972,7 +4930,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), byte_size))
         }
         K::Float32 => {
             let byte_size = 4;
@@ -5002,7 +4960,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), byte_size))
         }
         K::Float64 => {
             let byte_size = 8;
@@ -5033,7 +4991,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), byte_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), byte_size))
         }
         K::Pointer => {
             // Reinterpret the 8-byte address as an integer constant + cast.
@@ -5068,14 +5026,12 @@ fn parse_const_value_from_bytes(
                 Some(prev) => const_op_p.insert_after(ctx, prev),
                 None => const_op_p.insert_at_front(block_ptr, ctx),
             }
+            let const_val = const_op_p.deref(ctx).get_result(0);
             let cast_op = Operation::new(
                 ctx,
                 MirCastOp::get_concrete_op_info(),
                 vec![ty_ptr],
-                vec![Value::OpResult {
-                    op: const_op_p,
-                    res_idx: 0,
-                }],
+                vec![const_val],
                 vec![],
                 0,
             );
@@ -5083,7 +5039,7 @@ fn parse_const_value_from_bytes(
             MirCastOp::new(cast_op)
                 .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
             cast_op.insert_after(ctx, const_op_p);
-            Ok((Value::OpResult { op: cast_op, res_idx: 0 }, Some(cast_op), byte_size))
+            Ok((cast_op.deref(ctx).get_result(0), Some(cast_op), byte_size))
         }
         K::NestedStruct {
             field_types,
@@ -5167,7 +5123,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), resolved_total_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), resolved_total_size))
         }
         K::NestedArray { element_ty, count } => {
             let elem_size = byte_size_of_dialect_mir_type(ctx, element_ty)?;
@@ -5213,7 +5169,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), total_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), total_size))
         }
         K::NestedTuple { field_types } => {
             // Tuples have no padding metadata in our dialect; assume
@@ -5265,7 +5221,7 @@ fn parse_const_value_from_bytes(
                 Some(prev) => op.insert_after(ctx, prev),
                 None => op.insert_at_front(block_ptr, ctx),
             }
-            Ok((Value::OpResult { op, res_idx: 0 }, Some(op), total_size))
+            Ok((op.deref(ctx).get_result(0), Some(op), total_size))
         }
         K::Unsupported(desc) => input_err!(
             loc,
@@ -6368,10 +6324,7 @@ fn translate_union_aggregate(
             None => undef_op.insert_at_front(block_ptr, ctx),
         }
         current_prev_op = Some(undef_op);
-        field_values.push(Value::OpResult {
-            op: undef_op,
-            res_idx: 0,
-        });
+        field_values.push(undef_op.deref(ctx).get_result(0));
     }
 
     // Address-space normalize the field values against the struct field
@@ -6395,7 +6348,7 @@ fn translate_union_aggregate(
     );
     op.deref_mut(ctx).set_loc(loc);
 
-    let result = Value::OpResult { op, res_idx: 0 };
+    let result = op.deref(ctx).get_result(0);
     Ok((Some(op), result, prev_after_casts))
 }
 

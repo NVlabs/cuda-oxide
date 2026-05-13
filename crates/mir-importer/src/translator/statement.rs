@@ -684,10 +684,7 @@ pub fn translate_statement(
                             field_addr_op.insert_at_front(block_ptr, ctx);
                         }
                         current_prev = Some(field_addr_op);
-                        let field_ptr = Value::OpResult {
-                            op: field_addr_op,
-                            res_idx: 0,
-                        };
+                        let field_ptr = field_addr_op.deref(ctx).get_result(0);
 
                         // Translate the index local.
                         let index_place = mir::Place {
@@ -881,10 +878,7 @@ pub fn translate_statement(
                         } else {
                             const_op.insert_at_front(block_ptr, ctx);
                         }
-                        let idx_val = Value::OpResult {
-                            op: const_op,
-                            res_idx: 0,
-                        };
+                        let idx_val = const_op.deref(ctx).get_result(0);
 
                         if let InnerShape::Array {
                             arr_ptr_ty,
@@ -907,10 +901,7 @@ pub fn translate_statement(
                             );
                             load_op.deref_mut(ctx).set_loc(loc.clone());
                             load_op.insert_after(ctx, const_op);
-                            let arr_ptr = Value::OpResult {
-                                op: load_op,
-                                res_idx: 0,
-                            };
+                            let arr_ptr = load_op.deref(ctx).get_result(0);
 
                             let store_op = emit_array_element_store(
                                 ctx,
@@ -941,10 +932,7 @@ pub fn translate_statement(
                             );
                             load_op.deref_mut(ctx).set_loc(loc.clone());
                             load_op.insert_after(ctx, const_op);
-                            let slice_val = Value::OpResult {
-                                op: load_op,
-                                res_idx: 0,
-                            };
+                            let slice_val = load_op.deref(ctx).get_result(0);
 
                             let data_ptr_ty: Ptr<pliron::r#type::TypeObj> =
                                 dialect_mir::types::MirPtrType::get_generic(
@@ -966,10 +954,7 @@ pub fn translate_statement(
                                 dialect_mir::attributes::FieldIndexAttr(0),
                             );
                             extract_op.insert_after(ctx, load_op);
-                            let data_ptr = Value::OpResult {
-                                op: extract_op,
-                                res_idx: 0,
-                            };
+                            let data_ptr = extract_op.deref(ctx).get_result(0);
 
                             use dialect_mir::ops::MirPtrOffsetOp;
                             let offset_op = Operation::new(
@@ -982,10 +967,7 @@ pub fn translate_statement(
                             );
                             offset_op.deref_mut(ctx).set_loc(loc.clone());
                             offset_op.insert_after(ctx, extract_op);
-                            let elem_ptr = Value::OpResult {
-                                op: offset_op,
-                                res_idx: 0,
-                            };
+                            let elem_ptr = offset_op.deref(ctx).get_result(0);
 
                             let store_op = Operation::new(
                                 ctx,
@@ -1181,10 +1163,7 @@ pub fn translate_statement(
                             } else {
                                 load_op.insert_at_front(block_ptr, ctx);
                             }
-                            let arr_ptr = Value::OpResult {
-                                op: load_op,
-                                res_idx: 0,
-                            };
+                            let arr_ptr = load_op.deref(ctx).get_result(0);
 
                             let store_op = emit_array_element_store(
                                 ctx,
@@ -1223,10 +1202,7 @@ pub fn translate_statement(
                             } else {
                                 load_op.insert_at_front(block_ptr, ctx);
                             }
-                            let slice_val = Value::OpResult {
-                                op: load_op,
-                                res_idx: 0,
-                            };
+                            let slice_val = load_op.deref(ctx).get_result(0);
 
                             let data_ptr_ty: Ptr<pliron::r#type::TypeObj> =
                                 dialect_mir::types::MirPtrType::get_generic(
@@ -1248,10 +1224,7 @@ pub fn translate_statement(
                                 dialect_mir::attributes::FieldIndexAttr(0),
                             );
                             extract_op.insert_after(ctx, load_op);
-                            let data_ptr = Value::OpResult {
-                                op: extract_op,
-                                res_idx: 0,
-                            };
+                            let data_ptr = extract_op.deref(ctx).get_result(0);
 
                             use dialect_mir::ops::MirPtrOffsetOp;
                             let offset_op = Operation::new(
@@ -1264,10 +1237,7 @@ pub fn translate_statement(
                             );
                             offset_op.deref_mut(ctx).set_loc(loc.clone());
                             offset_op.insert_after(ctx, extract_op);
-                            let elem_ptr = Value::OpResult {
-                                op: offset_op,
-                                res_idx: 0,
-                            };
+                            let elem_ptr = offset_op.deref(ctx).get_result(0);
 
                             let store_op = Operation::new(
                                 ctx,
@@ -1383,10 +1353,7 @@ pub fn translate_statement(
                     outer_addr_op.insert_at_front(block_ptr, ctx);
                 }
                 current_prev = Some(outer_addr_op);
-                let outer_ptr = Value::OpResult {
-                    op: outer_addr_op,
-                    res_idx: 0,
-                };
+                let outer_ptr = outer_addr_op.deref(ctx).get_result(0);
 
                 // Step 2: index local.
                 let index_place = mir::Place {
@@ -1446,10 +1413,7 @@ pub fn translate_statement(
                 } else {
                     arr_addr_op.insert_at_front(block_ptr, ctx);
                 }
-                let element_ptr = Value::OpResult {
-                    op: arr_addr_op,
-                    res_idx: 0,
-                };
+                let element_ptr = arr_addr_op.deref(ctx).get_result(0);
 
                 // Step 4: inner field_addr — pointer to the inner field.
                 let inner_field_type = types::translate_type(ctx, inner_field_ty)?;
@@ -1475,10 +1439,7 @@ pub fn translate_statement(
                     dialect_mir::attributes::FieldIndexAttr(*inner_field_idx as u32),
                 );
                 inner_addr_op.insert_after(ctx, arr_addr_op);
-                let inner_ptr = Value::OpResult {
-                    op: inner_addr_op,
-                    res_idx: 0,
-                };
+                let inner_ptr = inner_addr_op.deref(ctx).get_result(0);
 
                 // Step 5: store.
                 let store_op = Operation::new(
@@ -1571,10 +1532,7 @@ pub fn translate_statement(
                 } else {
                     load_op.insert_at_front(block_ptr, ctx);
                 }
-                let struct_ptr = Value::OpResult {
-                    op: load_op,
-                    res_idx: 0,
-                };
+                let struct_ptr = load_op.deref(ctx).get_result(0);
 
                 let struct_ptr_mutable = pointer_is_mutable(ctx, struct_ptr);
                 let struct_ptr_addr_space = pointer_address_space(ctx, struct_ptr);
@@ -1606,10 +1564,7 @@ pub fn translate_statement(
                 );
                 field_addr_op.insert_after(ctx, load_op);
                 current_prev = Some(field_addr_op);
-                let field_ptr = Value::OpResult {
-                    op: field_addr_op,
-                    res_idx: 0,
-                };
+                let field_ptr = field_addr_op.deref(ctx).get_result(0);
 
                 // Translate the index local.
                 let index_place = mir::Place {

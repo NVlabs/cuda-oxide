@@ -78,7 +78,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::printable::Printable;
-use pliron::value::Value;
 use pliron::r#type::Typed;
 use pliron::{input_err, input_error};
 use rustc_public::CrateDef;
@@ -1314,10 +1313,7 @@ fn emit_typed_swap_nonoverlapping(
     load_x.deref_mut(ctx).set_loc(loc.clone());
     helpers::insert_op(ctx, load_x, block_ptr, last_op);
     last_op = Some(load_x);
-    let tmp_x = Value::OpResult {
-        op: load_x,
-        res_idx: 0,
-    };
+    let tmp_x = load_x.deref(ctx).get_result(0);
 
     // tmp_y = mir.load(y)
     let load_y = Operation::new(
@@ -1331,10 +1327,7 @@ fn emit_typed_swap_nonoverlapping(
     load_y.deref_mut(ctx).set_loc(loc.clone());
     helpers::insert_op(ctx, load_y, block_ptr, last_op);
     last_op = Some(load_y);
-    let tmp_y = Value::OpResult {
-        op: load_y,
-        res_idx: 0,
-    };
+    let tmp_y = load_y.deref(ctx).get_result(0);
 
     // mir.store(x, tmp_y)
     let store_x = Operation::new(
@@ -1461,10 +1454,7 @@ fn emit_volatile_load(
     );
     load_op.deref_mut(ctx).set_loc(loc.clone());
     helpers::insert_op(ctx, load_op, block_ptr, last_op);
-    let loaded = Value::OpResult {
-        op: load_op,
-        res_idx: 0,
-    };
+    let loaded = load_op.deref(ctx).get_result(0);
 
     helpers::emit_store_result_and_goto(
         ctx,
