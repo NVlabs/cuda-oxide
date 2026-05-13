@@ -1,0 +1,28 @@
+[package]
+name = "base58_limb_divrem"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Candidate repro targeting the EXACT PTX shape from base58_encode_32's
+# failing inner loop:
+#
+#     ld.local.b32  %rd, [stack_limb]
+#     shl.b64       %hi, %rd, 32
+#     add.s64       %dvd, %carry, %hi
+#     mul.hi.u64    %tmp, %dvd, 7544311872078572213
+#     shr.u64       %quot, %tmp, 28
+#
+# Distinct from `divrem_large_const` (which loads the dividend straight
+# from `args[]` as a single u64). Forces the dividend to be reconstructed
+# from `carry + (limbs[i] as u64 << 32)` so the operand path through
+# `ld.local.b32 + shl + add` is preserved.
+#
+# Build with:
+#   cargo oxide build base58_limb_divrem
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
