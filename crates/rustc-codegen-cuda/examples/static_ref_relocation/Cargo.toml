@@ -1,0 +1,32 @@
+[package]
+name = "static_ref_relocation"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure reproducer for cross-static pointer relocations
+# not being applied in device-global memory.
+#
+# Surfaced from `~/vanity-miner-rs/` self-test slot 0
+# (`kernel_self_test_primitive_ed25519`) -> Edwards basepoint
+# multiplication -> dereference of `ED25519_BASEPOINT_TABLE`,
+# which in curve25519-dalek is `pub static X: &T = &INNER`.
+# At runtime the kernel reads 0x0 from where X's body should
+# point at INNER.
+#
+# Builds cleanly today; the bug is in the emitted PTX, not at
+# codegen time. Inspect after build:
+#
+#   grep -E '^\.global|^\.visible \.global|^\.const'
+#       target/oxide/release/static_ref_relocation.ptx
+#
+# Bug present: the outer static's `.global` symbol is either
+# absent, zero-initialized, or otherwise not pointing at the
+# inner static's address.
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

@@ -5,12 +5,13 @@ harness and a directory but serve different purposes. Both kinds matter
 for regression coverage, but a future agent looking around shouldn't
 assume one shape is "the right shape."
 
-**1. Regression tests for codegen bugs** (the 43 crates added on the
-`reproduce-errors` branch — 37 passing, 6 documented known-failures).
-Each one has a `//!` doc block at the top of `src/main.rs` naming the
-pre-fix wall, the fix that landed (or "no fix yet — documents an
-unsupported construct"), and what triggers the case. The doc block is
-load-bearing: it's the contract for what the example proves.
+**1. Regression tests for codegen bugs** (the 45 crates added on the
+`reproduce-errors` branch — 38 passing, 6 codegen-time known-failures,
+1 runtime known-failure). Each one has a `//!` doc block at the top of
+`src/main.rs` naming the pre-fix wall, the fix that landed (or "no fix
+yet — documents an unsupported construct"), and what triggers the
+case. The doc block is load-bearing: it's the contract for what the
+example proves.
 
 **2. Demos and feature showcases** (the 49 crates that existed on `main`
 before this branch). These exercise specific cuda-oxide features
@@ -22,7 +23,7 @@ break the same way the regression tests do, so they participate in the
 codegen-regression sweep.
 
 The contract that holds for both: **anything passing today must keep
-passing.** The sweep loop below treats all 92 crates uniformly.
+passing.** The sweep loop below treats all 94 crates uniformly.
 
 ## Building
 
@@ -94,7 +95,7 @@ or pattern the codegen hasn't been taught yet):
 
 6. **Sweep for regressions.** Rebuild a handful of unrelated examples
    (e.g. `vecadd`, `hashmap`, plus anything near the path you touched).
-   For the full sweep, see the loop above — 86/92 examples pass on a
+   For the full sweep, see the loop above — 88/94 examples pass on a
    clean `reproduce-errors` branch, and that ratio must hold.
 
 7. **Commit the fix.** Reference the example name in the commit message
@@ -108,7 +109,30 @@ yet — documents an unsupported construct" and the build is expected to
 fail with exactly that diagnostic. Don't delete or work around these:
 they're what a future implementer needs to know exists.
 
-## 6 documented known-failures
+## A note on bug categories
+
+Repros land in one of three buckets:
+
+1. **Codegen-time known-failures** — `cargo oxide build` itself fails.
+   The walls are diagnostics like "unsupported construct", "symbol not
+   found", or LLC verification errors. Easy to spot in CI: build exit
+   code is non-zero.
+2. **Runtime known-failures (build passes, PTX is wrong)** — `cargo
+   oxide build` succeeds, but the emitted PTX has a shape that faults
+   or returns wrong answers on real hardware. Verification is by
+   PTX-text inspection or a hardware run. Symptom classes include
+   misaligned wide loads, missing static relocations, ABI mismatches
+   at kernel-call boundaries. The build-pass disguises the bug; if you
+   only check `cargo oxide build` you'll miss these.
+3. **Passing regression tests (fix landed)** — built and (where
+   possible) hardware-verified. Locks in a fix.
+
+When writing a new repro, pick the one that matches the surfaced
+behaviour and tag the doc block accordingly. Symptoms drive the
+category — a misaligned-load fault is a runtime known-failure even if
+the bug class is technically also a codegen bug.
+
+## 6 codegen-time known-failures
 
 These build-fail by design. Each one's `//!` block describes an
 unsupported construct and asserts the exact diagnostic the build
@@ -123,7 +147,21 @@ hiding the path).
 * `helper_no_inline` — `Symbol helper_no_inline__kernels__get_thread_idx not found`
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
 
-## 37 passing regression tests
+## 1 runtime known-failure (build passes, PTX is wrong)
+
+These build cleanly but the emitted PTX exhibits a bug that surfaces
+at runtime — typically a fault under compute-sanitizer or a
+wrong-answer result on real hardware. Each one's `//!` block describes
+the PTX-text symptom (e.g., specific instruction shape, missing
+symbol, wrong address space) and the expected post-fix PTX shape.
+Verification of a fix is a grep against the emitted PTX, not a build
+exit code.
+
+* `static_ref_relocation` — `pub static X: &T = &INNER` emits `@OUTER`
+  with `zeroinitializer` body; `@INNER` is absent from the device
+  module. Kernel reads `0x0` and faults on dereference.
+
+## 38 passing regression tests
 
 Each one's `//!` block describes the bug it locked down and the fix
 that landed. If any of these *stops* building, a recent change has
@@ -166,6 +204,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * str_panic_path
 * typed_swap_intrinsic
 * volatile_load_intrinsic
+* xoshiro_seed_misalign
 
 ## 49 pre-existing demos and feature showcases
 
@@ -181,7 +220,7 @@ A future agent extending this directory should:
 
 - **Treat them as covered by the regression sweep** (they're part of
   the 92/92 expected pass-rate when we don't count the 6 documented
-  known-failures, i.e. 86/92). Don't delete or move them just because
+  known-failures, i.e. 88/94). Don't delete or move them just because
   they don't match the regression-test docstring convention.
 - **Not retrofit them into the `//!` format** unless you're also
   reframing one as a regression test for a specific bug it locks
