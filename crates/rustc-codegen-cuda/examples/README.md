@@ -117,20 +117,29 @@ Repros land in one of three buckets:
    The walls are diagnostics like "unsupported construct", "symbol not
    found", or LLC verification errors. Easy to spot in CI: build exit
    code is non-zero.
-2. **Runtime known-failures (build passes, PTX is wrong)** — `cargo
-   oxide build` succeeds, but the emitted PTX has a shape that faults
-   or returns wrong answers on real hardware. Verification is by
-   PTX-text inspection or a hardware run. Symptom classes include
-   misaligned wide loads, missing static relocations, ABI mismatches
-   at kernel-call boundaries. The build-pass disguises the bug; if you
-   only check `cargo oxide build` you'll miss these.
-3. **Passing regression tests (fix landed)** — built and (where
+2. **PTX-shape known-failures (build passes, emitted PTX is wrong)**
+   — `cargo oxide build` succeeds, but the emitted PTX has the wrong
+   instruction sequence, operand wiring, or address space. The fix
+   loop is entirely local: rebuild, grep the new PTX for the expected
+   shape, iterate. No hardware run is in the contract. The doc block
+   names the expected PTX shape (e.g. `add.cc.u64 ... ; addc.u64 ...`),
+   the observed wrong shape, and the grep that verifies the fix.
+3. **Runtime known-failures** — `cargo oxide build` succeeds, the PTX
+   looks plausible on inspection, but the kernel faults under
+   compute-sanitizer or returns wrong answers on real hardware. The
+   contract requires a hardware run to verify a fix. Symptom classes
+   include misaligned wide loads, ABI mismatches at kernel-call
+   boundaries, undefined-behavior PTX that happens to text-grep as
+   correct.
+4. **Passing regression tests (fix landed)** — built and (where
    possible) hardware-verified. Locks in a fix.
 
 When writing a new repro, pick the one that matches the surfaced
 behaviour and tag the doc block accordingly. Symptoms drive the
 category — a misaligned-load fault is a runtime known-failure even if
-the bug class is technically also a codegen bug.
+the bug class is technically also a codegen bug. A wrong-shape PTX
+that *also* faults on hardware is a PTX-shape known-failure if the
+text-grep alone catches the bug.
 
 ## Codegen-time known-failures
 
@@ -149,15 +158,29 @@ hiding the path).
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
 * `tuple_const_array_field` — `Tuple constant field 0 has unsupported type MirArrayType { … }`
 
-## Runtime known-failures (build passes, PTX is wrong)
+## PTX-shape known-failures (build passes, emitted PTX is wrong)
 
-These build cleanly but the emitted PTX exhibits a bug that surfaces
-at runtime — typically a fault under compute-sanitizer or a
-wrong-answer result on real hardware. Each one's `//!` block describes
-the PTX-text symptom (e.g., specific instruction shape, missing
-symbol, wrong address space) and the expected post-fix PTX shape.
-Verification of a fix is a grep against the emitted PTX, not a build
-exit code.
+These build cleanly but the emitted PTX has the wrong shape — a
+specific instruction sequence is missing, an operand register is
+unwired, or the address space is wrong. The fix loop is entirely
+local: `cargo oxide build <name>`, inspect the PTX, grep for the
+expected shape. No hardware run is part of the contract.
+
+Each one's `//!` block describes:
+
+* the **expected** PTX shape (e.g. `add.cc.u64 ... ; addc.u64 ...`)
+* the **observed** wrong shape (e.g. plain `add.u64` with no carry)
+* the **grep** that verifies a fix
+
+* `u128_ne_early_return` — `if sum != const_u128 { return 0; }`: expect `xor.b64 …, E.hi` for each high-half-nonzero E
+
+## Runtime known-failures (hardware required to verify)
+
+These build cleanly, the emitted PTX text-greps as correct, but the
+kernel still misbehaves on real hardware — faults under
+compute-sanitizer, returns wrong answers, or exhibits UB-driven
+miscompilation that only the hardware exposes. Verification of a fix
+requires a hardware run; text inspection alone is insufficient.
 
 (None currently. `static_ref_relocation` and `xoshiro_seed_misalign`
 were here pre-fix and have moved to the passing list.)

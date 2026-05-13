@@ -1,0 +1,29 @@
+[package]
+name = "u128_ne_early_return"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# PTX-shape regression test for u128 switch-target truncation.
+# rustc lowers `if sum != const_u128 { return 0; }` to a `SwitchInt`
+# whose target value is the i128 constant itself. mir-importer's
+# `translate_switch` was casting the target through `val as u64`,
+# dropping the high half — so any E with non-zero high half got
+# silently truncated to its low limb. For vanity-miner-rs slot 65
+# (`arith i128 chain add`), this corrupted case 0 (E = 2^64) and
+# case 2 (E = 4*2^64 - 2), turning the runtime check into the
+# wrong comparison against E.lo.
+#
+# Verify by grepping the emitted PTX:
+#   grep -nE 'xor\.b64.*, (1|3)\b' u128_ne_early_return.ptx
+# Expect both `xor.b64 …, 1` (case 0, E.hi=1) and
+# `xor.b64 …, 3` (case 2, E.hi=3).
+#
+# Build with:
+#   cargo oxide build u128_ne_early_return
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
