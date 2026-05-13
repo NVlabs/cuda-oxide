@@ -1,0 +1,21 @@
+[package]
+name = "i128_add_carry_chain"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Candidate repro for Bug C: u128 + u128 cross-half carry dropped.
+# Slot 40 (single u128 wrapping_mul) and slot 49 (single widening
+# mul-pair) both PASS — but dalek/k256 do dozens of widening mults
+# followed by `u128 + u128` to accumulate. Native `add i128` lowers to
+# NVPTX `add.cc.u64` + `addc.u64`; if the carry from low → high is
+# dropped, every accumulation is silently wrong.
+#
+# Build with:
+#   cargo oxide build i128_add_carry_chain
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
