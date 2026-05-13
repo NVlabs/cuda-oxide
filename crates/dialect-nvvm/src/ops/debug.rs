@@ -16,6 +16,7 @@
 //! │ TrapOp                  │ trap / llvm.nvvm.trap        │ Abort kernel execution  │
 //! │ BreakpointOp            │ brkpt / llvm.nvvm.brkpt      │ cuda-gdb breakpoint     │
 //! │ VprintfOp               │ vprintf / call @vprintf      │ Formatted output        │
+//! │ BlackBoxOp              │ empty asm sideeffect barrier │ `core::hint::black_box` │
 //! └─────────────────────────┴──────────────────────────────┴─────────────────────────┘
 //! ```
 
@@ -338,6 +339,56 @@ impl Verify for VprintfOp {
     }
 }
 
+// =============================================================================
+// Compiler-Hint Operations
+// =============================================================================
+
+/// `core::hint::black_box` opaque-identity barrier.
+///
+/// One operand, one result of the same type. Semantically the identity
+/// function — at the LLVM stage this lowers to an empty inline `asm
+/// sideeffect` with register input/output (the same shape rustc's LLVM
+/// backend emits), which LLVM's optimizer treats as opaque. This is
+/// what prevents `black_box(const)` from being const-folded back into
+/// a constant, which is the whole point of the intrinsic.
+///
+/// Lives in `dialect-nvvm` rather than `dialect-mir` because the
+/// only lowering we know how to express today is target-specific
+/// (PTX inline asm constraint letters).
+///
+/// # Verification
+///
+/// - Must have 1 operand
+/// - Must have 1 result of the same type as the operand
+#[pliron_op(
+    name = "nvvm.black_box",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct BlackBoxOp;
+
+impl BlackBoxOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        BlackBoxOp { op }
+    }
+}
+
+impl Verify for BlackBoxOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = &*self.get_operation().deref(ctx);
+        let in_ty = op.get_operand(0).get_type(ctx);
+        let out_ty = op.get_result(0).get_type(ctx);
+        if in_ty != out_ty {
+            return verify_err!(
+                op.loc(),
+                "nvvm.black_box operand and result must have the same type"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Register debug operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // Clock/Timing
@@ -351,4 +402,6 @@ pub(super) fn register(ctx: &mut Context) {
     PmEventOp::register(ctx);
     // Printf
     VprintfOp::register(ctx);
+    // Compiler hints
+    BlackBoxOp::register(ctx);
 }

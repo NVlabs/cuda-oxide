@@ -1470,6 +1470,76 @@ fn emit_volatile_load(
     )
 }
 
+/// Lower `core::hint::black_box<T>(x: T) -> T` to `nvvm.black_box`.
+///
+/// `#[rustc_intrinsic]` with no MIR body. Without an opaque barrier the
+/// LLVM optimizer would const-fold the operand back into a constant —
+/// which defeats the bisection slots that wrap their operands in
+/// `black_box` to force runtime evaluation. We emit a dialect op that
+/// `mir-lower` rewrites to an empty inline `asm sideeffect` (the same
+/// shape rustc's LLVM backend uses).
+#[allow(clippy::too_many_arguments)]
+fn emit_black_box(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_nvvm::ops::BlackBoxOp;
+
+    if args.len() != 1 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "black_box expects 1 arg (x), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (in_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let value_ty = in_val.get_type(ctx);
+
+    let bb_op = Operation::new(
+        ctx,
+        BlackBoxOp::get_concrete_op_info(),
+        vec![value_ty],
+        vec![in_val],
+        vec![],
+        0,
+    );
+    bb_op.deref_mut(ctx).set_loc(loc.clone());
+    helpers::insert_op(ctx, bb_op, block_ptr, last_op);
+    let out_val = bb_op.deref(ctx).get_result(0);
+
+    helpers::emit_store_result_and_goto(
+        ctx,
+        destination,
+        out_val,
+        target,
+        block_ptr,
+        bb_op,
+        value_map,
+        block_map,
+        loc,
+        "black_box call without target not supported",
+    )
+}
+
 /// Handle closure trait method calls (FnOnce::call_once, FnMut::call_mut, Fn::call).
 ///
 /// These calls pass arguments as a tuple, but the closure body expects unpacked args:
@@ -2060,6 +2130,28 @@ fn try_dispatch_intrinsic(
         // =================================================================
         "core::intrinsics::volatile_load" | "std::intrinsics::volatile_load" => Ok(Some(
             emit_volatile_load(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?,
+        )),
+
+        // =================================================================
+        // black_box<T>(x: T) -> T
+        // Bodyless `#[rustc_intrinsic]`. Surfaces from `core::hint::black_box`,
+        // which downstream code uses as an opaque barrier to prevent
+        // const-folding of bisection-test operands. Lower to `nvvm.black_box`
+        // (which rewrites to an empty `asm sideeffect` at the LLVM stage).
+        // =================================================================
+        "core::intrinsics::black_box" | "std::intrinsics::black_box" => Ok(Some(
+            emit_black_box(
                 ctx,
                 body,
                 args,

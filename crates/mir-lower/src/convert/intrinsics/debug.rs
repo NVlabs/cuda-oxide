@@ -13,6 +13,7 @@
 //! | `Breakpoint`  | inline PTX `brkpt;`                 | `brkpt;`           |
 //! | `PmEvent`     | inline PTX `pmevent N;`             | `pmevent N;`       |
 //! | `Vprintf`     | `call @vprintf`                     | `call vprintf`     |
+//! | `BlackBox`    | empty `asm sideeffect` barrier      | (no instructions)  |
 
 use crate::convert::intrinsics::common::*;
 use crate::helpers;
@@ -27,6 +28,7 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
+use pliron::r#type::Typed;
 
 pub(crate) fn convert_clock(
     ctx: &mut Context,
@@ -112,6 +114,63 @@ pub(crate) fn convert_pm_event(
     let asm_str = format!("pmevent {};", event_id);
     inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], &asm_str, "");
     rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Lower `nvvm.black_box` to an empty inline `asm sideeffect` with
+/// register input/output — the same shape rustc's LLVM backend emits
+/// for `core::hint::black_box`. LLVM treats this as opaque, so the
+/// optimizer can't see through it and const-fold the operand back into
+/// a constant.
+///
+/// Constraint letter is picked from the integer bit-width using the
+/// NVPTX inline-asm register classes:
+/// * 8 / 16 / 32-bit → `r` (32-bit register, NVPTX promotes narrower)
+/// * 64-bit → `l` (64-bit register)
+///
+/// Wider integers (e.g. i128) and non-integer types are not supported
+/// yet; lower them by splitting on the caller side or extend this
+/// match.
+pub(crate) fn convert_black_box(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 {
+        return pliron::input_err_noloc!(
+            "nvvm.black_box requires 1 operand, got {}",
+            operands.len()
+        );
+    }
+    let input_val = operands[0];
+    let value_ty = input_val.get_type(ctx);
+
+    let constraint_letter = {
+        let ty_obj = value_ty.deref(ctx);
+        match ty_obj.downcast_ref::<IntegerType>() {
+            Some(int_ty) => match int_ty.width() {
+                1 | 8 | 16 | 32 => "r",
+                64 => "l",
+                w => {
+                    return pliron::input_err_noloc!(
+                        "nvvm.black_box of i{w} not yet supported \
+                         (split into 32/64-bit halves or extend convert_black_box)"
+                    );
+                }
+            },
+            None => {
+                return pliron::input_err_noloc!(
+                    "nvvm.black_box of non-integer type not yet supported"
+                );
+            }
+        }
+    };
+
+    let constraints = format!("={c},{c}", c = constraint_letter);
+    let asm_op = inline_asm_convergent(ctx, rewriter, value_ty, vec![input_val], "", &constraints);
+    rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
 }
 
