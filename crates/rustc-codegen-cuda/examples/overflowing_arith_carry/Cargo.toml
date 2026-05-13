@@ -1,0 +1,21 @@
+[package]
+name = "overflowing_arith_carry"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for the carry flag dropped by mir-lower's
+# `convert_checked_add` / `convert_checked_sub`. Both hardcode the
+# overflow flag to `false`, which silently breaks every multi-limb
+# carry chain (dalek, k256, base58_encode's byte loop).
+#
+# Build with:
+#   cargo oxide build overflowing_arith_carry
+# Run on a GPU with:
+#   cargo oxide run   overflowing_arith_carry
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
