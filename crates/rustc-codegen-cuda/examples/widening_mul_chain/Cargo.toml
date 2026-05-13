@@ -1,0 +1,27 @@
+[package]
+name = "widening_mul_chain"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Candidate repro for the partial-product accumulation pattern used
+# by curve25519-dalek's Scalar52::mul_internal and k256's
+# FieldElement5x52::mul_inner:
+#
+#   let z = m(a[0], b[2])
+#       .wrapping_add(m(a[1], b[1]))
+#       .wrapping_add(m(a[2], b[0]));
+#
+# where m(x, y) = (x as u128) * (y as u128). Slot 49 of vanity-miner-rs
+# (one widening mul-pair) PASSes; slot 40 (one u128 wrapping_mul)
+# PASSes; this repro chains them together to see if the interaction
+# trips a bug neither isolation slot catches.
+#
+# Build with:
+#   cargo oxide build widening_mul_chain
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
