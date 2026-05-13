@@ -395,7 +395,7 @@ pub fn convert_global_alloc_dc(
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let (global_key, mir_global_type, alignment) = {
+    let (global_key, mir_global_type, alignment, init_bytes, init_relocs) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
@@ -429,7 +429,26 @@ pub fn convert_global_alloc_dc(
 
         let alignment = global_op.get_alignment_value(ctx).unwrap_or(0);
 
-        (global_key, mir_global_type, alignment)
+        // Initializer attrs (set by mir-importer's static-translation path).
+        // Both are optional — a missing attr means "no initializer info"
+        // and the global stays `zeroinitializer`, preserving the old
+        // behaviour for any caller that hasn't been updated.
+        let init_bytes = op_ref
+            .attributes
+            .0
+            .get(&"initializer_bytes".try_into().unwrap())
+            .and_then(|a| a.downcast_ref::<StringAttr>())
+            .map(|a| String::from((*a).clone()))
+            .unwrap_or_default();
+        let init_relocs = op_ref
+            .attributes
+            .0
+            .get(&"initializer_relocations".try_into().unwrap())
+            .and_then(|a| a.downcast_ref::<StringAttr>())
+            .map(|a| String::from((*a).clone()))
+            .unwrap_or_default();
+
+        (global_key, mir_global_type, alignment, init_bytes, init_relocs)
     };
 
     let global_name = if let Some(existing_name) = device_globals.get(&global_key) {
@@ -442,6 +461,8 @@ pub fn convert_global_alloc_dc(
             &global_key,
             mir_global_type,
             alignment,
+            &init_bytes,
+            &init_relocs,
         )?
     };
 
@@ -460,7 +481,11 @@ fn create_device_global(
     global_key: &str,
     mir_global_type: Ptr<TypeObj>,
     alignment: u64,
+    init_bytes_hex: &str,
+    init_relocations: &str,
 ) -> Result<pliron::identifier::Identifier> {
+    use pliron::builtin::attributes::StringAttr;
+
     let llvm_global_type = convert_type(ctx, mir_global_type).map_err(anyhow_to_pliron)?;
 
     static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
@@ -475,6 +500,33 @@ fn create_device_global(
         llvm::GlobalOp::new(ctx, name.clone(), llvm_global_type)
     };
     global_op.set_address_space(ctx, dialect_llvm::types::address_space::GLOBAL);
+
+    // Always stash the source-level static key as a sidecar attribute.
+    // The exporter walks all globals to build a `source_key -> llvm_name`
+    // map so that initializer relocations naming "INNER" can be resolved
+    // to "@__device_global_<idx>".
+    global_op.get_operation().deref_mut(ctx).attributes.0.insert(
+        "llvm_global_source_key".try_into().unwrap(),
+        Box::new(StringAttr::new(global_key.to_string())),
+    );
+
+    // Forward the bytes + relocations through. The exporter
+    // (`crates/dialect-llvm/src/export.rs::export_global`) reads these
+    // attrs and emits a proper initializer in place of the historical
+    // `zeroinitializer` default. Empty strings mean "no info" and the
+    // exporter falls back to `zeroinitializer`.
+    if !init_bytes_hex.is_empty() {
+        global_op.get_operation().deref_mut(ctx).attributes.0.insert(
+            "llvm_initializer_bytes".try_into().unwrap(),
+            Box::new(StringAttr::new(init_bytes_hex.to_string())),
+        );
+    }
+    if !init_relocations.is_empty() {
+        global_op.get_operation().deref_mut(ctx).attributes.0.insert(
+            "llvm_initializer_relocations".try_into().unwrap(),
+            Box::new(StringAttr::new(init_relocations.to_string())),
+        );
+    }
 
     let parent_block = op
         .deref(ctx)

@@ -699,12 +699,23 @@ impl Verify for MirSharedAllocOp {
 /// # Attributes
 ///
 /// ```text
-/// | Name            | Type        | Description                      |
-/// |-----------------|-------------|----------------------------------|
-/// | `global_type`   | TypeAttr    | Type stored in the global        |
-/// | `global_key`    | StringAttr  | Stable key for deduplication     |
-/// | `global_alignment` | IntegerAttr | Optional alignment            |
+/// | Name                       | Type        | Description                                              |
+/// |----------------------------|-------------|----------------------------------------------------------|
+/// | `global_type`              | TypeAttr    | Type stored in the global                                |
+/// | `global_key`               | StringAttr  | Stable key for deduplication                             |
+/// | `global_alignment`         | IntegerAttr | Optional alignment                                       |
+/// | `initializer_bytes`        | StringAttr  | Hex-encoded raw initializer bytes (lowercase, no spaces) |
+/// | `initializer_relocations`  | StringAttr  | Comma-separated `offset:target_key` cross-static refs    |
 /// ```
+///
+/// `initializer_bytes` is a hex string so it survives the textual IR
+/// round-trip without escape headaches; it carries the raw bytes of the
+/// static's body, including zero placeholders at each relocation offset.
+///
+/// `initializer_relocations` names per-offset pointer fixups that the
+/// final emitter substitutes in for the zero placeholders: each entry
+/// is `OFF:KEY` where `OFF` is the byte offset (decimal) and `KEY` is
+/// the `global_key` of another `MirGlobalAllocOp` that emits the target.
 ///
 /// # Results
 ///
@@ -720,7 +731,9 @@ impl Verify for MirSharedAllocOp {
     attributes = (
         global_type: pliron::builtin::attributes::TypeAttr,
         global_key: pliron::builtin::attributes::StringAttr,
-        global_alignment: IntegerAttr
+        global_alignment: IntegerAttr,
+        initializer_bytes: pliron::builtin::attributes::StringAttr,
+        initializer_relocations: pliron::builtin::attributes::StringAttr
     )
 )]
 pub struct MirGlobalAllocOp;

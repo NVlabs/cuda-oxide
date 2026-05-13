@@ -1,28 +1,23 @@
-//! Known-failure reproducer for cross-static pointer relocations
-//! not being applied in device-global memory.
+//! Regression test for cross-static pointer relocations being
+//! applied (and the inner static actually emitted) in the device
+//! module's global memory.
 //!
-//! ## Status
+//! ## Pre-fix wall
 //!
-//! `cargo oxide build` succeeds today — the bug is in the emitted
-//! PTX, not at codegen time. On real GPU the kernel reads `0x0`
-//! from where `OUTER`'s body should hold the address of `INNER`,
-//! then dereferences and faults with
-//! `CUDA_ERROR_ILLEGAL_ADDRESS` (700).
+//! `cargo oxide build` succeeded, but the emitted PTX had only
+//! `@__device_global_0 = addrspace(1) global ptr zeroinitializer` —
+//! the outer static was a null-bodied pointer slot, and the inner
+//! static was missing from the module entirely.
 //!
-//! ## Pre-fix wall (compute-sanitizer on real GPU)
+//! On hardware, dereferencing the outer static read `0x0`. compute-
+//! sanitizer flagged the resulting null read inside
+//! `FieldElement51::conditional_assign`:
 //!
 //! ```text
 //! Invalid __global__ read of size 8 bytes
 //!     at $kernel_..._FieldElement51_..._conditional_assign+0x59b0
-//!     by thread (0,0,0) in block (0,0,0)
 //!     Access to 0x0 is out of bounds
-//!     and is 46170898432 bytes before the nearest allocation at 0xac0000000
 //! ```
-//!
-//! Address `0x0`, not a slightly-bad address — clean null deref.
-//! The kernel read the 8-byte pointer body of an outer
-//! `pub static X: &T = &INNER` static, expecting it to hold
-//! `INNER`'s relocated address, and got zero.
 //!
 //! Surfaced from `~/vanity-miner-rs/`'s self-test slot 1
 //! (`kernel_self_test_primitive_ed25519`):
@@ -35,9 +30,9 @@
 //!
 //! ## What triggers it
 //!
-//! curve25519-dalek (and many other crypto crates) lay out
-//! their precomputed tables as a `pub static` whose body is a
-//! reference to a private inner static holding the data:
+//! curve25519-dalek (and many other crypto crates) lay out their
+//! precomputed tables as a `pub static` whose body is a reference
+//! to a private inner static holding the data:
 //!
 //! ```rust,ignore
 //! // curve25519-dalek-4.1.3/src/backend/serial/u64/constants.rs:331
@@ -50,61 +45,78 @@
 //!
 //! This is a **cross-static relocation**: the outer static's body
 //! is a pointer that the linker fills in with the inner static's
-//! resolved address at link time. In LLVM IR, this is the shape
+//! resolved address. In LLVM IR, the shape is
 //!
 //! ```llvm,ignore
-//! @INNER = internal global [4 x i64] [i64 1, i64 2, i64 3, i64 4]
-//! @OUTER = constant ptr @INNER
+//! @INNER = addrspace(1) global [4 x i64] [i64 1, i64 2, i64 3, i64 4]
+//! @OUTER = addrspace(1) global ptr addrspacecast (ptr addrspace(1) @INNER to ptr)
 //! ```
 //!
-//! cuda-oxide is currently emitting `@OUTER`'s body as zero (or
-//! omitting `@INNER` from the device module entirely), so at
-//! runtime the kernel loads `0x0` instead of `@INNER`'s address.
+//! ## What landed
 //!
-//! ## Verifying the bug in the emitted PTX
+//! Replaced `ensure_zero_initializer` in
+//! `crates/mir-importer/src/translator/rvalue.rs` with
+//! `compute_static_initializer` + `collect_reachable_statics`:
+//!
+//! * `compute_static_initializer` returns the raw bytes plus an
+//!   offset-keyed list of pointer relocations (extracted from
+//!   `alloc.provenance.ptrs`, which the old placeholder discarded).
+//! * `collect_reachable_statics` walks the transitive closure of
+//!   referenced statics so every static the kernel can reach via
+//!   pointer chasing ends up in the device module.
+//!
+//! Plumbed through new `initializer_bytes` and
+//! `initializer_relocations` attributes on `MirGlobalAllocOp` ->
+//! the LLVM `GlobalOp` -> the dialect-llvm exporter
+//! (`export_global`), which now emits either
+//!
+//! * pure bytes:
+//!   `@INNER = addrspace(1) global [N x i8] c"\01\00..."`, or
+//! * a packed struct interleaving byte runs with addrspacecast'd
+//!   pointer relocations:
+//!   `@OUTER = addrspace(1) global <{ ptr }> <{ ptr addrspacecast (ptr addrspace(1) @INNER to ptr) }>`
+//!
+//! Relocation target keys are resolved through a
+//! `source_key_to_llvm_name` map built by a pre-pass over the
+//! module's globals, so OUTER's `ptr @INNER` reference lands on
+//! the correct synthetic `__device_global_N` symbol.
+//!
+//! Secondary MirGlobalAllocOps (the transitively-reachable ones
+//! whose values the kernel doesn't directly consume) are inserted
+//! at the front of the kernel block to keep the kernel's own
+//! terminator the last op in its block.
+//!
+//! NVPTX renders the addrspacecast as `generic(__device_global_N)`
+//! in the final PTX, which the JIT resolves to INNER's runtime
+//! address.
+//!
+//! ## Verifying the fix in the emitted PTX
 //!
 //! ```sh
 //! cargo oxide build static_ref_relocation
-//! grep -E '^\.global|^\.visible \.global|^\.const' \
+//! grep -E '^\.global' \
 //!     crates/rustc-codegen-cuda/examples/static_ref_relocation/static_ref_relocation.ptx
 //! ```
 //!
-//! Bug present: the inner static's `.global` symbol is missing,
-//! zero-initialized, or the outer ref-static's body holds a
-//! null pointer instead of the inner's relocated address.
+//! Post-fix output:
 //!
-//! ## What we expect to land
+//! ```text
+//! .visible .global .align 8 .b8 __device_global_0[32] = {1, 0, 0, 0, ...};
+//! .visible .global .align 8 .u64 __device_global_1[1] = {generic(__device_global_0)};
+//! ```
 //!
-//! Wherever mir-importer / mir-lower / dialect-llvm export
-//! handles `pub static X: &T = &INNER`:
+//! Both halves: INNER's bytes are present, and OUTER's body holds
+//! INNER's relocated address.
 //!
-//! 1. Ensure `INNER` is emitted as a `.global` (or `.const`)
-//!    with its full initializer, even when reachable only
-//!    through the outer ref-static.
-//! 2. Ensure the outer static's body is emitted as the
-//!    relocated address of `INNER`, not as a null pointer
-//!    or as a zero-initialized buffer.
+//! ## Relationship to other repros
 //!
-//! The same shape underlies many crypto/lookup-table crates:
-//! sha2's K constants, k256's affine generator, etc. Fixing
-//! this one shape unblocks the family.
-//!
-//! ## Why a fresh hardware run of this repro may pass
-//!
-//! Depending on which step is broken in the pipeline, this
-//! repro could also build to PTX that "works by luck" (e.g.,
-//! a constant-folded compile-time read of a known-value INNER).
-//! Confirmation is a PTX-text check, not just a hardware run.
-//!
-//! ## What this example is NOT
-//!
-//! - Not about a local stack misalignment (see
-//!   `xoshiro_seed_misalign/` for that bug, fixed by the
-//!   conservative alloca-align rule).
-//! - Not about a missing intrinsic handler (e.g. `raw_eq`,
-//!   covered by `array_eq_raw/`).
+//! - `xoshiro_seed_misalign`: local-stack-alloca alignment bug. Same
+//!   class (PTX-shape codegen issue), different storage class.
+//! - `array_eq_raw`: introduced the `raw_eq` intrinsic handler that
+//!   produces wide loads. Independent of this fix.
 //! - Not specific to ed25519 / curve25519-dalek — any
-//!   `pub static X: &T = &INNER` exhibits the same shape.
+//!   `pub static X: &T = &INNER` exhibits this shape, including
+//!   sha2's K constants, k256's affine generator, etc.
 //!
 //! ## Build with
 //!
@@ -117,10 +129,10 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 /// Inner static: the actual data.
 static INNER: [u64; 4] = [1, 2, 3, 4];
 
-/// Outer static: a reference to the inner. Its body must be
-/// relocated to `INNER`'s address at link time. cuda-oxide
-/// currently emits this body as null, so dereferencing `OUTER`
-/// inside a kernel reads `0x0`.
+/// Outer static: a reference to the inner. Its body is the
+/// relocated address of `INNER`. Pre-fix this body was null;
+/// post-fix the device module contains a packed-struct global
+/// whose single field is `addrspacecast (ptr addrspace(1) @INNER to ptr)`.
 static OUTER: &[u64; 4] = &INNER;
 
 #[cuda_module]

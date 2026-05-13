@@ -5,25 +5,24 @@ harness and a directory but serve different purposes. Both kinds matter
 for regression coverage, but a future agent looking around shouldn't
 assume one shape is "the right shape."
 
-**1. Regression tests for codegen bugs** (the 45 crates added on the
-`reproduce-errors` branch — 38 passing, 6 codegen-time known-failures,
-1 runtime known-failure). Each one has a `//!` doc block at the top of
-`src/main.rs` naming the pre-fix wall, the fix that landed (or "no fix
-yet — documents an unsupported construct"), and what triggers the
+**1. Regression tests for codegen bugs** (added on the
+`reproduce-errors` branch). Each one has a `//!` doc block at the top
+of `src/main.rs` naming the pre-fix wall, the fix that landed (or "no
+fix yet — documents an unsupported construct"), and what triggers the
 case. The doc block is load-bearing: it's the contract for what the
 example proves.
 
-**2. Demos and feature showcases** (the 49 crates that existed on `main`
-before this branch). These exercise specific cuda-oxide features
-(intrinsics, dialect ops, launch APIs, subsystem demos like wgmma/tcgen05/
-tma) rather than locking down a specific bug. Most don't carry a
-`//!`-block in the regression-test format, and that's fine — they're
-working sample code, not regression-test contracts. They still build and
-break the same way the regression tests do, so they participate in the
-codegen-regression sweep.
+**2. Demos and feature showcases** (pre-date the `reproduce-errors`
+branch). These exercise specific cuda-oxide features (intrinsics,
+dialect ops, launch APIs, subsystem demos like wgmma/tcgen05/tma)
+rather than locking down a specific bug. Most don't carry a `//!`-
+block in the regression-test format, and that's fine — they're
+working sample code, not regression-test contracts. They still build
+and break the same way the regression tests do, so they participate
+in the codegen-regression sweep.
 
 The contract that holds for both: **anything passing today must keep
-passing.** The sweep loop below treats all 94 crates uniformly.
+passing.** The sweep loop below treats every crate uniformly.
 
 ## Building
 
@@ -95,8 +94,9 @@ or pattern the codegen hasn't been taught yet):
 
 6. **Sweep for regressions.** Rebuild a handful of unrelated examples
    (e.g. `vecadd`, `hashmap`, plus anything near the path you touched).
-   For the full sweep, see the loop above — 88/94 examples pass on a
-   clean `reproduce-errors` branch, and that ratio must hold.
+   For the full sweep, see the loop above — every codegen-time known-
+   failure should still fail with its documented diagnostic, and every
+   other crate should still build.
 
 7. **Commit the fix.** Reference the example name in the commit message
    so future bisects connect the dots. Title pattern:
@@ -132,7 +132,7 @@ behaviour and tag the doc block accordingly. Symptoms drive the
 category — a misaligned-load fault is a runtime known-failure even if
 the bug class is technically also a codegen bug.
 
-## 6 codegen-time known-failures
+## Codegen-time known-failures
 
 These build-fail by design. Each one's `//!` block describes an
 unsupported construct and asserts the exact diagnostic the build
@@ -147,7 +147,7 @@ hiding the path).
 * `helper_no_inline` — `Symbol helper_no_inline__kernels__get_thread_idx not found`
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
 
-## 1 runtime known-failure (build passes, PTX is wrong)
+## Runtime known-failures (build passes, PTX is wrong)
 
 These build cleanly but the emitted PTX exhibits a bug that surfaces
 at runtime — typically a fault under compute-sanitizer or a
@@ -157,11 +157,10 @@ symbol, wrong address space) and the expected post-fix PTX shape.
 Verification of a fix is a grep against the emitted PTX, not a build
 exit code.
 
-* `static_ref_relocation` — `pub static X: &T = &INNER` emits `@OUTER`
-  with `zeroinitializer` body; `@INNER` is absent from the device
-  module. Kernel reads `0x0` and faults on dereference.
+(None currently. `static_ref_relocation` and `xoshiro_seed_misalign`
+were here pre-fix and have moved to the passing list.)
 
-## 38 passing regression tests
+## Passing regression tests
 
 Each one's `//!` block describes the bug it locked down and the fix
 that landed. If any of these *stops* building, a recent change has
@@ -201,6 +200,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * slice_const_idx_write
 * slice_last_from_end
 * slice_range
+* static_ref_relocation
 * str_panic_path
 * typed_swap_intrinsic
 * volatile_load_intrinsic
@@ -218,10 +218,10 @@ functionality.
 
 A future agent extending this directory should:
 
-- **Treat them as covered by the regression sweep** (they're part of
-  the 92/92 expected pass-rate when we don't count the 6 documented
-  known-failures, i.e. 88/94). Don't delete or move them just because
-  they don't match the regression-test docstring convention.
+- **Treat them as covered by the regression sweep** (they all build
+  today, alongside the regression tests). Don't delete or move them
+  just because they don't match the regression-test docstring
+  convention.
 - **Not retrofit them into the `//!` format** unless you're also
   reframing one as a regression test for a specific bug it locks
   down. They're working samples; turning a sample into a contract is

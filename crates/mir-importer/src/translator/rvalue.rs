@@ -1895,44 +1895,123 @@ pub fn translate_operand(
             // Ordinary Rust `static` / `static mut` values in device code live in
             // CUDA global memory (addrspace 1). SharedArray/Barrier statics have
             // already been intercepted above and remain addrspace 3.
+            //
+            // The static's body may contain cross-static pointer relocations
+            // (canonical shape: `pub static X: &T = &INNER`). For each such
+            // pointer the linker normally fills in INNER's resolved address;
+            // we propagate those relocations as `initializer_relocations`
+            // attribute pairs and also recursively emit a MirGlobalAllocOp
+            // for every transitively-reachable static so the device module
+            // contains all the data it needs.
             if let Some(static_def) = static_def_from_constant(constant)?
                 && let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
             {
-                ensure_zero_initializer(&static_def, loc.clone())?;
-
-                let global_ty = types::translate_type(ctx, &pointee_ty)?;
-                let ptr_ty =
-                    dialect_mir::types::MirPtrType::get_global(ctx, global_ty, is_mutable).into();
-
-                let op = Operation::new(
-                    ctx,
-                    MirGlobalAllocOp::get_concrete_op_info(),
-                    vec![ptr_ty],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc);
-
-                let global_alloc = MirGlobalAllocOp::new(op);
-
                 use pliron::builtin::attributes::{StringAttr, TypeAttr};
-                global_alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
-                global_alloc.set_attr_global_key(ctx, StringAttr::new(static_def.name()));
 
-                if let Some(alignment) = static_alignment(&static_def)? {
-                    global_alloc.set_alignment_value(ctx, alignment);
+                // Compute the body (bytes + relocations) and the full transitive
+                // closure of reachable statics. The first entry is `static_def`
+                // itself; the rest are transitively referenced through pointer
+                // relocations.
+                let mut visited = std::collections::HashSet::new();
+                let mut reachable = Vec::new();
+                collect_reachable_statics(&static_def, loc.clone(), &mut visited, &mut reachable)?;
+
+                let main_global_ty = types::translate_type(ctx, &pointee_ty)?;
+                let main_ptr_ty = dialect_mir::types::MirPtrType::get_global(
+                    ctx,
+                    main_global_ty,
+                    is_mutable,
+                )
+                .into();
+
+                let mut main_result: Option<(
+                    pliron::value::Value,
+                    Ptr<Operation>,
+                )> = None;
+
+                for (idx, (def, bytes, relocations)) in reachable.iter().enumerate() {
+                    let is_main = idx == 0;
+
+                    // Main static: use the real pointee type the caller asked for.
+                    // Secondary (transitively-reachable) statics: opaque byte
+                    // array sized to the body. LLVM IR is opaque-pointer-aware
+                    // so the global's type doesn't have to match what eventual
+                    // consumers load; we just need a valid sized symbol.
+                    let (this_global_ty, this_ptr_ty) = if is_main {
+                        (main_global_ty, main_ptr_ty)
+                    } else {
+                        let i8_ty = pliron::builtin::types::IntegerType::get(
+                            ctx,
+                            8,
+                            pliron::builtin::types::Signedness::Signless,
+                        );
+                        let arr_ty: pliron::context::Ptr<pliron::r#type::TypeObj> =
+                            dialect_mir::types::MirArrayType::get(
+                                ctx,
+                                i8_ty.into(),
+                                bytes.len() as u64,
+                            )
+                            .into();
+                        let ptr = dialect_mir::types::MirPtrType::get_global(
+                            ctx, arr_ty, false,
+                        )
+                        .into();
+                        (arr_ty, ptr)
+                    };
+
+                    let op = Operation::new(
+                        ctx,
+                        MirGlobalAllocOp::get_concrete_op_info(),
+                        vec![this_ptr_ty],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    op.deref_mut(ctx).set_loc(loc.clone());
+
+                    let global_alloc = MirGlobalAllocOp::new(op);
+                    global_alloc.set_attr_global_type(ctx, TypeAttr::new(this_global_ty));
+                    global_alloc.set_attr_global_key(ctx, StringAttr::new(def.name()));
+
+                    if let Some(alignment) = static_alignment(def)? {
+                        global_alloc.set_alignment_value(ctx, alignment);
+                    }
+
+                    let bytes_hex = hex_encode_bytes(bytes);
+                    global_alloc
+                        .set_attr_initializer_bytes(ctx, StringAttr::new(bytes_hex));
+                    let relocs_str = encode_relocations(relocations);
+                    global_alloc.set_attr_initializer_relocations(
+                        ctx,
+                        StringAttr::new(relocs_str),
+                    );
+
+                    if is_main {
+                        // Main static: insert at the requested position (after
+                        // prev_op or at block front) so the kernel can use its
+                        // result value in subsequent ops.
+                        if let Some(prev) = prev_op {
+                            op.insert_after(ctx, prev);
+                        } else {
+                            op.insert_at_front(block_ptr, ctx);
+                        }
+                        let v = op.deref(ctx).get_result(0);
+                        main_result = Some((v, op));
+                    } else {
+                        // Secondary statics: their result value isn't used by
+                        // the kernel — they exist only so mir-lower emits a
+                        // matching GlobalOp at module scope. Inserting at the
+                        // block's front keeps them out of the way of the
+                        // kernel's own terminator (mir.assert et al), which
+                        // must remain the last op in its block.
+                        op.insert_at_front(block_ptr, ctx);
+                    }
                 }
 
-                if let Some(prev) = prev_op {
-                    global_alloc.get_operation().insert_after(ctx, prev);
-                } else {
-                    global_alloc.get_operation().insert_at_front(block_ptr, ctx);
-                }
-
-                let val = global_alloc.get_operation().deref(ctx).get_result(0);
-
-                return Ok((val, Some(global_alloc.get_operation())));
+                let (val, main_op) = main_result.expect(
+                    "collect_reachable_statics always yields at least the root static",
+                );
+                return Ok((val, Some(main_op)));
             }
 
             let const_ty_ptr = types::translate_type(ctx, &rust_ty)?;
@@ -6825,12 +6904,26 @@ fn static_def_from_constant(
     }
 }
 
-/// Ordinary device globals are currently emitted as `zeroinitializer`.
-/// Reject non-zero initializers until constant-data export is implemented.
-fn ensure_zero_initializer(
+/// Extract the bytes-plus-relocations initializer of a device static.
+///
+/// Returns the raw byte body of the static (including zero placeholders
+/// at each relocation site) and a list of cross-static pointer fixups
+/// `(offset, target_static_name)`. Each relocation indicates that at
+/// `offset` bytes into the body, the linker would have written the
+/// address of `target_static_name`; we propagate those through to LLVM
+/// IR as pointer initializers.
+///
+/// `eval_initializer` is the rustc-public API for materializing a
+/// static's compile-time value. `alloc.provenance.ptrs` is the side
+/// table of pointer fixups; without walking it, we'd silently drop
+/// every `pub static X: &T = &INNER` shape (see
+/// `examples/static_ref_relocation/`).
+fn compute_static_initializer(
     static_def: &rustc_public::mir::mono::StaticDef,
     loc: Location,
-) -> TranslationResult<()> {
+) -> TranslationResult<(Vec<u8>, Vec<(u64, String)>)> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
     let alloc = static_def.eval_initializer().map_err(|e| {
         input_error_noloc!(TranslationErr::unsupported(format!(
             "Failed to evaluate initializer for device static {}: {:?}",
@@ -6846,17 +6939,93 @@ fn ensure_zero_initializer(
         )))
     })?;
 
-    if bytes.iter().all(|byte| *byte == 0) {
-        Ok(())
-    } else {
-        input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Device static {} has a non-zero initializer; cuda-oxide currently supports zero-initialized device statics",
-                static_def.name()
-            ))
-        )
+    let mut relocations: Vec<(u64, String)> = Vec::new();
+    for (offset, prov) in &alloc.provenance.ptrs {
+        match GlobalAlloc::from(prov.0) {
+            GlobalAlloc::Static(target_def) => {
+                relocations.push((*offset as u64, target_def.name()));
+            }
+            other => {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Device static {} has provenance entry pointing at non-Static allocation: {:?}",
+                        static_def.name(),
+                        other
+                    ))
+                );
+            }
+        }
     }
+
+    Ok((bytes, relocations))
+}
+
+/// Collect the transitive closure of statics reachable through pointer
+/// relocations, in emission order (referenced statics before their
+/// referrers — actually order doesn't matter for LLVM IR, which resolves
+/// symbols at module scope, but a topological-ish order keeps the dump
+/// readable). `visited` enforces dedupe / cycle safety across recursion.
+fn collect_reachable_statics(
+    root: &rustc_public::mir::mono::StaticDef,
+    loc: Location,
+    visited: &mut std::collections::HashSet<String>,
+    out: &mut Vec<(rustc_public::mir::mono::StaticDef, Vec<u8>, Vec<(u64, String)>)>,
+) -> TranslationResult<()> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+
+    let name = root.name();
+    if !visited.insert(name.clone()) {
+        return Ok(());
+    }
+
+    let (bytes, relocations) = compute_static_initializer(root, loc.clone())?;
+
+    // Recurse into each relocation target so transitively-reachable
+    // statics (sha2's K constants, etc.) all land in the device module.
+    let alloc = root.eval_initializer().map_err(|e| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "Failed to re-evaluate initializer for {}: {:?}",
+            name, e
+        )))
+    })?;
+    let targets: Vec<rustc_public::mir::mono::StaticDef> = alloc
+        .provenance
+        .ptrs
+        .iter()
+        .filter_map(|(_, prov)| match GlobalAlloc::from(prov.0) {
+            GlobalAlloc::Static(def) => Some(def),
+            _ => None,
+        })
+        .collect();
+
+    out.push((root.clone(), bytes, relocations));
+
+    for target in targets {
+        collect_reachable_statics(&target, loc.clone(), visited, out)?;
+    }
+    Ok(())
+}
+
+/// Hex-encode a byte slice without spaces or separators. Used as the
+/// payload for the `initializer_bytes` `MirGlobalAllocOp` attribute.
+fn hex_encode_bytes(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut s, "{:02x}", b);
+    }
+    s
+}
+
+/// Serialize relocations as `OFF:KEY,OFF:KEY,...`. Empty string when no
+/// relocations are present.
+fn encode_relocations(relocations: &[(u64, String)]) -> String {
+    relocations
+        .iter()
+        .map(|(off, name)| format!("{}:{}", off, name))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn static_alignment(

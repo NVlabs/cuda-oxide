@@ -274,7 +274,23 @@ pub enum GlobalOpVerifyErr {
         SingleBlockRegionInterface,
         LlvmSymbolName
     ],
-    attributes = (llvm_global_type: TypeAttr, global_initializer, llvm_global_linkage: LinkageAttr, llvm_alignment: crate::attributes::AlignmentAttr, llvm_global_address_space: GlobalAddressSpaceAttr)
+    attributes = (
+        llvm_global_type: TypeAttr,
+        global_initializer,
+        llvm_global_linkage: LinkageAttr,
+        llvm_alignment: crate::attributes::AlignmentAttr,
+        llvm_global_address_space: GlobalAddressSpaceAttr,
+        // Raw initializer bytes (hex-encoded) propagated from mir-lower.
+        // When present together with the relocations attr, the exporter
+        // emits a packed-struct initializer combining the byte runs with
+        // pointer relocations. See `crates/dialect-llvm/src/export.rs`
+        // `export_global` for the formatting rules.
+        llvm_initializer_bytes: pliron::builtin::attributes::StringAttr,
+        // Cross-global pointer relocations: comma-separated `offset:name`
+        // pairs (offset in bytes, name is the target global's LLVM name
+        // without the leading `@`).
+        llvm_initializer_relocations: pliron::builtin::attributes::StringAttr
+    )
 )]
 pub struct GlobalOp;
 

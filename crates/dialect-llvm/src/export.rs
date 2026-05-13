@@ -263,6 +263,7 @@ fn export_module_with_externs_impl(
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
     let mut state = ModuleExportState::new(ctx, emit_all_annotations, emit_ptx_kernel_keyword);
+    state.build_source_key_map(module);
 
     // 1. Header
     writeln!(
@@ -510,6 +511,7 @@ pub fn export_module_to_string_with_config(
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
     let mut state = ModuleExportState::new(ctx, emit_all_annotations, emit_ptx_kernel_keyword);
+    state.build_source_key_map(module);
 
     // 1. Header
     writeln!(
@@ -845,6 +847,12 @@ struct ModuleExportState<'a> {
     emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
     device_functions: Vec<String>,
+    /// Map from source-level static key (Rust mangled name) to the LLVM
+    /// symbol name we emit for that global. Populated by a pre-pass over
+    /// the module before any function or global is exported, so that
+    /// initializer relocations referencing other statics by source key
+    /// can resolve to the synthetic `__device_global_N` LLVM name.
+    source_key_to_llvm_name: HashMap<String, String>,
 }
 
 impl<'a> ModuleExportState<'a> {
@@ -858,6 +866,33 @@ impl<'a> ModuleExportState<'a> {
             track_all_kernels,
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
+            source_key_to_llvm_name: HashMap::new(),
+        }
+    }
+
+    /// Walk all GlobalOps in the module and populate
+    /// `source_key_to_llvm_name`. Must run before any global is exported
+    /// so that initializer relocations can resolve target symbols.
+    fn build_source_key_map(&mut self, module: &ModuleOp) {
+        use pliron::builtin::attributes::StringAttr;
+
+        let region = module.get_region(self.ctx).deref(self.ctx);
+        let Some(block) = region.iter(self.ctx).next() else {
+            return;
+        };
+        for op in block.deref(self.ctx).iter(self.ctx) {
+            let Some(global) = Operation::get_op::<ops::GlobalOp>(op, self.ctx) else {
+                continue;
+            };
+            let attrs = &global.get_operation().deref(self.ctx).attributes.0;
+            let key = attrs
+                .get(&"llvm_global_source_key".try_into().unwrap())
+                .and_then(|a| a.downcast_ref::<StringAttr>())
+                .map(|a| String::from((*a).clone()));
+            if let Some(key) = key {
+                let name = global.get_symbol_name(self.ctx).to_string();
+                self.source_key_to_llvm_name.insert(key, name);
+            }
         }
     }
 
@@ -883,6 +918,7 @@ impl<'a> ModuleExportState<'a> {
     /// Export a global variable (typically shared memory for GPU kernels)
     fn export_global(&mut self, global: &ops::GlobalOp, output: &mut String) -> Result<(), String> {
         use crate::attributes::LinkageAttr;
+        use pliron::builtin::attributes::StringAttr;
         use pliron::r#type::Typed;
 
         let name = global.get_symbol_name(self.ctx);
@@ -927,11 +963,135 @@ impl<'a> ModuleExportState<'a> {
             .unwrap();
             self.export_type(ty, output)?;
             writeln!(output, ", align {alignment}").unwrap();
-        } else {
-            // Internal linkage: static storage in the global's address space.
+            return Ok(());
+        }
+
+        // Read initializer attrs (set by mir-lower on cross-static refs).
+        let attrs = &global.get_operation().deref(self.ctx).attributes.0;
+        let init_bytes_hex = attrs
+            .get(&"llvm_initializer_bytes".try_into().unwrap())
+            .and_then(|a| a.downcast_ref::<StringAttr>())
+            .map(|a| String::from((*a).clone()))
+            .unwrap_or_default();
+        let init_relocs = attrs
+            .get(&"llvm_initializer_relocations".try_into().unwrap())
+            .and_then(|a| a.downcast_ref::<StringAttr>())
+            .map(|a| String::from((*a).clone()))
+            .unwrap_or_default();
+
+        if init_bytes_hex.is_empty() && init_relocs.is_empty() {
+            // No initializer info — fall back to historical behaviour.
             write!(output, "@{name} = addrspace({address_space}) global ").unwrap();
             self.export_type(ty, output)?;
             writeln!(output, " zeroinitializer, align {alignment}").unwrap();
+            return Ok(());
+        }
+
+        // We have a real initializer. Decode bytes + relocations.
+        let bytes = decode_hex_bytes(&init_bytes_hex).map_err(|e| {
+            format!("Failed to decode initializer bytes for @{name}: {e}")
+        })?;
+        let mut relocations = decode_relocations(&init_relocs)
+            .map_err(|e| format!("Failed to decode relocations for @{name}: {e}"))?;
+        // Sort by offset so the packed-struct walk is monotonic.
+        relocations.sort_by_key(|(off, _)| *off);
+
+        // Resolve relocation target names through the same dedup table the
+        // exporter uses for direct global references. We don't have direct
+        // access here, but since mir-lower keyed `device_globals` by the
+        // static's source name and the resulting `__device_global_N`
+        // symbols are what live in this module, the relocation target
+        // strings in `init_relocs` are the mir-importer-side keys.
+        //
+        // We'll resolve them by name at the IR level using a `@<key>`
+        // reference — that requires the GlobalOp for each target to have
+        // been emitted with that exact name. mir-lower assigns synthetic
+        // `__device_global_N` names, so to make the linkage work we need
+        // a key→name map at this layer. The simplest path is to look up
+        // each target by traversing the module's globals and matching on
+        // a sidecar attribute. We sidestep this by emitting the original
+        // global_key as the GlobalOp symbol name when it differs from a
+        // synthetic counter — see the mir-lower change that names globals
+        // after their key when an initializer is present.
+
+        if relocations.is_empty() {
+            // Pure-byte initializer (e.g. `static INNER: [u64; 4] = [...]`).
+            // Override the type to `[N x i8]` to match the byte payload —
+            // LLVM accepts the underlying global as opaque storage either
+            // way, and this lets us avoid reconstructing the typed initializer.
+            let n = bytes.len();
+            write!(
+                output,
+                "@{name} = addrspace({address_space}) global [{n} x i8] c\""
+            )
+            .unwrap();
+            for b in &bytes {
+                write!(output, "\\{:02X}", b).unwrap();
+            }
+            writeln!(output, "\", align {alignment}").unwrap();
+        } else {
+            // Mixed bytes + ptr relocations: emit a packed struct that
+            // interleaves byte runs with the relocated pointer slots.
+            // Each relocation occupies 8 bytes (64-bit pointer width).
+            let mut cursor: u64 = 0;
+            let mut type_parts: Vec<String> = Vec::new();
+            let mut value_parts: Vec<String> = Vec::new();
+            for (off, target_key) in &relocations {
+                if *off > cursor {
+                    let run_len = (*off - cursor) as usize;
+                    type_parts.push(format!("[{run_len} x i8]"));
+                    let mut s = format!("[{run_len} x i8] c\"");
+                    for b in &bytes[cursor as usize..*off as usize] {
+                        s.push_str(&format!("\\{:02X}", b));
+                    }
+                    s.push('"');
+                    value_parts.push(s);
+                }
+                type_parts.push("ptr".to_string());
+                // Resolve the source-level static key to the LLVM symbol
+                // name through the pre-built map. If the target wasn't
+                // emitted in this module (which shouldn't happen, since
+                // mir-importer emits the full reachable closure), fall
+                // back to a `null` pointer rather than a dangling ref.
+                //
+                // The target lives in addrspace(1) (CUDA global memory).
+                // The struct field is a generic `ptr` (addrspace 0), since
+                // that's how Rust references lower in our pipeline. We
+                // bridge with a constant `addrspacecast` so the value
+                // typechecks under opaque-pointer LLVM, and the runtime
+                // address still resolves correctly because addrspace 0
+                // (generic) covers addrspace 1 (global) for loads.
+                let llvm_name = self
+                    .source_key_to_llvm_name
+                    .get(target_key)
+                    .cloned()
+                    .unwrap_or_default();
+                if llvm_name.is_empty() {
+                    value_parts.push("ptr null".to_string());
+                } else {
+                    value_parts.push(format!(
+                        "ptr addrspacecast (ptr addrspace(1) @{llvm_name} to ptr)"
+                    ));
+                }
+                cursor = *off + 8;
+            }
+            if (cursor as usize) < bytes.len() {
+                let run_len = bytes.len() - cursor as usize;
+                type_parts.push(format!("[{run_len} x i8]"));
+                let mut s = format!("[{run_len} x i8] c\"");
+                for b in &bytes[cursor as usize..] {
+                    s.push_str(&format!("\\{:02X}", b));
+                }
+                s.push('"');
+                value_parts.push(s);
+            }
+            let struct_ty = format!("<{{ {} }}>", type_parts.join(", "));
+            let struct_val = format!("<{{ {} }}>", value_parts.join(", "));
+            writeln!(
+                output,
+                "@{name} = addrspace({address_space}) global {struct_ty} {struct_val}, align {alignment}"
+            )
+            .unwrap();
         }
 
         Ok(())
@@ -2424,4 +2584,49 @@ fn format_float_literal(value: f64) -> String {
             format!("{s}.0")
         }
     }
+}
+
+/// Decode a `[0-9a-fA-F]*` hex string into bytes. Lower-case is what
+/// mir-importer emits; this accepts both cases for robustness. Returns
+/// an error on odd-length input or non-hex characters.
+fn decode_hex_bytes(hex: &str) -> Result<Vec<u8>, String> {
+    if hex.len() % 2 != 0 {
+        return Err(format!("hex string has odd length {}", hex.len()));
+    }
+    let bytes = hex.as_bytes();
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        let hi = hex_digit(pair[0])?;
+        let lo = hex_digit(pair[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Ok(out)
+}
+
+fn hex_digit(b: u8) -> Result<u8, String> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err(format!("invalid hex digit: {:?}", b as char)),
+    }
+}
+
+/// Decode `"OFF:KEY,OFF:KEY,..."` into `Vec<(offset, target_key)>`.
+/// Returns an error on malformed input. Empty string yields empty Vec.
+fn decode_relocations(s: &str) -> Result<Vec<(u64, String)>, String> {
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in s.split(',') {
+        let (off_str, name) = entry
+            .split_once(':')
+            .ok_or_else(|| format!("relocation entry missing colon: {entry:?}"))?;
+        let off: u64 = off_str
+            .parse()
+            .map_err(|e| format!("invalid offset {off_str:?}: {e}"))?;
+        out.push((off, name.to_string()));
+    }
+    Ok(out)
 }
