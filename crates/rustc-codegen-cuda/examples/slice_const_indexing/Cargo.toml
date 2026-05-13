@@ -1,0 +1,22 @@
+[package]
+name = "slice_const_indexing"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Known-failure repro for indexing a `&'static [u8]` slice constant.
+# Builds clean, faults on hardware with a wild 0xfff... global read
+# because the slice-typed constant is lowered to `mir.undef` in
+# `crates/mir-importer/src/translator/rvalue.rs`. Index time the
+# undef'd base pointer = wild memory access.
+#
+# Build with:
+#   cargo oxide build slice_const_indexing
+# Run on a GPU with:
+#   cargo oxide run   slice_const_indexing
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
