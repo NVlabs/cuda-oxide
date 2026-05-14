@@ -235,6 +235,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * static_u64_array_load
 * str_panic_path
 * typed_swap_intrinsic
+* u128_imm_shr
 * u128_ne_early_return
 * volatile_load_intrinsic
 * xoshiro_seed_misalign

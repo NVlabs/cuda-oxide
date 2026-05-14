@@ -1,0 +1,26 @@
+[package]
+name = "u128_imm_shr"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# PTX-shape regression test for `u128 >> 52` (dalek
+# `montgomery_reduce::part1` shape). Falsifies the D1 hypothesis
+# from vanity-miner-rs's known-bugs tracker: cuda-oxide does NOT
+# miscompile the multi-step splice
+# `lo' = (hi << 12) | (lo >> 52); hi' = hi >> 52`. Local PTX shows
+# correct `shf.l.wrap.b32 ..., 12` + `shr.u64 ..., 52` emission for
+# both literal-input and dalek-faithful `(a + b) >> 52` shapes.
+#
+# Verify by grepping the emitted PTX:
+#   grep -nE 'shf\.l\.wrap\.b32.*, 12' u128_imm_shr.ptx   # 8 lines
+#   grep -nE 'shr\.u64.*, 52'           u128_imm_shr.ptx   # 4 lines
+#
+# Build with:
+#   cargo oxide build u128_imm_shr
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
