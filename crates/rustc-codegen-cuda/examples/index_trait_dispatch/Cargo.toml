@@ -1,0 +1,21 @@
+[package]
+name = "index_trait_dispatch"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Bug E from vanity-miner-rs's known-bugs tracker (slot 91 FAIL).
+# `core::ops::Index` / `IndexMut` trait dispatch on a newtype
+# wrapping `[u64; 5]` returns the wrong value when both the index
+# and the value flow through `core::hint::black_box`. Surfaces from
+# dalek `Scalar52` (which is exactly this newtype shape) in slots
+# 71/72 plus their cascades 2/3/11/12.
+#
+# Build with:
+#   cargo oxide build index_trait_dispatch
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
