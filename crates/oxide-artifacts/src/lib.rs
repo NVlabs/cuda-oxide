@@ -7,7 +7,7 @@
 //!
 //! The wire format is intentionally independent of a particular accelerator
 //! backend. A bundle names a producer, records the device target it was built
-//! for, and carries one or more generated PTX payloads.
+//! for, and carries one or more generated device-code payloads.
 
 use core::fmt;
 
@@ -22,18 +22,27 @@ const ENTRY_RECORD_BYTES: usize = 24;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ArtifactPayloadKind {
     Ptx,
+    NvvmIr,
+    Ltoir,
+    Cubin,
 }
 
 impl ArtifactPayloadKind {
     pub const fn to_u16(self) -> u16 {
         match self {
             Self::Ptx => 0x100,
+            Self::NvvmIr => 0x110,
+            Self::Ltoir => 0x120,
+            Self::Cubin => 0x200,
         }
     }
 
     pub const fn from_u16(value: u16) -> Option<Self> {
         match value {
             0x100 => Some(Self::Ptx),
+            0x110 => Some(Self::NvvmIr),
+            0x120 => Some(Self::Ltoir),
+            0x200 => Some(Self::Cubin),
             _ => None,
         }
     }
@@ -717,6 +726,44 @@ mod tests {
         assert_eq!(
             bundles[0].entry("hello").unwrap().kind,
             ArtifactEntryKind::Kernel
+        );
+    }
+
+    #[test]
+    fn artifact_blob_round_trips_non_ptx_payload_kinds() {
+        let blob = build_artifact_blob(
+            &ArtifactBundleSpec::new("demo", "sm_90")
+                .with_payload(ArtifactPayloadSpec::new(
+                    ArtifactPayloadKind::NvvmIr,
+                    "demo.ll",
+                    b"nvvm ir",
+                ))
+                .with_payload(ArtifactPayloadSpec::new(
+                    ArtifactPayloadKind::Ltoir,
+                    "demo.ltoir",
+                    b"ltoir",
+                ))
+                .with_payload(ArtifactPayloadSpec::new(
+                    ArtifactPayloadKind::Cubin,
+                    "demo.cubin",
+                    b"cubin",
+                )),
+        )
+        .unwrap();
+        let bundles = parse_artifact_section(&blob).unwrap();
+
+        assert_eq!(bundles.len(), 1);
+        assert_eq!(
+            bundles[0].payload(ArtifactPayloadKind::NvvmIr),
+            Some(&b"nvvm ir"[..])
+        );
+        assert_eq!(
+            bundles[0].payload(ArtifactPayloadKind::Ltoir),
+            Some(&b"ltoir"[..])
+        );
+        assert_eq!(
+            bundles[0].payload(ArtifactPayloadKind::Cubin),
+            Some(&b"cubin"[..])
         );
     }
 

@@ -119,12 +119,29 @@ use pliron::operation::Operation;
 use pliron::printable::Printable;
 use std::path::Path;
 
-/// Output paths and target from successful compilation.
+/// Device artifact format produced by a successful pipeline run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilationArtifactKind {
+    /// Textual PTX assembly, loadable by the CUDA driver.
+    Ptx,
+    /// NVVM-compatible LLVM IR, intended for libNVVM/nvJitLink.
+    NvvmIr,
+    /// Binary LTOIR, intended for nvJitLink.
+    Ltoir,
+    /// Final cubin image, loadable by the CUDA driver.
+    Cubin,
+}
+
+/// Output paths, target, and artifact format from successful compilation.
 pub struct CompilationResult {
     /// Path to generated LLVM IR (`.ll` file).
     pub ll_path: std::path::PathBuf,
     /// Path to generated PTX assembly (`.ptx` file).
     pub ptx_path: std::path::PathBuf,
+    /// Path to the artifact that should be embedded or consumed by the caller.
+    pub artifact_path: std::path::PathBuf,
+    /// Format of `artifact_path`.
+    pub artifact_kind: CompilationArtifactKind,
     /// GPU target architecture used (e.g., `sm_90a`, `sm_80`).
     pub target: String,
 }
@@ -404,7 +421,7 @@ pub fn run_pipeline(
              that can be compiled to LTOIR via libNVVM."
                 .to_string(),
         ))
-    } else if needs_libdevice {
+    } else if emit_nvvm_ir {
         // Skip llc -- see `needs_libdevice` comment above. Return a
         // would-be ptx_path so callers see a stable shape; the file does
         // not exist and the example must build its own cubin from `ll_path`.
@@ -412,12 +429,20 @@ pub fn run_pipeline(
             .output_dir
             .join(format!("{}.ptx", config.output_name));
         if config.verbose {
-            eprintln!("\n=== Skipping llc (libdevice present); example owns LTOIR build ===");
+            let reason = if needs_libdevice {
+                "libdevice present"
+            } else {
+                "NVVM IR mode requested"
+            };
+            eprintln!("\n=== Skipping llc ({reason}); consumer owns LTOIR build ===");
         }
         Ok(CompilationResult {
+            artifact_path: ll_path.clone(),
+            artifact_kind: CompilationArtifactKind::NvvmIr,
             ll_path,
             ptx_path,
-            target: "libdevice".to_string(),
+            target: std::env::var("CUDA_OXIDE_TARGET")
+                .unwrap_or_else(|_| config.ltoir_arch.clone()),
         })
     } else {
         // PTX mode: invoke llc
@@ -437,6 +462,8 @@ pub fn run_pipeline(
         }
 
         Ok(CompilationResult {
+            artifact_path: ptx_path.clone(),
+            artifact_kind: CompilationArtifactKind::Ptx,
             ll_path,
             ptx_path,
             target,

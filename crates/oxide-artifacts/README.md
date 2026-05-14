@@ -4,8 +4,9 @@
 `cuda-oxide`.
 
 The crate is deliberately accelerator-neutral. It knows how to describe bundles
-of generated PTX payloads, but it does not know how to compile or launch them.
-Runtime crates can parse bundles and decide whether they can consume them.
+of generated device-code payloads, but it does not know how to compile or
+launch them. Runtime crates can parse bundles and decide whether they can
+consume them.
 
 `oxide-artifacts` also does not decide target policy. Choices such as PTX versus
 LTOIR, cubin versus fatbin, or single-arch versus multi-arch packaging belong to
@@ -23,7 +24,7 @@ Each bundle contains:
 - a bundle name, normally the producing Rust crate name
 - a device target string, such as `sm_90`
 - zero or more entry records, such as CUDA kernels
-- one or more payload records, such as generated PTX bytes
+- one or more payload records, such as generated PTX, cubin, or IR bytes
 
 Multiple bundle blobs may be concatenated in the same section. Parsers walk the
 section by reading each blob's `total_len` field.
@@ -95,6 +96,9 @@ Payload Record (24 bytes)
 Payload kind values:
 
 - `0x0100`: PTX
+- `0x0110`: NVVM IR
+- `0x0120`: LTOIR
+- `0x0200`: cubin
 
 ```text
 Entry Record (24 bytes)
@@ -132,10 +136,11 @@ relocatable object with a single `.oxart` data section.
 The writer marks the ELF section as retained with
 `SHF_ALLOC | SHF_GNU_RETAIN`.
 
-The rustc CUDA backend writes generated PTX into one bundle blob, emits a host
-object for the current host target, and appends that object to rustc's compiled
-module list before linking. At runtime, `cuda-core` can read the executable's
-object sections and load the PTX payload with `cuModuleLoadData`.
+The rustc CUDA backend writes the generated device artifact into one bundle
+blob, emits a host object for the current host target, and appends that object
+to rustc's compiled module list before linking. At runtime, `cuda-host` can read
+the executable's object sections and load PTX/cubin payloads directly or build a
+cubin from embedded NVVM IR/LTOIR before loading.
 
 ## Constraints
 

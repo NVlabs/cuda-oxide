@@ -895,10 +895,10 @@ fn touch_main_rs(example_dir: &Path) {
     }
 }
 
-/// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`) from a
+/// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`, `.cubin`) from a
 /// previous run so we can verify the build produces fresh output.
 fn clean_generated_files(example_dir: &Path, example: &str) {
-    for ext in &["ptx", "ll", "ltoir"] {
+    for ext in &["ptx", "ll", "ltoir", "cubin"] {
         let file = example_dir.join(format!("{}.{}", example, ext));
         if file.exists() {
             let _ = std::fs::remove_file(&file);
