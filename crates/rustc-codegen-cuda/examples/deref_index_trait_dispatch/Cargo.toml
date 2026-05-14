@@ -1,0 +1,26 @@
+[package]
+name = "deref_index_trait_dispatch"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Bug E follow-on: `<Newtype as Index/IndexMut>` trait dispatch
+# where the receiver is a BORROWED reference, not an owned local.
+# The MIR projection chain becomes `Deref -> Field(0) -> Index(i)`
+# (or `Deref -> Field(0) -> Field(1) -> Index(i)`), which the
+# rvalue.rs Case 2 handler bailed on at the trailing Index. Without
+# the fix, `a[i]` on `a: &Scalar52` (dalek's whole hot path) wraps
+# in MirRefOp + fresh alloca — same Bug E symptom, just one
+# Deref deeper than the slot-91 minimal.
+#
+# Surfaced from vanity-miner-rs slot 71 still failing after the
+# slot-91 Bug E fix landed (commit 87548c1).
+#
+# Build with:
+#   cargo oxide build deref_index_trait_dispatch
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
