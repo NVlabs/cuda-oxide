@@ -213,6 +213,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * field_index_field_write
 * field_index_write
 * fndef_zst_type
+* generic_array_as_slice_last
 * generic_array_deref
 * generic_array_to_slice
 * generic_sequence_alias

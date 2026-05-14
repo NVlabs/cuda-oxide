@@ -3594,7 +3594,8 @@ fn translate_place_addr_from_slot(
                 from_end: false, ..
             } => {}
             mir::ProjectionElem::Index(_) => {}
-            // Everything else (ConstantIndex with from_end=true, Deref,
+            mir::ProjectionElem::Deref => {}
+            // Everything else (ConstantIndex with from_end=true,
             // Downcast, Subslice, ...) is handled by the caller's
             // value-materialisation fallback, not here.
             _ => return Ok(None),
@@ -3738,7 +3739,60 @@ fn translate_place_addr_from_slot(
                 current_prev_op = Some(addr_op);
             }
 
-            // Remaining projection kinds (Deref, Downcast, Subslice, ...)
+            mir::ProjectionElem::Deref => {
+                // `&(*ptr)[i]` / `&(*ptr).field` — the chain crosses
+                // a `&T` borrow. The current pointer points at the
+                // SLOT holding the borrow; load it once to get the
+                // borrow's value (the inner pointer to the actual
+                // pointee), then continue walking from there.
+                //
+                // Surfaced from slice `.last()` lowering: `_3 =
+                // &(*slice_local)[len-1]` has projection chain
+                // `[Deref, Index|ConstantIndex]`. Without this arm,
+                // Case 4 bailed here and Case 5's `MirRefOp` wrapper
+                // over-indirected the resulting pointer — `Option<&u8>
+                // ::Some(_)` then stored the slot's address as the
+                // payload instead of the actual `&u8`, and unwrapping
+                // loaded the low byte of the pointer address instead
+                // of the slice's last byte. See
+                // `examples/generic_array_as_slice_last`.
+                let pointee_ty = match current
+                    .get_type(ctx)
+                    .deref(ctx)
+                    .downcast_ref::<dialect_mir::types::MirPtrType>()
+                {
+                    Some(mp) => mp.pointee,
+                    None => return Ok(None),
+                };
+                // The pointee must itself be a pointer for further
+                // GEP-walking to make sense.
+                if pointee_ty
+                    .deref(ctx)
+                    .downcast_ref::<dialect_mir::types::MirPtrType>()
+                    .is_none()
+                {
+                    return Ok(None);
+                }
+
+                use dialect_mir::ops::MirLoadOp;
+                let load = Operation::new(
+                    ctx,
+                    MirLoadOp::get_concrete_op_info(),
+                    vec![pointee_ty],
+                    vec![current],
+                    vec![],
+                    0,
+                );
+                load.deref_mut(ctx).set_loc(loc.clone());
+                match current_prev_op {
+                    Some(p) => load.insert_after(ctx, p),
+                    None => load.insert_at_front(block_ptr, ctx),
+                }
+                current = load.deref(ctx).get_result(0);
+                current_prev_op = Some(load);
+            }
+
+            // Remaining projection kinds (Downcast, Subslice, ...)
             // aren't lowered to addresses here yet. Punt to the caller,
             // which will fall back to materialising a value and wrapping
             // it in `MirRefOp`.
@@ -4587,13 +4641,32 @@ fn apply_slice_deref_constant_index_from_end(
         vec![],
         0,
     );
-    ptr_offset_op.deref_mut(ctx).set_loc(loc);
+    ptr_offset_op.deref_mut(ctx).set_loc(loc.clone());
     ptr_offset_op.insert_after(ctx, sub_op);
+    let elem_ptr = ptr_offset_op.deref(ctx).get_result(0);
 
-    Ok((
-        ptr_offset_op.deref(ctx).get_result(0),
-        Some(ptr_offset_op),
-    ))
+    // Load the element value. `translate_place_iterative` operates on
+    // SSA values; the sibling runtime-`Index` path also does
+    // PtrOffset + Load. Without this load, callers expecting the
+    // place's value got a *pointer to* the element instead and any
+    // downstream `MirRefOp` wrapper (e.g. inside `slice.last()`'s
+    // `Option<&u8>::Some(...)` construction) would over-indirect:
+    // `Option<&u8>` ended up holding the address of a scratch slot
+    // that held the actual `&u8`, so unwrapping + dereferencing loaded
+    // the low byte of the pointer instead of the slice's last element.
+    // See `examples/generic_array_as_slice_last`.
+    let load_op = Operation::new(
+        ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![element_ty],
+        vec![elem_ptr],
+        vec![],
+        0,
+    );
+    load_op.deref_mut(ctx).set_loc(loc);
+    load_op.insert_after(ctx, ptr_offset_op);
+
+    Ok((load_op.deref(ctx).get_result(0), Some(load_op)))
 }
 
 /// Translate a pointer-to-array constant to MIR operations.
