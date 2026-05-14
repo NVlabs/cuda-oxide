@@ -1,0 +1,26 @@
+[package]
+name = "subtle_choice_select"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Bug F probe from vanity-miner-rs's known-bugs tracker — slot 95
+# (subtle::ConditionallySelectable trait dispatch). The faithful
+# subtle 2.6.1 implementation is reproduced here verbatim so the
+# bug can be triaged without pulling in k256/elliptic-curve.
+#
+# Shapes covered:
+#   * `Choice(u8)` newtype + `from(u8)` + `unwrap_u8()`
+#   * `<u64 as ConditionallySelectable>::conditional_select` (mask blend)
+#   * `<[u8; 32] as ConditionallySelectable>::conditional_select`
+#     (iter_mut + zip + per-byte conditional_assign — what
+#     `EncodedPoint::conditional_select` actually runs)
+#
+# Build with:
+#   cargo oxide build subtle_choice_select
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
