@@ -1,0 +1,21 @@
+[package]
+name = "generic_array_as_slice_last"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Bug-96 narrowed: vanity-miner-rs slot 101 FAILed in v1.53.0 —
+# `&GenericArray<u8, N>` parameter → `.as_slice().last()` inside fn.
+# This is exactly what `Tag::compress_y(y.as_slice())` does inside
+# `sec1::EncodedPoint::from_affine_coordinates`. Slot 100 (raw
+# `[u8; 33]` re-impl of the same algorithm) PASSes, so the bug is
+# specifically in the slice-from-GA `as_slice().last()` chain.
+#
+# Build with:
+#   cargo oxide build generic_array_as_slice_last
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
