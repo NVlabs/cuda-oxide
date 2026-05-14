@@ -1,0 +1,23 @@
+[package]
+name = "generic_array_deref"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Bug-96 probe from vanity-miner-rs's known-bugs tracker: the
+# `EncodedPoint::from_affine_coordinates` cascade (slots
+# 4/5/13-24/74/75/78/79/80/93/96, all of k256). Suspect is the
+# manual `Deref` impl on `GenericArray<T, N>` that constructs a
+# slice from `self as *const Self as *const T` via
+# `slice::from_raw_parts`. If that raw-pointer-cast Deref
+# miscompiles, every `bytes[i]` / `bytes[a..b]` operation on a
+# GenericArray is wrong.
+#
+# Build with:
+#   cargo oxide build generic_array_deref
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
