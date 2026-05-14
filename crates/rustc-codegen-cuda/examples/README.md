@@ -156,7 +156,6 @@ hiding the path).
 * `error_wgmma_mma_unimplemented` — `wgmma.mma_async` lowering is not yet implemented
 * `helper_no_inline` — `Symbol helper_no_inline__kernels__get_thread_idx not found`
 * `helper_outside_module` — `Symbol helper_outside_module__get_thread_idx not found`
-* `index_trait_dispatch` — PTX-shape miscompile: `Index`/`IndexMut` trait dispatch with runtime index on a newtype `[u64; N]` writes/reads through fresh allocas, not the original local
 * `tuple_const_array_field` — `Tuple constant field 0 has unsupported type MirArrayType { … }`
 
 ## PTX-shape known-failures (build passes, emitted PTX is wrong)
@@ -215,6 +214,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * fndef_zst_type
 * generic_array_to_slice
 * generic_sequence_alias
+* index_trait_dispatch
 * inherent_impl_call
 * iter_zip_chunks_exact
 * maybe_uninit_union
