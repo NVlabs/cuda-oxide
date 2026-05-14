@@ -2334,10 +2334,34 @@ fn format_half_literal(bits: u16) -> String {
 }
 
 /// Format a float value as an LLVM IR literal.
-/// LLVM requires float literals to have a decimal point (e.g., "0.0" not "0").
+///
+/// LLVM IR's float literal grammar accepts either decimal notation with a
+/// decimal point (e.g. `1.0`) or a 16-hex-digit double bit pattern
+/// (e.g. `0x7FF0000000000000`). The hex form is interpreted as a `double`
+/// and converted to the destination type when the literal is consumed by a
+/// `float` (or `half`) constant; this is the only form that survives for
+/// NaN / Inf because the textual `nan` / `inf` tokens are not part of the
+/// LLVM IR float grammar and libNVVM rejects them with
+/// `parse expected value token`.
 fn format_float_literal(value: f64) -> String {
     if value.is_nan() {
-        "nan".to_string()
+        // LLVM IR does not accept the bare token `nan` for floating-point
+        // constants. Emit a canonical quiet NaN as a 16-hex-digit double
+        // bit pattern (`0x7FF8000000000000`, sign bit clear). LLVM converts
+        // the f64 pattern to the destination type; the f32 cast preserves
+        // the qNaN top mantissa bit and produces a valid f32 qNaN.
+        //
+        // The sign bit on a NaN payload is not architecturally meaningful,
+        // but we mirror its sign for symmetry with the `Inf` arm below: the
+        // helper preserves the NaN sign while canonicalizing the payload
+        // (the payload bits below the leading qNaN marker are *not*
+        // preserved -- a non-canonical NaN payload becomes the canonical
+        // qNaN payload).
+        if value.is_sign_negative() {
+            "0xFFF8000000000000".to_string()
+        } else {
+            "0x7FF8000000000000".to_string()
+        }
     } else if value.is_infinite() {
         if value.is_sign_positive() {
             "0x7FF0000000000000".to_string() // +inf
@@ -2352,5 +2376,59 @@ fn format_float_literal(value: f64) -> String {
         } else {
             format!("{s}.0")
         }
+    }
+}
+
+#[cfg(test)]
+mod float_literal_tests {
+    use super::format_float_literal;
+
+    #[test]
+    fn nan_is_emitted_as_hex_qnan_not_bare_token() {
+        // The bare token `nan` is not a valid LLVM IR float constant and
+        // is rejected by libNVVM with `parse expected value token`. Emit a
+        // canonical quiet NaN as a 16-hex-digit double bit pattern so the
+        // value survives both `llc` and libNVVM.
+        assert_eq!(format_float_literal(f64::NAN), "0x7FF8000000000000");
+        assert_eq!(
+            format_float_literal(f64::from(f32::NAN)),
+            "0x7FF8000000000000"
+        );
+    }
+
+    #[test]
+    fn negative_nan_preserves_sign() {
+        // The sign bit of a NaN payload is architecturally meaningless but
+        // is part of `f32::NAN.is_sign_negative()`'s observable surface,
+        // so the helper should not silently flip it while canonicalizing
+        // the payload.
+        assert_eq!(format_float_literal(-f64::NAN), "0xFFF8000000000000");
+    }
+
+    #[test]
+    fn positive_infinity_is_emitted_as_hex() {
+        assert_eq!(format_float_literal(f64::INFINITY), "0x7FF0000000000000");
+    }
+
+    #[test]
+    fn negative_infinity_is_emitted_as_hex() {
+        assert_eq!(
+            format_float_literal(f64::NEG_INFINITY),
+            "0xFFF0000000000000"
+        );
+    }
+
+    #[test]
+    fn finite_values_get_a_decimal_point() {
+        // LLVM IR requires float literals to have a decimal point or an
+        // exponent. Integers like `42` would otherwise be rejected.
+        let formatted = format_float_literal(42.0);
+        assert!(
+            formatted.contains('.') || formatted.contains('e') || formatted.contains('E'),
+            "expected decimal point or exponent in `{formatted}`"
+        );
+
+        // Negative zero must keep its sign and not become the integer `-0`.
+        assert_eq!(format_float_literal(-0.0), "-0.0");
     }
 }
