@@ -920,6 +920,23 @@ pub fn translate_rvalue(
             // For AddressOf(*ptr), we just want the pointer itself - no load needed.
             // For other places, we must materialize an address (mir.ref or mir.field_addr).
 
+            // Case 0: bare local `&raw mut local` / `&raw const local`.
+            // Return the local's alloca slot directly — identical to
+            // `Rvalue::Ref` Case 3, just for raw-pointer flavor. Without
+            // this, `let mut p = T::default(); &raw mut p as *mut u8` (the
+            // shape `<GenericArray as DerefMut>::deref_mut`'s
+            // `self as *mut Self as *mut u8` produces) loaded the local's
+            // value, wrapped it in `MirRefOp` (fresh alloca + store), then
+            // returned the fresh alloca — disconnecting all subsequent
+            // writes from the original `p`. See
+            // `examples/generic_array_deref`.
+            if place.projection.is_empty() {
+                if let Some(slot) = value_map.get_slot(place.local) {
+                    return Ok((None, slot, prev_op));
+                }
+                // ZST / no slot — fall through to fallback below.
+            }
+
             // Check if the place is a simple Deref: *local
             if place.projection.len() == 1
                 && let mir::ProjectionElem::Deref = &place.projection[0]
