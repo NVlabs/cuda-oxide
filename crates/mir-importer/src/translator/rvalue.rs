@@ -3759,6 +3759,245 @@ fn pointer_pointee_kind(ctx: &Context, ptr_value: Value) -> Option<(PointeeKind,
 
 /// Translate a MIR Place using iterative projection processing.
 /// This handles arbitrary depth projections by processing each element in sequence.
+/// Fast path for value-reads through a borrowed reference. If `place`
+/// is shaped `[Deref, Field | Index(local) | ConstantIndex(from_end=
+/// false), ...]` and the local holds a pointer, walk via
+/// `field_addr` / `array_element_addr` and emit a single final
+/// `mir.load` from the leaf pointer.
+///
+/// Without this fast path, `a[i]` where `a: &Newtype([u64; N])` (the
+/// dalek `Scalar52::sub(a: &Scalar52, b: &Scalar52)` shape) loaded
+/// the whole pointee, extracted the inner array, spilled it to a
+/// fresh alloca, then GEPed — so writes via sibling assigns through
+/// `&a` never propagated. Same Bug E miscompile, one Deref deeper
+/// than the slot-91 minimal. See `examples/deref_index_trait_dispatch`.
+///
+/// Returns `Ok(None)` when the gate doesn't match; the caller falls
+/// through to the general value-projection path.
+fn translate_place_via_deref_walk(
+    ctx: &mut Context,
+    body: &mir::Body,
+    place: &mir::Place,
+    value_map: &ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<(Value, Option<Ptr<Operation>>)>> {
+    use dialect_mir::ops::{
+        MirArrayElementAddrOp, MirConstantOp, MirFieldAddrOp, MirLoadOp,
+    };
+
+    // Shape gate. Must start with `Deref` and have at least one
+    // following projection; every projection after the leading Deref
+    // must be GEP-able.
+    if place.projection.len() < 2 {
+        return Ok(None);
+    }
+    if !matches!(place.projection[0], mir::ProjectionElem::Deref) {
+        return Ok(None);
+    }
+    for elem in &place.projection[1..] {
+        match elem {
+            mir::ProjectionElem::Field(_, _) => {}
+            mir::ProjectionElem::Index(_) => {}
+            mir::ProjectionElem::ConstantIndex {
+                from_end: false, ..
+            } => {}
+            _ => return Ok(None),
+        }
+    }
+
+    // The local must have an alloca slot containing the pointer.
+    // Bail BEFORE inserting anything so the caller's general path
+    // can take over cleanly. `get_slot` doesn't emit ops.
+    let slot = match value_map.get_slot(place.local) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // The slot's pointee must itself be a pointer type (otherwise
+    // Deref doesn't apply at the dialect-mir level).
+    let slot_pointee = slot
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+        .map(|mp| mp.pointee);
+    let slot_pointee = match slot_pointee {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    if slot_pointee
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+        .is_none()
+    {
+        return Ok(None);
+    }
+
+    // Gate passed. Now insert ops: load the pointer from the slot.
+    let (load_op, mut current_ptr) =
+        match value_map.load_local(ctx, place.local, block_ptr, prev_op) {
+            Some(pair) => pair,
+            None => return Ok(None),
+        };
+    let mut current_prev_op = Some(load_op);
+
+    let is_mutable_marker = false; // result is loaded by value; the walk's ptr mutability flag is internal
+
+    for elem in &place.projection[1..] {
+        match elem {
+            mir::ProjectionElem::Field(field_idx, field_ty) => {
+                let field_type = types::translate_type(ctx, field_ty)?;
+                let result_ptr_ty = dialect_mir::types::MirPtrType::get_generic(
+                    ctx,
+                    field_type,
+                    is_mutable_marker,
+                );
+                let op = Operation::new(
+                    ctx,
+                    MirFieldAddrOp::get_concrete_op_info(),
+                    vec![result_ptr_ty.into()],
+                    vec![current_ptr],
+                    vec![],
+                    0,
+                );
+                op.deref_mut(ctx).set_loc(loc.clone());
+                MirFieldAddrOp::new(op).set_attr_field_index(
+                    ctx,
+                    dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                );
+                if let Some(p) = current_prev_op {
+                    op.insert_after(ctx, p);
+                }
+                current_ptr = op.deref(ctx).get_result(0);
+                current_prev_op = Some(op);
+            }
+
+            mir::ProjectionElem::Index(index_local) => {
+                let (element_ty, addr_space) = match pointer_pointee_kind(ctx, current_ptr) {
+                    Some((PointeeKind::Array(elem_ty), addr_space)) => (elem_ty, addr_space),
+                    _ => return Ok(None),
+                };
+
+                let (idx_load_op, index_val) = match value_map.load_local(
+                    ctx,
+                    *index_local,
+                    block_ptr,
+                    current_prev_op,
+                ) {
+                    Some(pair) => pair,
+                    None => return Ok(None),
+                };
+                current_prev_op = Some(idx_load_op);
+                let _ = body;
+
+                let elem_ptr_ty = dialect_mir::types::MirPtrType::get(
+                    ctx,
+                    element_ty,
+                    is_mutable_marker,
+                    addr_space,
+                )
+                .into();
+                let addr_op = Operation::new(
+                    ctx,
+                    MirArrayElementAddrOp::get_concrete_op_info(),
+                    vec![elem_ptr_ty],
+                    vec![current_ptr, index_val],
+                    vec![],
+                    0,
+                );
+                addr_op.deref_mut(ctx).set_loc(loc.clone());
+                if let Some(p) = current_prev_op {
+                    addr_op.insert_after(ctx, p);
+                }
+                current_ptr = addr_op.deref(ctx).get_result(0);
+                current_prev_op = Some(addr_op);
+            }
+
+            mir::ProjectionElem::ConstantIndex {
+                offset,
+                from_end: false,
+                ..
+            } => {
+                let (element_ty, addr_space) = match pointer_pointee_kind(ctx, current_ptr) {
+                    Some((PointeeKind::Array(elem_ty), addr_space)) => (elem_ty, addr_space),
+                    _ => return Ok(None),
+                };
+
+                let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+                let index_apint =
+                    APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+                let const_attr =
+                    pliron::builtin::attributes::IntegerAttr::new(i64_ty, index_apint);
+                let const_op_ptr = Operation::new(
+                    ctx,
+                    MirConstantOp::get_concrete_op_info(),
+                    vec![i64_ty.into()],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                const_op_ptr.deref_mut(ctx).set_loc(loc.clone());
+                MirConstantOp::new(const_op_ptr).set_attr_value(ctx, const_attr);
+                if let Some(p) = current_prev_op {
+                    const_op_ptr.insert_after(ctx, p);
+                }
+                current_prev_op = Some(const_op_ptr);
+                let index_val = const_op_ptr.deref(ctx).get_result(0);
+
+                let elem_ptr_ty = dialect_mir::types::MirPtrType::get(
+                    ctx,
+                    element_ty,
+                    is_mutable_marker,
+                    addr_space,
+                )
+                .into();
+                let addr_op = Operation::new(
+                    ctx,
+                    MirArrayElementAddrOp::get_concrete_op_info(),
+                    vec![elem_ptr_ty],
+                    vec![current_ptr, index_val],
+                    vec![],
+                    0,
+                );
+                addr_op.deref_mut(ctx).set_loc(loc.clone());
+                if let Some(p) = current_prev_op {
+                    addr_op.insert_after(ctx, p);
+                }
+                current_ptr = addr_op.deref(ctx).get_result(0);
+                current_prev_op = Some(addr_op);
+            }
+
+            _ => unreachable!("gate above filters out other variants"),
+        }
+    }
+
+    let pointee_ty = match current_ptr
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+    {
+        Some(mp) => mp.pointee,
+        None => return Ok(None),
+    };
+
+    let final_load = Operation::new(
+        ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![pointee_ty],
+        vec![current_ptr],
+        vec![],
+        0,
+    );
+    final_load.deref_mut(ctx).set_loc(loc.clone());
+    if let Some(p) = current_prev_op {
+        final_load.insert_after(ctx, p);
+    }
+    let result_val = final_load.deref(ctx).get_result(0);
+
+    Ok(Some((result_val, Some(final_load))))
+}
+
 pub fn translate_place_iterative(
     ctx: &mut Context,
     body: &mir::Body,
@@ -3768,6 +4007,21 @@ pub fn translate_place_iterative(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    // Fast path for `[Deref, Field|Index|ConstantIndex...]` chains
+    // through a borrowed reference. See
+    // [`translate_place_via_deref_walk`] doc-comment for why.
+    if let Some(result) = translate_place_via_deref_walk(
+        ctx,
+        body,
+        place,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )? {
+        return Ok(result);
+    }
+
     // Start with the base local's current value. In the alloca model every
     // non-ZST local has a stack slot, so we emit `mir.load` once here and
     // then layer projections on top of the loaded SSA value; `mem2reg` folds

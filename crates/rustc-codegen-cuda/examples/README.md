@@ -205,6 +205,7 @@ regressed a previously-fixed bug — bisect the codegen crates.
 * deref_const_index_array_write
 * deref_field_index_write
 * deref_index_local_write
+* deref_index_trait_dispatch
 * device_unsafe_repro
 * drop_adt_no_impl
 * drop_copy_primitive
