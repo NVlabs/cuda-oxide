@@ -86,13 +86,12 @@ pub fn resolve_context() -> Context {
 ///
 /// Cleans stale artifacts, sets `RUSTFLAGS` to point at the backend `.so`,
 /// and invokes `cargo run --release` from the example directory. Environment
-/// variables control output format (PTX / LTOIR / NVVM IR) and verbosity.
+/// variables control output format (PTX / NVVM IR) and verbosity.
 #[allow(clippy::too_many_arguments)]
 pub fn codegen_run(
     ctx: &Context,
     example: &str,
     verbose: bool,
-    dlto: bool,
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
@@ -106,18 +105,18 @@ pub fn codegen_run(
 
     clean_generated_files(&example_dir, example);
 
-    let output_format = format_label(dlto, emit_nvvm_ir);
-    let target_arch = arch.unwrap_or(if dlto { "sm_100" } else { "sm_90" });
+    let output_format = format_label(emit_nvvm_ir);
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA: {}", example);
     println!("=========================================");
     println!();
-    if dlto || emit_nvvm_ir {
+    if emit_nvvm_ir {
         println!("Output format: {}", output_format);
-        if dlto {
-            println!("Target arch: {}", target_arch);
-        }
+        println!(
+            "Target arch: {}",
+            arch.expect("--emit-nvvm-ir requires --arch")
+        );
         println!();
     }
     println!("This is the proper cargo workflow:");
@@ -149,7 +148,7 @@ pub fn codegen_run(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, arch);
     apply_ld_library_path(&mut cmd);
 
     if let Some(bin) = bin {
@@ -179,7 +178,6 @@ pub fn codegen_build_example(
     ctx: &Context,
     example: &str,
     verbose: bool,
-    dlto: bool,
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
@@ -191,8 +189,6 @@ pub fn codegen_build_example(
     };
 
     clean_generated_files(&example_dir, example);
-
-    let target_arch = arch.unwrap_or(if dlto { "sm_100" } else { "sm_90" });
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA BUILD: {}", example);
@@ -221,7 +217,7 @@ pub fn codegen_build_example(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, arch);
     apply_ld_library_path(&mut cmd);
 
     println!("Building {}...", example);
@@ -246,27 +242,25 @@ pub fn codegen_build_example(
 /// Enables all diagnostic env vars (`CUDA_OXIDE_VERBOSE`, `SHOW_RUSTC_MIR`,
 /// `DUMP_MIR`, `DUMP_LLVM`) so the user can see MIR collection, the
 /// `dialect-mir` module (pre- and post-`mem2reg`), the `dialect-llvm`
-/// module, textual LLVM IR, and the final PTX or LTOIR. After the build,
+/// module, textual LLVM IR, and the final PTX or NVVM IR. After the build,
 /// generated artifacts are printed to stdout.
-pub fn codegen_show_pipeline(
-    ctx: &Context,
-    example: &str,
-    dlto: bool,
-    emit_nvvm_ir: bool,
-    arch: Option<&str>,
-) {
+pub fn codegen_show_pipeline(ctx: &Context, example: &str, emit_nvvm_ir: bool, arch: Option<&str>) {
     let example_dir = resolve_example_dir(ctx, example);
 
     clean_generated_files(&example_dir, example);
-
-    let output_format = format_label(dlto, emit_nvvm_ir);
-    let target_arch = arch.unwrap_or(if dlto { "sm_100" } else { "sm_90" });
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA PIPELINE: {}", example);
     println!("=========================================");
     println!();
-    println!("Output format: {} (arch: {})", output_format, target_arch);
+    match (emit_nvvm_ir, arch) {
+        (true, Some(target_arch)) => println!("Output format: NVVM IR (arch: {})", target_arch),
+        (false, Some(target_arch)) => {
+            println!("Output format: PTX (arch override: {})", target_arch)
+        }
+        (false, None) => println!("Output format: PTX (auto-detected arch)"),
+        (true, None) => unreachable!("--emit-nvvm-ir requires --arch"),
+    }
     println!();
     println!("Required flags (applied via RUSTFLAGS):");
     println!("  -C opt-level=3              MIR optimization");
@@ -292,7 +286,7 @@ pub fn codegen_show_pipeline(
     cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
     cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, arch);
     apply_ld_library_path(&mut cmd);
 
     println!("Building {}...", example);
@@ -305,7 +299,7 @@ pub fn codegen_show_pipeline(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    show_generated_artifacts(&example_dir, example, dlto);
+    show_generated_artifacts(&example_dir, example);
 }
 
 // =============================================================================
@@ -827,20 +821,9 @@ fn build_rustflags_with_existing(
     flags
 }
 
-/// Set environment variables that tell the codegen backend which output
-/// format to produce (LTOIR, NVVM IR) and the target GPU architecture.
-fn apply_output_mode(
-    cmd: &mut Command,
-    dlto: bool,
-    emit_nvvm_ir: bool,
-    arch: Option<&str>,
-    target_arch: &str,
-) {
-    if dlto {
-        cmd.env("CUDA_OXIDE_EMIT_LTOIR", "1");
-        cmd.env("CUDA_OXIDE_ARCH", target_arch);
-    }
-    if emit_nvvm_ir || arch.is_some() {
+/// Set environment variables for the codegen backend.
+fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) {
+    if let Some(target_arch) = arch {
         cmd.env("CUDA_OXIDE_TARGET", target_arch);
     }
     if emit_nvvm_ir {
@@ -907,23 +890,14 @@ fn clean_generated_files(example_dir: &Path, example: &str) {
 }
 
 /// Human-readable label for the selected output format.
-fn format_label(dlto: bool, emit_nvvm_ir: bool) -> &'static str {
-    if dlto {
-        "LTOIR"
-    } else if emit_nvvm_ir {
-        "NVVM IR"
-    } else {
-        "PTX"
-    }
+fn format_label(emit_nvvm_ir: bool) -> &'static str {
+    if emit_nvvm_ir { "NVVM IR" } else { "PTX" }
 }
 
-/// Print generated artifacts (LLVM IR, PTX, or LTOIR) to stdout after a
-/// pipeline build. For LTOIR (binary), prints the file path and disassembly
-/// instructions instead of raw content.
-fn show_generated_artifacts(example_dir: &Path, example: &str, dlto: bool) {
+/// Print generated artifacts (LLVM IR or PTX) to stdout after a pipeline build.
+fn show_generated_artifacts(example_dir: &Path, example: &str) {
     let ll_file = example_dir.join(format!("{}.ll", example));
     let ptx_file = example_dir.join(format!("{}.ptx", example));
-    let ltoir_file = example_dir.join(format!("{}.ltoir", example));
 
     if ll_file.exists() {
         println!();
@@ -935,19 +909,7 @@ fn show_generated_artifacts(example_dir: &Path, example: &str, dlto: bool) {
         }
     }
 
-    if dlto && ltoir_file.exists() {
-        println!();
-        println!("=========================================");
-        println!("LTOIR ({}.ltoir)", example);
-        println!("=========================================");
-        println!("Binary LTOIR file generated: {}", ltoir_file.display());
-        println!();
-        println!("To disassemble, use nvvm-dis (NVVM 2.0 dialect for Blackwell+):");
-        println!(
-            "  export LD_LIBRARY_PATH=/path/to/nvvm-tools-next/Linux_amd64_release:$LD_LIBRARY_PATH"
-        );
-        println!("  nvvm-dis {}.ltoir", example);
-    } else if ptx_file.exists() {
+    if ptx_file.exists() {
         println!();
         println!("=========================================");
         println!("PTX ({}.ptx)", example);
@@ -1202,6 +1164,13 @@ fn find_executable(name: &str, fallback_paths: &[&str]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
+
+    fn command_env(cmd: &Command, key: &str) -> Option<String> {
+        cmd.get_envs()
+            .find(|(name, _)| *name == OsStr::new(key))
+            .and_then(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+    }
 
     #[test]
     fn build_rustflags_appends_existing_rustflags_after_required_flags() {
@@ -1228,5 +1197,44 @@ mod tests {
 
         assert!(rustflags.contains(" -C debuginfo=2"));
         assert!(!rustflags.ends_with(' '));
+    }
+
+    #[test]
+    fn apply_output_mode_sets_target_for_arch_override() {
+        let mut cmd = Command::new("cargo");
+
+        apply_output_mode(&mut cmd, false, Some("sm_120"));
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_TARGET").as_deref(),
+            Some("sm_120")
+        );
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR"), None);
+    }
+
+    #[test]
+    fn apply_output_mode_sets_nvvm_ir_flag_and_target() {
+        let mut cmd = Command::new("cargo");
+
+        apply_output_mode(&mut cmd, true, Some("sm_100a"));
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_TARGET").as_deref(),
+            Some("sm_100a")
+        );
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR").as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn apply_output_mode_leaves_auto_detect_ptx_unset() {
+        let mut cmd = Command::new("cargo");
+
+        apply_output_mode(&mut cmd, false, None);
+
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_TARGET"), None);
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR"), None);
     }
 }

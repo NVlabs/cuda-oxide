@@ -34,17 +34,16 @@ cargo oxide setup                   # explicitly build the codegen backend
 
 ### Flags
 
-| Flag               | Applies to              | Description                                    |
-|--------------------|-------------------------|------------------------------------------------|
-| `--dlto`           | run, build, pipeline    | Generate LTOIR container (Blackwell+ only)     |
-| `--emit-nvvm-ir`   | run, build, pipeline    | Generate NVVM IR (use with libNVVM -gen-lto)   |
-| `--arch <sm_XXX>`  | run, build, pipeline    | Target architecture (e.g., sm_90, sm_100)      |
-| `--features <F>`   | run, build              | Comma-separated cargo features to enable       |
-| `-v, --verbose`    | run, build              | Show detailed compilation output               |
-| `--async`          | new                     | Use async template (tokio + cuda-async)        |
-| `--cgdb`           | debug                   | Use cgdb frontend instead of cuda-gdb          |
-| `--tui`            | debug                   | Use GDB's built-in TUI interface               |
-| `--check`          | fmt                     | Check formatting without modifying files       |
+| Flag              | Applies to           | Description                              |
+|-------------------|----------------------|------------------------------------------|
+| `--emit-nvvm-ir`  | run, build, pipeline | Generate NVVM IR for libNVVM             |
+| `--arch <sm_XX>`  | run, build, pipeline | Target architecture override             |
+| `--features <F>`  | run, build           | Comma-separated cargo features to enable |
+| `-v, --verbose`   | run, build           | Show detailed compilation output         |
+| `--async`         | new                  | Use the async template                   |
+| `--cgdb`          | debug                | Use cgdb instead of cuda-gdb             |
+| `--tui`           | debug                | Use GDB's TUI interface                  |
+| `--check`         | fmt                  | Check formatting only                    |
 
 ## Commands
 
@@ -73,7 +72,7 @@ Shows the full compilation pipeline with verbose output at every stage: MIR coll
 
 ```bash
 cargo oxide pipeline vecadd
-cargo oxide pipeline vecadd --dlto --arch sm_100
+cargo oxide pipeline device_ffi_test --emit-nvvm-ir --arch sm_120
 ```
 
 ### `cargo oxide debug <example>`

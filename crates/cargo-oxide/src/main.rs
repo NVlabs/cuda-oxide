@@ -51,9 +51,6 @@ enum Commands {
     Run {
         /// Example name (required in workspace, optional for standalone projects)
         example: Option<String>,
-        /// Generate LTOIR container (Blackwell+ only)
-        #[arg(long)]
-        dlto: bool,
         /// Generate NVVM IR (use with libNVVM -gen-lto)
         #[arg(long)]
         emit_nvvm_ir: bool,
@@ -76,9 +73,6 @@ enum Commands {
     Build {
         /// Example name (required in workspace, optional for standalone projects)
         example: Option<String>,
-        /// Generate LTOIR container (Blackwell+ only)
-        #[arg(long)]
-        dlto: bool,
         /// Generate NVVM IR (use with libNVVM -gen-lto)
         #[arg(long)]
         emit_nvvm_ir: bool,
@@ -92,13 +86,10 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Show the full compilation pipeline (MIR -> PTX/LTOIR) with verbose output
+    /// Show the full compilation pipeline (MIR -> PTX/NVVM IR) with verbose output
     Pipeline {
         /// Example name (from crates/rustc-codegen-cuda/examples/)
         example: String,
-        /// Generate LTOIR container (Blackwell+ only)
-        #[arg(long)]
-        dlto: bool,
         /// Generate NVVM IR (use with libNVVM -gen-lto)
         #[arg(long)]
         emit_nvvm_ir: bool,
@@ -155,7 +146,6 @@ fn main() {
     match cli.command {
         Commands::Run {
             example,
-            dlto,
             emit_nvvm_ir,
             arch,
             features,
@@ -169,7 +159,6 @@ fn main() {
                 &ctx,
                 &example,
                 verbose,
-                dlto,
                 emit_nvvm_ir,
                 arch.as_deref(),
                 features.as_deref(),
@@ -178,7 +167,6 @@ fn main() {
         }
         Commands::Build {
             example,
-            dlto,
             emit_nvvm_ir,
             arch,
             features,
@@ -191,7 +179,6 @@ fn main() {
                 &ctx,
                 &example,
                 verbose,
-                dlto,
                 emit_nvvm_ir,
                 arch.as_deref(),
                 features.as_deref(),
@@ -199,13 +186,12 @@ fn main() {
         }
         Commands::Pipeline {
             example,
-            dlto,
             emit_nvvm_ir,
             arch,
         } => {
             validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
             let ctx = commands::resolve_context();
-            commands::codegen_show_pipeline(&ctx, &example, dlto, emit_nvvm_ir, arch.as_deref());
+            commands::codegen_show_pipeline(&ctx, &example, emit_nvvm_ir, arch.as_deref());
         }
         Commands::Debug { example, cgdb, tui } => {
             let ctx = commands::resolve_context();

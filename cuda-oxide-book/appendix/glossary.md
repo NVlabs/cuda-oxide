@@ -98,8 +98,8 @@ without shared memory or barriers.
 ## LTOIR (Link-Time Optimized IR)
 
 An intermediate representation used for device-side link-time optimization.
-cuda-oxide can emit LTOIR (via `--dlto`) for linking Rust device code with CUDA
-C++ device code using `nvJitLink`.
+cuda-oxide emits NVVM IR for libNVVM, which can compile it to LTOIR for
+linking Rust device code with CUDA C++ device code using `nvJitLink`.
 
 ## `ManagedBarrier<State, Kind, ID>`
 
