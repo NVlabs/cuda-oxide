@@ -83,3 +83,4 @@ pub mod tcgen05;
 pub mod tma;
 pub mod warp;
 pub mod wgmma;
+pub mod wmma;
