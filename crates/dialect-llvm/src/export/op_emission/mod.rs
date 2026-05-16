@@ -20,12 +20,16 @@ use pliron::{
 };
 
 use crate::{
-    attributes::{FPHalfAttr, GepIndexAttr, ICmpPredicateAttr},
-    ops::{self, atomic::LlvmAtomicOpInterface},
-    types::{FuncType, PointerType, VoidType},
+    attributes::{FPHalfAttr, ICmpPredicateAttr},
+    ops,
+    types::{FuncType, VoidType},
 };
 
 use super::{ModuleExportState, format_float_literal, format_half_literal, strip_device_prefix};
+
+mod atomic;
+mod memory;
+mod terminator;
 
 impl<'a> ModuleExportState<'a> {
     pub(super) fn export_op(
@@ -53,302 +57,63 @@ impl<'a> ModuleExportState<'a> {
         match op_id {
             // --- Terminators ---
             id if id == ops::ReturnOp::get_opid_static() => {
-                write!(output, "  ret ").unwrap();
-                if op_ref.operands().count() == 0 {
-                    write!(output, "void").unwrap();
-                } else {
-                    let val = op_ref.operands().next().unwrap();
-                    self.export_type(val.get_type(self.ctx), output)?;
-                    write!(output, " ").unwrap();
-                    self.export_value(val, value_names, output)?;
-                }
-                writeln!(output).unwrap();
+                self.export_return_op(&op_ref, value_names, output)?;
             }
             id if id == ops::UnreachableOp::get_opid_static() => {
-                writeln!(output, "  unreachable").unwrap();
+                self.export_unreachable_op(output);
             }
             id if id == ops::BrOp::get_opid_static() => {
-                let dest = op_ref.successors().next().unwrap();
-                let label = block_labels.get(&dest).ok_or("Missing block label")?;
-                writeln!(output, "  br label %{label}").unwrap();
+                self.export_br_op(&op_ref, block_labels, output)?;
             }
             id if id == ops::CondBrOp::get_opid_static() => {
-                let mut succs = op_ref.successors();
-                let true_dest = succs.next().unwrap();
-                let false_dest = succs.next().unwrap();
-                let true_label = block_labels.get(&true_dest).ok_or("Missing true label")?;
-                let false_label = block_labels.get(&false_dest).ok_or("Missing false label")?;
-                let cond = op_ref.get_operand(0);
-
-                write!(output, "  br i1 ").unwrap();
-                self.export_value(cond, value_names, output)?;
-                writeln!(output, ", label %{true_label}, label %{false_label}").unwrap();
+                self.export_cond_br_op(&op_ref, value_names, block_labels, output)?;
             }
 
             // --- Memory Ops ---
             id if id == ops::LoadOp::get_opid_static() => {
-                let res = op_ref.get_result(0);
-                let ptr = op_ref.get_operand(0);
-                let res_name = value_names.get(&res).unwrap();
-                let ty = res.get_type(self.ctx);
-
-                // Check pointer address space
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                write!(output, "  {res_name} = load ").unwrap();
-                self.export_type(ty, output)?;
-                if addrspace != 0 {
-                    write!(output, ", ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, ", ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-                writeln!(output).unwrap();
+                self.export_load_op(&op_ref, value_names, output)?;
             }
             id if id == ops::StoreOp::get_opid_static() => {
-                let val = op_ref.get_operand(0);
-                let ptr = op_ref.get_operand(1);
-
-                // Check pointer address space
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                write!(output, "  store ").unwrap();
-                self.export_type(val.get_type(self.ctx), output)?;
-                write!(output, " ").unwrap();
-                self.export_value(val, value_names, output)?;
-                if addrspace != 0 {
-                    write!(output, ", ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, ", ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-                writeln!(output).unwrap();
+                self.export_store_op(&op_ref, value_names, output)?;
             }
             // --- Atomic Ops ---
             id if id == ops::AtomicLoadOp::get_opid_static() => {
-                // %val = load atomic i32, ptr [addrspace(N)] %p syncscope("device") acquire
                 let atomic_load = op_obj.as_ref().downcast_ref::<ops::AtomicLoadOp>().unwrap();
-                let res = op_ref.get_result(0);
-                let ptr = op_ref.get_operand(0);
-                let res_name = value_names.get(&res).unwrap();
-                let ty = res.get_type(self.ctx);
-                let syncscope_str = ops::atomic::format_syncscope(&atomic_load.syncscope(self.ctx));
-                let ordering_str = ops::atomic::format_ordering(&atomic_load.ordering(self.ctx));
-
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                write!(output, "  {res_name} = load atomic ").unwrap();
-                self.export_type(ty, output)?;
-                if addrspace != 0 {
-                    write!(output, ", ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, ", ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-                let align = self.natural_alignment(ty);
-                writeln!(output, "{syncscope_str} {ordering_str}, align {align}").unwrap();
+                self.export_atomic_load_op(&op_ref, atomic_load, value_names, output)?;
             }
             id if id == ops::AtomicStoreOp::get_opid_static() => {
-                // store atomic i32 %v, ptr [addrspace(N)] %p syncscope("device") release
                 let atomic_store = op_obj
                     .as_ref()
                     .downcast_ref::<ops::AtomicStoreOp>()
                     .unwrap();
-                let val = op_ref.get_operand(0);
-                let ptr = op_ref.get_operand(1);
-                let syncscope_str =
-                    ops::atomic::format_syncscope(&atomic_store.syncscope(self.ctx));
-                let ordering_str = ops::atomic::format_ordering(&atomic_store.ordering(self.ctx));
-
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                write!(output, "  store atomic ").unwrap();
-                self.export_type(val.get_type(self.ctx), output)?;
-                write!(output, " ").unwrap();
-                self.export_value(val, value_names, output)?;
-                if addrspace != 0 {
-                    write!(output, ", ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, ", ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-                let align = self.natural_alignment(val.get_type(self.ctx));
-                writeln!(output, "{syncscope_str} {ordering_str}, align {align}").unwrap();
+                self.export_atomic_store_op(&op_ref, atomic_store, value_names, output)?;
             }
             id if id == ops::AtomicRmwOp::get_opid_static() => {
-                // %old = atomicrmw add ptr [addrspace(N)] %p, i32 %v syncscope("device") monotonic
                 let atomic_rmw = op_obj.as_ref().downcast_ref::<ops::AtomicRmwOp>().unwrap();
-                let res = op_ref.get_result(0);
-                let ptr = op_ref.get_operand(0);
-                let val = op_ref.get_operand(1);
-                let res_name = value_names.get(&res).unwrap();
-                let rmw_kind_str = ops::atomic::format_rmw_kind(&atomic_rmw.rmw_kind(self.ctx));
-                let syncscope_str = ops::atomic::format_syncscope(&atomic_rmw.syncscope(self.ctx));
-                let ordering_str = ops::atomic::format_ordering(&atomic_rmw.ordering(self.ctx));
-
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                write!(output, "  {res_name} = atomicrmw {rmw_kind_str} ").unwrap();
-                if addrspace != 0 {
-                    write!(output, "ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, "ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-                write!(output, ", ").unwrap();
-                self.export_type(val.get_type(self.ctx), output)?;
-                write!(output, " ").unwrap();
-                self.export_value(val, value_names, output)?;
-                writeln!(output, "{syncscope_str} {ordering_str}").unwrap();
+                self.export_atomic_rmw_op(&op_ref, atomic_rmw, value_names, output)?;
             }
             id if id == ops::AtomicCmpxchgOp::get_opid_static() => {
-                // %result_struct = cmpxchg ptr %p, i32 %cmp, i32 %new syncscope("device") acq_rel acquire
-                // %old = extractvalue { i32, i1 } %result_struct, 0
-                // %success = extractvalue { i32, i1 } %result_struct, 1
                 let atomic_cmpxchg = op_obj
                     .as_ref()
                     .downcast_ref::<ops::AtomicCmpxchgOp>()
                     .unwrap();
-                let res = op_ref.get_result(0);
-                let ptr = op_ref.get_operand(0);
-                let cmp = op_ref.get_operand(1);
-                let new_val = op_ref.get_operand(2);
-                let res_name = value_names.get(&res).unwrap();
-                let success_ord_str =
-                    ops::atomic::format_ordering(&atomic_cmpxchg.success_ordering(self.ctx));
-                let failure_ord_str =
-                    ops::atomic::format_ordering(&atomic_cmpxchg.failure_ordering(self.ctx));
-                let syncscope_str =
-                    ops::atomic::format_syncscope(&atomic_cmpxchg.syncscope(self.ctx));
-                let val_ty = cmp.get_type(self.ctx);
-
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                // Emit the cmpxchg instruction -- returns { T, i1 }
-                let struct_name = format!("{res_name}.cx");
-                write!(output, "  {struct_name} = cmpxchg ").unwrap();
-                if addrspace != 0 {
-                    write!(output, "ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, "ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-                write!(output, ", ").unwrap();
-                self.export_type(val_ty, output)?;
-                write!(output, " ").unwrap();
-                self.export_value(cmp, value_names, output)?;
-                write!(output, ", ").unwrap();
-                self.export_type(val_ty, output)?;
-                write!(output, " ").unwrap();
-                self.export_value(new_val, value_names, output)?;
-                writeln!(
-                    output,
-                    "{syncscope_str} {success_ord_str} {failure_ord_str}"
-                )
-                .unwrap();
-
-                // Extract the old value (element 0 of the { T, i1 } struct)
-                write!(output, "  {res_name} = extractvalue {{ ").unwrap();
-                self.export_type(val_ty, output)?;
-                writeln!(output, ", i1 }} {struct_name}, 0").unwrap();
+                self.export_atomic_cmpxchg_op(&op_ref, atomic_cmpxchg, value_names, output)?;
             }
             id if id == ops::FenceOp::get_opid_static() => {
-                // fence syncscope("device") release
                 let fence = op_obj.as_ref().downcast_ref::<ops::FenceOp>().unwrap();
-                let syncscope_str = ops::atomic::format_syncscope(&fence.syncscope(self.ctx));
-                let ordering_str = ops::atomic::format_ordering(&fence.ordering(self.ctx));
-                writeln!(output, "  fence{syncscope_str} {ordering_str}").unwrap();
+                self.export_fence_op(fence, output);
             }
 
             id if id == ops::AllocaOp::get_opid_static() => {
-                // %res = alloca <type>
-                let res = op_ref.get_result(0);
-                let res_name = value_names.get(&res).unwrap();
-
-                // Get the element type from the attribute
                 let alloca_op = op_obj.as_ref().downcast_ref::<ops::AllocaOp>().unwrap();
-                let elem_ty = alloca_op
-                    .get_attr_alloca_element_type(self.ctx)
-                    .expect("Missing alloca_element_type");
-                let elem_ty_ptr = elem_ty.get_type(self.ctx);
-
-                write!(output, "  {res_name} = alloca ").unwrap();
-                self.export_type(elem_ty_ptr, output)?;
-                writeln!(output).unwrap();
+                self.export_alloca_op(&op_ref, alloca_op, value_names, output)?;
             }
             id if id == ops::GetElementPtrOp::get_opid_static() => {
-                // %res = getelementptr inbounds TYPE, ptr addrspace(N) %ptr, i32 %idx...
-                let res = op_ref.get_result(0);
-                let res_name = value_names.get(&res).unwrap();
-                let ptr = op_ref.get_operand(0);
-
                 let gep_op = op_obj
                     .as_ref()
                     .downcast_ref::<ops::GetElementPtrOp>()
                     .unwrap();
-                let elem_ty = gep_op
-                    .get_attr_gep_src_elem_type(self.ctx)
-                    .expect("Missing gep_src_elem_type")
-                    .get_type(self.ctx); // Ptr<TypeObj>
-
-                write!(output, "  {res_name} = getelementptr inbounds ").unwrap();
-                self.export_type(elem_ty, output)?;
-
-                // Check if pointer has a non-default address space
-                let ptr_ty = ptr.get_type(self.ctx);
-                let addrspace = ptr_ty
-                    .deref(self.ctx)
-                    .downcast_ref::<PointerType>()
-                    .map_or(0, PointerType::address_space);
-
-                if addrspace != 0 {
-                    write!(output, ", ptr addrspace({addrspace}) ").unwrap();
-                } else {
-                    write!(output, ", ptr ").unwrap();
-                }
-                self.export_value(ptr, value_names, output)?;
-
-                // Indices
-                let indices = &gep_op.get_attr_gep_indices(self.ctx).unwrap().0;
-                for idx_attr in indices {
-                    write!(output, ", ").unwrap();
-                    match idx_attr {
-                        GepIndexAttr::Constant(val) => {
-                            write!(output, "i32 {val}").unwrap();
-                        }
-                        GepIndexAttr::OperandIdx(operand_idx) => {
-                            let val = op_ref.get_operand(*operand_idx);
-                            self.export_type(val.get_type(self.ctx), output)?;
-                            write!(output, " ").unwrap();
-                            self.export_value(val, value_names, output)?;
-                        }
-                    }
-                }
-                writeln!(output).unwrap();
+                self.export_gep_op(&op_ref, gep_op, value_names, output)?;
             }
 
             // --- Arithmetic ---

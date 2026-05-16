@@ -138,7 +138,11 @@ src/
 │   ├── literals.rs     # Constant literal formatting
 │   ├── metadata.rs     # NVVM metadata emission
 │   ├── names.rs        # Exported symbol naming
-│   ├── op_emission.rs  # LLVM operation emission
+│   ├── op_emission/    # LLVM operation emission
+│   │   ├── mod.rs      # Op dispatch + uncategorized op emission
+│   │   ├── atomic.rs   # Atomic operation emission
+│   │   ├── memory.rs   # Memory operation emission
+│   │   └── terminator.rs # Terminator operation emission
 │   ├── type_printing.rs # LLVM type printing
 │   └── values.rs       # SSA value printing
 └── ops/
