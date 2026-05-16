@@ -142,7 +142,9 @@ src/
 │   │   ├── mod.rs      # Op dispatch + uncategorized op emission
 │   │   ├── aggregate.rs # Aggregate operation emission
 │   │   ├── arithmetic.rs # Arithmetic and comparison operation emission
+│   │   ├── asm.rs     # Inline assembly operation emission
 │   │   ├── atomic.rs   # Atomic operation emission
+│   │   ├── calls.rs   # Call operation emission
 │   │   ├── casts.rs    # Cast operation emission
 │   │   ├── memory.rs   # Memory operation emission
 │   │   ├── terminator.rs # Terminator operation emission

@@ -6,13 +6,36 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use pliron::{operation::Operation, r#type::Typed, value::Value};
+use pliron::{context::Ptr, operation::Operation, r#type::Typed, value::Value};
 
 use crate::{attributes::ICmpPredicateAttr, ops};
 
 use super::super::ModuleExportState;
 
 impl<'a> ModuleExportState<'a> {
+    pub(super) fn export_binop(
+        &self,
+        op_name: &str,
+        op: Ptr<Operation>,
+        value_names: &HashMap<Value, String>,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let op_ref = op.deref(self.ctx);
+        let res = op_ref.get_result(0);
+        let lhs = op_ref.get_operand(0);
+        let rhs = op_ref.get_operand(1);
+        let res_name = value_names.get(&res).unwrap();
+
+        write!(output, "  {res_name} = {op_name} ").unwrap();
+        self.export_type(lhs.get_type(self.ctx), output)?;
+        write!(output, " ").unwrap();
+        self.export_value(lhs, value_names, output)?;
+        write!(output, ", ").unwrap();
+        self.export_value(rhs, value_names, output)?;
+        writeln!(output).unwrap();
+        Ok(())
+    }
+
     pub(super) fn export_fneg_op(
         &self,
         op_ref: &Operation,
