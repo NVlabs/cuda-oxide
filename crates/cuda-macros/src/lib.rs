@@ -1013,18 +1013,46 @@ fn find_closure_generic(generics: &syn::Generics) -> Option<syn::Ident> {
     for param in &generics.params {
         if let syn::GenericParam::Type(type_param) = param {
             for bound in &type_param.bounds {
-                if let syn::TypeParamBound::Trait(trait_bound) = bound
-                    && let Some(segment) = trait_bound.path.segments.last()
-                {
-                    let name = segment.ident.to_string();
-                    if name == "Fn" || name == "FnMut" || name == "FnOnce" {
-                        return Some(type_param.ident.clone());
-                    }
+                if is_fn_trait_bound(bound) {
+                    return Some(type_param.ident.clone());
                 }
             }
         }
     }
+
+    if let Some(where_clause) = &generics.where_clause {
+        for predicate in &where_clause.predicates {
+            let syn::WherePredicate::Type(predicate_type) = predicate else {
+                continue;
+            };
+            if !predicate_type.bounds.iter().any(is_fn_trait_bound) {
+                continue;
+            }
+            let Type::Path(type_path) = &predicate_type.bounded_ty else {
+                continue;
+            };
+            if type_path.qself.is_none()
+                && type_path.path.segments.len() == 1
+                && let Some(segment) = type_path.path.segments.first()
+            {
+                return Some(segment.ident.clone());
+            }
+        }
+    }
+
     None
+}
+
+fn is_fn_trait_bound(bound: &syn::TypeParamBound) -> bool {
+    let syn::TypeParamBound::Trait(trait_bound) = bound else {
+        return false;
+    };
+    trait_bound.path.segments.last().is_some_and(|segment| {
+        matches!(
+            segment.ident.to_string().as_str(),
+            "Fn" | "FnMut" | "FnOnce"
+        )
+    })
 }
 
 /// Find which function parameter uses the closure type.
@@ -2297,6 +2325,8 @@ pub fn readonly(_attr: TokenStream, item: TokenStream) -> TokenStream {
 fn as_closure_expr(expr: &syn::Expr) -> Option<&syn::ExprClosure> {
     match expr {
         syn::Expr::Closure(closure) => Some(closure),
+        syn::Expr::Group(group) => as_closure_expr(&group.expr),
+        syn::Expr::Paren(paren) => as_closure_expr(&paren.expr),
         _ => None,
     }
 }
@@ -2900,7 +2930,7 @@ impl Parse for CudaLaunchAsyncInput {
 /// - `slice(x)` -- immutable device slice; pushes `(ptr, len)` as two kernel args
 /// - `slice_mut(x)` -- mutable device slice; same as `slice` but takes `&mut`
 /// - `expr` -- scalar or device pointer passed directly
-/// - `|captures| body` -- closure whose captures are marshalled as individual args
+/// - `|captures| body` -- closure environment passed by value
 ///
 /// # Returns
 ///
@@ -2938,6 +2968,18 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
     let config = &input.config;
     let (kernel_base, generics) = input.kernel_parts();
     let marker_name = format_ident!("__{}_CudaKernel", kernel_base);
+    let instantiate_name = format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base);
+    let has_closure = input
+        .args
+        .iter()
+        .any(|arg| matches!(arg, CudaLaunchArg::Closure { .. }));
+    let closure_expr = input.args.iter().find_map(|arg| {
+        if let CudaLaunchArg::Closure { closure_expr } = arg {
+            Some(closure_expr)
+        } else {
+            None
+        }
+    });
 
     let arg_code: Vec<TokenStream2> = input
         .args
@@ -2969,28 +3011,44 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
                         __launch.push_arg(Box::new(#len_name));
                     }
                 }
-                CudaLaunchArg::Closure { closure_expr, .. } => {
-                    // Push the whole closure as one boxed byval scalar so
-                    // the host packet matches the kernel-boundary ABI
-                    // (one .param entry per aggregate kernel argument).
-                    // `Box::new(...)` keeps the closure alive until the
-                    // async launch is submitted; `KernelArgument for
-                    // Box<T>` heap-allocates and stores the pointer.
-                    //
-                    // `T: 'static` is required by the blanket impl, so
-                    // non-`'static` borrowing closures aren't supported
-                    // on the async path today — same posture as before
-                    // this change, just expressed at the closure level
-                    // instead of per-capture.
+                CudaLaunchArg::Closure { .. } => {
+                    // Push the whole closure as one byval scalar so the
+                    // host packet matches the single aggregate `.param`
+                    // at the kernel boundary. ZST closures are omitted
+                    // to keep later packet slots aligned.
                     quote! {
-                        __launch.push_arg(Box::new(#closure_expr));
+                        if ::core::mem::size_of_val(&__closure) != 0 {
+                            __launch.push_scalar_arg(__closure);
+                        }
                     }
                 }
             }
         })
         .collect();
 
-    let expanded = if input.is_generic() {
+    let expanded = if has_closure {
+        let closure_expr = closure_expr.expect("has_closure but no closure expression");
+        quote! {
+            {
+                let __closure = #closure_expr;
+                let __ptx_name: &'static str = #instantiate_name(&__closure);
+                let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                        stringify!(#kernel_base),
+                        __ptx_name,
+                        err,
+                    )
+                });
+                let mut __launch = cuda_async::launch::AsyncKernelLaunch::new(
+                    std::sync::Arc::new(__func),
+                );
+                #(#arg_code)*
+                __launch.set_launch_config(#config);
+                __launch
+            }
+        }
+    } else if input.is_generic() {
         let kernel_entry = format_ident!("{}{}", KERNEL_PREFIX, kernel_base);
         quote! {
             {

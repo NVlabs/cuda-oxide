@@ -19,18 +19,28 @@
 //! ## What it covers
 //!
 //! 1. Generic kernel with `Fn` trait bound: `fn map<T, F: Fn(T) -> T + Copy>(...)`
-//! 2. Closure with 0, 1, 2, 3, 4 captures.
+//! 2. Closures with 0, 1, 2, 3, 4 captures.
 //! 3. Type inference of `F` at the call site (`module.map::<f32, _>(...)`).
-//! 4. The closure is pushed via `push_kernel_scalar` and read on the device as
-//!    a single byval struct — no per-capture flattening on either side.
+//! 4. The closure is passed as a single byval struct — no per-capture flattening
+//!    on either side.
+//! 5. Equivalent coverage through sync and async typed and untyped launch paths.
+//! 6. A where-clause `Fn` bound and layout-sensitive captures.
 
+use cuda_async::device_operation::DeviceOperation;
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_device::{DisjointSlice, kernel, thread};
+use cuda_host::{cuda_launch, cuda_launch_async, cuda_module, load_kernel_module};
+
+#[derive(Clone, Copy)]
+struct MixedCapture {
+    small: u8,
+    wide: f64,
+    scale: f32,
+}
 
 // =============================================================================
-// CLOSURE-ACCEPTING GENERIC KERNEL
+// CLOSURE-ACCEPTING GENERIC KERNELS
 // =============================================================================
-
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -49,6 +59,47 @@ mod kernels {
             *out_elem = f(input[idx_raw]);
         }
     }
+
+    #[kernel]
+    pub fn map_where<T, F>(f: F, input: &[T], mut out: DisjointSlice<T>)
+    where
+        T: Copy,
+        F: Fn(T) -> T + Copy,
+    {
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = out.get_mut(idx) {
+            *out_elem = f(input[idx_raw]);
+        }
+    }
+}
+
+fn verify_output(
+    label: &str,
+    output: &[f32],
+    input: &[f32],
+    tolerance: f32,
+    expected: impl Fn(f32) -> f32,
+    failed: &mut bool,
+) {
+    let errors = output
+        .iter()
+        .zip(input)
+        .filter(|(got, x)| (**got - expected(**x)).abs() > tolerance)
+        .count();
+
+    if errors == 0 {
+        println!("  ✓ SUCCESS: {label}");
+    } else {
+        println!("  ✗ FAILED: {label}: {errors} errors");
+        *failed = true;
+        for (i, (&got, &x)) in output.iter().zip(input).take(5).enumerate() {
+            let expected = expected(x);
+            if (got - expected).abs() > tolerance {
+                println!("    [{i}]: got {got}, expected {expected}");
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -65,13 +116,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_data: Vec<f32> = (0..N).map(|i| i as f32).collect();
 
     let input_dev = DeviceBuffer::from_host(&stream, &input_data)?;
-    let mut output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
+    let mut output_dev: DeviceBuffer<f32>;
 
-    let module = kernels::load(&ctx)
+    let module = load_kernel_module(&ctx, "host_closure")
         .map_err(|err| format!("failed to load host_closure kernel module: {err}"))?;
+    let typed_module = kernels::from_module(module.clone())
+        .map_err(|err| format!("failed to initialize typed host_closure module: {err}"))?;
+    use kernels::*;
 
-    let cfg = LaunchConfig::for_num_elems(N as u32);
     let mut failed = false;
+
+    macro_rules! run_launch_matrix {
+        (
+            $label:literal,
+            $kernel:path,
+            $typed_method:ident,
+            $typed_async_method:ident,
+            $closure:expr,
+            $expected:expr,
+            $tolerance:expr
+        ) => {{
+            output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
+            cuda_launch! {
+                kernel: $kernel,
+                stream: stream,
+                module: module,
+                config: LaunchConfig::for_num_elems(N as u32),
+                args: [$closure, slice(input_dev), slice_mut(output_dev)]
+            }?;
+            let output_host = output_dev.to_host_vec(&stream)?;
+            verify_output(
+                concat!("cuda_launch ", $label),
+                &output_host,
+                &input_data,
+                $tolerance,
+                $expected,
+                &mut failed,
+            );
+
+            output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
+            typed_module.$typed_method::<f32, _>(
+                stream.as_ref(),
+                LaunchConfig::for_num_elems(N as u32),
+                $closure,
+                &input_dev,
+                &mut output_dev,
+            )?;
+            let output_host = output_dev.to_host_vec(&stream)?;
+            verify_output(
+                concat!("typed launch ", $label),
+                &output_host,
+                &input_data,
+                $tolerance,
+                $expected,
+                &mut failed,
+            );
+
+            output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
+            cuda_launch_async! {
+                kernel: $kernel,
+                module: module,
+                config: LaunchConfig::for_num_elems(N as u32),
+                args: [$closure, slice(input_dev), slice_mut(output_dev)]
+            }
+            .sync_on(&stream)?;
+            let output_host = output_dev.to_host_vec(&stream)?;
+            verify_output(
+                concat!("cuda_launch_async ", $label),
+                &output_host,
+                &input_data,
+                $tolerance,
+                $expected,
+                &mut failed,
+            );
+
+            output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
+            typed_module
+                .$typed_async_method::<f32, _>(
+                    LaunchConfig::for_num_elems(N as u32),
+                    $closure,
+                    &input_dev,
+                    &mut output_dev,
+                )?
+                .sync_on(&stream)?;
+            let output_host = output_dev.to_host_vec(&stream)?;
+            verify_output(
+                concat!("typed async launch ", $label),
+                &output_host,
+                &input_data,
+                $tolerance,
+                $expected,
+                &mut failed,
+            );
+        }};
+    }
 
     // =========================================================================
     // TEST 1: Closure with single capture
@@ -82,25 +220,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  factor = {}", factor);
         println!("  N = {}", N);
 
-        module.map::<f32, _>(
-            &stream,
-            cfg,
+        run_launch_matrix!(
+            "single capture",
+            map::<f32, _>,
+            map,
+            map_async,
             move |x: f32| x * factor,
-            &input_dev,
-            &mut output_dev,
-        )?;
-
-        let output_host = output_dev.to_host_vec(&stream)?;
-        let errors = (0..N)
-            .filter(|&i| (output_host[i] - input_data[i] * factor).abs() > 1e-5)
-            .count();
-
-        if errors == 0 {
-            println!("  ✓ SUCCESS: All {} elements correct!\n", N);
-        } else {
-            println!("  ✗ FAILED: {} errors\n", errors);
-            failed = true;
-        }
+            |x| x * factor,
+            1e-5
+        );
+        println!();
     }
 
     // =========================================================================
@@ -112,27 +241,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let offset = 10.0f32;
         println!("  scale = {}, offset = {}", scale, offset);
 
-        output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-
-        module.map::<f32, _>(
-            &stream,
-            cfg,
+        run_launch_matrix!(
+            "multiple captures",
+            map::<f32, _>,
+            map,
+            map_async,
             move |x: f32| x * scale + offset,
-            &input_dev,
-            &mut output_dev,
-        )?;
-
-        let output_host = output_dev.to_host_vec(&stream)?;
-        let errors = (0..N)
-            .filter(|&i| (output_host[i] - (input_data[i] * scale + offset)).abs() > 1e-5)
-            .count();
-
-        if errors == 0 {
-            println!("  ✓ SUCCESS: All {} elements correct!\n", N);
-        } else {
-            println!("  ✗ FAILED: {} errors\n", errors);
-            failed = true;
-        }
+            |x| x * scale + offset,
+            1e-5
+        );
+        println!();
     }
 
     // =========================================================================
@@ -140,21 +258,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     println!("Test 3: Zero captures (double each element)");
     {
-        output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-
-        module.map::<f32, _>(&stream, cfg, |x: f32| x * 2.0, &input_dev, &mut output_dev)?;
-
-        let output_host = output_dev.to_host_vec(&stream)?;
-        let errors = (0..N)
-            .filter(|&i| (output_host[i] - input_data[i] * 2.0).abs() > 1e-5)
-            .count();
-
-        if errors == 0 {
-            println!("  ✓ SUCCESS: All {} elements correct!\n", N);
-        } else {
-            println!("  ✗ FAILED: {} errors\n", errors);
-            failed = true;
-        }
+        run_launch_matrix!(
+            "zero-capture closure",
+            map::<f32, _>,
+            map,
+            map_async,
+            |x: f32| x * 2.0,
+            |x| x * 2.0,
+            1e-5
+        );
+        println!();
     }
 
     // =========================================================================
@@ -167,36 +280,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let c = 1.0f32;
         println!("  a = {}, b = {}, c = {}", a, b, c);
 
-        output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-
-        module.map::<f32, _>(
-            &stream,
-            cfg,
+        run_launch_matrix!(
+            "three captures",
+            map::<f32, _>,
+            map,
+            map_async,
             move |x: f32| a * x * x + b * x + c,
-            &input_dev,
-            &mut output_dev,
-        )?;
-
-        let output_host = output_dev.to_host_vec(&stream)?;
-        let errors = (0..N)
-            .filter(|&i| {
-                let x = input_data[i];
-                let expected = a * x * x + b * x + c;
-                (output_host[i] - expected).abs() > 1e-3
-            })
-            .count();
-
-        if errors == 0 {
-            println!("  ✓ SUCCESS: All {} elements correct!\n", N);
-        } else {
-            println!("  ✗ FAILED: {} errors\n", errors);
-            failed = true;
-            for i in 0..N.min(5) {
-                let x = input_data[i];
-                let expected = a * x * x + b * x + c;
-                println!("    [{i}]: got {}, expected {}", output_host[i], expected);
-            }
-        }
+            |x| a * x * x + b * x + c,
+            1e-3
+        );
+        println!();
     }
 
     // =========================================================================
@@ -210,36 +303,108 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let w4 = 7.0f32;
         println!("  w1 = {}, w2 = {}, w3 = {}, w4 = {}", w1, w2, w3, w4);
 
-        output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-
-        module.map::<f32, _>(
-            &stream,
-            cfg,
+        run_launch_matrix!(
+            "four captures",
+            map::<f32, _>,
+            map,
+            map_async,
             move |x: f32| w1 * x + w2 + w3 * w4,
-            &input_dev,
-            &mut output_dev,
-        )?;
+            |x| w1 * x + w2 + w3 * w4,
+            1e-3
+        );
+        println!();
+    }
 
-        let output_host = output_dev.to_host_vec(&stream)?;
-        let errors = (0..N)
-            .filter(|&i| {
-                let x = input_data[i];
-                let expected = w1 * x + w2 + w3 * w4;
-                (output_host[i] - expected).abs() > 1e-3
-            })
-            .count();
+    // =========================================================================
+    // TEST 6: where-clause Fn bound
+    // =========================================================================
+    println!("Test 6: where-clause Fn bound");
+    {
+        let scale = 1.5f32;
+        let bias = 4.0f32;
+        println!("  scale = {}, bias = {}", scale, bias);
 
-        if errors == 0 {
-            println!("  ✓ SUCCESS: All {} elements correct!\n", N);
-        } else {
-            println!("  ✗ FAILED: {} errors\n", errors);
-            failed = true;
-            for i in 0..N.min(5) {
-                let x = input_data[i];
-                let expected = w1 * x + w2 + w3 * w4;
-                println!("    [{i}]: got {}, expected {}", output_host[i], expected);
-            }
-        }
+        run_launch_matrix!(
+            "where-clause Fn bound",
+            map_where::<f32, _>,
+            map_where,
+            map_where_async,
+            move |x: f32| x * scale - bias,
+            |x| x * scale - bias,
+            1e-5
+        );
+        println!();
+    }
+
+    // =========================================================================
+    // TEST 7: mixed-size captures
+    // =========================================================================
+    println!("Test 7: mixed-size captures");
+    {
+        let small = 7u8;
+        let scale = 1.25f32;
+        let wide = 3.5f64;
+        println!("  small = {}, scale = {}, wide = {}", small, scale, wide);
+
+        run_launch_matrix!(
+            "mixed-size captures",
+            map::<f32, _>,
+            map,
+            map_async,
+            move |x: f32| x * scale + wide as f32 + small as f32,
+            |x| x * scale + wide as f32 + small as f32,
+            1e-5
+        );
+        println!();
+    }
+
+    // =========================================================================
+    // TEST 8: struct capture with internal padding
+    // =========================================================================
+    println!("Test 8: struct capture with internal padding");
+    {
+        let mixed = MixedCapture {
+            small: 9,
+            wide: 2.25,
+            scale: 0.75,
+        };
+        println!(
+            "  small = {}, scale = {}, wide = {}",
+            mixed.small, mixed.scale, mixed.wide
+        );
+
+        run_launch_matrix!(
+            "struct capture with internal padding",
+            map::<f32, _>,
+            map,
+            map_async,
+            move |x: f32| x * mixed.scale + mixed.wide as f32 + mixed.small as f32,
+            |x| x * mixed.scale + mixed.wide as f32 + mixed.small as f32,
+            1e-5
+        );
+        println!();
+    }
+
+    // =========================================================================
+    // TEST 9: non-move reference captures
+    // =========================================================================
+    println!("Test 9: non-move reference captures");
+    {
+        let scale = 0.5f32;
+        let bias = 8.0f32;
+        println!("  scale = {}, bias = {}", scale, bias);
+        println!("  captures are borrowed by the closure environment");
+
+        run_launch_matrix!(
+            "non-move reference captures",
+            map::<f32, _>,
+            map,
+            map_async,
+            |x: f32| x * scale + bias,
+            |x| x * scale + bias,
+            1e-5
+        );
+        println!();
     }
 
     println!("=== All Tests Complete ===");

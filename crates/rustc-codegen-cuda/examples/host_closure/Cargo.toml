@@ -9,5 +9,6 @@ license = "Apache-2.0"
 
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }
-cuda-host = { path = "../../../cuda-host" }
+cuda-host = { path = "../../../cuda-host", features = ["async"] }
 cuda-core = { path = "../../../cuda-core" }
+cuda-async = { path = "../../../cuda-async" }

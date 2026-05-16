@@ -291,7 +291,9 @@ pub fn push_async_kernel_scalar<'a, T: KernelScalar + 'a>(
     launch: &mut cuda_async::launch::AsyncKernelLaunch<'a>,
     value: T,
 ) {
-    launch.push_scalar_arg(value);
+    if std::mem::size_of::<T>() != 0 {
+        launch.push_scalar_arg(value);
+    }
 }
 
 #[doc(hidden)]

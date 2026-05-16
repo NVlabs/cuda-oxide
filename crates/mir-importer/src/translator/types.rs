@@ -582,10 +582,30 @@ pub fn translate_type(
                 }
             }
 
-            Ok(
-                dialect_mir::types::MirStructType::get(ctx, closure_name, field_names, field_types)
-                    .into(),
+            let (mem_to_decl, field_offsets, total_size) = if let Ok(layout) = rust_ty.layout() {
+                let shape = layout.shape();
+                let mem_to_decl = shape.fields.fields_by_offset_order();
+                let field_offsets = match &shape.fields {
+                    rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
+                        offsets.iter().map(|offset| offset.bytes() as u64).collect()
+                    }
+                    _ => vec![],
+                };
+                (mem_to_decl, field_offsets, shape.size.bytes() as u64)
+            } else {
+                (vec![], vec![], 0)
+            };
+
+            Ok(dialect_mir::types::MirStructType::get_with_full_layout(
+                ctx,
+                closure_name,
+                field_names,
+                field_types,
+                mem_to_decl,
+                field_offsets,
+                total_size,
             )
+            .into())
         }
         // Handle associated types like <SharedArray<f32, 256> as Index<usize>>::Output
         // or <Closure as FnOnce<(Args,)>>::Output
