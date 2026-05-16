@@ -140,9 +140,13 @@ src/
 │   ├── names.rs        # Exported symbol naming
 │   ├── op_emission/    # LLVM operation emission
 │   │   ├── mod.rs      # Op dispatch + uncategorized op emission
+│   │   ├── aggregate.rs # Aggregate operation emission
+│   │   ├── arithmetic.rs # Arithmetic and comparison operation emission
 │   │   ├── atomic.rs   # Atomic operation emission
+│   │   ├── casts.rs    # Cast operation emission
 │   │   ├── memory.rs   # Memory operation emission
-│   │   └── terminator.rs # Terminator operation emission
+│   │   ├── terminator.rs # Terminator operation emission
+│   │   └── virtual_ops.rs # Constant/address virtual op emission
 │   ├── type_printing.rs # LLVM type printing
 │   └── values.rs       # SSA value printing
 └── ops/
