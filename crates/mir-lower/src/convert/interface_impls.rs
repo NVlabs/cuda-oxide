@@ -43,9 +43,10 @@ use dialect_nvvm::ops::{
     CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp, CpAsyncBulkTensorG2sTile5dOp,
     CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp, CpAsyncBulkTensorS2gTile3dOp,
     CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp, CpAsyncBulkWaitGroupOp,
-    CpAsyncBulkWaitGroupReadOp, CvtF16x2F32Op, CvtF32x2Bf16x2Op, DsmemReadU32Op,
-    FenceProxyAsyncSharedCtaOp, MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
-    MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveClusterOp, MbarrierArriveExpectTxSharedOp,
+    CpAsyncBulkWaitGroupReadOp, CpAsyncCa16Op, CpAsyncCg16Op, CvtF16x2F32Op, CvtF32x2Bf16x2Op,
+    DsmemReadU32Op, FenceProxyAsyncSharedCtaOp, MapaSharedClusterOp, MatchAllSyncI32Op,
+    MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveClusterOp,
+    MbarrierArriveExpectTxSharedOp,
     MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
     MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, NanosleepOp, NvvmAtomicCmpxchgOp,
     NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op,
@@ -2821,6 +2822,43 @@ impl MirToLlvmConversion for StmatrixM8n8X2TransOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::stmatrix::convert_m8n8_x2_trans(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+
+// ---- NVVM cp.async ops (Ampere SM 80+) -------------------------------------
+
+#[op_interface_impl]
+impl MirToLlvmConversion for CpAsyncCg16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::cp_async::convert_cp_async_cg_16(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for CpAsyncCa16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::cp_async::convert_cp_async_ca_16(
             ctx,
             rewriter,
             self.get_operation(),

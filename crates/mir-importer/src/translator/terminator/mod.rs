@@ -2106,6 +2106,20 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
+
+        // =================================================================
+        // Async Copy (cp.async)
+        // =================================================================
+        "cuda_device::async_copy::cp_async_cg_16" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_cg_16(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::async_copy::cp_async_ca_16" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_16(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
         // =================================================================
         // Type Conversions
         // =================================================================

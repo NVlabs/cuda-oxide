@@ -76,6 +76,7 @@ pub mod clc;
 pub mod cluster;
 pub mod common;
 pub mod convert;
+pub mod cp_async;
 pub mod debug;
 pub mod mbarrier;
 pub mod stmatrix;

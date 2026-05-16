@@ -39,6 +39,7 @@ pub mod atomic;
 pub mod bigint;
 pub mod bitops;
 pub mod clc;
+pub mod cp_async;
 pub mod cluster;
 pub mod convert;
 pub mod debug;

@@ -97,6 +97,7 @@
 
 pub mod atomic;
 mod clc;
+mod cp_async;
 mod cluster;
 mod convert;
 mod debug;
@@ -116,6 +117,7 @@ pub use atomic::*;
 pub use clc::*;
 pub use cluster::*;
 pub use convert::*;
+pub use cp_async::*;
 pub use debug::*;
 pub use grid::*;
 pub use mbarrier::*;
@@ -135,6 +137,7 @@ pub fn register(ctx: &mut Context) {
     clc::register(ctx);
     convert::register(ctx);
     thread::register(ctx);
+    cp_async::register(ctx);
     warp::register(ctx);
     cluster::register(ctx);
     grid::register(ctx);
