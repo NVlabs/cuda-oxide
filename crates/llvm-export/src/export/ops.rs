@@ -862,9 +862,14 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(res_ty, output)?;
         }
 
+        let se = if crate::ops::is_pure_asm(self.ctx, op) {
+            ""
+        } else {
+            " sideeffect"
+        };
         write!(
             output,
-            " asm sideeffect \"{asm_template}\", \"{constraints}\"("
+            " asm{se} \"{asm_template}\", \"{constraints}\"("
         )
         .unwrap();
         for (i, arg) in op_ref.operands().enumerate() {

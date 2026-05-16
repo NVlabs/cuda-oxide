@@ -524,14 +524,13 @@ pub(crate) fn convert_cvt_f32x2_bf16x2(
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
 
-    // Non-convergent inline asm (this is a pure data conversion, not a collective op)
-    let inline_asm = llvm::InlineAsmOp::new(
+    // Pure data conversion — no side effects, not a collective op
+    let inline_asm = llvm::InlineAsmOp::new_pure(
         ctx,
         i32_ty.into(),
         vec![a_val, b_val],
         "cvt.rn.bf16x2.f32 $0, $2, $1;",
         "=r,f,f",
-        false,
     );
 
     let asm_op = inline_asm.get_operation();

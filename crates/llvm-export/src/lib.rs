@@ -145,16 +145,34 @@ pub mod ops {
         r#type::TypeObj,
         value::Value,
     };
+    use pliron::builtin::attributes::BoolAttr;
     use pliron_llvm::attributes::AlignmentAttr;
     pub use pliron_llvm::ops::{GlobalOp, InlineAsmOp};
 
-    /// Convergent inline-asm constructor re-homed from the pre-migration local
-    /// op. Upstream `InlineAsmOp::new` takes a trailing `convergent: bool`;
-    /// this keeps the `new_convergent(...)` call shape used across mir-lower.
+    /// Op-attribute key that marks an `InlineAsmOp` as side-effect-free.
+    /// When present and `true`, the LLVM IR exporter omits the `sideeffect`
+    /// flag, allowing LLVM to apply CSE, DCE, and LICM to pure data
+    /// conversions like `cvt.rn.bf16x2.f32`.
+    const PURE_ASM_KEY: &str = "cuda_oxide_pure_asm";
+
+    /// Convergent / pure inline-asm constructors re-homed from the
+    /// pre-migration local op. Upstream `InlineAsmOp::new` takes a trailing
+    /// `convergent: bool`; these keep the ergonomic call shapes used across
+    /// mir-lower.
     pub trait InlineAsmOpExt {
         /// Build a convergent `InlineAsmOp` (use a void result type for asm
         /// with no result value).
         fn new_convergent(
+            ctx: &mut Context,
+            result_ty: Ptr<TypeObj>,
+            inputs: Vec<Value>,
+            asm_template: &str,
+            constraints: &str,
+        ) -> Self;
+
+        /// Build a pure (side-effect-free) `InlineAsmOp`. LLVM may CSE / DCE /
+        /// hoist the resulting instruction.
+        fn new_pure(
             ctx: &mut Context,
             result_ty: Ptr<TypeObj>,
             inputs: Vec<Value>,
@@ -173,6 +191,34 @@ pub mod ops {
         ) -> Self {
             InlineAsmOp::new(ctx, result_ty, inputs, asm_template, constraints, true)
         }
+
+        fn new_pure(
+            ctx: &mut Context,
+            result_ty: Ptr<TypeObj>,
+            inputs: Vec<Value>,
+            asm_template: &str,
+            constraints: &str,
+        ) -> Self {
+            let op =
+                InlineAsmOp::new(ctx, result_ty, inputs, asm_template, constraints, false);
+            let key =
+                Identifier::try_new(PURE_ASM_KEY.to_string()).expect("valid identifier");
+            op.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, BoolAttr::new(true));
+            op
+        }
+    }
+
+    /// Returns `true` when the inline asm was built with [`InlineAsmOpExt::new_pure`].
+    pub fn is_pure_asm(ctx: &Context, op: &InlineAsmOp) -> bool {
+        let key = Identifier::try_new(PURE_ASM_KEY.to_string()).expect("valid identifier");
+        op.get_operation()
+            .deref(ctx)
+            .attributes
+            .get::<BoolAttr>(&key)
+            .is_some_and(|b| bool::from(b.clone()))
     }
 
     /// Op-attribute key for a `GlobalOp`'s explicit alignment.
