@@ -98,6 +98,7 @@
 pub mod atomic;
 mod clc;
 mod cluster;
+mod convert;
 mod debug;
 mod grid;
 mod mbarrier;
@@ -114,6 +115,7 @@ use pliron::context::Context;
 pub use atomic::*;
 pub use clc::*;
 pub use cluster::*;
+pub use convert::*;
 pub use debug::*;
 pub use grid::*;
 pub use mbarrier::*;
@@ -131,6 +133,7 @@ pub use wgmma::*;
 pub fn register(ctx: &mut Context) {
     atomic::register(ctx);
     clc::register(ctx);
+    convert::register(ctx);
     thread::register(ctx);
     warp::register(ctx);
     cluster::register(ctx);
