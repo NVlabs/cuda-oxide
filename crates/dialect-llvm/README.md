@@ -130,13 +130,17 @@ src/
 ├── attributes.rs       # 11 attribute types
 ├── op_interfaces.rs    # Shared op interfaces
 ├── export/             # LLVM IR text export
-│   ├── mod.rs          # Public API + function/block/op emission
+│   ├── mod.rs          # Public API + module/global emission
+│   ├── block.rs        # Basic block and PHI emission
 │   ├── config.rs       # Backend configuration
 │   ├── externs.rs      # Device extern declarations
+│   ├── function.rs     # Function declaration/body emission
 │   ├── literals.rs     # Constant literal formatting
 │   ├── metadata.rs     # NVVM metadata emission
 │   ├── names.rs        # Exported symbol naming
-│   └── type_printing.rs # LLVM type printing
+│   ├── op_emission.rs  # LLVM operation emission
+│   ├── type_printing.rs # LLVM type printing
+│   └── values.rs       # SSA value printing
 └── ops/
     ├── mod.rs           # Op module registry
     ├── arithmetic.rs    # Integer and float binary ops
