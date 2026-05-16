@@ -129,7 +129,14 @@ src/
 ├── types.rs            # 6 LLVM types + address_space constants
 ├── attributes.rs       # 11 attribute types
 ├── op_interfaces.rs    # Shared op interfaces
-├── export.rs           # LLVM IR text export + backend configs
+├── export/             # LLVM IR text export
+│   ├── mod.rs          # Public API + function/block/op emission
+│   ├── config.rs       # Backend configuration
+│   ├── externs.rs      # Device extern declarations
+│   ├── literals.rs     # Constant literal formatting
+│   ├── metadata.rs     # NVVM metadata emission
+│   ├── names.rs        # Exported symbol naming
+│   └── type_printing.rs # LLVM type printing
 └── ops/
     ├── mod.rs           # Op module registry
     ├── arithmetic.rs    # Integer and float binary ops

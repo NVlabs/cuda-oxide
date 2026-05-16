@@ -29,7 +29,6 @@ use pliron::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr},
         op_interfaces::{CallOpCallable, CallOpInterface, OneRegionInterface, SymbolOpInterface},
         ops::ModuleOp,
-        types::{FP32Type, FP64Type, IntegerType},
     },
     context::{Context, Ptr},
     linked_list::ContainsLinkedList,
@@ -44,168 +43,22 @@ use std::fmt::Write;
 use crate::{
     attributes::{FPHalfAttr, GepIndexAttr, ICmpPredicateAttr},
     ops::{self, FuncOp, atomic::LlvmAtomicOpInterface},
-    types::{FuncType, HalfType, PointerType, StructType, VoidType},
+    types::{FuncType, PointerType, VoidType},
 };
 use pliron::builtin::type_interfaces::FunctionTypeInterface;
 
-/// Minimal data layout for PTX mode (default behavior).
-const NVPTX_DATALAYOUT_PTX: &str = "e-i64:64-i128:128-v16:16-v32:32-n16:32:64";
+mod config;
+mod externs;
+mod literals;
+mod metadata;
+mod names;
+mod type_printing;
 
-// ============================================================================
-// Device Extern Declaration Types (for FFI with external LTOIR)
-// ============================================================================
-
-/// An external device function declaration (for linking with external LTOIR).
-///
-/// These declarations are emitted as LLVM `declare` statements and resolved
-/// at link time by nvJitLink when linking with external LTOIR (e.g., CCCL).
-#[derive(Debug, Clone)]
-pub struct DeviceExternDecl {
-    /// The export name (e.g., "cub_block_reduce_sum").
-    pub export_name: String,
-
-    /// Function parameter types (LLVM type strings like "float", "ptr", "i32").
-    pub param_types: Vec<String>,
-
-    /// Return type (LLVM type string like "float", "void", "i32").
-    pub return_type: String,
-
-    /// NVVM attributes for this function.
-    pub attrs: DeviceExternAttrs,
-}
-
-/// NVVM attributes for device extern declarations.
-///
-/// NOTE: These attributes are currently **not emitted** to the LLVM IR output.
-/// When linking LTOIR via nvJitLink, the external library's LTOIR already contains
-/// proper attributes (convergent, nounwind, memory, etc.) on the function DEFINITIONS.
-/// nvJitLink uses the definition's attributes during LTO, making attributes on
-/// declarations redundant.
-///
-/// This struct is retained for potential future use or for debugging/inspection.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub struct DeviceExternAttrs {
-    /// Function is convergent (all threads must execute together).
-    pub is_convergent: bool,
-
-    /// Function is pure (no side effects). Maps to LLVM `readnone`.
-    pub is_pure: bool,
-
-    /// Function is read-only (only reads memory). Maps to LLVM `readonly`.
-    pub is_readonly: bool,
-}
-
-/// Full NVPTX data layout for libNVVM/LTOIR mode (Blackwell+, LLVM 20 dialect).
-///
-/// This matches nvcc's output for sm_100+ and is required for full NVVM compatibility.
-const NVPTX_DATALAYOUT_FULL: &str = "e-p:64:64:64-p3:32:32:32-i1:8:8-i8:8:8-\
-    i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-f128:128:128-\
-    v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64-a:8:8";
-
-// ============================================================================
-// Export Backend Configuration Trait
-// ============================================================================
-
-/// Configuration trait for export backends (PTX, LTOIR, etc.).
-///
-/// This trait allows different backends to customize IR generation without
-/// exposing backend-specific details in the public API.
-pub trait ExportBackendConfig {
-    /// Data layout string for the target.
-    fn datalayout(&self) -> &str;
-
-    /// Whether to emit `@llvm.used` for kernel functions.
-    /// This prevents the optimizer from removing "unused" kernels.
-    fn emit_llvm_used(&self) -> bool;
-
-    /// Whether to emit `!nvvmir.version` metadata.
-    fn emit_nvvmir_version(&self) -> bool;
-
-    /// The version tuple for `!nvvmir.version` metadata.
-    /// Format: [major, minor, debug_major, debug_minor]
-    fn nvvmir_version(&self) -> [i32; 4];
-
-    /// Whether to emit `!nvvm.annotations` for ALL kernels.
-    /// When false, only kernels with special attributes get annotations.
-    fn emit_all_kernel_annotations(&self) -> bool;
-
-    /// Whether kernel definitions should use the `ptx_kernel` calling convention.
-    fn emit_ptx_kernel_keyword(&self) -> bool;
-}
-
-/// Default PTX export configuration.
-///
-/// Uses minimal settings appropriate for standard PTX generation via llc.
-#[derive(Clone, Debug, Default)]
-pub struct PtxExportConfig;
-
-impl ExportBackendConfig for PtxExportConfig {
-    fn datalayout(&self) -> &str {
-        NVPTX_DATALAYOUT_PTX
-    }
-
-    fn emit_llvm_used(&self) -> bool {
-        false
-    }
-
-    fn emit_nvvmir_version(&self) -> bool {
-        false
-    }
-
-    fn nvvmir_version(&self) -> [i32; 4] {
-        [0, 0, 0, 0] // Not used in PTX mode
-    }
-
-    fn emit_all_kernel_annotations(&self) -> bool {
-        false
-    }
-
-    fn emit_ptx_kernel_keyword(&self) -> bool {
-        true
-    }
-}
-
-/// Export configuration for NVVM IR output.
-///
-/// Emits LLVM IR with full NVVM compatibility:
-/// - Full NVPTX datalayout string
-/// - `@llvm.used` to prevent kernel optimization
-/// - `!nvvm.annotations` for all kernels
-/// - `!nvvmir.version` metadata
-///
-/// This produces IR suitable for consumption by libNVVM (e.g., `nvvmCompileProgram -gen-lto`)
-/// or other NVVM-compatible tools.
-///
-/// Currently supports NVVM 20 dialect (Blackwell+, opaque pointers).
-/// NVVM 7 dialect (pre-Blackwell, typed pointers) is not yet supported.
-#[derive(Clone, Debug, Default)]
-pub struct NvvmExportConfig;
-
-impl ExportBackendConfig for NvvmExportConfig {
-    fn datalayout(&self) -> &str {
-        NVPTX_DATALAYOUT_FULL
-    }
-
-    fn emit_llvm_used(&self) -> bool {
-        true
-    }
-
-    fn emit_nvvmir_version(&self) -> bool {
-        true
-    }
-
-    fn nvvmir_version(&self) -> [i32; 4] {
-        [2, 0, 3, 2] // NVVM IR 2.0, debug 3.2
-    }
-
-    fn emit_all_kernel_annotations(&self) -> bool {
-        true // Emit annotations for all kernels
-    }
-
-    fn emit_ptx_kernel_keyword(&self) -> bool {
-        false
-    }
-}
+pub use config::{ExportBackendConfig, NvvmExportConfig, PtxExportConfig};
+pub use externs::{AsDeviceExtern, DeviceExternAttrs, DeviceExternDecl};
+use literals::{format_float_literal, format_half_literal};
+use metadata::{emit_nvvm_annotations, md_id_after_annotations};
+use names::{has_device_prefix, strip_device_prefix};
 
 /// Export a module op to a String containing LLVM IR.
 ///
@@ -235,21 +88,6 @@ pub fn export_module_with_externs<T: AsDeviceExtern>(
         .collect();
 
     export_module_with_externs_impl(ctx, module, &externs, config)
-}
-
-/// Trait for types that can be converted to DeviceExternDecl.
-///
-/// This allows mir-importer to pass its own DeviceExternDecl type
-/// without dialect-llvm depending on mir-importer.
-pub trait AsDeviceExtern {
-    fn as_device_extern(&self) -> DeviceExternDecl;
-}
-
-// Self-implementation for DeviceExternDecl
-impl AsDeviceExtern for DeviceExternDecl {
-    fn as_device_extern(&self) -> DeviceExternDecl {
-        self.clone()
-    }
 }
 
 /// Internal implementation of export with device externs.
@@ -418,83 +256,6 @@ fn export_module_with_externs_impl(
     }
 
     Ok(output)
-}
-
-/// Helper to emit nvvm.annotations metadata.
-fn emit_nvvm_annotations(
-    output: &mut String,
-    state: &ModuleExportState,
-    emit_all_annotations: bool,
-) {
-    let mut metadata_refs = Vec::new();
-    let mut md_id = 0;
-
-    // Collect names of kernels that have special configs
-    let special_kernel_names: std::collections::HashSet<&str> = state
-        .cluster_kernels
-        .iter()
-        .map(|k| k.name.as_str())
-        .chain(state.launch_bounds_kernels.iter().map(|k| k.name.as_str()))
-        .collect();
-
-    // Emit basic annotation for kernels WITHOUT special configs
-    if emit_all_annotations {
-        for kernel in state.all_kernels.iter() {
-            if !special_kernel_names.contains(kernel.name.as_str()) {
-                writeln!(
-                    output,
-                    "!{} = !{{ptr @{}, !\"kernel\", i32 1}}",
-                    md_id, kernel.name
-                )
-                .unwrap();
-                metadata_refs.push(format!("!{}", md_id));
-                md_id += 1;
-            }
-        }
-    }
-
-    // Emit cluster config annotations
-    for cfg in state.cluster_kernels.iter() {
-        writeln!(
-            output,
-            "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
-            md_id, cfg.name, cfg.dim_x, cfg.dim_y, cfg.dim_z
-        )
-        .unwrap();
-        metadata_refs.push(format!("!{}", md_id));
-        md_id += 1;
-    }
-
-    // Emit launch bounds annotations
-    for bounds in state.launch_bounds_kernels.iter() {
-        if let Some(min_blocks) = bounds.min_blocks {
-            writeln!(
-                output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
-                md_id, bounds.name, bounds.max_threads, min_blocks
-            )
-            .unwrap();
-        } else {
-            writeln!(
-                output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
-                md_id, bounds.name, bounds.max_threads
-            )
-            .unwrap();
-        }
-        metadata_refs.push(format!("!{}", md_id));
-        md_id += 1;
-    }
-
-    // Emit named metadata referencing all annotation nodes
-    if !metadata_refs.is_empty() {
-        writeln!(
-            output,
-            "!nvvm.annotations = !{{{}}}",
-            metadata_refs.join(", ")
-        )
-        .unwrap();
-    }
 }
 
 /// Export a module op to a String containing LLVM IR with custom backend configuration.
@@ -742,38 +503,6 @@ pub fn export_module_to_string_with_config(
     Ok(output)
 }
 
-/// Calculate the next metadata ID after annotations (for !nvvmir.version).
-fn md_id_after_annotations(state: &ModuleExportState) -> usize {
-    let mut count = state.all_kernels.len();
-
-    // Subtract kernels that have special configs (they're not double-counted)
-    let special_kernel_names: std::collections::HashSet<&str> = state
-        .cluster_kernels
-        .iter()
-        .map(|k| k.name.as_str())
-        .chain(state.launch_bounds_kernels.iter().map(|k| k.name.as_str()))
-        .collect();
-
-    for kernel in &state.all_kernels {
-        if special_kernel_names.contains(kernel.name.as_str()) {
-            count -= 1;
-        }
-    }
-
-    // Add cluster kernels
-    count += state.cluster_kernels.len();
-
-    // Add launch bounds kernels (each has multiple metadata entries)
-    for cfg in &state.launch_bounds_kernels {
-        count += 3; // maxntidx, maxntidy, maxntidz
-        if cfg.min_blocks.is_some() {
-            count += 1; // minctasm
-        }
-    }
-
-    count
-}
-
 /// Map from block to its predecessors, with the values passed to each predecessor.
 /// Used for PHI node generation when exporting to LLVM IR.
 type PredecessorMap = HashMap<Ptr<BasicBlock>, Vec<(Ptr<BasicBlock>, Vec<Value>)>>;
@@ -796,37 +525,6 @@ struct KernelLaunchBounds {
 /// Basic kernel info (for backends that need annotations for all kernels).
 struct KernelInfo {
     name: String,
-}
-
-// Device-symbol detection and base-name extraction route through
-// `reserved-oxide-symbols`, the workspace-internal source of truth for the
-// `cuda_oxide_*` namespace.
-//
-// Note on FQDN forms: MIR import converts `::` to `__`, so a fully-qualified
-// device symbol can appear as `mycrate__cuda_oxide_device_<hash>_foo`. Because
-// the helpers in `reserved-oxide-symbols` use substring matching (not
-// `starts_with`), they handle both bare and FQDN forms uniformly — no separate
-// `FQDN_DEVICE_PREFIX` constant is needed.
-use reserved_oxide_symbols::{device_base_name, is_device_extern_symbol, is_device_symbol};
-
-/// Returns true if `name` is a device function (definition, not extern).
-fn has_device_prefix(name: &str) -> bool {
-    is_device_symbol(name)
-}
-
-/// Strip the device-function prefix from `name` if present.
-///
-/// The reserved prefix is needed internally for MIR-level detection but
-/// should not leak into the final LLVM IR / PTX / LTOIR output. Returns
-/// `name` unchanged for non-device symbols and for device-extern declarations
-/// (those keep their original-name `link_name` attribute).
-fn strip_device_prefix(name: &str) -> String {
-    if is_device_extern_symbol(name) {
-        return name.to_string();
-    }
-    device_base_name(name)
-        .map(str::to_string)
-        .unwrap_or_else(|| name.to_string())
 }
 
 struct ModuleExportState<'a> {
@@ -2286,94 +1984,6 @@ impl<'a> ModuleExportState<'a> {
         } else {
             write!(output, "undef").unwrap();
             Ok(())
-        }
-    }
-
-    /// Compute natural alignment (in bytes) for a type.
-    /// Used for atomic load/store which require explicit alignment in LLVM IR.
-    fn natural_alignment(&self, ty: Ptr<TypeObj>) -> u32 {
-        let ty_ref = ty.deref(self.ctx);
-        if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
-            let width = int_ty.width();
-            // Alignment = ceil(width / 8), minimum 1
-            std::cmp::max(1, width / 8)
-        } else if ty_ref.is::<pliron::builtin::types::FP32Type>() {
-            4
-        } else if ty_ref.is::<pliron::builtin::types::FP64Type>() {
-            8
-        } else {
-            // Default: 8 bytes (conservative for pointers, etc.)
-            8
-        }
-    }
-
-    fn export_type(&self, ty: Ptr<TypeObj>, output: &mut String) -> Result<(), String> {
-        let ty_ref = ty.deref(self.ctx);
-        if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
-            write!(output, "i{}", int_ty.width()).unwrap();
-        } else if let Some(ptr_ty) = ty_ref.downcast_ref::<PointerType>() {
-            let addrspace = ptr_ty.address_space();
-            if addrspace != 0 {
-                write!(output, "ptr addrspace({addrspace})").unwrap();
-            } else {
-                write!(output, "ptr").unwrap();
-            }
-        } else if ty_ref.is::<VoidType>() {
-            write!(output, "void").unwrap();
-        } else if ty_ref.is::<HalfType>() {
-            write!(output, "half").unwrap();
-        } else if ty_ref.is::<FP32Type>() {
-            write!(output, "float").unwrap();
-        } else if ty_ref.is::<FP64Type>() {
-            write!(output, "double").unwrap();
-        } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
-            write!(output, "{{ ").unwrap();
-            for (i, elem_ty) in struct_ty.fields().enumerate() {
-                if i > 0 {
-                    write!(output, ", ").unwrap();
-                }
-                self.export_type(elem_ty, output)?;
-            }
-            write!(output, " }}").unwrap();
-        } else if let Some(array_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
-            // Format: [N x element_type]
-            write!(output, "[{} x ", array_ty.size()).unwrap();
-            self.export_type(array_ty.elem_type(), output)?;
-            write!(output, "]").unwrap();
-        } else if let Some(vec_ty) = ty_ref.downcast_ref::<crate::types::VectorType>() {
-            // Format: <N x element_type>
-            write!(output, "<{} x ", vec_ty.size()).unwrap();
-            self.export_type(vec_ty.elem_type(), output)?;
-            write!(output, ">").unwrap();
-        } else {
-            write!(output, "void /* unknown: {} */", ty_ref.disp(self.ctx)).unwrap();
-        }
-        Ok(())
-    }
-}
-
-fn format_half_literal(bits: u16) -> String {
-    format!("0xH{bits:04X}")
-}
-
-/// Format a float value as an LLVM IR literal.
-/// LLVM requires float literals to have a decimal point (e.g., "0.0" not "0").
-fn format_float_literal(value: f64) -> String {
-    if value.is_nan() {
-        "nan".to_string()
-    } else if value.is_infinite() {
-        if value.is_sign_positive() {
-            "0x7FF0000000000000".to_string() // +inf
-        } else {
-            "0xFFF0000000000000".to_string() // -inf
-        }
-    } else {
-        // Format the float, ensuring it has a decimal point
-        let s = format!("{value}");
-        if s.contains('.') || s.contains('e') || s.contains('E') {
-            s
-        } else {
-            format!("{s}.0")
         }
     }
 }
