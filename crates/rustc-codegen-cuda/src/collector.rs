@@ -1010,9 +1010,17 @@ impl<'tcx> DeviceCollector<'tcx> {
             return CollectDecision::Collect;
         }
 
-        // Forbidden crate: std (OS, I/O, threads) - absolutely can't run on GPU
+        // Intercept std::sys::cmath functions — these are C math library
+        // calls (tanhf, sinhf, etc.) that Rust delegates to libm via FFI.
+        // On GPU, we skip collecting them; the MIR importer already rewrites
+        // the corresponding core::intrinsics calls to __nv_* placeholders.
+        // For cmath calls that reach here, we treat them as intentional skips
+        // since the MIR-level rewriting handles the actual lowering.
         if name_str == "std" {
             let fn_path = self.tcx.def_path_str(def_id);
+            if fn_path.contains("cmath") {
+                return CollectDecision::SkipIntentional;
+            }
             return CollectDecision::Forbidden {
                 crate_name: name_str.to_string(),
                 fn_path,
