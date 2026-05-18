@@ -189,6 +189,23 @@ enum RustFloatMathIntrinsic {
     Fabs,
     CopysignF32,
     CopysignF64,
+    // cmath functions (not in core::intrinsics, intercepted from std::sys::cmath)
+    TanhF32,
+    TanhF64,
+    SinhF32,
+    SinhF64,
+    CoshF32,
+    CoshF64,
+    AsinF32,
+    AsinF64,
+    AcosF32,
+    AcosF64,
+    AtanF32,
+    AtanF64,
+    Atan2F32,
+    Atan2F64,
+    ErfF32,
+    ErfF64,
 }
 
 impl RustFloatMathIntrinsic {
@@ -234,8 +251,47 @@ impl RustFloatMathIntrinsic {
             rust_intrinsics::CALLEE_FABS => Some(Self::Fabs),
             rust_intrinsics::CALLEE_COPYSIGN_F32 => Some(Self::CopysignF32),
             rust_intrinsics::CALLEE_COPYSIGN_F64 => Some(Self::CopysignF64),
+            rust_intrinsics::CALLEE_TANH_F32 => Some(Self::TanhF32),
+            rust_intrinsics::CALLEE_TANH_F64 => Some(Self::TanhF64),
+            rust_intrinsics::CALLEE_SINH_F32 => Some(Self::SinhF32),
+            rust_intrinsics::CALLEE_SINH_F64 => Some(Self::SinhF64),
+            rust_intrinsics::CALLEE_COSH_F32 => Some(Self::CoshF32),
+            rust_intrinsics::CALLEE_COSH_F64 => Some(Self::CoshF64),
+            rust_intrinsics::CALLEE_ASIN_F32 => Some(Self::AsinF32),
+            rust_intrinsics::CALLEE_ASIN_F64 => Some(Self::AsinF64),
+            rust_intrinsics::CALLEE_ACOS_F32 => Some(Self::AcosF32),
+            rust_intrinsics::CALLEE_ACOS_F64 => Some(Self::AcosF64),
+            rust_intrinsics::CALLEE_ATAN_F32 => Some(Self::AtanF32),
+            rust_intrinsics::CALLEE_ATAN_F64 => Some(Self::AtanF64),
+            rust_intrinsics::CALLEE_ATAN2_F32 => Some(Self::Atan2F32),
+            rust_intrinsics::CALLEE_ATAN2_F64 => Some(Self::Atan2F64),
+            rust_intrinsics::CALLEE_ERF_F32 => Some(Self::ErfF32),
+            rust_intrinsics::CALLEE_ERF_F64 => Some(Self::ErfF64),
             _ => None,
         }
+    }
+
+    /// Match mangled `std::sys::cmath::*` function names from the MIR.
+    /// These arrive as `std__sys__cmath__tanhf` (with `::` mangled to `__`).
+    fn from_cmath_callee(callee: &str) -> Option<Self> {
+        // The callee might have module prefixes; match on the suffix
+        if callee.ends_with("__tanhf")  { return Some(Self::TanhF32); }
+        if callee.ends_with("__tanh") && !callee.ends_with("__tanhf") { return Some(Self::TanhF64); }
+        if callee.ends_with("__sinhf")  { return Some(Self::SinhF32); }
+        if callee.ends_with("__sinh") && !callee.ends_with("__sinhf") { return Some(Self::SinhF64); }
+        if callee.ends_with("__coshf")  { return Some(Self::CoshF32); }
+        if callee.ends_with("__cosh") && !callee.ends_with("__coshf") { return Some(Self::CoshF64); }
+        if callee.ends_with("__asinf")  { return Some(Self::AsinF32); }
+        if callee.ends_with("__asin") && !callee.ends_with("__asinf") { return Some(Self::AsinF64); }
+        if callee.ends_with("__acosf")  { return Some(Self::AcosF32); }
+        if callee.ends_with("__acos") && !callee.ends_with("__acosf") { return Some(Self::AcosF64); }
+        if callee.ends_with("__atanf")  { return Some(Self::AtanF32); }
+        if callee.ends_with("__atan") && !callee.ends_with("__atanf") && !callee.ends_with("__atan2f") && !callee.ends_with("__atan2") { return Some(Self::AtanF64); }
+        if callee.ends_with("__atan2f") { return Some(Self::Atan2F32); }
+        if callee.ends_with("__atan2") && !callee.ends_with("__atan2f") { return Some(Self::Atan2F64); }
+        if callee.ends_with("__erff")   { return Some(Self::ErfF32); }
+        if callee.ends_with("__erf") && !callee.ends_with("__erff") { return Some(Self::ErfF64); }
+        None
     }
 
     /// CUDA libdevice function name for this Rust math intrinsic.
@@ -283,6 +339,22 @@ impl RustFloatMathIntrinsic {
             Self::Fabs => fabs_libdevice_name(ctx, result_ty, loc),
             Self::CopysignF32 => Ok("__nv_copysignf"),
             Self::CopysignF64 => Ok("__nv_copysign"),
+            Self::TanhF32 => Ok("__nv_tanhf"),
+            Self::TanhF64 => Ok("__nv_tanh"),
+            Self::SinhF32 => Ok("__nv_sinhf"),
+            Self::SinhF64 => Ok("__nv_sinh"),
+            Self::CoshF32 => Ok("__nv_coshf"),
+            Self::CoshF64 => Ok("__nv_cosh"),
+            Self::AsinF32 => Ok("__nv_asinf"),
+            Self::AsinF64 => Ok("__nv_asin"),
+            Self::AcosF32 => Ok("__nv_acosf"),
+            Self::AcosF64 => Ok("__nv_acos"),
+            Self::AtanF32 => Ok("__nv_atanf"),
+            Self::AtanF64 => Ok("__nv_atan"),
+            Self::Atan2F32 => Ok("__nv_atan2f"),
+            Self::Atan2F64 => Ok("__nv_atan2"),
+            Self::ErfF32 => Ok("__nv_erff"),
+            Self::ErfF64 => Ok("__nv_erf"),
         }
     }
 
@@ -294,7 +366,9 @@ impl RustFloatMathIntrinsic {
             | Self::PowfF32
             | Self::PowfF64
             | Self::CopysignF32
-            | Self::CopysignF64 => 2,
+            | Self::CopysignF64
+            | Self::Atan2F32
+            | Self::Atan2F64 => 2,
             Self::FmaF32 | Self::FmaF64 | Self::FmuladdF32 | Self::FmuladdF64 => 3,
             _ => 1,
         }
@@ -346,6 +420,13 @@ pub fn convert(
     }
 
     if let Some(intrinsic) = RustFloatMathIntrinsic::from_placeholder_callee(&callee_name) {
+        return convert_rust_float_math_intrinsic(ctx, rewriter, op, intrinsic);
+    }
+
+    // Intercept std::sys::cmath functions (tanhf, sinhf, erff, etc.)
+    // These arrive as "std__sys__cmath__tanhf" — map to __nv_* via the
+    // same RustFloatMathIntrinsic infrastructure used for core intrinsics.
+    if let Some(intrinsic) = RustFloatMathIntrinsic::from_cmath_callee(&callee_name) {
         return convert_rust_float_math_intrinsic(ctx, rewriter, op, intrinsic);
     }
 

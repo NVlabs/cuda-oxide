@@ -351,13 +351,7 @@ pub fn run_pipeline(
     // The example is then expected to feed the `.ll` through the LTOIR
     // pipeline (compile_ltoir + link_ltoir) and load the resulting cubin.
     let needs_libdevice = module_uses_libdevice(&ctx, module_op_ptr);
-    let emit_nvvm_ir = config.emit_nvvm_ir || needs_libdevice;
-    if needs_libdevice && !config.emit_nvvm_ir && config.verbose {
-        eprintln!(
-            "\n=== Detected CUDA libdevice (`__nv_*`) calls; \
-             auto-emitting NVVM IR (skip llc) ==="
-        );
-    }
+    let emit_nvvm_ir = config.emit_nvvm_ir;
 
     // Step 7: Export to LLVM IR
     if config.verbose {
@@ -365,34 +359,115 @@ pub fn run_pipeline(
         eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
     }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
-    let _llvm_ir = export_llvm_ir(&ctx, module_op_ptr, device_externs, &ll_path, emit_nvvm_ir)?;
+    let _llvm_ir = export_llvm_ir(&ctx, module_op_ptr, device_externs, &ll_path, emit_nvvm_ir || needs_libdevice)?;
     if config.verbose {
         eprintln!("LLVM IR written to {}", ll_path.display());
     }
 
-    // Step 8: Generate PTX or stop at NVVM IR for libNVVM-owned paths.
+    // Step 8: Generate PTX.
+    //
+    // When libdevice is needed, we link libdevice.10.bc with the kernel IR
+    // using llvm-link, then internalize + dead-strip with opt, then generate
+    // PTX via llc as usual. This works on ALL sm architectures (sm_61+).
+    //
+    // When --emit-nvvm-ir is explicitly requested, we skip llc and return
+    // the .ll for the caller's libNVVM/nvJitLink pipeline.
     if emit_nvvm_ir {
-        // Skip llc. Return a would-be ptx_path so callers see a stable shape;
-        // the file does not exist and the example must build its own cubin
-        // from `ll_path`.
+        // Explicit NVVM IR mode requested by user.
         let ptx_path = config
             .output_dir
             .join(format!("{}.ptx", config.output_name));
         if config.verbose {
-            let reason = if needs_libdevice {
-                "libdevice present"
-            } else {
-                "NVVM IR requested"
-            };
             eprintln!(
-                "\n=== Skipping llc ({}); consumer owns libNVVM/nvJitLink build ===",
-                reason
+                "\n=== Skipping llc (NVVM IR requested); consumer owns libNVVM/nvJitLink build ==="
             );
         }
         Ok(CompilationResult {
             ll_path,
             ptx_path,
             target: "nvvm-ir".to_string(),
+        })
+    } else if needs_libdevice {
+        // Kernel uses __nv_* libdevice calls. Link libdevice.10.bc before llc.
+        if config.verbose {
+            eprintln!("\n=== Linking libdevice.10.bc for transcendental math functions ===");
+        }
+
+        // Find libdevice.10.bc
+        let libdevice = find_libdevice(config)?;
+
+        // Find llvm-link and opt next to llc (via CUDA_OXIDE_LLC or PATH)
+        let llc_path_str = std::env::var("CUDA_OXIDE_LLC").unwrap_or_else(|_| "llc".to_string());
+        let llc_path = std::path::Path::new(&llc_path_str);
+        let llc_dir = llc_path.parent().unwrap_or(std::path::Path::new("/usr/bin"));
+        let llvm_link = llc_dir.join("llvm-link");
+        let opt = llc_dir.join("opt");
+
+        // llvm-link kernel.ll + libdevice.10.bc → merged.bc
+        let merged_bc = config.output_dir.join(format!("{}.merged.bc", config.output_name));
+        let link_status = std::process::Command::new(&llvm_link)
+            .arg(&ll_path)
+            .arg(&libdevice)
+            .arg("-o")
+            .arg(&merged_bc)
+            .status()
+            .map_err(|e| PipelineError::PtxGeneration(format!("llvm-link: {}", e)))?;
+        if !link_status.success() {
+            return Err(PipelineError::PtxGeneration("llvm-link failed".into()));
+        }
+
+        // opt: internalize everything except kernel entry points + dead-strip
+        let opt_bc = config.output_dir.join(format!("{}.opt.bc", config.output_name));
+        let public_api = &config.output_name;
+        let opt_status = std::process::Command::new(&opt)
+            .arg("-passes=internalize,inline,default<O2>")
+            .arg(format!("-internalize-public-api-list={}", public_api))
+            .arg(&merged_bc)
+            .arg("-o")
+            .arg(&opt_bc)
+            .status()
+            .map_err(|e| PipelineError::PtxGeneration(format!("opt: {}", e)))?;
+        if !opt_status.success() {
+            return Err(PipelineError::PtxGeneration("opt (internalize) failed".into()));
+        }
+
+        // llc: generate PTX from optimized bitcode
+        let ptx_path = config
+            .output_dir
+            .join(format!("{}.ptx", config.output_name));
+        // Determine GPU target (same logic as the non-libdevice path)
+        let llc_target = std::env::var("CUDA_OXIDE_TARGET")
+            .unwrap_or_else(|_| "sm_61".to_string());
+        let llc_status = std::process::Command::new(&llc_path_str)
+            .arg("-march=nvptx64")
+            .arg(format!("-mcpu={}", llc_target))
+            .arg(&opt_bc)
+            .arg("-o")
+            .arg(&ptx_path)
+            .status()
+            .map_err(|e| PipelineError::PtxGeneration(format!("llc: {}", e)))?;
+        if !llc_status.success() {
+            return Err(PipelineError::PtxGeneration("llc failed for libdevice-linked kernel".into()));
+        }
+
+        if config.verbose {
+            eprintln!("PTX (with libdevice) written to {}", ptx_path.display());
+        }
+
+        // Extract target from the PTX (first .target directive)
+        let ptx_content = std::fs::read_to_string(&ptx_path)
+            .unwrap_or_default();
+        let target = ptx_content
+            .lines()
+            .find(|l| l.starts_with(".target"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("sm_61")
+            .to_string();
+
+        Ok(CompilationResult {
+            ll_path,
+            ptx_path,
+            target,
         })
     } else {
         // PTX mode: invoke llc
@@ -425,6 +500,44 @@ pub fn run_pipeline(
 /// entry points from `libdevice.10.bc`. `llc` cannot resolve these; they
 /// need libNVVM + nvJitLink + libdevice. When we see any `__nv_*` symbol
 /// the example owns the LTOIR build (see `examples/device_ffi_test/tools/`).
+/// Find `libdevice.10.bc` in the CUDA toolkit or via environment variable.
+///
+/// Search order:
+/// 1. `CUDA_OXIDE_LIBDEVICE` environment variable (explicit override)
+/// 2. `$CUDA_TOOLKIT_PATH/nvvm/libdevice/libdevice.10.bc`
+fn find_libdevice(_config: &PipelineConfig) -> Result<std::path::PathBuf, PipelineError> {
+    // Check explicit override
+    if let Ok(path) = std::env::var("CUDA_OXIDE_LIBDEVICE") {
+        let p = std::path::PathBuf::from(&path);
+        if p.exists() {
+            return Ok(p);
+        }
+        return Err(PipelineError::PtxGeneration(
+            format!("CUDA_OXIDE_LIBDEVICE={} does not exist", path)
+        ));
+    }
+
+    // Search relative to CUDA toolkit (via CUDA_TOOLKIT_PATH env var)
+    let toolkit = std::env::var("CUDA_TOOLKIT_PATH")
+        .unwrap_or_else(|_| "/usr/local/cuda".to_string());
+    let toolkit_path = std::path::PathBuf::from(&toolkit);
+
+    let candidates = [
+        toolkit_path.join("nvvm/libdevice/libdevice.10.bc"),
+        toolkit_path.join("../cuda_nvcc/nvvm/libdevice/libdevice.10.bc"),
+    ];
+
+    for p in &candidates {
+        if p.exists() {
+            return Ok(p.clone());
+        }
+    }
+
+    Err(PipelineError::PtxGeneration(
+        format!("libdevice.10.bc not found. Set CUDA_OXIDE_LIBDEVICE=/path/to/libdevice.10.bc\nSearched: {:?}", candidates)
+    ))
+}
+
 fn module_uses_libdevice(ctx: &Context, module_op_ptr: Ptr<Operation>) -> bool {
     op_uses_libdevice(ctx, module_op_ptr)
 }
