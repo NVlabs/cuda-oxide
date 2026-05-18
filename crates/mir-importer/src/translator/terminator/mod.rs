@@ -1924,6 +1924,21 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
+        // Type Conversions
+        // =================================================================
+        "cuda_device::convert::cvt_f16x2_f32" => Ok(Some(intrinsics::convert::emit_cvt_f16x2_f32(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+
         // Debug & Profiling (from intrinsics::debug)
         // =================================================================
         "cuda_device::debug::clock" => Ok(Some(intrinsics::debug::emit_clock(
