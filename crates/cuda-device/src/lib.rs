@@ -21,6 +21,7 @@ pub mod debug;
 pub mod disjoint;
 pub mod fence;
 pub mod grid;
+pub mod math;
 pub mod shared;
 pub mod tcgen05;
 pub mod thread;

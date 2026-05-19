@@ -23,6 +23,10 @@ pub enum RustFloatMathIntrinsic {
     SqrtF32,
     /// `core::intrinsics::sqrtf64`.
     SqrtF64,
+    /// `cuda_device::math::rsqrt_f32` (cuda-oxide-specific; no rustc analogue).
+    RsqrtF32,
+    /// `cuda_device::math::rsqrt_f64` (cuda-oxide-specific; no rustc analogue).
+    RsqrtF64,
     /// `core::intrinsics::powif32`.
     PowiF32,
     /// `core::intrinsics::powif64`.
@@ -158,11 +162,25 @@ impl RustFloatMathIntrinsic {
         }
     }
 
+    /// Recognize cuda-oxide-specific math paths that don't have a Rust core analogue.
+    ///
+    /// Currently covers `cuda_device::math::rsqrt_f32` and `rsqrt_f64`, which lower
+    /// to libdevice `__nv_rsqrtf` / `__nv_rsqrt`.
+    pub fn from_cuda_device_math_path(name: &str) -> Option<Self> {
+        match name {
+            "cuda_device::math::rsqrt_f32" => Some(Self::RsqrtF32),
+            "cuda_device::math::rsqrt_f64" => Some(Self::RsqrtF64),
+            _ => None,
+        }
+    }
+
     /// Return the internal placeholder name used until MIR-to-LLVM lowering.
     pub fn placeholder_callee(self) -> &'static str {
         match self {
             Self::SqrtF32 => rust_intrinsics::CALLEE_SQRT_F32,
             Self::SqrtF64 => rust_intrinsics::CALLEE_SQRT_F64,
+            Self::RsqrtF32 => rust_intrinsics::CALLEE_RSQRT_F32,
+            Self::RsqrtF64 => rust_intrinsics::CALLEE_RSQRT_F64,
             Self::PowiF32 => rust_intrinsics::CALLEE_POWI_F32,
             Self::PowiF64 => rust_intrinsics::CALLEE_POWI_F64,
             Self::SinF32 => rust_intrinsics::CALLEE_SIN_F32,
