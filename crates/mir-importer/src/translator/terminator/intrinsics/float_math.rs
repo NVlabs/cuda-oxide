@@ -97,6 +97,14 @@ pub enum RustFloatMathIntrinsic {
     CopysignF32,
     /// `core::intrinsics::copysignf64`.
     CopysignF64,
+    /// `core::intrinsics::maximum_number_nsz_f32` (backs `f32::max`).
+    MaxNumNszF32,
+    /// `core::intrinsics::maximum_number_nsz_f64` (backs `f64::max`).
+    MaxNumNszF64,
+    /// `core::intrinsics::minimum_number_nsz_f32` (backs `f32::min`).
+    MinNumNszF32,
+    /// `core::intrinsics::minimum_number_nsz_f64` (backs `f64::min`).
+    MinNumNszF64,
 }
 
 impl RustFloatMathIntrinsic {
@@ -154,6 +162,14 @@ impl RustFloatMathIntrinsic {
             "core::intrinsics::copysignf64" | "std::intrinsics::copysignf64" => {
                 Some(Self::CopysignF64)
             }
+            "core::intrinsics::maximum_number_nsz_f32"
+            | "std::intrinsics::maximum_number_nsz_f32" => Some(Self::MaxNumNszF32),
+            "core::intrinsics::maximum_number_nsz_f64"
+            | "std::intrinsics::maximum_number_nsz_f64" => Some(Self::MaxNumNszF64),
+            "core::intrinsics::minimum_number_nsz_f32"
+            | "std::intrinsics::minimum_number_nsz_f32" => Some(Self::MinNumNszF32),
+            "core::intrinsics::minimum_number_nsz_f64"
+            | "std::intrinsics::minimum_number_nsz_f64" => Some(Self::MinNumNszF64),
             _ => None,
         }
     }
@@ -200,6 +216,10 @@ impl RustFloatMathIntrinsic {
             Self::Fabs => rust_intrinsics::CALLEE_FABS,
             Self::CopysignF32 => rust_intrinsics::CALLEE_COPYSIGN_F32,
             Self::CopysignF64 => rust_intrinsics::CALLEE_COPYSIGN_F64,
+            Self::MaxNumNszF32 => rust_intrinsics::CALLEE_MAXNUM_NSZ_F32,
+            Self::MaxNumNszF64 => rust_intrinsics::CALLEE_MAXNUM_NSZ_F64,
+            Self::MinNumNszF32 => rust_intrinsics::CALLEE_MINNUM_NSZ_F32,
+            Self::MinNumNszF64 => rust_intrinsics::CALLEE_MINNUM_NSZ_F64,
         }
     }
 }
@@ -234,4 +254,84 @@ pub fn emit_rust_float_math_intrinsic(
         block_map,
         loc,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dialect_mir::rust_intrinsics;
+
+    /// `f32::max` / `f64::max` / `f32::min` / `f64::min` all lower to the
+    /// `_nsz` flavor of the rustc maxNum/minNum intrinsics. Lock the four
+    /// `core::intrinsics::*` paths and their `std::intrinsics::*` aliases to
+    /// the dedicated enum variants so a rustc rename surfaces here as a
+    /// compile-time failure rather than a runtime "intrinsic not lowered"
+    /// error.
+    #[test]
+    fn from_core_path_recognizes_maxnum_minnum_nsz_intrinsics() {
+        for (path, expected) in [
+            (
+                "core::intrinsics::maximum_number_nsz_f32",
+                RustFloatMathIntrinsic::MaxNumNszF32,
+            ),
+            (
+                "std::intrinsics::maximum_number_nsz_f32",
+                RustFloatMathIntrinsic::MaxNumNszF32,
+            ),
+            (
+                "core::intrinsics::maximum_number_nsz_f64",
+                RustFloatMathIntrinsic::MaxNumNszF64,
+            ),
+            (
+                "core::intrinsics::minimum_number_nsz_f32",
+                RustFloatMathIntrinsic::MinNumNszF32,
+            ),
+            (
+                "core::intrinsics::minimum_number_nsz_f64",
+                RustFloatMathIntrinsic::MinNumNszF64,
+            ),
+        ] {
+            assert_eq!(
+                RustFloatMathIntrinsic::from_core_path(path),
+                Some(expected),
+                "`{path}` did not map to the expected intrinsic"
+            );
+        }
+
+        // Negative case: the NaN-propagating `maximumf*` / `minimumf*`
+        // family (backing `f32::maximum` / `f32::minimum`) is intentionally
+        // not handled in this PR. Make sure it does not silently get
+        // routed to the `_nsz` variants.
+        assert_eq!(
+            RustFloatMathIntrinsic::from_core_path("core::intrinsics::maximumf32"),
+            None
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::from_core_path("core::intrinsics::minimumf32"),
+            None
+        );
+    }
+
+    #[test]
+    fn maxnum_minnum_nsz_placeholders_round_trip_through_dialect_mir() {
+        // The placeholder names must match between this importer crate and
+        // `dialect-mir::rust_intrinsics`. A drift here would manifest as a
+        // missed lowering in `mir-lower`, so spot-check both sides.
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF32.placeholder_callee(),
+            rust_intrinsics::CALLEE_MAXNUM_NSZ_F32
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF64.placeholder_callee(),
+            rust_intrinsics::CALLEE_MAXNUM_NSZ_F64
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF32.placeholder_callee(),
+            rust_intrinsics::CALLEE_MINNUM_NSZ_F32
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF64.placeholder_callee(),
+            rust_intrinsics::CALLEE_MINNUM_NSZ_F64
+        );
+    }
 }

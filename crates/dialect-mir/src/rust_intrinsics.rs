@@ -123,3 +123,15 @@ pub const CALLEE_FABS: &str = placeholder!("fabs");
 pub const CALLEE_COPYSIGN_F32: &str = placeholder!("copysignf32");
 /// Placeholder call used for `core::intrinsics::copysignf64`.
 pub const CALLEE_COPYSIGN_F64: &str = placeholder!("copysignf64");
+/// Placeholder call used for `core::intrinsics::maximum_number_nsz_f32`
+/// (the intrinsic backing `f32::max`).
+pub const CALLEE_MAXNUM_NSZ_F32: &str = placeholder!("maximum_number_nsz_f32");
+/// Placeholder call used for `core::intrinsics::maximum_number_nsz_f64`
+/// (the intrinsic backing `f64::max`).
+pub const CALLEE_MAXNUM_NSZ_F64: &str = placeholder!("maximum_number_nsz_f64");
+/// Placeholder call used for `core::intrinsics::minimum_number_nsz_f32`
+/// (the intrinsic backing `f32::min`).
+pub const CALLEE_MINNUM_NSZ_F32: &str = placeholder!("minimum_number_nsz_f32");
+/// Placeholder call used for `core::intrinsics::minimum_number_nsz_f64`
+/// (the intrinsic backing `f64::min`).
+pub const CALLEE_MINNUM_NSZ_F64: &str = placeholder!("minimum_number_nsz_f64");

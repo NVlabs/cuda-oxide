@@ -189,6 +189,10 @@ enum RustFloatMathIntrinsic {
     Fabs,
     CopysignF32,
     CopysignF64,
+    MaxNumNszF32,
+    MaxNumNszF64,
+    MinNumNszF32,
+    MinNumNszF64,
 }
 
 impl RustFloatMathIntrinsic {
@@ -234,6 +238,10 @@ impl RustFloatMathIntrinsic {
             rust_intrinsics::CALLEE_FABS => Some(Self::Fabs),
             rust_intrinsics::CALLEE_COPYSIGN_F32 => Some(Self::CopysignF32),
             rust_intrinsics::CALLEE_COPYSIGN_F64 => Some(Self::CopysignF64),
+            rust_intrinsics::CALLEE_MAXNUM_NSZ_F32 => Some(Self::MaxNumNszF32),
+            rust_intrinsics::CALLEE_MAXNUM_NSZ_F64 => Some(Self::MaxNumNszF64),
+            rust_intrinsics::CALLEE_MINNUM_NSZ_F32 => Some(Self::MinNumNszF32),
+            rust_intrinsics::CALLEE_MINNUM_NSZ_F64 => Some(Self::MinNumNszF64),
             _ => None,
         }
     }
@@ -283,6 +291,17 @@ impl RustFloatMathIntrinsic {
             Self::Fabs => fabs_libdevice_name(ctx, result_ty, loc),
             Self::CopysignF32 => Ok("__nv_copysignf"),
             Self::CopysignF64 => Ok("__nv_copysign"),
+            // `f32::max` / `f32::min` (and the f64 forms) call the
+            // `_nsz` intrinsics, i.e. IEEE-754 maxNum/minNum with the
+            // "no signed zero" relaxation: when one operand is NaN the
+            // non-NaN operand is returned, and -0.0 / +0.0 may be
+            // treated as equivalent. libdevice `__nv_fmaxf`/`__nv_fminf`
+            // implement the same maxNum/minNum NaN rule (the -0/+0 nsz
+            // relaxation is a permitted slack, not a required behavior).
+            Self::MaxNumNszF32 => Ok("__nv_fmaxf"),
+            Self::MaxNumNszF64 => Ok("__nv_fmax"),
+            Self::MinNumNszF32 => Ok("__nv_fminf"),
+            Self::MinNumNszF64 => Ok("__nv_fmin"),
         }
     }
 
@@ -294,7 +313,11 @@ impl RustFloatMathIntrinsic {
             | Self::PowfF32
             | Self::PowfF64
             | Self::CopysignF32
-            | Self::CopysignF64 => 2,
+            | Self::CopysignF64
+            | Self::MaxNumNszF32
+            | Self::MaxNumNszF64
+            | Self::MinNumNszF32
+            | Self::MinNumNszF64 => 2,
             Self::FmaF32 | Self::FmaF64 | Self::FmuladdF32 | Self::FmuladdF64 => 3,
             _ => 1,
         }
@@ -1101,6 +1124,22 @@ mod tests {
                 rust_intrinsics::CALLEE_LOG2_F64,
                 RustFloatMathIntrinsic::Log2F64,
             ),
+            (
+                rust_intrinsics::CALLEE_MAXNUM_NSZ_F32,
+                RustFloatMathIntrinsic::MaxNumNszF32,
+            ),
+            (
+                rust_intrinsics::CALLEE_MAXNUM_NSZ_F64,
+                RustFloatMathIntrinsic::MaxNumNszF64,
+            ),
+            (
+                rust_intrinsics::CALLEE_MINNUM_NSZ_F32,
+                RustFloatMathIntrinsic::MinNumNszF32,
+            ),
+            (
+                rust_intrinsics::CALLEE_MINNUM_NSZ_F64,
+                RustFloatMathIntrinsic::MinNumNszF64,
+            ),
         ];
 
         for (name, expected) in cases {
@@ -1127,6 +1166,48 @@ mod tests {
         assert_eq!(RustFloatMathIntrinsic::CopysignF32.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::FmaF32.arg_count(), 3);
         assert_eq!(RustFloatMathIntrinsic::FmuladdF64.arg_count(), 3);
+        assert_eq!(RustFloatMathIntrinsic::MaxNumNszF32.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::MaxNumNszF64.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::MinNumNszF32.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::MinNumNszF64.arg_count(), 2);
+    }
+
+    /// `f32::max`/`f64::max` and their `min` siblings lower to the `_nsz`
+    /// flavor of the rustc maxNum/minNum intrinsics, which we route through
+    /// libdevice `__nv_fmax{f}`/`__nv_fmin{f}`. Spot-check the table so a
+    /// future rename in `dialect-mir::rust_intrinsics` cannot drift the
+    /// placeholder name silently away from its libdevice symbol.
+    #[test]
+    fn test_float_math_maxnum_minnum_nsz_libdevice_symbols() {
+        let ctx = Context::new();
+        let f32_ty = FP32Type::get(&ctx).into();
+        let f64_ty = FP64Type::get(&ctx).into();
+        let loc = pliron::location::Location::Unknown;
+
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF32
+                .libdevice_name(&ctx, f32_ty, loc.clone())
+                .unwrap(),
+            "__nv_fmaxf"
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MaxNumNszF64
+                .libdevice_name(&ctx, f64_ty, loc.clone())
+                .unwrap(),
+            "__nv_fmax"
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF32
+                .libdevice_name(&ctx, f32_ty, loc.clone())
+                .unwrap(),
+            "__nv_fminf"
+        );
+        assert_eq!(
+            RustFloatMathIntrinsic::MinNumNszF64
+                .libdevice_name(&ctx, f64_ty, loc)
+                .unwrap(),
+            "__nv_fmin"
+        );
     }
 
     /// `Fabs` is the only float-math intrinsic whose libdevice name depends on
