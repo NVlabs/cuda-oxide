@@ -2,4 +2,4 @@
 # rustc_private APIs change between nightly versions.
 [toolchain]
 channel = "nightly-2026-04-03"
-components = ["rust-src", "rustc-dev", "rust-analyzer"]
+components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]

@@ -35,9 +35,6 @@
 //!
 //! Build and run with:
 //!   cargo oxide run atomics
-//!
-//! For best results (correct syncscope on all instructions), use llc-22:
-//!   CUDA_OXIDE_LLC=/path/to/llc-22 cargo oxide run atomics
 
 use core::sync::atomic::Ordering;
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};

@@ -1012,7 +1012,7 @@ const GIT_REPO: &str = "https://github.com/NVlabs/cuda-oxide.git";
 
 const RUST_TOOLCHAIN_TOML: &str = r#"[toolchain]
 channel = "nightly-2026-04-03"
-components = ["rust-src", "rustc-dev", "rust-analyzer"]
+components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
 "#;
 
 /// Scaffold a new standalone cuda-oxide project.
