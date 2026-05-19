@@ -5,14 +5,15 @@
 
 //! Debug and profiling intrinsic conversion.
 //!
-//! | Operation     | Lowering                            | PTX Output         |
-//! |---------------|-------------------------------------|--------------------|
-//! | `Clock`       | `llvm_nvvm_read_ptx_sreg_clock`     | `mov %r, %clock`   |
-//! | `Clock64`     | `llvm_nvvm_read_ptx_sreg_clock64`   | `mov %rd, %clock64`|
-//! | `Trap`        | inline PTX `trap;`                  | `trap;`            |
-//! | `Breakpoint`  | inline PTX `brkpt;`                 | `brkpt;`           |
-//! | `PmEvent`     | inline PTX `pmevent N;`             | `pmevent N;`       |
-//! | `Vprintf`     | `call @vprintf`                     | `call vprintf`     |
+//! | Operation      | Lowering                            | PTX Output              |
+//! |----------------|-------------------------------------|-------------------------|
+//! | `Clock`        | `llvm_nvvm_read_ptx_sreg_clock`     | `mov %r, %clock`        |
+//! | `Clock64`      | `llvm_nvvm_read_ptx_sreg_clock64`   | `mov %rd, %clock64`     |
+//! | `Globaltimer`  | inline PTX `%globaltimer`           | `mov %rd, %globaltimer` |
+//! | `Trap`         | inline PTX `trap;`                  | `trap;`                 |
+//! | `Breakpoint`   | inline PTX `brkpt;`                 | `brkpt;`                |
+//! | `PmEvent`      | inline PTX `pmevent N;`             | `pmevent N;`            |
+//! | `Vprintf`      | `call @vprintf`                     | `call vprintf`          |
 
 use crate::convert::intrinsics::common::*;
 use crate::helpers;
@@ -69,6 +70,25 @@ pub(crate) fn convert_clock64(
     )?;
     rewriter.replace_operation(ctx, op, call_op);
 
+    Ok(())
+}
+
+pub(crate) fn convert_globaltimer(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        i64_ty.into(),
+        vec![],
+        "mov.u64 $0, %globaltimer;",
+        "=l",
+    );
+    rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
 }
 

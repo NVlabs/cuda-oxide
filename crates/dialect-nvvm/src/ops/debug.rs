@@ -8,15 +8,16 @@
 //! This module provides operations for debugging and profiling GPU kernels:
 //!
 //! ```text
-//! ┌─────────────────────────┬──────────────────────────────┬─────────────────────────┐
-//! │ Operation               │ PTX / LLVM Intrinsic         │ Description             │
-//! ├─────────────────────────┼──────────────────────────────┼─────────────────────────┤
-//! │ ReadPtxSregClockOp      │ %clock / read.ptx.sreg.clock │ 32-bit clock counter    │
-//! │ ReadPtxSregClock64Op    │ %clock64 / ...clock64        │ 64-bit clock counter    │
-//! │ TrapOp                  │ trap / llvm.nvvm.trap        │ Abort kernel execution  │
-//! │ BreakpointOp            │ brkpt / llvm.nvvm.brkpt      │ cuda-gdb breakpoint     │
-//! │ VprintfOp               │ vprintf / call @vprintf      │ Formatted output        │
-//! └─────────────────────────┴──────────────────────────────┴─────────────────────────┘
+//! ┌──────────────────────────┬──────────────────────────────┬─────────────────────────┐
+//! │ Operation                │ PTX / LLVM Intrinsic         │ Description             │
+//! ├──────────────────────────┼──────────────────────────────┼─────────────────────────┤
+//! │ ReadPtxSregClockOp       │ %clock / read.ptx.sreg.clock │ 32-bit clock counter    │
+//! │ ReadPtxSregClock64Op     │ %clock64 / ...clock64        │ 64-bit clock counter    │
+//! │ ReadPtxSregGlobaltimerOp │ %globaltimer                 │ Global timer counter    │
+//! │ TrapOp                   │ trap / llvm.nvvm.trap        │ Abort kernel execution  │
+//! │ BreakpointOp             │ brkpt / llvm.nvvm.brkpt      │ cuda-gdb breakpoint     │
+//! │ VprintfOp                │ vprintf / call @vprintf      │ Formatted output        │
+//! └──────────────────────────┴──────────────────────────────┴─────────────────────────┘
 //! ```
 
 use pliron::{
@@ -127,6 +128,55 @@ impl Verify for ReadPtxSregClock64Op {
             return verify_err!(
                 op.loc(),
                 "nvvm.read_ptx_sreg_clock64 result must be 64-bit integer"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Read the 64-bit GPU global timer.
+///
+/// Corresponds to PTX `%globaltimer`.
+///
+/// # Verification
+///
+/// - Must have 0 operands
+/// - Must have 1 result of type `i64`
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_globaltimer",
+    format,
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregGlobaltimerOp;
+
+impl ReadPtxSregGlobaltimerOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregGlobaltimerOp { op }
+    }
+}
+
+impl Verify for ReadPtxSregGlobaltimerOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = &*self.get_operation().deref(ctx);
+        let res = op.get_result(0);
+        let ty = res.get_type(ctx);
+
+        let ty_obj = ty.deref(ctx);
+        let int_ty = match ty_obj.downcast_ref::<IntegerType>() {
+            Some(ty) => ty,
+            None => {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.read_ptx_sreg_globaltimer result must be integer"
+                );
+            }
+        };
+
+        if int_ty.width() != 64 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.read_ptx_sreg_globaltimer result must be 64-bit integer"
             );
         }
         Ok(())
@@ -343,6 +393,7 @@ pub(super) fn register(ctx: &mut Context) {
     // Clock/Timing
     ReadPtxSregClockOp::register(ctx);
     ReadPtxSregClock64Op::register(ctx);
+    ReadPtxSregGlobaltimerOp::register(ctx);
     // Trap
     TrapOp::register(ctx);
     // Debugging

@@ -129,7 +129,9 @@ pub fn debug_kernel(data: &[f32]) {
 }
 ```
 
-`gpu_printf!` compiles to device-side `vprintf` with C vararg promotion. `gpu_assert!` traps on failure.
+`gpu_printf!` compiles to device-side `vprintf` with C vararg promotion.
+`gpu_assert!` traps on failure. The `debug` module also exposes GPU timing
+register reads such as `clock64()` and `globaltimer()`.
 
 ## Proc-Macro Re-exports
 

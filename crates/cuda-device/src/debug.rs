@@ -11,6 +11,7 @@
 //! |--------------------|-------------------------------|---------------------|
 //! | [`clock()`]        | Read 32-bit GPU clock counter | `clock()`           |
 //! | [`clock64()`]      | Read 64-bit GPU clock counter | `clock64()`         |
+//! | [`globaltimer()`]  | Read GPU global timer         | `%globaltimer`      |
 //! | [`trap()`]         | Abort kernel execution        | `__trap()`          |
 //! | [`breakpoint()`]   | Insert cuda-gdb breakpoint    | `__brkpt()`         |
 //! | [`prof_trigger()`] | Signal NVIDIA profiler        | `__prof_trigger(N)` |
@@ -101,6 +102,28 @@ pub fn clock() -> u32 {
 pub fn clock64() -> u64 {
     // Lowered to: call i64 @llvm.nvvm.read.ptx.sreg.clock64()
     unreachable!("clock64 called outside CUDA kernel context")
+}
+
+/// Read the GPU global timer.
+///
+/// Returns a 64-bit timer value from PTX `%globaltimer`. Unlike [`clock64()`],
+/// this is a global timer source, so it is preferable when measuring interactions
+/// that may span multiple SMs.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use cuda_device::debug;
+///
+/// let start = debug::globaltimer();
+/// // ... operation to measure ...
+/// let end = debug::globaltimer();
+/// let ticks = end.wrapping_sub(start);
+/// ```
+#[inline(never)]
+pub fn globaltimer() -> u64 {
+    // Lowered to: inline PTX "mov.u64 ..., %globaltimer;"
+    unreachable!("globaltimer called outside CUDA kernel context")
 }
 
 // =============================================================================

@@ -1946,6 +1946,16 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
+        "cuda_device::debug::globaltimer" => Ok(Some(intrinsics::debug::emit_globaltimer(
+            ctx,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         "cuda_device::debug::trap" => Ok(Some(intrinsics::debug::emit_trap(
             ctx, target, block_ptr, prev_op, block_map, loc,
         )?)),

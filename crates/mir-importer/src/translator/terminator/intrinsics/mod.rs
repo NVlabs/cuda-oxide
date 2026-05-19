@@ -8,17 +8,17 @@
 //! This module handles the translation of `cuda_device` intrinsic calls into
 //! `dialect-nvvm` operations. Intrinsics are organized by functional category:
 //!
-//! | Module      | Intrinsics                                          |
-//! |-------------|-----------------------------------------------------|
+//! | Module      | Intrinsics                                                                   |
+//! |-------------|------------------------------------------------------------------------------|
 //! | `indexing`  | `threadIdx_*`, `blockIdx_*`, `index_1d`, `index_2d::<S>`, `index_2d_runtime` |
-//! | `sync`      | `sync_threads`, `mbarrier_*`, `fence_*`             |
-//! | `cluster`   | `cluster_ctaidX`, `cluster_sync`, `map_shared_rank` |
-//! | `warp`      | `shuffle_*`, `vote_*`, `lane_id`                    |
-//! | `wgmma`     | Hopper WGMMA matrix operations                      |
-//! | `tcgen05`   | Blackwell tensor core (tcgen05) operations          |
-//! | `tma`       | Tensor Memory Access (TMA) operations               |
-//! | `memory`    | `SharedArray`, `stmatrix_*`, type conversions       |
-//! | `debug`     | `clock`, `clock64`, `trap`, `breakpoint`            |
+//! | `sync`      | `sync_threads`, `mbarrier_*`, `fence_*`                                      |
+//! | `cluster`   | `cluster_ctaidX`, `cluster_sync`, `map_shared_rank`                          |
+//! | `warp`      | `shuffle_*`, `vote_*`, `lane_id`                                             |
+//! | `wgmma`     | Hopper WGMMA matrix operations                                               |
+//! | `tcgen05`   | Blackwell tensor core (tcgen05) operations                                   |
+//! | `tma`       | Tensor Memory Access (TMA) operations                                        |
+//! | `memory`    | `SharedArray`, `stmatrix_*`, type conversions                                |
+//! | `debug`     | `clock`, `clock64`, `globaltimer`, `trap`, `breakpoint`                      |
 //!
 //! # Architecture
 //!
