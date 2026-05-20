@@ -1,0 +1,18 @@
+[package]
+name = "mma_smoke"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# Mark as standalone crate (not part of parent workspace)
+[workspace]
+
+# Smoke test for mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 (SM80+).
+# Build / run with:
+#   cargo oxide build --arch sm_120 mma_smoke
+#   cargo oxide run   --arch sm_120 mma_smoke
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

@@ -225,6 +225,7 @@ compiles a Rust kernel to PTX, launches it on the GPU, and prints
 | `generic`            | Generic kernels with monomorphization (`scale<T>`)                       |
 | `gemm_sol`           | GEMM SoL: 868 TFLOPS (58% cuBLAS on B200), 8 kernels across 4 phases     |
 | `tcgen05`            | Blackwell tensor cores (sm_100a): TMEM, MMA, cta_group::2                |
+| `mma_gemm`           | Tensor-core bf16 GEMM via mma.sync.aligned + ldmatrix (sm_80..sm_120)    |
 | `atomics`            | GPU atomics: 6 types x 3 scopes x 5 orderings (20 tests)                 |
 | `cluster`            | Thread Block Clusters + DSMEM ring exchange (Hopper+)                    |
 | `async_mlp`          | Async MLP pipeline: GEMM → MatVec → ReLU across concurrent streams       |
