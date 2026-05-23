@@ -123,3 +123,11 @@ pub const CALLEE_FABS: &str = placeholder!("fabs");
 pub const CALLEE_COPYSIGN_F32: &str = placeholder!("copysignf32");
 /// Placeholder call used for `core::intrinsics::copysignf64`.
 pub const CALLEE_COPYSIGN_F64: &str = placeholder!("copysignf64");
+/// Placeholder call used for `f32::atan2` / `std::sys::cmath::atan2f`.
+pub const CALLEE_ATAN2_F32: &str = placeholder!("atan2f32");
+/// Placeholder call used for `f64::atan2` / `std::sys::cmath::atan2`.
+pub const CALLEE_ATAN2_F64: &str = placeholder!("atan2f64");
+/// Placeholder call used for `f32::atan` / `std::sys::cmath::atanf`.
+pub const CALLEE_ATAN_F32: &str = placeholder!("atanf32");
+/// Placeholder call used for `f64::atan` / `std::sys::cmath::atan`.
+pub const CALLEE_ATAN_F64: &str = placeholder!("atanf64");

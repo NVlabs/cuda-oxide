@@ -97,6 +97,14 @@ pub enum RustFloatMathIntrinsic {
     CopysignF32,
     /// `core::intrinsics::copysignf64`.
     CopysignF64,
+    /// `f32::atan2` / `std::sys::cmath::atan2f`.
+    Atan2F32,
+    /// `f64::atan2` / `std::sys::cmath::atan2`.
+    Atan2F64,
+    /// `f32::atan` / `std::sys::cmath::atanf`.
+    AtanF32,
+    /// `f64::atan` / `std::sys::cmath::atan`.
+    AtanF64,
 }
 
 impl RustFloatMathIntrinsic {
@@ -154,6 +162,10 @@ impl RustFloatMathIntrinsic {
             "core::intrinsics::copysignf64" | "std::intrinsics::copysignf64" => {
                 Some(Self::CopysignF64)
             }
+            "std::sys::cmath::atan2f" => Some(Self::Atan2F32),
+            "std::sys::cmath::atan2" => Some(Self::Atan2F64),
+            "std::sys::cmath::atanf" => Some(Self::AtanF32),
+            "std::sys::cmath::atan" => Some(Self::AtanF64),
             _ => None,
         }
     }
@@ -200,6 +212,10 @@ impl RustFloatMathIntrinsic {
             Self::Fabs => rust_intrinsics::CALLEE_FABS,
             Self::CopysignF32 => rust_intrinsics::CALLEE_COPYSIGN_F32,
             Self::CopysignF64 => rust_intrinsics::CALLEE_COPYSIGN_F64,
+            Self::Atan2F32 => rust_intrinsics::CALLEE_ATAN2_F32,
+            Self::Atan2F64 => rust_intrinsics::CALLEE_ATAN2_F64,
+            Self::AtanF32 => rust_intrinsics::CALLEE_ATAN_F32,
+            Self::AtanF64 => rust_intrinsics::CALLEE_ATAN_F64,
         }
     }
 }

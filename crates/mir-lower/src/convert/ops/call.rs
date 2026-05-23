@@ -189,6 +189,10 @@ enum RustFloatMathIntrinsic {
     Fabs,
     CopysignF32,
     CopysignF64,
+    Atan2F32,
+    Atan2F64,
+    AtanF32,
+    AtanF64,
 }
 
 impl RustFloatMathIntrinsic {
@@ -234,6 +238,10 @@ impl RustFloatMathIntrinsic {
             rust_intrinsics::CALLEE_FABS => Some(Self::Fabs),
             rust_intrinsics::CALLEE_COPYSIGN_F32 => Some(Self::CopysignF32),
             rust_intrinsics::CALLEE_COPYSIGN_F64 => Some(Self::CopysignF64),
+            rust_intrinsics::CALLEE_ATAN2_F32 => Some(Self::Atan2F32),
+            rust_intrinsics::CALLEE_ATAN2_F64 => Some(Self::Atan2F64),
+            rust_intrinsics::CALLEE_ATAN_F32 => Some(Self::AtanF32),
+            rust_intrinsics::CALLEE_ATAN_F64 => Some(Self::AtanF64),
             _ => None,
         }
     }
@@ -283,6 +291,10 @@ impl RustFloatMathIntrinsic {
             Self::Fabs => fabs_libdevice_name(ctx, result_ty, loc),
             Self::CopysignF32 => Ok("__nv_copysignf"),
             Self::CopysignF64 => Ok("__nv_copysign"),
+            Self::Atan2F32 => Ok("__nv_atan2f"),
+            Self::Atan2F64 => Ok("__nv_atan2"),
+            Self::AtanF32 => Ok("__nv_atanf"),
+            Self::AtanF64 => Ok("__nv_atan"),
         }
     }
 
@@ -294,7 +306,9 @@ impl RustFloatMathIntrinsic {
             | Self::PowfF32
             | Self::PowfF64
             | Self::CopysignF32
-            | Self::CopysignF64 => 2,
+            | Self::CopysignF64
+            | Self::Atan2F32
+            | Self::Atan2F64 => 2,
             Self::FmaF32 | Self::FmaF64 | Self::FmuladdF32 | Self::FmuladdF64 => 3,
             _ => 1,
         }
@@ -1101,6 +1115,22 @@ mod tests {
                 rust_intrinsics::CALLEE_LOG2_F64,
                 RustFloatMathIntrinsic::Log2F64,
             ),
+            (
+                rust_intrinsics::CALLEE_ATAN2_F32,
+                RustFloatMathIntrinsic::Atan2F32,
+            ),
+            (
+                rust_intrinsics::CALLEE_ATAN2_F64,
+                RustFloatMathIntrinsic::Atan2F64,
+            ),
+            (
+                rust_intrinsics::CALLEE_ATAN_F32,
+                RustFloatMathIntrinsic::AtanF32,
+            ),
+            (
+                rust_intrinsics::CALLEE_ATAN_F64,
+                RustFloatMathIntrinsic::AtanF64,
+            ),
         ];
 
         for (name, expected) in cases {
@@ -1125,6 +1155,10 @@ mod tests {
         assert_eq!(RustFloatMathIntrinsic::PowiF32.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::PowfF64.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::CopysignF32.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::Atan2F32.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::Atan2F64.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::AtanF32.arg_count(), 1);
+        assert_eq!(RustFloatMathIntrinsic::AtanF64.arg_count(), 1);
         assert_eq!(RustFloatMathIntrinsic::FmaF32.arg_count(), 3);
         assert_eq!(RustFloatMathIntrinsic::FmuladdF64.arg_count(), 3);
     }

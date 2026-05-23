@@ -407,6 +407,29 @@ pub fn is_fully_monomorphized<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>)
     true
 }
 
+/// Paths into `std::sys::cmath` that mir-importer rewrites to a libdevice
+/// intrinsic placeholder.
+///
+/// `f32::atan2`, `f32::atan`, `f64::atan2`, and `f64::atan` are declared
+/// in `std` and dispatched through `extern "C"` shims in `std::sys::cmath`.
+/// `f32::atan2` (etc.) is `#[inline]`, so MIR-opt collapses the wrapper and
+/// the surviving call site points directly at one of these shims. Device
+/// codegen must never see them: mir-importer matches the same FQDN and
+/// emits an `__nv_*` libdevice call instead, and the collector silently
+/// skips them here so the std-crate guard doesn't fire.
+///
+/// Keep this list in sync with the matches in
+/// `mir-importer/src/translator/terminator/intrinsics/float_math.rs`.
+fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
+    matches!(
+        fn_path,
+        "std::sys::cmath::atan2f"
+            | "std::sys::cmath::atan2"
+            | "std::sys::cmath::atanf"
+            | "std::sys::cmath::atan"
+    )
+}
+
 /// Collects all device-reachable functions starting from kernel entry points.
 ///
 /// This is the main entry point for device function collection. It:
@@ -1013,6 +1036,17 @@ impl<'tcx> DeviceCollector<'tcx> {
         // Forbidden crate: std (OS, I/O, threads) - absolutely can't run on GPU
         if name_str == "std" {
             let fn_path = self.tcx.def_path_str(def_id);
+            // A handful of `std::sys::cmath::*` libm shims are intercepted
+            // by mir-importer's float-math intrinsic dispatch and lowered
+            // directly to libdevice (`__nv_atan2f` etc.). They never enter
+            // device codegen, so silently skip them here instead of tripping
+            // the std-crate guard. This is what makes `f32::atan2`,
+            // `f32::atan`, and the f64 counterparts usable from device code
+            // (MIR-opt inlines the `#[inline]` `std` wrapper, leaving a
+            // direct call to the cmath shim at the kernel call site).
+            if is_intrinsic_lowered_cmath_shim(&fn_path) {
+                return CollectDecision::SkipIntentional;
+            }
             return CollectDecision::Forbidden {
                 crate_name: name_str.to_string(),
                 fn_path,
