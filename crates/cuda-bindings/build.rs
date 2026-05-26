@@ -32,22 +32,28 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo::rustc-check-cfg=cfg(cuda_has_cuEventElapsedTime_v2)");
 
     let toolkit = cuda_toolkit_dir();
-    let cuda_h = Path::new(&toolkit).join("include/cuda.h");
+    let include_paths = collect_include_paths(&toolkit);
+    let cuda_h = include_paths
+        .iter()
+        .map(|include| include.join("cuda.h"))
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            format!(
+                "cuda-bindings: could not find cuda.h under {}. Set CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA Toolkit install that contains include/cuda.h or targets/x86_64-linux/include/cuda.h.",
+                toolkit
+            )
+        })?;
     println!("cargo:rerun-if-changed={}", cuda_h.display());
 
-    match std::fs::read_to_string(&cuda_h) {
-        Ok(contents) => {
-            if contents.contains("cuEventElapsedTime_v2") {
-                println!("cargo:rustc-cfg=cuda_has_cuEventElapsedTime_v2");
-            }
-        }
-        Err(err) => {
-            println!(
-                "cargo:warning=cuda-bindings: Could not read cuda.h at {}: {}",
-                cuda_h.display(),
-                err
-            );
-        }
+    let contents = std::fs::read_to_string(&cuda_h).map_err(|err| {
+        format!(
+            "cuda-bindings: could not read cuda.h at {}: {}",
+            cuda_h.display(),
+            err
+        )
+    })?;
+    if contents.contains("cuEventElapsedTime_v2") {
+        println!("cargo:rustc-cfg=cuda_has_cuEventElapsedTime_v2");
     }
 
     for path in collect_lib_paths(&toolkit) {
@@ -55,9 +61,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     println!("cargo:rustc-link-lib=dylib=cuda");
 
-    bindgen::builder()
+    let mut builder = bindgen::builder()
         .header("wrapper.h")
-        .clang_arg(format!("-I{}/include", toolkit))
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         // CUDA 13.2+ adds types to CUlaunchAttributeValue that bindgen/libclang
         // cannot translate, collapsing the struct to a 1-byte opaque blob while the
@@ -65,12 +70,31 @@ fn run() -> Result<(), Box<dyn Error>> {
         // inner union opaque produces correctly-sized byte blobs across CUDA versions.
         // launch_kernel_ex in cuda-core constructs this struct via raw pointer writes.
         .opaque_type("CUlaunchAttribute_st")
-        .opaque_type("CUlaunchAttributeValue_union")
+        .opaque_type("CUlaunchAttributeValue_union");
+    for include_path in include_paths {
+        builder = builder.clang_arg(format!("-I{}", include_path.display()));
+    }
+    builder
         .generate()
-        .expect("Unable to generate CUDA bindings")
+        .map_err(|err| format!("cuda-bindings: unable to generate CUDA bindings: {err}"))?
         .write_to_file(Path::new(&env::var("OUT_DIR")?).join("bindings.rs"))?;
 
     Ok(())
+}
+
+/// Candidate CUDA include directories for both standard and redistributable layouts.
+fn collect_include_paths(toolkit: &str) -> Vec<PathBuf> {
+    let base = PathBuf::from(toolkit);
+    let mut paths = Vec::new();
+
+    paths.push(base.join("include"));
+
+    let targets_include = base.join("targets/x86_64-linux/include");
+    if targets_include.join("cuda.h").is_file() {
+        paths.push(targets_include);
+    }
+
+    paths
 }
 
 /// Candidate directories for `rustc-link-search=native` when linking against the driver library.
