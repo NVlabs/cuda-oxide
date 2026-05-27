@@ -236,9 +236,17 @@ pub trait DeviceOperation:
     ) -> Result<<Self as DeviceOperation>::Output, DeviceError> {
         let ctx = ExecutionContext::new(Arc::clone(stream));
         let res = unsafe { self.execute(&ctx) };
-        stream.synchronize().expect("Synchronize failed.");
-        res
+        finish_sync(res, stream.synchronize())
     }
+}
+
+fn finish_sync<T>(
+    operation_result: Result<T, DeviceError>,
+    synchronize_result: Result<(), cuda_core::DriverError>,
+) -> Result<T, DeviceError> {
+    let output = operation_result?;
+    synchronize_result.map_err(DeviceError::Driver)?;
+    Ok(output)
 }
 
 // --- Combinators ---
@@ -881,6 +889,45 @@ where
 
 /// Blanket impl: any operation producing `(T0, T1)` is unzippable.
 impl<T0: Send, T1: Send, DI: DeviceOperation<Output = (T0, T1)>> Unzippable2<T0, T1> for DI {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finish_sync_returns_operation_result_after_successful_synchronize() {
+        let result = finish_sync::<u32>(Ok(7), Ok(()));
+
+        assert_eq!(result, Ok(7));
+    }
+
+    #[test]
+    fn finish_sync_preserves_operation_error_after_successful_synchronize() {
+        let operation_error = DeviceError::Launch("launch failed".to_string());
+        let result = finish_sync::<u32>(Err(operation_error.clone()), Ok(()));
+
+        assert_eq!(result, Err(operation_error));
+    }
+
+    #[test]
+    fn finish_sync_propagates_synchronize_error_instead_of_panicking() {
+        let driver_error =
+            cuda_core::DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE);
+        let result = finish_sync::<u32>(Ok(7), Err(driver_error));
+
+        assert_eq!(result, Err(DeviceError::Driver(driver_error)));
+    }
+
+    #[test]
+    fn finish_sync_preserves_operation_error_when_synchronize_also_fails() {
+        let operation_error = DeviceError::Launch("launch failed".to_string());
+        let driver_error =
+            cuda_core::DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE);
+        let result = finish_sync::<u32>(Err(operation_error.clone()), Err(driver_error));
+
+        assert_eq!(result, Err(operation_error));
+    }
+}
 
 /// Splits a tuple-producing [`DeviceOperation`] into per-element operations.
 ///

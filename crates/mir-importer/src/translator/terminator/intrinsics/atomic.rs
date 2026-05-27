@@ -79,7 +79,6 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::value::Value;
 use rustc_public::mir;
 use rustc_public::ty::{GenericArgKind, RigidTy, TyConstKind, TyKind};
 // =============================================================================
@@ -389,10 +388,7 @@ fn emit_atomic_load(
         op_ptr.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -569,10 +565,7 @@ fn emit_atomic_rmw(
         op_ptr.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -672,10 +665,7 @@ fn emit_atomic_compare_exchange(
         op_ptr.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -1043,10 +1033,7 @@ fn emit_core_atomic_load(
         op_ptr.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -1199,10 +1186,7 @@ fn emit_core_atomic_rmw(
         op_ptr.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -1294,10 +1278,7 @@ fn emit_core_atomic_cmpxchg(
         op_ptr.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,

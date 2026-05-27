@@ -191,6 +191,7 @@ name = "cargo-oxide"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "cuda-core",
  "cuda-host",
  "libnvvm-sys",
  "nvjitlink-sys",
@@ -784,7 +785,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 [[package]]
 name = "pliron"
 version = "0.14.0"
-source = "git+https://github.com/vaivaswatha/pliron#536d7a9b245b79d70b47d0fb84e500b4c6858e4a"
+source = "git+https://github.com/vaivaswatha/pliron?rev=b51e73b11648508188184451adebdcf63957b7fe#b51e73b11648508188184451adebdcf63957b7fe"
 dependencies = [
  "awint",
  "combine",
@@ -806,7 +807,7 @@ dependencies = [
 [[package]]
 name = "pliron-derive"
 version = "0.14.0"
-source = "git+https://github.com/vaivaswatha/pliron#536d7a9b245b79d70b47d0fb84e500b4c6858e4a"
+source = "git+https://github.com/vaivaswatha/pliron?rev=b51e73b11648508188184451adebdcf63957b7fe#b51e73b11648508188184451adebdcf63957b7fe"
 dependencies = [
  "combine",
  "convert_case",

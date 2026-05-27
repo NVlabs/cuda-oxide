@@ -27,9 +27,9 @@ oxide-artifacts = { path = "../oxide-artifacts", features = ["object-write"] }
 
 # IMPORTANT: This crate is isolated from the main workspace, so we cannot use
 # `{ workspace = true }`. Keep these versions synchronized with root Cargo.toml
-# [workspace.dependencies] section.
-pliron = { git = "https://github.com/vaivaswatha/pliron" }
-pliron-derive = { git = "https://github.com/vaivaswatha/pliron" }
+# [workspace.dependencies] section, including the pinned `rev`.
+pliron = { git = "https://github.com/vaivaswatha/pliron", rev = "b51e73b11648508188184451adebdcf63957b7fe" }
+pliron-derive = { git = "https://github.com/vaivaswatha/pliron", rev = "b51e73b11648508188184451adebdcf63957b7fe" }
 linkme = "0.3"            # must match workspace
 combine = "4.6"           # must match workspace
 once_cell = "1.18"        # must match workspace

@@ -22,7 +22,6 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::value::Value;
 use rustc_public::mir;
 /// Emit clc_try_cancel: async request to steal a pending CTA's work.
 ///
@@ -272,10 +271,7 @@ fn emit_clc_query(
         query_op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: query_op,
-        res_idx: 0,
-    };
+    let result_value = query_op.deref(ctx).get_result(0);
     let no_target_msg = format!("{} call without target block", op_name);
     emit_store_result_and_goto(
         ctx,

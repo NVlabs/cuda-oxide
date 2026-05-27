@@ -27,7 +27,6 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::value::Value;
 use rustc_public::mir;
 /// Emits `cp_async_bulk_tensor_Nd_g2s`: Async tensor copy global → shared via TMA.
 ///
@@ -165,10 +164,7 @@ pub fn emit_tma_g2s(
             .get_operation()
             .insert_at_front(block_ptr, ctx);
     }
-    let cta_mask = Value::OpResult {
-        op: cta_mask_const.get_operation(),
-        res_idx: 0,
-    };
+    let cta_mask = cta_mask_const.get_operation().deref(ctx).get_result(0);
     operands.push(cta_mask);
 
     // Create constant for cache_hint = 0
@@ -190,10 +186,7 @@ pub fn emit_tma_g2s(
         .get_operation()
         .insert_after(ctx, cta_mask_const.get_operation());
 
-    let cache_hint = Value::OpResult {
-        op: cache_hint_const.get_operation(),
-        res_idx: 0,
-    };
+    let cache_hint = cache_hint_const.get_operation().deref(ctx).get_result(0);
     operands.push(cache_hint);
 
     // Select the appropriate NVVM op based on dimensions
@@ -509,10 +502,7 @@ pub fn emit_tma_g2s_multicast(
             .insert_at_front(block_ptr, ctx);
     }
 
-    let cache_hint = Value::OpResult {
-        op: cache_hint_const.get_operation(),
-        res_idx: 0,
-    };
+    let cache_hint = cache_hint_const.get_operation().deref(ctx).get_result(0);
     operands.push(cache_hint);
 
     // Create the multicast TMA op
@@ -683,10 +673,7 @@ pub fn emit_tma_g2s_multicast_cg2(
             .insert_at_front(block_ptr, ctx);
     }
 
-    let cache_hint = Value::OpResult {
-        op: cache_hint_const.get_operation(),
-        res_idx: 0,
-    };
+    let cache_hint = cache_hint_const.get_operation().deref(ctx).get_result(0);
     operands.push(cache_hint);
 
     // Create the cg2 multicast TMA op

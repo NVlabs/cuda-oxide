@@ -71,17 +71,32 @@ pub trait CudaKernel {
 ///
 /// impl<T: Copy + Mul<Output = T>> GenericCudaKernel for __scale_CudaKernel<T> {
 ///     fn ptx_name() -> &'static str {
-///         // Hash-based name that matches what the backend generates
-///         // e.g., "scale_a1b2c3d4" for scale::<f32>
+///         // "scale_TID_<hex32>" — one 32-char hex chunk for the entire
+///         // tuple of generic args. The hash matches what the backend
+///         // wrote into the .ptx for the same monomorphization.
 ///     }
 /// }
 /// ```
 ///
 /// # PTX Naming Scheme
 ///
-/// Generic kernels use a hash of `std::any::type_name::<Self>()` to generate
-/// a stable, unique PTX name for each instantiation. The backend uses the same
-/// scheme when generating PTX.
+/// Generic kernels are named `<base>_TID_<hex32>`, where `<hex32>` is
+/// `cuda_host::type_id_u128::<(T0, T1, ...,)>()` for the *tuple* of the
+/// kernel's generic type parameters, rendered as 32 lowercase hex chars.
+/// The backend computes the same hash via
+/// `tcx.type_id_hash(Ty::new_tup(tcx, &args)).as_u128()`, so both ends of
+/// a single rustc invocation produce the same string for the same types.
+/// Hashing the tuple keeps the name fixed-length regardless of generic
+/// arity — PTX identifiers can be ~1024 chars but the name is repeated
+/// per kernel parameter, so a per-arg layout would blow up quickly.
+///
+/// The bound on `ptx_name` is intentionally just whatever the kernel
+/// itself declared — typically `Copy` on the value-passed generics. No
+/// `'static` is added: the helper `cuda_host::type_id_u128` uses
+/// `core::intrinsics::type_id`, which is bound `T: ?Sized` rather than
+/// `T: 'static`, so closures that borrow non-`'static` data still go
+/// through the typed launch path (just like they did under the legacy
+/// `type_name`-based scheme).
 pub trait GenericCudaKernel {
     /// Get the PTX entry point name for this specific instantiation.
     ///
@@ -109,9 +124,22 @@ impl<T: Copy> KernelScalar for T {}
 /// The pointed-to value must remain alive until the launch submission call has
 /// returned. The generated `#[cuda_module]` launch methods create stack locals
 /// for this purpose before calling this helper.
+///
+/// # Zero-sized values
+///
+/// `T` is allowed to be zero-sized (e.g. a closure with no captures, a unit
+/// struct). When `size_of::<T>() == 0` the backend drops the corresponding
+/// `.param` entirely from the kernel's PTX entry point — the CUDA driver
+/// reads no bytes for it — so we must also skip the host push to keep the
+/// driver's `kernelParams[]` indices aligned with the kernel's declared
+/// parameters. The check is a `const`-fold for monomorphized types and
+/// disappears in release builds for non-ZSTs.
 #[inline]
 #[doc(hidden)]
 pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &mut T) {
+    if std::mem::size_of::<T>() == 0 {
+        return;
+    }
     args.push(value as *mut T as *mut c_void);
 }
 

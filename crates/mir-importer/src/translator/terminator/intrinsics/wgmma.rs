@@ -23,7 +23,6 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::value::Value;
 use rustc_public::mir;
 /// Emits `wgmma_fence()`: WGMMA input fence.
 ///
@@ -272,10 +271,7 @@ pub fn emit_wgmma_make_smem_desc(
     }
 
     // Map the result
-    let result_value = Value::OpResult {
-        op: desc_op,
-        res_idx: 0,
-    };
+    let result_value = desc_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,

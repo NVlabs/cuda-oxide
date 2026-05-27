@@ -489,10 +489,7 @@ fn translate_switch(
                 } else {
                     not_op.insert_at_front(block_ptr, ctx);
                 }
-                let cond = pliron::value::Value::OpResult {
-                    op: not_op,
-                    res_idx: 0,
-                };
+                let cond = not_op.deref(ctx).get_result(0);
                 (cond, Some(not_op))
             } else {
                 // val == 1: condition is discr itself
@@ -549,10 +546,7 @@ fn translate_switch(
             eq_op.deref_mut(ctx).set_loc(loc.clone());
             eq_op.insert_after(ctx, const_op_wrapped.get_operation());
 
-            let cond = pliron::value::Value::OpResult {
-                op: eq_op,
-                res_idx: 0,
-            };
+            let cond = eq_op.deref(ctx).get_result(0);
             (cond, Some(eq_op))
         };
 
@@ -667,10 +661,7 @@ fn translate_switch(
                 .insert_at_front(current_block_ptr, ctx);
         }
 
-        let const_val = pliron::value::Value::OpResult {
-            op: const_op_wrapped.get_operation(),
-            res_idx: 0,
-        };
+        let const_val = const_op_wrapped.get_operation().deref(ctx).get_result(0);
 
         // Create comparison: discr == val
         let cmp_op = Operation::new(
@@ -684,10 +675,7 @@ fn translate_switch(
         cmp_op.deref_mut(ctx).set_loc(loc.clone());
         cmp_op.insert_after(ctx, const_op_wrapped.get_operation());
 
-        let condition = pliron::value::Value::OpResult {
-            op: cmp_op,
-            res_idx: 0,
-        };
+        let condition = cmp_op.deref(ctx).get_result(0);
 
         // Alloca + load/store model: argument-less successor blocks; the
         // cond_br carries only its boolean condition.
@@ -1949,6 +1937,16 @@ fn try_dispatch_intrinsic(
             loc,
         )?)),
         "cuda_device::debug::clock64" => Ok(Some(intrinsics::debug::emit_clock64(
+            ctx,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::debug::globaltimer" => Ok(Some(intrinsics::debug::emit_globaltimer(
             ctx,
             destination,
             target,

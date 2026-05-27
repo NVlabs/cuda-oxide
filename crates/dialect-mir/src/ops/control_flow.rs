@@ -186,6 +186,16 @@ impl BranchOpInterface for MirGotoOp {
         assert!(succ_idx == 0, "MirGotoOp has exactly one successor");
         Operation::push_operand(self.get_operation(), ctx, operand)
     }
+
+    fn remove_successor_operand(
+        &self,
+        ctx: &mut Context,
+        succ_idx: usize,
+        opd_idx: usize,
+    ) -> Value {
+        assert!(succ_idx == 0, "MirGotoOp has exactly one successor");
+        Operation::remove_operand(self.get_operation(), ctx, opd_idx)
+    }
 }
 
 // ============================================================================
@@ -303,6 +313,15 @@ impl BranchOpInterface for MirCondBranchOp {
     fn add_successor_operand(&self, ctx: &mut Context, succ_idx: usize, operand: Value) -> usize {
         self.push_to_segment(ctx, succ_idx + 1, operand)
     }
+
+    fn remove_successor_operand(
+        &self,
+        ctx: &mut Context,
+        succ_idx: usize,
+        opd_idx: usize,
+    ) -> Value {
+        self.remove_from_segment(ctx, succ_idx + 1, opd_idx)
+    }
 }
 
 // ============================================================================
@@ -402,6 +421,16 @@ impl BranchOpInterface for MirAssertOp {
     fn add_successor_operand(&self, ctx: &mut Context, succ_idx: usize, operand: Value) -> usize {
         assert!(succ_idx == 0, "MirAssertOp has exactly one successor");
         self.push_to_segment(ctx, 1, operand)
+    }
+
+    fn remove_successor_operand(
+        &self,
+        ctx: &mut Context,
+        succ_idx: usize,
+        opd_idx: usize,
+    ) -> Value {
+        assert!(succ_idx == 0, "MirAssertOp has exactly one successor");
+        self.remove_from_segment(ctx, 1, opd_idx)
     }
 }
 

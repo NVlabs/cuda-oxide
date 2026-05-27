@@ -49,7 +49,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
-use pliron::value::Value;
 use rustc_public::mir;
 /// Emits the expansion of `index_1d()`: `(blockIdx.x * blockDim.x + threadIdx.x) as usize`
 ///
@@ -700,10 +699,7 @@ pub fn emit_get_thread_local(
             }
             last_op = Some(load_op);
 
-            let loaded_val = Value::OpResult {
-                op: load_op,
-                res_idx: 0,
-            };
+            let loaded_val = load_op.deref(ctx).get_result(0);
             (loaded_val, element_ty)
         }
     };
@@ -730,10 +726,7 @@ pub fn emit_get_thread_local(
     }
     last_op = Some(extract_ptr.get_operation());
 
-    let ptr_val = Value::OpResult {
-        op: extract_ptr.get_operation(),
-        res_idx: 0,
-    };
+    let ptr_val = extract_ptr.get_operation().deref(ctx).get_result(0);
 
     // Compute ptr + idx using MirPtrOffsetOp
     let offset_op = Operation::new(
@@ -753,10 +746,7 @@ pub fn emit_get_thread_local(
     }
     last_op = Some(offset_op);
 
-    let result_ptr = Value::OpResult {
-        op: offset_op,
-        res_idx: 0,
-    };
+    let result_ptr = offset_op.deref(ctx).get_result(0);
 
     let prev = last_op.expect("should have at least offset_op");
     emit_store_result_and_goto(
@@ -851,10 +841,7 @@ pub fn emit_len(
     }
     last_op = Some(extract_len.get_operation());
 
-    let len_val = Value::OpResult {
-        op: extract_len.get_operation(),
-        res_idx: 0,
-    };
+    let len_val = extract_len.get_operation().deref(ctx).get_result(0);
 
     let prev = last_op.expect("should have at least extract_len op");
     emit_store_result_and_goto(

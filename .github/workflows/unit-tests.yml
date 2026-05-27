@@ -22,31 +22,51 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Each entry must be a workspace crate whose `cargo test --all-targets`
-        # is runnable on a stock `ubuntu-latest` runner — i.e. no live GPU and
-        # no full CUDA toolchain. Crates that need a GPU at runtime (e.g.
-        # `cuda-core`'s VMM/P2P integration test) are intentionally not in
-        # this matrix; they're covered by the GPU-enabled examples flow.
-        package:
-          - dialect-llvm
-          - dialect-mir
-          - dialect-nvvm
-          - mir-importer
-          - mir-lower
-          - reserved-oxide-symbols
-          - cuda-macros
-          - cuda-device   # trybuild compile-fail suite for ThreadIndex / DisjointSlice safety
-          - cuda-host     # pure-Rust kernel-launch helpers + tcgen05 tiling tables
+        # Each entry must be runnable on a stock `ubuntu-latest` runner — i.e.
+        # no live GPU. `needs_cuda: true` installs the CUDA toolkit for build-
+        # time bindgen (every crate that transitively depends on
+        # `cuda-bindings` needs `cuda.h` to compile). `test_args` overrides
+        # the default `--all-targets`, used by `cuda-core` to skip its
+        # GPU-only `tests/vmm_p2p.rs` integration test.
+        #
+        # Crates intentionally not in this matrix:
+        #   * `cuda-bindings`, `libnvvm-sys`, `nvjitlink-sys` — sys binding
+        #     shells with no `#[test]` functions; covered transitively.
+        #   * `fuzzer` — differential-testing infra with no unit tests.
+        #   * `rustc-codegen-cuda` — its own [workspace] that links against
+        #     `rustc-private` dylibs; covered by the dedicated clippy job.
+        include:
+          - package: dialect-llvm
+          - package: dialect-mir
+          - package: dialect-nvvm
+          - package: mir-importer
+          - package: mir-lower
+          - package: oxide-artifacts
+          - package: reserved-oxide-symbols
+          - package: cuda-macros
+          # trybuild compile-fail suite for ThreadIndex / DisjointSlice safety
+          - package: cuda-device
+          # pure-Rust kernel-launch helpers + tcgen05 tiling tables
+          - package: cuda-host
+            needs_cuda: true
+          # cargo subcommand wrapper; transitively pulls cuda-bindings
+          - package: cargo-oxide
+            needs_cuda: true
+          # async DeviceOperation pipeline; transitively pulls cuda-bindings
+          - package: cuda-async
+            needs_cuda: true
+          # CUDA driver wrappers; `--lib` skips the GPU-only VMM/P2P
+          # integration test in `tests/vmm_p2p.rs`.
+          - package: cuda-core
+            needs_cuda: true
+            test_args: --lib
 
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      # Only `cuda-host` transitively pulls in `cuda-bindings`, whose
-      # build script invokes bindgen against `cuda.h`. Skip the install
-      # for the other matrix entries to keep their jobs lean.
-      - name: Install CUDA toolkit (cuda-host only)
-        if: matrix.package == 'cuda-host'
+      - name: Install CUDA toolkit
+        if: matrix.needs_cuda
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit
         with:
@@ -61,4 +81,24 @@ jobs:
           sysroot="$(rustc --print sysroot)"
           export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
           export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
-          cargo test -p ${{ matrix.package }} --all-targets
+
+          # cuda-bindings emits `cargo:rustc-link-lib=dylib=cuda`, and the
+          # linker stamps the stub's SONAME (`libcuda.so.1`) into the test
+          # binary's DT_NEEDED. The `cudart-dev` sub-package only ships the
+          # link-time stub named `libcuda.so`, with no `libcuda.so.1` alias.
+          # Binaries that actually reference `cu*` symbols (cuda-core,
+          # cuda-async) keep the NEEDED entry and fail to load at runtime
+          # on a GPU-less runner. Binaries whose `cu*` calls were pruned by
+          # `--as-needed` (e.g. cuda-host's tests) load fine without it.
+          # Create a writable shadow with the `libcuda.so.1` filename
+          # pointing at the stub, and prepend it to LD_LIBRARY_PATH. The
+          # stub returns errors for any real driver call, which is fine
+          # because the unit tests selected here never invoke one.
+          if [ -n "${CUDA_TOOLKIT_PATH:-}" ] && [ -f "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" ]; then
+            stub_shadow="${RUNNER_TEMP}/libcuda-stub"
+            mkdir -p "${stub_shadow}"
+            ln -sf "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" "${stub_shadow}/libcuda.so.1"
+            export LD_LIBRARY_PATH="${stub_shadow}:${LD_LIBRARY_PATH}"
+          fi
+
+          cargo test -p ${{ matrix.package }} ${{ matrix.test_args || '--all-targets' }}

@@ -159,20 +159,18 @@ manual sidecar artifact loading and custom launch code.
 
 ### Argument scalarization
 
-Aggregate types (slices, structs, closures) are **scalarized** at the host/device boundary. A `&[f32]` is decomposed into its `(ptr, len)` components and passed as two separate kernel parameters. On the device side, the compiler reassembles them back into a slice. This avoids ABI mismatches between host and device compilers:
+Slices cross the host/device ABI as their `(ptr, len)` components -- the host passes them as two kernel arguments, and the device compiler reassembles the slice in the entry block. Structs and closures by value travel as one byval `.param` instead, so the host packet pushes the whole aggregate as a single slot (this matches what the launcher actually does and avoids mismatches with field-by-field declarations). All of this is fully transparent -- the kernel signature still looks like ordinary Rust:
 
 ```text
 Host:   module.vecadd(..., &data, ...)
-          → extracts ptr + len, passes two args
+          → extracts (ptr, len) for the slice, passes two args
 
 PTX:    .entry kernel(.param .u64 ptr, .param .u64 len, ...)
-          → receives flat parameters
+          → receives flat slice parameters
 
 Device: kernel body sees unified &[T] slice
           → compiler reconstructs at entry
 ```
-
-This is fully transparent -- you never see it.
 
 ### Dynamic struct layout
 

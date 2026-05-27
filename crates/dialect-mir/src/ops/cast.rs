@@ -7,7 +7,7 @@
 //!
 //! This module defines type conversion operations for the MIR dialect.
 
-use crate::attributes::MirCastKindAttr;
+use crate::attributes::{MirCastKindAttr, NicheEncodingAttr};
 use crate::types::MirPtrType;
 use pliron::{
     builtin::{
@@ -49,9 +49,15 @@ use pliron_derive::pliron_op;
 ///
 /// # Attributes
 ///
-/// | Name        | Type              | Description                 |
-/// |-------------|-------------------|-----------------------------|
-/// | `cast_kind` | `MirCastKindAttr` | Semantic cast kind from MIR |
+/// | Name              | Type                 | Description                                                                                  |
+/// |-------------------|----------------------|----------------------------------------------------------------------------------------------|
+/// | `cast_kind`       | `MirCastKindAttr`    | Semantic cast kind from MIR.                                                                 |
+/// | `niche_encoding`  | `NicheEncodingAttr`  | Optional. Niche layout for a `Transmute` whose destination is a niche-optimised enum.        |
+///
+/// `niche_encoding` is only meaningful when `cast_kind == Transmute`. The
+/// importer attaches it whenever rustc tells us the destination type uses
+/// `TagEncoding::Niche`; mir-lower reads it to rebuild the un-niched
+/// `{ discriminant, payload }` aggregate explicitly.
 ///
 /// # Verification
 ///
@@ -61,11 +67,13 @@ use pliron_derive::pliron_op;
 /// - **PointerExposeAddress**: operand is pointer, result is integer.
 /// - **PointerWithExposedProvenance**: operand is integer, result is pointer.
 /// - **PtrToPtr**, **Transmute**, **PointerCoercion\***, **Subtype**: no extra type check (lowering handles ptr/struct/tuple etc.).
+///
+/// If `niche_encoding` is present, `cast_kind` must be `Transmute` (rejected otherwise).
 #[pliron_op(
     name = "mir.cast",
     format,
     interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface],
-    attributes = (cast_kind: MirCastKindAttr)
+    attributes = (cast_kind: MirCastKindAttr, niche_encoding: NicheEncodingAttr)
 )]
 pub struct MirCastOp;
 
@@ -167,6 +175,18 @@ impl Verify for MirCastOp {
             | MirCastKindAttr::PointerCoercionUnsafeFnPointer
             | MirCastKindAttr::PointerCoercionClosureFnPointer
             | MirCastKindAttr::Subtype => {}
+        }
+
+        // `niche_encoding` only makes sense on a Transmute. Catching this
+        // here means downstream lowering can assume that whenever a niche
+        // encoding is present the cast really is a Transmute.
+        if self.get_attr_niche_encoding(ctx).is_some()
+            && !matches!(cast_kind, MirCastKindAttr::Transmute)
+        {
+            return verify_err!(
+                loc,
+                "niche_encoding attribute is only valid on a Transmute cast"
+            );
         }
 
         Ok(())

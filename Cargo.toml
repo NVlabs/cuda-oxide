@@ -37,8 +37,10 @@ repository = "https://github.com/NVlabs/cuda-oxide.git"
 
 [workspace.dependencies]
 # Pliron MLIR framework
-pliron = { git = "https://github.com/vaivaswatha/pliron" }
-pliron-derive = { git = "https://github.com/vaivaswatha/pliron" }
+# Pinned to avoid breakage when upstream `main` moves. Bump deliberately and
+# keep `crates/rustc-codegen-cuda/Cargo.toml` on the same rev.
+pliron = { git = "https://github.com/vaivaswatha/pliron", rev = "b51e73b11648508188184451adebdcf63957b7fe" }
+pliron-derive = { git = "https://github.com/vaivaswatha/pliron", rev = "b51e73b11648508188184451adebdcf63957b7fe" }
 
 # Internal crates
 dialect-llvm = { path = "crates/dialect-llvm" }

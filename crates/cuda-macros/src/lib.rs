@@ -53,7 +53,6 @@ use reserved_oxide_symbols::{
     DEVICE_EXTERN_PREFIX, DEVICE_PREFIX, INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL,
     RESERVED_ROOT, kernel_symbol,
 };
-use std::collections::HashSet;
 use syn::{
     Expr, ExprCall, ExprMethodCall, ExprPath, FnArg, ForeignItem, GenericArgument, GenericParam,
     Ident, Item, ItemFn, ItemForeignMod, ItemMod, Pat, Path, PathArguments, Stmt, Token, Type,
@@ -62,7 +61,6 @@ use syn::{
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
-    visit::Visit,
     visit_mut::{self, VisitMut},
 };
 
@@ -1335,44 +1333,44 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
         })
         .collect();
 
-    // Generate the instantiate helper only if we found a closure parameter
+    let marker_name = format_ident!("__{}_CudaKernel", fn_name);
     let instantiate_helper = if let Some(closure_type_name) = closure_generic {
-        // Find which parameter uses the closure type
         if let Some((_closure_idx, (_closure_name, closure_type))) =
             find_closure_param(&args_info, &closure_type_name)
         {
-            // Build the function type for the kernel (for the function pointer)
             let arg_types: Vec<TokenStream2> =
                 args_info.iter().map(|(_, ty)| quote! { #ty }).collect();
 
             quote! {
                 /// Auto-generated helper to force kernel monomorphization.
-                /// Takes the closure and its source location, returns the PTX export name.
-                /// This forces rustc to monomorphize the kernel with the closure type
-                /// WITHOUT actually calling the kernel (which would panic on host).
                 ///
-                /// The line/col parameters come from the proc-macro's span, ensuring the
-                /// export name matches what the backend generates.
+                /// Takes the closure by *reference* so its anonymous type
+                /// is bound to the generic parameter `F` at the call site
+                /// without moving the closure — the caller still needs the
+                /// closure value to push as the kernel argument right
+                /// after. Then forces rustc to emit a CGU entry for the
+                /// concrete `#kernel_name::<...>` instantiation. Returns
+                /// the PTX export name produced by the kernel's
+                /// `GenericCudaKernel::ptx_name()` impl, which is the
+                /// single source of truth for the on-wire name on the
+                /// host side.
+                ///
+                /// Bound is intentionally not `'static`: closures that
+                /// borrow non-`'static` data (e.g. capture `&[T]`) still
+                /// monomorphize cleanly. The caller is responsible for
+                /// keeping that borrow alive across the asynchronous
+                /// launch — `cuda_host::type_id_u128` does not enforce
+                /// this.
                 #[doc(hidden)]
                 #[inline(never)]
-                #vis fn #instantiate_name #generics (_f: #closure_type, line: u32, col: u32) -> &'static str #where_clause {
-                    // Force monomorphization by referencing the kernel with explicit type params
-                    // CRITICAL: Use volatile write/read to prevent optimization from eliminating
-                    // the function pointer reference. Without this, the `let _ = ...` gets DCE'd
-                    // and rustc doesn't generate the CGU entry.
+                #vis fn #instantiate_name #generics (_f: &#closure_type) -> &'static str #where_clause {
                     let __kernel_ptr = #kernel_name::<#(#generic_param_names),*> as fn(#(#arg_types),*) as *const ();
                     unsafe {
                         let mut __force_mono: *const () = core::ptr::null();
                         core::ptr::write_volatile(&mut __force_mono, __kernel_ptr);
                         let _ = core::ptr::read_volatile(&__force_mono);
                     }
-                    // Return the PTX export name - based on source location
-                    // The backend uses the same naming scheme: "{kernel}_L{line}C{col}"
-                    // Leak a formatted string (only happens once per monomorphization)
-                    let name = std::boxed::Box::leak(
-                        format!("{}_L{}C{}", stringify!(#fn_name), line, col).into_boxed_str()
-                    );
-                    name
+                    <#marker_name::<#(#generic_param_names),*> as cuda_host::GenericCudaKernel>::ptx_name()
                 }
             }
         } else {
@@ -1470,16 +1468,35 @@ fn generate_simple_kernel(mut input: ItemFn) -> TokenStream {
 
 /// Generate the GenericCudaKernel trait implementation for a generic kernel.
 ///
-/// For generic kernels like `fn scale<T>()`, we generate:
+/// For generic kernels like `fn scale<T>()`, emits:
+///
 /// ```ignore
 /// pub struct __scale_CudaKernel<T>(PhantomData<T>);
 /// impl<T> GenericCudaKernel for __scale_CudaKernel<T> {
-///     fn ptx_name() -> &'static str { ... }
+///     fn ptx_name() -> &'static str {
+///         // "scale_TID_<hex32>" — one 32-char hex chunk for the
+///         // 1-tuple `(T,)`. For an N-generic kernel we hash the
+///         // N-tuple `(T0, T1, ...)` so the name length is constant
+///         // regardless of arity.
+///     }
 /// }
 /// ```
 ///
-/// The PTX name is computed at runtime based on `std::any::type_name::<Self>()`.
-/// The backend uses the same naming scheme when generating PTX.
+/// The body computes the same string the backend writes into the PTX:
+/// `<base>_TID_<hex32>`, where `<hex32>` is
+/// `cuda_host::type_id_u128::<(T0, T1, ...,)>()` rendered as 32
+/// lowercase hex chars. The backend's `compute_kernel_export_name`
+/// computes the same hash via `Ty::new_tup(tcx, &[T0, T1, ...])` +
+/// `tcx.type_id_hash(...)`, so the two strings match byte-for-byte.
+///
+/// Bound on the impl is `where_clause` verbatim — typically `Copy` on
+/// each value-passed generic. We deliberately do not add `'static`:
+/// `type_id_u128` has bound `T: ?Sized`, so closure types that borrow
+/// non-`'static` data still satisfy the marker's bounds and can be
+/// launched through the typed `module.<kernel>(...)` path. Keeping the
+/// borrow alive across `stream.synchronize()` remains the caller's
+/// responsibility, exactly as it was under the previous `type_name`
+/// scheme.
 fn generate_generic_cuda_kernel_impl(
     fn_name: &Ident,
     generics: &syn::Generics,
@@ -1488,7 +1505,6 @@ fn generate_generic_cuda_kernel_impl(
     let marker_name = format_ident!("__{}_CudaKernel", fn_name);
     let base_name = fn_name.to_string();
 
-    // Extract just the type parameters (for PhantomData and impl)
     let type_params: Vec<_> = generics.params.iter().collect();
     let type_param_names: Vec<_> = generics
         .params
@@ -1502,9 +1518,29 @@ fn generate_generic_cuda_kernel_impl(
         })
         .collect();
 
+    let ptx_name_body = if type_param_names.is_empty() {
+        quote! {
+            fn ptx_name() -> &'static str {
+                #base_name
+            }
+        }
+    } else {
+        // Trailing comma in the tuple type expression keeps the
+        // arity-1 case `(T,)` a real 1-tuple — without it,
+        // `(T)` would just be a parenthesized type and the hash
+        // would differ from the backend's `Ty::new_tup(tcx, &[T])`.
+        quote! {
+            fn ptx_name() -> &'static str {
+                let __hash = ::cuda_host::type_id_u128::<( #(#type_param_names,)* )>();
+                let name = format!("{}_TID_{:032x}", #base_name, __hash);
+                Box::leak(name.into_boxed_str())
+            }
+        }
+    };
+
     quote! {
-        /// Marker type for generic kernel, implements GenericCudaKernel trait.
-        /// The type parameters match the kernel's generic parameters.
+        /// Marker type for a generic kernel; implements `GenericCudaKernel`.
+        /// The type parameters mirror the kernel's generic parameters.
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
         pub struct #marker_name<#(#type_params),*>(
@@ -1514,42 +1550,7 @@ fn generate_generic_cuda_kernel_impl(
         impl<#(#type_params),*> cuda_host::GenericCudaKernel for #marker_name<#(#type_param_names),*>
         #where_clause
         {
-            fn ptx_name() -> &'static str {
-                // Generate a unique PTX name for this specific monomorphization.
-                // Uses type_name to distinguish e.g. scale::<f32> from scale::<i32>.
-                //
-                // The naming scheme must match the collector's compute_generic_kernel_name()
-                // which uses the same approach: base_name + sanitized type params.
-                //
-                // We use a const fn to compute this at compile time, leaking a String
-                // to get a &'static str. This is acceptable as kernel names are few.
-                const BASE: &str = #base_name;
-
-                // Get the full type name which includes generic params
-                // e.g., "cross_crate_kernel::__scale_CudaKernel<f32>"
-                let full_name = core::any::type_name::<Self>();
-
-                // Extract just the type params from the angle brackets
-                // e.g., "<f32>" or "<i32, SomeType>"
-                if let Some(start) = full_name.find('<') {
-                    if let Some(end) = full_name.rfind('>') {
-                        let type_params = &full_name[start + 1..end];
-                        // Sanitize: replace invalid PTX chars with underscores
-                        let sanitized: String = type_params
-                            .chars()
-                            .map(|c| match c {
-                                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => c,
-                                _ => '_',
-                            })
-                            .collect();
-                        // Combine: "scale" + "__" + "f32" = "scale__f32"
-                        let name = format!("{}__{}", BASE, sanitized);
-                        return Box::leak(name.into_boxed_str());
-                    }
-                }
-                // Fallback: no type params, use base name
-                BASE
-            }
+            #ptx_name_body
         }
     }
 }
@@ -2286,118 +2287,13 @@ pub fn readonly(_attr: TokenStream, item: TokenStream) -> TokenStream {
 // cuda_launch! Macro (unified compilation)
 // ============================================================================
 
-// ============================================================================
-// Closure Capture Extraction
-// ============================================================================
-
-/// Collects identifiers from an expression AST.
-/// Used to find potential captured variables in closures.
-struct IdentCollector {
-    /// Collected identifiers (simple names, not paths)
-    idents: Vec<syn::Ident>,
-    /// Variables that are bound locally (shadow outer scope)
-    local_bindings: HashSet<String>,
-}
-
-impl IdentCollector {
-    fn new() -> Self {
-        Self {
-            idents: Vec::new(),
-            local_bindings: HashSet::new(),
-        }
-    }
-}
-
-impl<'ast> Visit<'ast> for IdentCollector {
-    fn visit_expr_path(&mut self, node: &'ast syn::ExprPath) {
-        // Only collect simple identifiers, not qualified paths like std::mem::drop
-        if node.path.segments.len() == 1 && node.qself.is_none() {
-            let ident = &node.path.segments[0].ident;
-            let name = ident.to_string();
-            // Skip if it's a local binding (shadowed variable)
-            if !self.local_bindings.contains(&name) {
-                self.idents.push(ident.clone());
-            }
-        }
-        syn::visit::visit_expr_path(self, node);
-    }
-
-    fn visit_local(&mut self, node: &'ast syn::Local) {
-        // Track local `let` bindings - they shadow outer variables
-        if let syn::Pat::Ident(pat_ident) = &node.pat {
-            self.local_bindings.insert(pat_ident.ident.to_string());
-        } else if let syn::Pat::Type(pat_type) = &node.pat
-            && let syn::Pat::Ident(pat_ident) = &*pat_type.pat
-        {
-            self.local_bindings.insert(pat_ident.ident.to_string());
-        }
-        // Still visit the initializer and body
-        syn::visit::visit_local(self, node);
-    }
-
-    fn visit_expr_closure(&mut self, _node: &'ast syn::ExprClosure) {
-        // Don't recurse into nested closures - their captures are their own
-        // We only care about captures at the current closure level
-    }
-}
-
-/// Extract captured variables from a closure expression.
+/// Try to extract closure from an expression.
 ///
-/// This function parses the closure's parameters and body to determine which
-/// variables are captured from the surrounding scope.
-///
-/// # Algorithm
-/// 1. Collect parameter names (they're not captures)
-/// 2. Walk the body AST, collect all simple identifiers
-/// 3. Captures = body identifiers - parameters - local bindings
-///
-/// # Example
-/// ```ignore
-/// move |x: u32| x * factor + offset
-/// // params = ["x"]
-/// // body_idents = ["x", "factor", "offset"]
-/// // captures = ["factor", "offset"]
-/// ```
-fn extract_closure_captures(closure: &syn::ExprClosure) -> Vec<syn::Ident> {
-    // Step 1: Get parameter names
-    let params: HashSet<String> = closure
-        .inputs
-        .iter()
-        .filter_map(|pat| {
-            // Handle both `|x|` and `|x: Type|` patterns
-            match pat {
-                syn::Pat::Ident(pat_ident) => Some(pat_ident.ident.to_string()),
-                syn::Pat::Type(pat_type) => {
-                    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                        Some(pat_ident.ident.to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        })
-        .collect();
-
-    // Step 2: Walk body and collect identifiers
-    let mut visitor = IdentCollector::new();
-    syn::visit::visit_expr(&mut visitor, &closure.body);
-
-    // Step 3: Filter to get captures (identifiers that aren't parameters)
-    let mut seen = HashSet::new();
-    visitor
-        .idents
-        .into_iter()
-        .filter(|id| {
-            let name = id.to_string();
-            // Keep if: not a parameter, not a placeholder (_), not already seen
-            !params.contains(&name) && !name.starts_with('_') && seen.insert(name)
-            // dedup
-        })
-        .collect()
-}
-
-/// Try to extract closure from an expression
+/// Closure marshalling no longer needs per-capture extraction: the
+/// backend emits a single byval `.param` for the whole closure struct,
+/// and the host pushes one scalar. The closure literal is still parsed
+/// out of the launch args so the `instantiate_name` helper has a
+/// concrete `&F` to bind the kernel's generic closure type to.
 fn as_closure_expr(expr: &syn::Expr) -> Option<&syn::ExprClosure> {
     match expr {
         syn::Expr::Closure(closure) => Some(closure),
@@ -2413,18 +2309,10 @@ enum CudaLaunchArg {
     SliceWithLen(syn::Expr),
     /// Mutable slice with explicit length - passed as ptr + len
     SliceMutWithLen(syn::Expr),
-    /// Closure expression - captures extracted and passed as individual args
-    Closure {
-        /// The original closure expression (for type inference and monomorphization)
-        closure_expr: syn::ExprClosure,
-        /// Captured variables extracted from the closure body
-        captures: Vec<syn::Ident>,
-        /// Whether this is a `move` closure (captures by value) or non-move (captures by reference)
-        ///
-        /// - `move` closure: captures are values, pass `&cap`
-        /// - non-move closure: captures are references, pass `&(&cap as *const _)` (the address)
-        is_move: bool,
-    },
+    /// Closure expression. The closure value is pushed as a single byval
+    /// scalar argument; the backend emits a matching single .param entry
+    /// for aggregate kernel parameters. No per-capture decomposition.
+    Closure { closure_expr: syn::ExprClosure },
 }
 
 impl Parse for CudaLaunchArg {
@@ -2452,12 +2340,8 @@ impl Parse for CudaLaunchArg {
                     // Parse the full closure expression (move |args| body)
                     let expr: syn::Expr = input.parse()?;
                     if let Some(closure) = as_closure_expr(&expr) {
-                        let captures = extract_closure_captures(closure);
-                        let is_move = closure.capture.is_some(); // `move` keyword present
                         return Ok(CudaLaunchArg::Closure {
                             closure_expr: closure.clone(),
-                            captures,
-                            is_move,
                         });
                     }
                     // Not a closure, treat as direct expression
@@ -2471,12 +2355,8 @@ impl Parse for CudaLaunchArg {
         if input.peek(Token![|]) {
             let expr: syn::Expr = input.parse()?;
             if let Some(closure) = as_closure_expr(&expr) {
-                let captures = extract_closure_captures(closure);
-                let is_move = closure.capture.is_some(); // `move` keyword present (false here)
                 return Ok(CudaLaunchArg::Closure {
                     closure_expr: closure.clone(),
-                    captures,
-                    is_move,
                 });
             }
             // Shouldn't happen, but fallback to direct
@@ -2488,12 +2368,8 @@ impl Parse for CudaLaunchArg {
 
         // Check if the parsed expression happens to be a closure
         if let Some(closure) = as_closure_expr(&expr) {
-            let captures = extract_closure_captures(closure);
-            let is_move = closure.capture.is_some(); // `move` keyword present
             return Ok(CudaLaunchArg::Closure {
                 closure_expr: closure.clone(),
-                captures,
-                is_move,
             });
         }
 
@@ -2678,20 +2554,16 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         .iter()
         .any(|arg| matches!(arg, CudaLaunchArg::Closure { .. }));
 
-    // Extract closure info if present (for monomorphization)
-    let closure_info: Option<(&syn::ExprClosure, &Vec<syn::Ident>)> =
-        input.args.iter().find_map(|arg| {
-            if let CudaLaunchArg::Closure {
-                closure_expr,
-                captures,
-                is_move: _,
-            } = arg
-            {
-                Some((closure_expr, captures))
-            } else {
-                None
-            }
-        });
+    // Extract closure info if present (for monomorphization). Only the
+    // first closure is treated as the type-inference anchor; the macro
+    // currently supports at most one closure parameter per kernel.
+    let closure_info: Option<&syn::ExprClosure> = input.args.iter().find_map(|arg| {
+        if let CudaLaunchArg::Closure { closure_expr } = arg {
+            Some(closure_expr)
+        } else {
+            None
+        }
+    });
 
     // Generate argument marshaling code.
     //
@@ -2734,39 +2606,23 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                         __args.push(&mut #len_name as *mut _ as *mut std::ffi::c_void);
                     }
                 }
-                CudaLaunchArg::Closure {
-                    closure_expr: _,
-                    captures,
-                    is_move,
-                } => {
-                    // Each captured variable becomes an individual kernel argument.
+                CudaLaunchArg::Closure { .. } => {
+                    // Push the whole closure as a single byval scalar. The
+                    // backend emits a single byval kernel parameter for
+                    // aggregate (struct / closure) entry-point args, so
+                    // pushing `__closure` once matches what the device-side
+                    // `.param` declaration expects.
                     //
-                    // Move closures capture BY VALUE → pass &mut cap.
-                    // Non-move closures capture BY REFERENCE → pass &mut (&cap as *const _),
-                    // the GPU accesses the host address via HMM.
-                    let capture_args: Vec<TokenStream2> = captures
-                        .iter()
-                        .enumerate()
-                        .map(|(ci, cap)| {
-                            let cap_name = format_ident!("__cap_{}_{}", i, ci);
-                            if *is_move {
-                                quote! {
-                                    let mut #cap_name = #cap;
-                                    __args.push(&mut #cap_name as *mut _ as *mut std::ffi::c_void);
-                                }
-                            } else {
-                                quote! {
-                                    let mut #cap_name = &(#cap) as *const _;
-                                    __args.push(&mut #cap_name as *mut _ as *mut std::ffi::c_void);
-                                }
-                            }
-                        })
-                        .collect();
-
-                    if captures.is_empty() {
-                        quote! {}
-                    } else {
-                        quote! { #(#capture_args)* }
+                    // Routed through `push_kernel_scalar` so ZST closures
+                    // (zero captures) are dropped from the host packet —
+                    // matching the backend, which drops their `.param`
+                    // declaration too. Move closures push by value;
+                    // non-move closures push the closure struct (which
+                    // contains host references the GPU dereferences via
+                    // HMM).
+                    let _ = i;
+                    quote! {
+                        ::cuda_host::push_kernel_scalar(&mut __args, &mut __closure);
                     }
                 }
             }
@@ -2839,18 +2695,28 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
     };
 
     let expanded = if has_closure {
-        let (closure_expr, _captures) = closure_info.expect("has_closure but no closure_info");
+        let closure_expr = closure_info.expect("has_closure but no closure_info");
 
-        let closure_span = closure_expr.span();
-        let start = closure_span.start();
-        let line = start.line as u32;
-        let col = start.column as u32;
+        // The on-wire PTX name comes from the kernel's
+        // GenericCudaKernel::ptx_name() impl (via the instantiate helper).
+        // The helper takes `&F` so we can keep ownership of `__closure`
+        // and push it as the byval kernel argument right after — the
+        // backend's kernel-boundary ABI emits a single .param for the
+        // whole closure struct, matching this single push.
+        let _ = closure_expr.span();
 
         quote! {
             {
-                let __closure = #closure_expr;
-                let __ptx_name: &'static str = #instantiate_name(__closure, #line, #col);
-                let __func = #module.load_function(__ptx_name).expect("Failed to load kernel function");
+                let mut __closure = #closure_expr;
+                let __ptx_name: &'static str = #instantiate_name(&__closure);
+                let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                        stringify!(#kernel_base),
+                        __ptx_name,
+                        err,
+                    )
+                });
 
                 let mut __args: Vec<*mut std::ffi::c_void> = Vec::new();
                 #(#arg_code)*
@@ -2871,7 +2737,14 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                 }
 
                 let __ptx_name = <#marker_name #generics as cuda_host::GenericCudaKernel>::ptx_name();
-                let __func = #module.load_function(__ptx_name).expect("Failed to load kernel function");
+                let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                        stringify!(#kernel_base),
+                        __ptx_name,
+                        err,
+                    )
+                });
 
                 let mut __args: Vec<*mut std::ffi::c_void> = Vec::new();
                 #(#arg_code)*
@@ -2885,7 +2758,14 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         quote! {
             {
                 const __PTX_NAME: &str = <#marker_name as cuda_host::CudaKernel>::PTX_NAME;
-                let __func = #module.load_function(__PTX_NAME).expect("Failed to load kernel function");
+                let __func = #module.load_function(__PTX_NAME).unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                        stringify!(#kernel_base),
+                        __PTX_NAME,
+                        err,
+                    )
+                });
 
                 let mut __args: Vec<*mut std::ffi::c_void> = Vec::new();
                 #(#arg_code)*
@@ -3089,23 +2969,22 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
                         __launch.push_arg(Box::new(#len_name));
                     }
                 }
-                CudaLaunchArg::Closure {
-                    captures, is_move, ..
-                } => {
-                    let capture_args: Vec<TokenStream2> = captures
-                        .iter()
-                        .map(|cap| {
-                            if *is_move {
-                                quote! { __launch.push_arg(Box::new(#cap)); }
-                            } else {
-                                quote! {
-                                    let __ref_capture = &(#cap) as *const _ as usize;
-                                    __launch.push_arg(Box::new(__ref_capture));
-                                }
-                            }
-                        })
-                        .collect();
-                    quote! { #(#capture_args)* }
+                CudaLaunchArg::Closure { closure_expr, .. } => {
+                    // Push the whole closure as one boxed byval scalar so
+                    // the host packet matches the kernel-boundary ABI
+                    // (one .param entry per aggregate kernel argument).
+                    // `Box::new(...)` keeps the closure alive until the
+                    // async launch is submitted; `KernelArgument for
+                    // Box<T>` heap-allocates and stores the pointer.
+                    //
+                    // `T: 'static` is required by the blanket impl, so
+                    // non-`'static` borrowing closures aren't supported
+                    // on the async path today — same posture as before
+                    // this change, just expressed at the closure level
+                    // instead of per-capture.
+                    quote! {
+                        __launch.push_arg(Box::new(#closure_expr));
+                    }
                 }
             }
         })
@@ -3122,8 +3001,14 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
                     let _ = core::ptr::read_volatile(&__force_mono);
                 }
                 let __ptx_name = <#marker_name #generics as cuda_host::GenericCudaKernel>::ptx_name();
-                let __func = #module.load_function(__ptx_name)
-                    .expect("Failed to load kernel function");
+                let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                        stringify!(#kernel_base),
+                        __ptx_name,
+                        err,
+                    )
+                });
                 let mut __launch = cuda_async::launch::AsyncKernelLaunch::new(
                     std::sync::Arc::new(__func),
                 );
@@ -3137,8 +3022,14 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
             {
                 const __PTX_NAME: &str =
                     <#marker_name as cuda_host::CudaKernel>::PTX_NAME;
-                let __func = #module.load_function(__PTX_NAME)
-                    .expect("Failed to load kernel function");
+                let __func = #module.load_function(__PTX_NAME).unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                        stringify!(#kernel_base),
+                        __PTX_NAME,
+                        err,
+                    )
+                });
                 let mut __launch = cuda_async::launch::AsyncKernelLaunch::new(
                     std::sync::Arc::new(__func),
                 );

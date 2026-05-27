@@ -16,3 +16,4 @@ clap = { version = "4", features = ["derive"] }
 libnvvm-sys = { workspace = true }
 nvjitlink-sys = { workspace = true }
 cuda-host = { workspace = true }
+cuda-core = { workspace = true }

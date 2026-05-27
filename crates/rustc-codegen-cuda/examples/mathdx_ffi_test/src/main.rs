@@ -657,9 +657,24 @@ fn get_example_dir() -> std::path::PathBuf {
 
 /// Runs a shell command in the specified directory.
 fn run_command(cmd: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
-    let status = Command::new(cmd)
-        .args(args)
-        .current_dir(cwd)
+    run_command_with_env(cmd, args, cwd, &[])
+}
+
+/// Same as `run_command`, but injects extra `(key, value)` pairs into the
+/// child's environment first. Used to forward the discovered `MATHDX_ROOT`
+/// to `extern-libs/build.sh` even when the parent shell didn't export it.
+fn run_command_with_env(
+    cmd: &str,
+    args: &[&str],
+    cwd: &Path,
+    extra_env: &[(&str, &str)],
+) -> Result<(), String> {
+    let mut command = Command::new(cmd);
+    command.args(args).current_dir(cwd);
+    for (k, v) in extra_env {
+        command.env(k, v);
+    }
+    let status = command
         .status()
         .map_err(|e| format!("Failed to run {}: {}", cmd, e))?;
 
@@ -704,12 +719,21 @@ fn build_tools(example_dir: &Path) -> Result<(), String> {
 
 /// Builds external MathDx CUDA C++ files to LTOIR.
 /// Always does a clean rebuild during development.
-fn build_external_ltoir(example_dir: &Path) -> Result<(), String> {
+fn build_external_ltoir(example_dir: &Path, mathdx_root: &Path) -> Result<(), String> {
     let extern_libs_dir = example_dir.join("extern-libs");
 
     println!("=== Building MathDx LTOIR ===");
+    println!("    Using MATHDX_ROOT={}", mathdx_root.display());
+    let mathdx_root_str = mathdx_root
+        .to_str()
+        .ok_or_else(|| format!("MATHDX_ROOT is not valid UTF-8: {}", mathdx_root.display()))?;
     // Always clean rebuild during development to ensure fresh LTOIR
-    run_command("./build.sh", &["--clean", arch()], &extern_libs_dir)?;
+    run_command_with_env(
+        "./build.sh",
+        &["--clean", arch()],
+        &extern_libs_dir,
+        &[("MATHDX_ROOT", mathdx_root_str)],
+    )?;
     println!("  ✓ MathDx LTOIR built\n");
     Ok(())
 }
@@ -812,11 +836,11 @@ fn link_ltoir(
 }
 
 /// Runs the complete build pipeline.
-fn build_pipeline() -> Result<std::path::PathBuf, String> {
+fn build_pipeline(mathdx_root: &Path) -> Result<std::path::PathBuf, String> {
     let example_dir = get_example_dir();
 
     build_tools(&example_dir)?;
-    build_external_ltoir(&example_dir)?;
+    build_external_ltoir(&example_dir, mathdx_root)?;
 
     // Generate LTOIR using libmathdx C API (Option B) - only if feature enabled
     #[cfg(feature = "libmathdx")]
@@ -835,23 +859,116 @@ fn build_pipeline() -> Result<std::path::PathBuf, String> {
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use std::sync::Arc;
 
-/// Mirrors the detection logic in `extern-libs/build.sh`: first honour
-/// `MATHDX_ROOT`, then fall back to well-known install paths. Returns `None`
-/// if MathDx is not reachable on this host.
+/// Locate a usable MathDx SDK root. A directory is *usable* iff it contains
+/// both `include/` (cufftdx.hpp, cublasdx.hpp, ...) and
+/// `external/cutlass/include/` — the two trees `extern-libs/build.sh` will
+/// pass to `nvcc -I`. Anything less complete returns `None` so the example
+/// skips cleanly instead of letting `nvcc` crash later with a "missing
+/// folder" diagnostic against a half-installed or stale root.
+///
+/// Search order:
+///   1. `MATHDX_ROOT` (explicit override; treated as the path itself).
+///   2. The canonical Linux install paths used by the deb/rpm packages.
+///   3. Common unpacked layouts under user/system roots — the SDK tarballs
+///      extract to `<parent>/nvidia/mathdx/<version>/`, so we walk the
+///      `<version>/` entries of the first `nvidia/mathdx/` we find.
+///
+/// This is best-effort discovery for local dev machines. The smoketest only
+/// cares that we land on a usable root *or* return `None` cleanly.
 fn find_mathdx_root() -> Option<std::path::PathBuf> {
+    let usable = |p: &std::path::Path| -> bool {
+        p.is_dir()
+            && p.join("include").is_dir()
+            && p.join("external").join("cutlass").join("include").is_dir()
+    };
+
     if let Ok(root) = std::env::var("MATHDX_ROOT") {
         let p = std::path::PathBuf::from(root);
-        if p.is_dir() {
+        if usable(&p) {
             return Some(p);
         }
     }
+
     for candidate in ["/usr/local/mathdx", "/opt/nvidia/mathdx"] {
         let p = std::path::PathBuf::from(candidate);
-        if p.is_dir() {
+        if usable(&p) {
             return Some(p);
         }
     }
+
+    // Tarball layout: `<parent>/nvidia/mathdx/<version>/`. Pick the
+    // lexicographically-greatest version (usually the newest).
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let mut parents: Vec<std::path::PathBuf> = vec![
+        std::path::PathBuf::from("/opt"),
+        std::path::PathBuf::from("/usr/local"),
+    ];
+    if let Some(h) = home {
+        parents.push(h.join("dev"));
+        parents.push(h.clone());
+        parents.push(h.join(".local"));
+    }
+
+    for parent in &parents {
+        if let Some(p) = pick_mathdx_under(parent, &usable) {
+            return Some(p);
+        }
+    }
+
     None
+}
+
+/// Walks `<parent>` looking for a `nvidia/mathdx/<version>/` tree (either
+/// directly, or one level deeper — the tarball expands to
+/// `nvidia-mathdx-<...>/nvidia/mathdx/<version>/`). Returns the highest-named
+/// version that satisfies `usable`.
+fn pick_mathdx_under(
+    parent: &std::path::Path,
+    usable: &dyn Fn(&std::path::Path) -> bool,
+) -> Option<std::path::PathBuf> {
+    let candidates = [
+        parent.join("nvidia").join("mathdx"),
+        // Try one level down for unpacked tarballs.
+        // We only look at entries whose name starts with `nvidia-mathdx`.
+    ];
+
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    for c in candidates {
+        if c.is_dir() {
+            roots.push(c);
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("nvidia-mathdx") {
+                let inner = entry.path().join("nvidia").join("mathdx");
+                if inner.is_dir() {
+                    roots.push(inner);
+                }
+            }
+        }
+    }
+
+    let mut best: Option<std::path::PathBuf> = None;
+    let mut best_name: Option<std::ffi::OsString> = None;
+    for root in roots {
+        if let Ok(versions) = std::fs::read_dir(&root) {
+            for v in versions.flatten() {
+                let path = v.path();
+                if !usable(&path) {
+                    continue;
+                }
+                let name = v.file_name();
+                if best_name.as_ref().is_none_or(|cur| &name > cur) {
+                    best = Some(path);
+                    best_name = Some(name);
+                }
+            }
+        }
+    }
+    best
 }
 
 fn main() {
@@ -861,19 +978,25 @@ fn main() {
     // host. The smoketest's LTOIR verdict recognises the `skipping:` prefix
     // and treats this as PASS so long as the cuda-oxide NVVM IR (.ll) was
     // generated (which happens before `cargo run` is invoked).
-    if find_mathdx_root().is_none() {
-        println!("skipping: MathDx SDK not found");
-        println!();
-        println!("To run this example, either:");
-        println!("  - set MATHDX_ROOT to your MathDx install root, or");
-        println!("  - install MathDx to /usr/local/mathdx or /opt/nvidia/mathdx.");
-        println!();
-        println!("Download MathDx from: https://developer.nvidia.com/cublasdx-downloads");
-        return;
-    }
+    let mathdx_root = match find_mathdx_root() {
+        Some(p) => p,
+        None => {
+            println!("skipping: MathDx SDK not found");
+            println!();
+            println!("To run this example, either:");
+            println!("  - set MATHDX_ROOT to your MathDx install root, or");
+            println!("  - install MathDx to /usr/local/mathdx or /opt/nvidia/mathdx, or");
+            println!("  - extract the SDK tarball under ~/dev, /opt, or /usr/local — the");
+            println!("    example auto-discovers `nvidia/mathdx/<version>/` trees there.");
+            println!();
+            println!("Download MathDx from: https://developer.nvidia.com/cublasdx-downloads");
+            return;
+        }
+    };
+    println!("MathDx root: {}\n", mathdx_root.display());
 
     // Build pipeline (tools, external LTOIR, link)
-    let cubin_path = match build_pipeline() {
+    let cubin_path = match build_pipeline(&mathdx_root) {
         Ok(path) => path,
         Err(e) => {
             eprintln!("Build failed: {}", e);

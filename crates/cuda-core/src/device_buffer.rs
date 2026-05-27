@@ -27,6 +27,7 @@ use cuda_bindings::CUdeviceptr;
 
 use crate::context::CudaContext;
 use crate::error::DriverError;
+use crate::pinned_host_buffer::PinnedHostBuffer;
 use crate::stream::CudaStream;
 
 /// Marker trait for values that can be safely copied between host and device
@@ -133,7 +134,7 @@ unsafe impl<T: Send + Sync> Sync for DeviceBuffer<T> {}
 impl<T> Drop for DeviceBuffer<T> {
     fn drop(&mut self) {
         if self.ptr != 0 {
-            let _ = self.ctx.bind_to_thread();
+            self.ctx.record_err(self.ctx.bind_to_thread());
             self.ctx
                 .record_err(unsafe { crate::memory::free_sync(self.ptr) });
         }
@@ -223,6 +224,45 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
         })
     }
 
+    /// Allocates device memory and enqueues a host-to-device copy from a
+    /// pinned host buffer on `stream`, returning without synchronizing.
+    ///
+    /// Pinned host memory allows CUDA to avoid the pageable-memory staging
+    /// path and is required when host-device copies need true asynchronous
+    /// overlap with other stream work.
+    ///
+    /// `PinnedHostBuffer` currently uses `cuMemAllocHost` without the
+    /// `PORTABLE` flag, so the allocation is only pinned in the context that
+    /// created it. In debug builds this asserts that `data` and `stream`
+    /// share the same [`CudaContext`].
+    ///
+    /// The device-to-host counterparts are [`Self::copy_to_pinned_host`]
+    /// (blocking) and [`Self::copy_to_pinned_host_async`] (non-blocking). To
+    /// refill an existing device buffer instead of allocating a new one, use
+    /// [`Self::copy_from_pinned_host_async`].
+    ///
+    /// # Safety
+    ///
+    /// This call only enqueues the host-to-device copy on `stream` and
+    /// returns; CUDA may still be reading from `data`'s pinned pointer long
+    /// after this function returns. The caller is responsible for ensuring
+    /// `data` is not dropped, freed, mutated, or aliased until the enqueued
+    /// copy has completed, typically after the next
+    /// [`CudaStream::synchronize`] call or a stream-ordered event wait.
+    /// Dropping `data` before that synchronization point calls
+    /// `cuMemFreeHost` while the in-flight transfer is still reading the
+    /// buffer, which is undefined behavior.
+    pub unsafe fn from_pinned_host(
+        stream: &CudaStream,
+        data: &PinnedHostBuffer<T>,
+    ) -> Result<Self, DriverError> {
+        debug_assert!(
+            Arc::ptr_eq(data.context(), stream.context()),
+            "pinned host buffer and stream must belong to the same CUDA context"
+        );
+        Self::from_host(stream, data.as_slice())
+    }
+
     /// Allocates zero-initialized device memory of `len` elements, enqueued
     /// on `stream`.
     pub fn zeroed(stream: &CudaStream, len: usize) -> Result<Self, DriverError> {
@@ -282,5 +322,119 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
             )?;
         }
         stream.synchronize()
+    }
+
+    /// Copies the buffer contents into an existing pinned host buffer and
+    /// synchronizes `stream` before returning.
+    ///
+    /// Panics if `dst.len() < self.len()`. Use pinned destinations when you
+    /// need the transfer to avoid pageable-memory staging; this helper still
+    /// waits for completion before returning, matching [`Self::copy_to_host`].
+    ///
+    /// For true DtoH overlap, use [`Self::copy_to_pinned_host_async`] and
+    /// synchronize the stream later.
+    pub fn copy_to_pinned_host(
+        &self,
+        stream: &CudaStream,
+        dst: &mut PinnedHostBuffer<T>,
+    ) -> Result<(), DriverError> {
+        // SAFETY: we synchronize the stream below before returning, so the
+        // pinned destination is no longer being written to by CUDA when the
+        // mutable borrow on `dst` is released to the caller.
+        unsafe { self.copy_to_pinned_host_async(stream, dst)? };
+        stream.synchronize()
+    }
+
+    /// Enqueues a device-to-host copy into an existing pinned host buffer and
+    /// returns without synchronizing.
+    ///
+    /// Panics if `dst.len() < self.len()`.
+    ///
+    /// `PinnedHostBuffer` currently uses `cuMemAllocHost` without the
+    /// `PORTABLE` flag, so the allocation is only pinned in the context that
+    /// created it. In debug builds this asserts that `dst` and `stream`
+    /// share the same [`CudaContext`].
+    ///
+    /// # Safety
+    ///
+    /// This call only enqueues the device-to-host copy on `stream` and
+    /// returns; CUDA may still be writing into `dst`'s pinned pointer long
+    /// after this function returns. The caller is responsible for ensuring
+    /// `dst` is not dropped, freed, read, or aliased until the enqueued copy
+    /// has completed, typically after the next [`CudaStream::synchronize`]
+    /// call or a stream-ordered event wait. Dropping `dst` before that
+    /// synchronization point calls `cuMemFreeHost` while the in-flight
+    /// transfer is still writing the buffer, which is undefined behavior.
+    pub unsafe fn copy_to_pinned_host_async(
+        &self,
+        stream: &CudaStream,
+        dst: &mut PinnedHostBuffer<T>,
+    ) -> Result<(), DriverError> {
+        debug_assert!(
+            Arc::ptr_eq(dst.context(), stream.context()),
+            "pinned host buffer and stream must belong to the same CUDA context"
+        );
+        assert!(
+            dst.len() >= self.len,
+            "destination pinned host buffer too small: {} < {}",
+            dst.len(),
+            self.len
+        );
+        unsafe {
+            crate::memory::memcpy_dtoh_async(
+                dst.as_mut_ptr(),
+                self.ptr,
+                self.num_bytes(),
+                stream.cu_stream(),
+            )
+        }
+    }
+
+    /// Enqueues a host-to-device copy from a pinned host buffer into this
+    /// device buffer and returns without synchronizing.
+    ///
+    /// This is the symmetric counterpart of
+    /// [`Self::copy_to_pinned_host_async`]: it refills an existing device
+    /// allocation from rotating pinned host stagers instead of allocating a
+    /// fresh device buffer per refresh, which is the typical shape for
+    /// asynchronous overlap pipelines.
+    ///
+    /// Panics if `src.len() > self.len()`.
+    ///
+    /// `PinnedHostBuffer` currently uses `cuMemAllocHost` without the
+    /// `PORTABLE` flag, so the allocation is only pinned in the context that
+    /// created it. In debug builds this asserts that `src` and `stream`
+    /// share the same [`CudaContext`].
+    ///
+    /// # Safety
+    ///
+    /// This call only enqueues the host-to-device copy on `stream` and
+    /// returns; CUDA may still be reading from `src`'s pinned pointer long
+    /// after this function returns. The caller is responsible for ensuring
+    /// `src` is not dropped, freed, mutated, or aliased until the enqueued
+    /// copy has completed, typically after the next
+    /// [`CudaStream::synchronize`] call or a stream-ordered event wait.
+    /// Dropping `src` before that synchronization point calls
+    /// `cuMemFreeHost` while the in-flight transfer is still reading the
+    /// buffer, which is undefined behavior.
+    pub unsafe fn copy_from_pinned_host_async(
+        &mut self,
+        stream: &CudaStream,
+        src: &PinnedHostBuffer<T>,
+    ) -> Result<(), DriverError> {
+        debug_assert!(
+            Arc::ptr_eq(src.context(), stream.context()),
+            "pinned host buffer and stream must belong to the same CUDA context"
+        );
+        assert!(
+            src.len() <= self.len,
+            "source pinned host buffer too large: {} > {}",
+            src.len(),
+            self.len
+        );
+        let num_bytes = src.num_bytes();
+        unsafe {
+            crate::memory::memcpy_htod_async(self.ptr, src.as_ptr(), num_bytes, stream.cu_stream())
+        }
     }
 }

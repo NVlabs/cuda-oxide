@@ -49,14 +49,20 @@ organized by category.
 
 For each `MirFuncOp` in the module, `convert_func` (in `lowering.rs`):
 
-1. **Creates an LLVM function** with a flattened type signature (aggregate
-   args become multiple scalar args for the CUDA ABI).
+1. **Creates an LLVM function** whose signature depends on whether the
+   function is a kernel entry point. Non-kernel functions flatten every
+   aggregate arg into its scalar fields for the internal CUDA ABI. Kernel
+   entry points keep slices flattened (`(ptr, len)`) but pass structs and
+   closures as a single byval value, since the host launcher pushes the
+   whole aggregate as one packet slot (see {ref}`Argument Scalarization
+   <lowering-argument-scalarization>` below).
 2. **Propagates GPU metadata** (`gpu_kernel`, `maxntid`, `cluster_dim_*`).
 3. **Uses `inline_region`** to move MIR blocks into the LLVM function. The
    original blocks are preserved -- no manual block mapping needed.
-4. **Builds an entry prologue** that reconstructs aggregate values from
-   the flat LLVM arguments via `insertvalue` (see {ref}`Argument Scalarization
-   <lowering-argument-scalarization>` below).
+4. **Builds an entry prologue** that reconstructs the MIR-level value
+   for every parameter from whatever shape arrived at the LLVM level
+   (`insertvalue` of flattened scalars for internal calls and for
+   slices; passthrough for byval aggregates at kernel boundaries).
 5. **Runs `DialectConversion`** which walks every MIR operation and invokes
    its `MirToLlvmConversion::rewrite` implementation to replace it with
    LLVM operations.
@@ -108,12 +114,26 @@ converters pick it back up when they emit comparison and division instructions.
 
 ### Argument Scalarization
 
-Kernel entry points need special treatment. The CUDA driver passes kernel
-arguments as flat scalars -- it does not understand Rust fat pointers or
-structs. If a kernel takes a `&[f32]`, the driver needs to pass a raw pointer
-and a length as two separate arguments.
+Kernel entry points need special treatment. The CUDA driver doesn't
+understand Rust fat pointers, so `&[f32]` has to arrive as a separate
+pointer and length on both sides of the ABI. Structs and closures by
+value, on the other hand, do match a single host packet slot, so the
+kernel entry takes them as one byval `.param` -- otherwise the device
+would expect N flattened arguments and the host would only push one,
+mismatching every later slice.
 
-The lowering pass scalarizes aggregate kernel arguments and reconstructs them
+The lowering pass therefore distinguishes the kernel-entry rule from the
+internal-call rule:
+
+| MIR kernel param      | LLVM kernel signature                      |
+|:----------------------|:-------------------------------------------|
+| `&[f32]`              | `ptr addrspace(1) %ptr, i64 %len`          |
+| `T` (scalar)          | passthrough                                |
+| `struct { a, b }`     | one byval `{a, b}` value                   |
+| closure (N captures)  | one byval closure-struct value             |
+| zero-sized aggregate  | dropped (no LLVM arg, no host packet slot) |
+
+The slice case still uses the classic reconstruct-from-flattened pattern
 in the entry block:
 
 ```text
@@ -126,11 +146,11 @@ LLVM: fn kernel(ptr addrspace(1) %ptr, i64 %len)
           %slice2 = insertvalue {ptr, i64} %slice, %len, 1
 ```
 
-The rest of the function sees `%slice2` and uses it normally. The scalarization
-is invisible to everything downstream of the entry block -- they just see a
-struct value, as if nothing happened. This avoids ABI mismatches between the
-host compiler (which calls `cuLaunchKernel` with flat arguments) and the device
-compiler (which expects typed Rust values).
+The struct/closure case skips the reconstruct -- the byval value is
+already the right shape -- and the rest of the function sees it as if
+nothing special happened. Internal device-to-device calls keep
+flattening aggregates the same way they always have, so the cost of
+this rule lives only at the kernel boundary.
 
 ---
 
@@ -376,6 +396,15 @@ The `CUDA_OXIDE_TARGET` environment variable overrides auto-detection for cases
 where you need a specific target. For example, `sm_100a` enables
 Blackwell-specific `tcgen05` features that are not available under the generic
 `sm_100` target.
+
+`cargo oxide run` adds a second layer of auto-detection on top of the
+backend's feature-based default: when neither `--arch` nor `CUDA_OXIDE_TARGET`
+is set, it queries the compute capability of CUDA device 0 and forwards that
+to the backend so the generated module is guaranteed to load on the local GPU.
+The full precedence is `--arch` > `CUDA_OXIDE_TARGET` > host CC (for `run`
+only) > backend feature-based default. `cargo oxide build` and
+`cargo oxide pipeline` deliberately skip the host-CC step so they remain
+usable for cross-compilation.
 
 ```{note}
 Why LLVM 21? The 2-D bulk TMA load intrinsic used by `tma_copy`,

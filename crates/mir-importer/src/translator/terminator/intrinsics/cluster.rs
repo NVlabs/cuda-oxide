@@ -31,7 +31,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
-use pliron::value::Value;
 use rustc_public::mir;
 // =============================================================================
 // Block Position Within Cluster
@@ -70,7 +69,7 @@ pub fn emit_cluster_ctaid_x(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -116,7 +115,7 @@ pub fn emit_cluster_ctaid_y(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -162,7 +161,7 @@ pub fn emit_cluster_ctaid_z(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -212,7 +211,7 @@ pub fn emit_cluster_nctaid_x(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -258,7 +257,7 @@ pub fn emit_cluster_nctaid_y(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -304,7 +303,7 @@ pub fn emit_cluster_nctaid_z(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -354,7 +353,7 @@ pub fn emit_cluster_idx(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -400,7 +399,7 @@ pub fn emit_num_clusters(
         op
     };
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -534,7 +533,7 @@ pub fn emit_map_shared_rank(
         op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -619,7 +618,7 @@ pub fn emit_dsmem_read_u32(
         op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult { op, res_idx: 0 };
+    let result_value = op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,

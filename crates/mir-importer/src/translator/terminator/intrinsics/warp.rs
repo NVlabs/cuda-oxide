@@ -212,8 +212,6 @@ pub fn emit_warp_shuffle_i32(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    use pliron::value::Value;
-
     if args.len() != 3 {
         return input_err!(
             loc.clone(),
@@ -274,10 +272,7 @@ pub fn emit_warp_shuffle_i32(
         shuffle_op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: shuffle_op,
-        res_idx: 0,
-    };
+    let result_value = shuffle_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -314,7 +309,6 @@ pub fn emit_warp_shuffle_f32(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     use pliron::builtin::types::FP32Type;
-    use pliron::value::Value;
 
     if args.len() != 3 {
         return input_err!(
@@ -376,10 +370,7 @@ pub fn emit_warp_shuffle_f32(
         shuffle_op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: shuffle_op,
-        res_idx: 0,
-    };
+    let result_value = shuffle_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -421,8 +412,6 @@ pub fn emit_warp_match(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    use pliron::value::Value;
-
     if args.len() != 2 {
         return input_err!(
             loc.clone(),
@@ -474,10 +463,7 @@ pub fn emit_warp_match(
         match_op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: match_op,
-        res_idx: 0,
-    };
+    let result_value = match_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -515,8 +501,6 @@ pub fn emit_warp_vote(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    use pliron::value::Value;
-
     if args.len() != 2 {
         return input_err!(
             loc.clone(),
@@ -570,10 +554,7 @@ pub fn emit_warp_vote(
         vote_op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_value = Value::OpResult {
-        op: vote_op,
-        res_idx: 0,
-    };
+    let result_value = vote_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,

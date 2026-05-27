@@ -35,7 +35,7 @@ set -uo pipefail
 
 TCGEN05_EXAMPLES=(gemm_sol tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
-LTOIR_EXAMPLES=(cpp_consumes_rust_device device_ffi_test manual_launch_libdevice mathdx_ffi_test primitive_stress)
+LTOIR_EXAMPLES=(addressof_sharedarray_repro cpp_consumes_rust_device device_ffi_test manual_launch_libdevice mathdx_ffi_test primitive_stress)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_copy_nonoverlapping_unhandled error_set_discriminant_unhandled error_drop_glue)
 
 classify() {
@@ -212,9 +212,39 @@ verdict_standard() {
     local log="$1" ec="$2"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
+    if grep_failure_markers "${log}"; then
+        echo "FAIL (failure marker in output)"
+        return 1
+    fi
+    # `skipping:` is an explicit, graceful opt-out (e.g. cluster on
+    # pre-Hopper, mathdx_ffi_test with no MathDx SDK). Accept it as PASS so
+    # standard-category examples can gate themselves on hardware/SDK presence
+    # without having to fake a success marker.
+    if grep -qE '^[[:space:]]*skipping:' "${log}"; then
+        echo "PASS (skipped)"
+        return 0
+    fi
     if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS"; return 0; fi
     echo "FAIL (no success marker)"
     return 1
+}
+
+# Returns 0 iff the log contains any of our known failure signals. Designed
+# to be aggressive about false negatives — we'd rather flag a borderline
+# example for human review than miss a regression. Each pattern is anchored
+# enough not to match incidental prose ("This will fail if...", or the
+# success line "(no assertion failed)" some examples print).
+grep_failure_markers() {
+    local log="$1"
+    grep -qE \
+        -e '(^|[[:space:]])FAIL(ED)?($|[[:space:]:!.])' \
+        -e '(^|[[:space:]])✗($|[[:space:]])' \
+        -e 'panicked at |thread .* panicked' \
+        -e 'assertion failed:|assertion `[^`]*` failed' \
+        -e 'illegal memory access|invalid argument|misaligned address' \
+        -e 'CUDA(_ERROR)?[ _][A-Z_]*(FAIL|ERROR)' \
+        -e 'fatal( error)?:' \
+        "${log}"
 }
 
 verdict_error() {
@@ -252,6 +282,10 @@ verdict_tcgen05() {
         return 1
     fi
     if [[ ${ec} -ne 0 ]]; then echo "FAIL (tcgen05, exit=${ec})"; return 1; fi
+    if grep_failure_markers "${log}"; then
+        echo "FAIL (tcgen05, failure marker in output)"
+        return 1
+    fi
     if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS (tcgen05, executed)"; return 0; fi
     echo "FAIL (tcgen05, no success marker)"
     return 1
@@ -269,6 +303,10 @@ verdict_wgmma() {
         return 1
     fi
     if [[ ${ec} -ne 0 ]]; then echo "FAIL (wgmma, exit=${ec})"; return 1; fi
+    if grep_failure_markers "${log}"; then
+        echo "FAIL (wgmma, failure marker in output)"
+        return 1
+    fi
     if grep -qE 'SUCCESS|PASS|Complete' "${log}"; then echo "PASS (wgmma, executed)"; return 0; fi
     echo "FAIL (wgmma, no success marker)"
     return 1
@@ -281,7 +319,7 @@ verdict_ltoir() {
     # `skipping:` marker -- the example opted out (e.g. mathdx_ffi_test with
     # MATHDX_ROOT unset). Accept as pass so long as the cuda-oxide side
     # still produced NVVM IR.
-    if grep -qE 'skipping:' "${log}"; then
+    if grep -qE '^[[:space:]]*skipping:' "${log}"; then
         if [[ -f "${ll_file}" ]]; then
             echo "PASS (LTOIR, skipped: NVVM IR generated)"
             return 0
@@ -290,6 +328,10 @@ verdict_ltoir() {
         return 1
     fi
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (LTOIR, exit=${ec})";             return 1; fi
+    if grep_failure_markers "${log}"; then
+        echo "FAIL (LTOIR, failure marker in output)"
+        return 1
+    fi
     if grep -qE 'SUCCESS|PASS|Complete|NVVM IR is ready' "${log}"; then
         echo "PASS (LTOIR)"
         return 0

@@ -408,7 +408,6 @@ pub fn emit_shared_array_index(
     _is_mut: bool,
 ) -> TranslationResult<Ptr<Operation>> {
     use dialect_mir::ops::MirPtrOffsetOp;
-    use pliron::value::Value;
 
     // Args should be: [&mut SharedArray<T, N>, usize]
     if args.len() != 2 {
@@ -473,10 +472,7 @@ pub fn emit_shared_array_index(
     }
     last_op = Some(offset_op);
 
-    let result_ptr = Value::OpResult {
-        op: offset_op,
-        res_idx: 0,
-    };
+    let result_ptr = offset_op.deref(ctx).get_result(0);
 
     let prev = last_op.expect("should have at least offset_op");
     emit_store_result_and_goto(
@@ -519,7 +515,6 @@ pub fn emit_shared_array_as_ptr(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     use dialect_mir::types::MirPtrType;
-    use pliron::value::Value;
 
     if args.is_empty() {
         return input_err!(
@@ -582,10 +577,7 @@ pub fn emit_shared_array_as_ptr(
         cast_op.insert_at_front(block_ptr, ctx);
     }
 
-    let result_ptr = Value::OpResult {
-        op: cast_op,
-        res_idx: 0,
-    };
+    let result_ptr = cast_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -632,7 +624,6 @@ pub fn emit_dynamic_shared_get(
 ) -> TranslationResult<Ptr<Operation>> {
     use dialect_mir::ops::MirExternSharedOp;
     use dialect_mir::types::MirPtrType;
-    use pliron::value::Value;
 
     // Get the destination type to determine the pointer element type
     // DynamicSharedArray::get() returns *mut T, so the destination is a raw pointer type
@@ -686,10 +677,7 @@ pub fn emit_dynamic_shared_get(
             .insert_at_front(block_ptr, ctx);
     }
 
-    let result_ptr = Value::OpResult {
-        op: extern_shared.get_operation(),
-        res_idx: 0,
-    };
+    let result_ptr = extern_shared.get_operation().deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -730,7 +718,6 @@ pub fn emit_dynamic_shared_offset(
     use dialect_mir::ops::MirExternSharedOp;
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};
-    use pliron::value::Value;
 
     // Get the destination type to determine the pointer element type
     // DynamicSharedArray::offset() returns *mut T, so the destination is a raw pointer type
@@ -782,10 +769,7 @@ pub fn emit_dynamic_shared_offset(
             .insert_at_front(block_ptr, ctx);
     }
 
-    let base_ptr = Value::OpResult {
-        op: extern_shared.get_operation(),
-        res_idx: 0,
-    };
+    let base_ptr = extern_shared.get_operation().deref(ctx).get_result(0);
 
     // Now handle the offset
     // If we have an argument, translate it and emit a ptr_offset op
@@ -822,10 +806,7 @@ pub fn emit_dynamic_shared_offset(
             cast_to_byte.insert_after(ctx, extern_shared.get_operation());
         }
 
-        let byte_ptr = Value::OpResult {
-            op: cast_to_byte,
-            res_idx: 0,
-        };
+        let byte_ptr = cast_to_byte.deref(ctx).get_result(0);
 
         // Emit ptr_offset with byte offset
         let offset_op = Operation::new(
@@ -839,10 +820,7 @@ pub fn emit_dynamic_shared_offset(
         offset_op.deref_mut(ctx).set_loc(loc.clone());
         offset_op.insert_after(ctx, cast_to_byte);
 
-        let offset_ptr = Value::OpResult {
-            op: offset_op,
-            res_idx: 0,
-        };
+        let offset_ptr = offset_op.deref(ctx).get_result(0);
 
         // Cast back to target element type
         let cast_to_elem = Operation::new(
@@ -857,10 +835,7 @@ pub fn emit_dynamic_shared_offset(
         MirCastOp::new(cast_to_elem).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
         cast_to_elem.insert_after(ctx, offset_op);
 
-        let final_ptr = Value::OpResult {
-            op: cast_to_elem,
-            res_idx: 0,
-        };
+        let final_ptr = cast_to_elem.deref(ctx).get_result(0);
         (final_ptr, cast_to_elem)
     } else {
         // No offset argument - use base pointer directly

@@ -28,7 +28,9 @@
 //! ```
 
 use crate::context::{DynamicSmemAlignmentMap, SharedGlobalsMap};
-use crate::convert::types::{convert_function_type, convert_type, is_zero_sized_type};
+use crate::convert::types::{
+    convert_function_type, convert_type, is_kernel_func, is_zero_sized_type,
+};
 
 use dialect_llvm::ops as llvm;
 use dialect_mir::ops::MirFuncOp;
@@ -74,10 +76,11 @@ pub fn convert_func(
     let func_name_str = name.to_string();
 
     let kernel_key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
-    let is_kernel = op.deref(ctx).attributes.0.contains_key(&kernel_key);
+    let is_kernel = is_kernel_func(ctx, op);
 
     let func_type = mir_func.get_type(ctx);
-    let llvm_func_type = convert_function_type(ctx, func_type).map_err(anyhow_to_pliron)?;
+    let llvm_func_type =
+        convert_function_type(ctx, func_type, is_kernel).map_err(anyhow_to_pliron)?;
 
     let llvm_func = llvm::FuncOp::new(ctx, name, llvm_func_type);
 
@@ -112,8 +115,8 @@ pub fn convert_func(
             ft_ref.arg_types().to_vec()
         };
 
-        let reconstructed_args =
-            build_entry_prologue(ctx, &mir_arg_types, llvm_entry).map_err(anyhow_to_pliron)?;
+        let reconstructed_args = build_entry_prologue(ctx, &mir_arg_types, llvm_entry, is_kernel)
+            .map_err(anyhow_to_pliron)?;
 
         rewriter.inline_region(ctx, mir_region, BlockInsertionPoint::AfterBlock(llvm_entry));
 
@@ -187,14 +190,17 @@ fn propagate_kernel_attrs(
 /// Build LLVM entry block prologue: reconstruct aggregate args from flattened
 /// LLVM block arguments and return the values to pass to the MIR entry block.
 ///
-/// The LLVM entry block args are the flattened function signature (slices
-/// become ptr+len pairs, structs become individual fields). This function
-/// creates `undef` + `insertvalue` chains to re-assemble the original
-/// aggregate types that the MIR entry block expects.
+/// The LLVM entry block args reflect the post-flatten function signature.
+/// Slices always arrive as `(ptr, len)` pairs and get re-assembled via
+/// `insertvalue`. Structs only arrive flattened on the internal device-fn
+/// ABI; at kernel boundaries (`is_kernel_entry = true`) they arrive as a
+/// single byval value and pass through. This function decides the shape
+/// per-argument and emits the matching reconstruction sequence.
 fn build_entry_prologue(
     ctx: &mut Context,
     mir_arg_types: &[Ptr<TypeObj>],
     llvm_entry: Ptr<BasicBlock>,
+    is_kernel_entry: bool,
 ) -> std::result::Result<Vec<Value>, anyhow::Error> {
     let llvm_args: Vec<_> = llvm_entry.deref(ctx).arguments().collect();
     let mut llvm_arg_idx = 0;
@@ -202,7 +208,7 @@ fn build_entry_prologue(
     let mut result_args = Vec::new();
 
     for &mir_ty in mir_arg_types {
-        let kind = classify_argument_type(ctx, mir_ty);
+        let kind = classify_argument_type(ctx, mir_ty, is_kernel_entry);
 
         match kind {
             ReconstructKind::Slice => {
@@ -268,7 +274,16 @@ enum ReconstructKind {
 
 /// Classify an argument type to determine how to reconstruct it from
 /// flattened LLVM entry block arguments.
-fn classify_argument_type(ctx: &mut Context, arg_ty: Ptr<TypeObj>) -> ReconstructKind {
+///
+/// At kernel-entry boundaries (`is_kernel_entry = true`) structs arrive
+/// intact, so they're classified as `None` even though the MIR type is
+/// `MirStructType`. Slices keep their `(ptr, len)` reconstruction on
+/// both ABIs.
+fn classify_argument_type(
+    ctx: &mut Context,
+    arg_ty: Ptr<TypeObj>,
+    is_kernel_entry: bool,
+) -> ReconstructKind {
     let (is_slice, struct_fields) = {
         let arg_ty_ref = arg_ty.deref(ctx);
         let is_slice = arg_ty_ref.is::<MirSliceType>() || arg_ty_ref.is::<MirDisjointSliceType>();
@@ -281,6 +296,9 @@ fn classify_argument_type(ctx: &mut Context, arg_ty: Ptr<TypeObj>) -> Reconstruc
     if is_slice {
         ReconstructKind::Slice
     } else if let Some(fields) = struct_fields {
+        // Count non-ZST fields the same way `convert_function_type` does
+        // — empty structs and structs of all-ZSTs are themselves ZST and
+        // get dropped from the LLVM signature on both ABIs.
         let non_zst_count = fields
             .iter()
             .filter(|f| {
@@ -289,7 +307,21 @@ fn classify_argument_type(ctx: &mut Context, arg_ty: Ptr<TypeObj>) -> Reconstruc
                     .unwrap_or(true)
             })
             .count();
-        ReconstructKind::Struct(non_zst_count)
+
+        if non_zst_count == 0 {
+            // Whole struct is ZST: `convert_function_type` skipped it,
+            // so no LLVM args were emitted. We still need to produce an
+            // undef value for the MIR entry block's slot — `Struct(0)`
+            // builds that via the existing reconstruct_struct path.
+            ReconstructKind::Struct(0)
+        } else if is_kernel_entry {
+            // Kernel boundary: struct arrived as a single byval value,
+            // so the MIR entry block can consume it directly without
+            // any insertvalue prologue.
+            ReconstructKind::None
+        } else {
+            ReconstructKind::Struct(non_zst_count)
+        }
     } else {
         ReconstructKind::None
     }

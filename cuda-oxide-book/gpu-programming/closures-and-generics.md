@@ -30,14 +30,25 @@ pub fn scale<T: Copy + Mul<Output = T>>(
 
 ### PTX naming
 
-Each monomorphization produces a distinct PTX entry point. The name is derived
-from the function name and the concrete type parameters:
+Each monomorphization produces a distinct PTX entry point. Non-generic kernels
+keep their plain function name. Generic kernels (including closure-generic
+kernels) get a `_TID_<hex32>` suffix where `<hex32>` is rustc's stable
+type-id hash of the *tuple* of generic arguments, rendered as 32 lowercase
+hex characters:
 
-| Instantiation      | PTX entry point name |
-|:-------------------|:---------------------|
-| `scale::<f32>`     | `scale__f32`         |
-| `scale::<i32>`     | `scale__i32`         |
-| `scale::<MyType>`  | `scale__MyType`      |
+| Instantiation             | PTX entry point name |
+|:--------------------------|:---------------------|
+| `vecadd` (non-generic)    | `vecadd`             |
+| `scale::<f32>`            | `scale_TID_<hex32>`  |
+| `scale::<MyType>`         | `scale_TID_<hex32>`  |
+| `map::<f32, _>` (closure) | `map_TID_<hex32>`    |
+
+Both the host launcher and the device backend ask the same rustc invocation
+for the same hash, so the strings match byte-for-byte. Hashing the tuple
+(not each argument independently) keeps the on-wire name a fixed length
+regardless of how many generic parameters the kernel takes. Borrow
+lifetimes are erased before hashing, so `&'a T` and `&'static T` produce
+the same hash for the same shape `T`.
 
 ### Launching generic kernels
 
@@ -89,37 +100,45 @@ module
     .expect("Launch failed");
 ```
 
-### How capture extraction works
+### How closure arguments travel
 
-The launch macro analyzes the closure at compile time:
+The closure passes through the launch as one value -- not as a list of
+captured fields. The launcher pushes a single driver argument (the whole
+closure struct, captures and all), and the kernel receives it as one
+byval `.param`:
 
-1. **Identify captures** -- walk the closure body's AST, collecting identifiers
-   that are not parameters or local bindings. In `move |x| x * factor`, `x` is
-   a parameter and `factor` is a capture.
-2. **Scalarize captures** -- each captured variable becomes a separate kernel
-   parameter (just like {ref}`argument scalarization <memory-argument-scalarization>`).
-3. **Reconstruct on device** -- inside the kernel, the compiler reassembles the
-   closure from its individual scalar fields.
+```text
+host          factor = 3i32; cl = move |x| x * factor
+              push one driver arg ─► closure struct { factor: i32 }
 
-```{figure} images/closure-capture-flow.svg
-:align: center
-:width: 100%
-
-Closure capture extraction: the launch macro analyzes the closure AST,
-extracts captured variables (factor, offset), and passes each as a separate
-scalarized kernel parameter. The device kernel reconstructs the closure from
-its individual scalar fields.
+GPU kernel    .entry map_TID_<hex>(
+                .param .align 4 .b8 f[4],    ; one byval closure
+                .param .u64 input_ptr,        ; slice still (ptr, len)
+                .param .u64 input_len,
+                ...
+              )
 ```
+
+Slices keep their `(ptr, len)` flattening because that shape is shared by
+the host launch helpers and the PTX entry-point layout. Only aggregate-
+by-value parameters (closures and user structs passed by value) land as
+one byval at the kernel boundary.
+
+A closure with no captures is a zero-sized type -- the backend drops the
+`.param` entirely, and the host launcher knows to skip it so the packet
+stays aligned.
 
 ### PTX naming for closures
 
-Closure kernels get unique PTX names based on source location to avoid
-collisions when multiple closures instantiate the same generic kernel:
+A closure-generic kernel gets the same `_TID_<hex32>` suffix as any other
+generic kernel. The closure's anonymous type is one of the entries in the
+hashed tuple, so two distinct closure literals -- even ones with the
+same `Fn` signature -- produce two distinct entry points:
 
-| Closure                                      | PTX entry point |
-|:---------------------------------------------|:----------------|
-| `move \|x\| x * factor` at line 42, col 8    | `map_L42C8`     |
-| `move \|x\| x + offset` at line 50, col 8    | `map_L50C8`     |
+| Closure                                | PTX entry point   |
+|:---------------------------------------|:------------------|
+| `move \|x\| x * factor` (one capture)  | `map_TID_<hex_a>` |
+| `move \|x\| x + offset` (one capture)  | `map_TID_<hex_b>` |
 
 ## Move vs reference closures
 
@@ -129,24 +148,26 @@ The `move` keyword determines how captures are transferred to the GPU:
 
 ```rust
 let factor = 3i32;
-move |x| x * factor   // `factor` is copied to the GPU
+move |x| x * factor   // `factor` is copied into the closure struct
 ```
 
-- Each capture is **copied by value** to the device through scalarized kernel
-  parameters.
-- The host value can be dropped after launch.
+- The closure struct holds the capture by value (`{ factor: i32 }`).
+- The kernel reads `factor` as a regular field of the byval closure.
+- The host variable can be dropped after launch.
 - Works on all systems -- no special hardware support needed.
 
 ### Reference closures (HMM)
 
 ```rust
 let factor = 3i32;
-|x| x * factor   // `factor` stays on host; GPU accesses via pointer
+|x| x * factor   // closure captures &factor
 ```
 
-- Captures are passed as **pointers to host memory**.
-- The GPU reads them through **Hardware-Managed Memory (HMM)** -- automatic
-  page migration from host to device on access.
+- The closure struct contains a **host pointer** to `factor`
+  (`{ factor: &i32 }`).
+- The whole closure still travels as one byval parameter; the kernel
+  deref's that host pointer through **Hardware-Managed Memory (HMM)**,
+  which migrates the host page on access.
 - The host variable **must remain alive** until the kernel completes.
 - Requires HMM support (Turing+ GPU, Linux 6.1.24+, CUDA 12.2+).
 
@@ -167,8 +188,8 @@ everywhere, and avoid the synchronization hazards of shared host/device memory.
 ## In-kernel closures
 
 Closures defined and called entirely within device code work with normal Rust
-semantics -- no capture extraction or scalarization is involved because
-everything is already on the GPU:
+semantics -- no host/device ABI is involved because everything is already on
+the GPU:
 
 ```rust
 #[kernel]

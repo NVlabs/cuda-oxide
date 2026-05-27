@@ -61,7 +61,9 @@
 //! callee declaration carried `addrspace(3)`. The verifier rejected the
 //! mismatch.
 
-use crate::convert::types::{convert_function_type, convert_type, is_zero_sized_type};
+use crate::convert::types::{
+    convert_function_type, convert_type, is_kernel_func, is_zero_sized_type,
+};
 use crate::helpers;
 use dialect_llvm::op_interfaces::CastOpInterface;
 use dialect_llvm::ops as llvm;
@@ -992,7 +994,14 @@ fn find_callee_arg_types(
     if let Some(existing_op) = mir_decl_op {
         let func = MirFuncOp::wrap(ctx, existing_op)?;
         let mir_func_ty = func.get_type(ctx);
-        let llvm_func_ty = convert_function_type(ctx, mir_func_ty).ok()?;
+        // Match the callee's own boundary kind: a kernel callee (rare; not
+        // produced by Rust code today, but cheap to keep correct) keeps its
+        // params as byval, internal callees stay flattened. Reading
+        // `is_kernel_func` here keeps `find_callee_arg_types` consistent
+        // with what `lowering.rs::convert_func` would produce for the
+        // same callee.
+        let callee_is_kernel = is_kernel_func(ctx, existing_op);
+        let llvm_func_ty = convert_function_type(ctx, mir_func_ty, callee_is_kernel).ok()?;
         return Some(llvm_func_ty.deref(ctx).arg_types().clone());
     }
 

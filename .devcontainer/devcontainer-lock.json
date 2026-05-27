@@ -1,0 +1,14 @@
+{
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "version": "2.5.7",
+      "resolved": "ghcr.io/devcontainers/features/common-utils@sha256:dbf431d6b42d55cde50fa1df75c7f7c3999a90cde6d73f7a7071174b3c3d0cc4",
+      "integrity": "sha256:dbf431d6b42d55cde50fa1df75c7f7c3999a90cde6d73f7a7071174b3c3d0cc4"
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "1.5.0",
+      "resolved": "ghcr.io/devcontainers/features/rust@sha256:0c55e65f2e3df736e478f26ee4d5ed41bae6b54dac1318c443e31444c8ed283c",
+      "integrity": "sha256:0c55e65f2e3df736e478f26ee4d5ed41bae6b54dac1318c443e31444c8ed283c"
+    }
+  }
+}

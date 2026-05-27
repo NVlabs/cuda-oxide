@@ -229,10 +229,7 @@ pub fn translate_statement(
                         } else {
                             field_addr_op.insert_at_front(block_ptr, ctx);
                         }
-                        let field_ptr = Value::OpResult {
-                            op: field_addr_op,
-                            res_idx: 0,
-                        };
+                        let field_ptr = field_addr_op.deref(ctx).get_result(0);
 
                         let store_op = Operation::new(
                             ctx,
@@ -322,10 +319,7 @@ pub fn translate_statement(
                             const_op_ptr.insert_at_front(block_ptr, ctx);
                         }
                         current_prev = Some(const_op_ptr);
-                        let index_value = Value::OpResult {
-                            op: const_op_ptr,
-                            res_idx: 0,
-                        };
+                        let index_value = const_op_ptr.deref(ctx).get_result(0);
 
                         let store_op = emit_array_element_store(
                             ctx,
@@ -487,10 +481,7 @@ pub fn translate_statement(
                         } else {
                             addr_op.insert_at_front(block_ptr, ctx);
                         }
-                        let field_ptr = Value::OpResult {
-                            op: addr_op,
-                            res_idx: 0,
-                        };
+                        let field_ptr = addr_op.deref(ctx).get_result(0);
 
                         let store_op = Operation::new(
                             ctx,
@@ -573,10 +564,7 @@ pub fn translate_statement(
                             outer_addr_op.insert_at_front(block_ptr, ctx);
                         }
                         current_prev = Some(outer_addr_op);
-                        let outer_ptr = Value::OpResult {
-                            op: outer_addr_op,
-                            res_idx: 0,
-                        };
+                        let outer_ptr = outer_addr_op.deref(ctx).get_result(0);
 
                         let inner_field_type = types::translate_type(ctx, inner_field_ty)?;
                         let inner_ptr_ty = dialect_mir::types::MirPtrType::get(
@@ -604,10 +592,7 @@ pub fn translate_statement(
                         } else {
                             inner_addr_op.insert_at_front(block_ptr, ctx);
                         }
-                        let inner_ptr = Value::OpResult {
-                            op: inner_addr_op,
-                            res_idx: 0,
-                        };
+                        let inner_ptr = inner_addr_op.deref(ctx).get_result(0);
 
                         let store_op = Operation::new(
                             ctx,
@@ -790,10 +775,7 @@ fn emit_array_element_store(
         Some(prev) => addr_op.insert_after(ctx, prev),
         None => addr_op.insert_at_front(block_ptr, ctx),
     }
-    let elem_ptr = Value::OpResult {
-        op: addr_op,
-        res_idx: 0,
-    };
+    let elem_ptr = addr_op.deref(ctx).get_result(0);
 
     let store_op = Operation::new(
         ctx,

@@ -28,7 +28,6 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::value::Value;
 use rustc_public::mir;
 /// Emits `sync_threads()`: CTA-wide barrier synchronization.
 ///
@@ -357,10 +356,7 @@ pub fn emit_mbarrier_arrive(
     }
 
     // Store the result (token) in the destination and branch to the success target.
-    let result_value = Value::OpResult {
-        op: arrive_op,
-        res_idx: 0,
-    };
+    let result_value = arrive_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -453,10 +449,7 @@ pub fn emit_mbarrier_arrive_expect_tx(
     }
 
     // Store the result (token) in the destination and branch to the success target.
-    let result_value = Value::OpResult {
-        op: arrive_op,
-        res_idx: 0,
-    };
+    let result_value = arrive_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -679,10 +672,7 @@ pub fn emit_mbarrier_test_wait(
     }
 
     // Store the result in the destination slot and branch to the success target.
-    let result_value = Value::OpResult {
-        op: test_wait_op,
-        res_idx: 0,
-    };
+    let result_value = test_wait_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -773,10 +763,7 @@ pub fn emit_mbarrier_try_wait(
     }
 
     // Store the result in the destination slot and branch to the success target.
-    let result_value = Value::OpResult {
-        op: try_wait_op,
-        res_idx: 0,
-    };
+    let result_value = try_wait_op.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,
@@ -861,10 +848,7 @@ pub fn emit_mbarrier_try_wait_parity(
     }
 
     // Store the result in the destination slot and branch to the success target.
-    let result_value = Value::OpResult {
-        op: op_ptr,
-        res_idx: 0,
-    };
+    let result_value = op_ptr.deref(ctx).get_result(0);
     emit_store_result_and_goto(
         ctx,
         destination,

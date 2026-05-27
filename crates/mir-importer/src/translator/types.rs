@@ -691,6 +691,17 @@ pub fn translate_type(
                 alias_ty.def_id
             )))
         }
+        // Pattern types (e.g. the storage of `NonZeroUsize` is `Pat<usize, 1..=usize::MAX>`).
+        //
+        // Layout assumption: a `Pat<T, P>` has the same size and alignment as
+        // its base `T`; the pattern only restricts the set of valid values
+        // (used by rustc for niche optimisation in enclosing enums). For
+        // memory layout, lowering it as the base type is sound, and the
+        // niche metadata that rustc relies on is consumed when we query
+        // `ty.layout()` on the enclosing ADT, not here.
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Pat(base_ty, _pat)) => {
+            translate_type(ctx, &base_ty)
+        }
         _ => input_err_noloc!(TranslationErr::unsupported(format!(
             "Type translation not yet implemented for: {:?}",
             ty_kind

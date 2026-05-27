@@ -205,17 +205,13 @@ fn main() {
     let ctx = CudaContext::new(0).expect("CUDA context");
     let stream = ctx.default_stream();
 
-    // Check compute capability
     let (major, minor) = ctx.compute_capability().expect("compute capability");
     println!("GPU Compute Capability: sm_{}{}", major, minor);
 
     if major < 9 {
-        println!("\n⚠ WARNING: Thread Block Clusters require sm_90+ (Hopper)");
-        println!(
-            "⚠ Your GPU is sm_{}{}. Tests may not run correctly.",
-            major, minor
-        );
-        println!("⚠ Continuing anyway to verify PTX generation...\n");
+        println!("\nskipping: Thread Block Clusters require sm_90+ (Hopper)");
+        println!("  this GPU is sm_{}{}", major, minor);
+        return;
     }
 
     let module = ctx
@@ -487,7 +483,7 @@ fn main() {
 
     let all_pass = ct_pass && sync_pass && ring_pass && reduce_pass;
     if all_pass {
-        println!("🎉 All cluster + DSMEM tests PASSED!");
+        println!("All cluster + DSMEM tests PASSED!");
     } else {
         println!("Results:");
         println!(
@@ -507,5 +503,6 @@ fn main() {
             "  Test 4 (DSMEM reduction):        {}",
             if reduce_pass { "PASS" } else { "FAIL" }
         );
+        std::process::exit(1);
     }
 }

@@ -49,20 +49,22 @@ levels of abstraction:
 | **`dialect-nvvm`** | GPU intrinsics -- thread indexing, warp shuffles, TMA, WGMMA  | `nvvm.read_ptx_sreg_tid_x`, `nvvm.shfl_sync` |
 
 Without an extensible IR, we would have to either jam Rust enums into LLVM IR
-(losing semantic information) or build three separate IR frameworks (losing our
-sanity). MLIR lets us define all three as dialects in a single system and lower
-between them with well-typed passes.
+(losing semantic information) or build separate IR frameworks for each level of
+the pipeline. MLIR lets us define all three as dialects in a single system and
+lower between them with well-typed passes.
 
 ## Enter pliron
 
-MLIR is a great idea. MLIR's implementation, however, is C++ with a side of
-TableGen, a build system that requires you to compile all of LLVM, and debugging
-sessions that make you question your career choices.
+MLIR's dialect-and-lowering model is the right abstraction for cuda-oxide: keep
+high-level semantics in the IR while progressively lowering toward code the GPU
+backend can consume. The question is implementation fit. Upstream MLIR is part
+of the LLVM C++ ecosystem, while cuda-oxide is a Rust compiler project built
+around Rust crates, Rust types, and Cargo workflows.
 
 [Pliron](https://github.com/vaivaswatha/pliron) is an MLIR-inspired extensible
 compiler IR framework written in **pure Rust**. It follows the same conceptual
 model -- operations, regions, basic blocks, types, attributes, dialects, passes
--- but trades C++ and TableGen for `cargo build` and standard Rust tooling.
+-- while fitting naturally into a Rust-native compiler stack.
 
 | Aspect            | pliron                                   | Upstream MLIR                      |
 | :---------------- | :--------------------------------------- | :--------------------------------- |
@@ -74,8 +76,9 @@ model -- operations, regions, basic blocks, types, attributes, dialects, passes
 | Dependency weight | One crate (git dependency)               | Gigabytes of LLVM build artifacts  |
 
 For cuda-oxide, this means the entire compiler -- from MIR import to LLVM IR
-export -- is a single `cargo build` invocation. No CMake. No C++ linker errors.
-No staring at TableGen error messages and wondering what you did to deserve this.
+export -- stays within the same Rust build and debugging environment as the rest
+of the project. Pliron gives us the extensible IR structure we need without
+moving the compiler out of the Rust ecosystem.
 
 ## Core data structures
 
@@ -267,8 +270,8 @@ This means:
 If you are familiar with LLVM's `Value` / `Use` / `User` system, pliron's
 design serves the same purpose. The difference is that LLVM implements it with
 intrusive linked lists and raw `Value*` pointers, while pliron implements it
-with arena indices and `HashSet<UseNode>`. Same semantics, fewer late-night
-debugging sessions.
+with arena indices and `HashSet<UseNode>`. The semantics are similar, but the
+ownership model fits Rust IR transforms directly.
 ```
 
 ## Op interfaces

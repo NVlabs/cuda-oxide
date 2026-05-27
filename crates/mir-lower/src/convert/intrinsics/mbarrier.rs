@@ -26,6 +26,7 @@ use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInf
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::operation::Operation;
 use pliron::result::Result;
+use pliron::value::DefiningEntity;
 
 /// mbarrier.init.shared: (ptr, count) -> void
 pub(crate) fn convert_init(
@@ -178,8 +179,8 @@ pub(crate) fn convert_test_wait(
     let i32_result = asm_op.deref(ctx).get_result(0);
     let trunc_op = trunc_to_i1(ctx, rewriter, i32_result);
     // trunc_to_i1 returns a Value; we need the operation that defined it
-    let trunc_def_op = match trunc_op {
-        pliron::value::Value::OpResult { op: def_op, .. } => def_op,
+    let trunc_def_op = match trunc_op.defining_entity() {
+        DefiningEntity::Op(def_op) => def_op,
         _ => unreachable!(),
     };
     rewriter.replace_operation(ctx, op, trunc_def_op);
@@ -214,8 +215,8 @@ pub(crate) fn convert_try_wait(
     );
     let i32_result = asm_op.deref(ctx).get_result(0);
     let trunc_val = trunc_to_i1(ctx, rewriter, i32_result);
-    let trunc_def_op = match trunc_val {
-        pliron::value::Value::OpResult { op: def_op, .. } => def_op,
+    let trunc_def_op = match trunc_val.defining_entity() {
+        DefiningEntity::Op(def_op) => def_op,
         _ => unreachable!(),
     };
     rewriter.replace_operation(ctx, op, trunc_def_op);
@@ -249,8 +250,8 @@ pub(crate) fn convert_try_wait_parity(
     );
     let i32_result = asm_op.deref(ctx).get_result(0);
     let trunc_val = trunc_to_i1(ctx, rewriter, i32_result);
-    let trunc_def_op = match trunc_val {
-        pliron::value::Value::OpResult { op: def_op, .. } => def_op,
+    let trunc_def_op = match trunc_val.defining_entity() {
+        DefiningEntity::Op(def_op) => def_op,
         _ => unreachable!(),
     };
     rewriter.replace_operation(ctx, op, trunc_def_op);

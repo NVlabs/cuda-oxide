@@ -16,9 +16,11 @@
 //! streams that reference the allocation before dropping the box.
 
 use crate::device_context::with_deallocator_stream;
+use crate::error::DeviceError;
 use crate::launch::{AsyncKernelLaunch, KernelArgument};
 use cuda_bindings::CUdeviceptr;
 use cuda_core::memory::free_async;
+use std::io::{self, Write};
 use std::marker::PhantomData;
 
 /// Non-owning, `Copy` handle to a typed device allocation.
@@ -87,23 +89,29 @@ unsafe impl<T: Send + ?Sized> Send for DeviceBox<T> {}
 /// value, which is safe to read from any thread.
 unsafe impl<T: Send + ?Sized> Sync for DeviceBox<T> {}
 
-/// Enqueues an asynchronous free on the device's deallocator stream.
+/// Best-effort enqueue of an asynchronous free on the device's deallocator
+/// stream.
 ///
-/// # Panics
-///
-/// Panics if the deallocator stream for `self.device_id` is unavailable.
+/// Drop cannot return errors, so failures to access the deallocator stream or
+/// enqueue the free are reported to stderr instead of panicking.
 impl<T: Send + ?Sized> Drop for DeviceBox<T> {
     fn drop(&mut self) {
-        unsafe {
+        let result = unsafe {
             with_deallocator_stream(self.device_id, |stream| {
-                let _ = free_async(self.cudptr, stream.cu_stream());
+                free_async(self.cudptr, stream.cu_stream()).map_err(DeviceError::Driver)
             })
-            .unwrap_or_else(|_| {
-                panic!(
-                    "Failed to free device pointer on device_id={}",
-                    self.device_id
-                )
-            })
+        };
+
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) | Err(err) => {
+                let mut stderr = io::stderr().lock();
+                let _ = writeln!(
+                    stderr,
+                    "cuda-async: failed to enqueue async free for device pointer on device_id={}: {}",
+                    self.device_id, err
+                );
+            }
         }
     }
 }

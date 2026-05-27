@@ -6,10 +6,15 @@ Terms are defined as they are used in the cuda-oxide project and this book.
 
 ## ABI Scalarization
 
-The process of decomposing composite types (slices, structs) into scalar kernel
-parameters at function boundaries. For example, `&[T]` becomes a `(ptr, len)`
-pair in PTX. The compiler reconstructs the composite type inside the function
-body via `insertvalue`/`extractvalue`.
+The process of decomposing composite types into a shape both host and
+device agree on. Slices flatten at all call boundaries: `&[T]` becomes
+a `(ptr, len)` pair, reconstructed inside the function via
+`insertvalue`/`extractvalue`. Structs and closures by value flatten the
+same way for internal device-to-device calls, but at the **kernel**
+boundary they instead travel as one byval `.param` (one host packet
+slot) — that matches what the host launcher pushes and avoids
+mismatches between flattened device declarations and a single-slot host
+packet.
 
 ## Block (Thread Block)
 
@@ -93,8 +98,8 @@ without shared memory or barriers.
 ## LTOIR (Link-Time Optimized IR)
 
 An intermediate representation used for device-side link-time optimization.
-cuda-oxide can emit LTOIR (via `--dlto`) for linking Rust device code with CUDA
-C++ device code using `nvJitLink`.
+cuda-oxide emits NVVM IR for libNVVM, which can compile it to LTOIR for
+linking Rust device code with CUDA C++ device code using `nvJitLink`.
 
 ## `ManagedBarrier<State, Kind, ID>`
 

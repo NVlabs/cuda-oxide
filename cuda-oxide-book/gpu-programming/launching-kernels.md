@@ -127,8 +127,12 @@ cuda_launch! {
 .expect("Kernel launch failed");
 ```
 
-The wrappers in `args` perform the same scalarization as the generated
-`#[cuda_module]` methods.
+The wrappers in `args` produce the same host packet as the generated
+`#[cuda_module]` methods: `slice(...)` and `slice_mut(...)` push the
+`(ptr, len)` pair, scalar arguments push their value directly, and a
+closure or by-value struct pushes as a single byval value (the kernel
+boundary receives it as one `.param`, not as per-field flattened
+parameters).
 
 ## Artifact policy
 

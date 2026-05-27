@@ -50,14 +50,17 @@ equivalent of `main`:
 
 ### Parameter constraints
 
-Kernel parameters are flattened at the ABI boundary through a process called
+Kernel parameters cross the host/device ABI boundary through
 **argument scalarization** (covered in the
 [Memory and Data Movement](memory-and-data-movement.md) chapter). The key
 rules:
 
 - **Slices** (`&[T]`, `DisjointSlice<T>`) become a pointer + length pair.
 - **Scalars** (`u32`, `f32`, etc.) are passed directly.
-- **Structs** are decomposed into their individual fields.
+- **Structs and closures by value** travel as a single byval `.param`. The
+  field-by-field flattening still applies to internal device-to-device
+  calls, but the kernel boundary itself receives the whole aggregate as
+  one value to match the single packet slot the host launcher pushes.
 - **No heap-allocated types** (`Vec`, `String`, `Box`) -- the `alloc` crate is
   allowed through the compiler, but no device-side `#[global_allocator]` is
   configured today. Even with one, device `malloc` is extremely slow.

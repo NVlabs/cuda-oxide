@@ -799,7 +799,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Comparing: &raw const SMEM as u64  vs  &raw const SMEM as *const u8 as u64");
     println!();
 
-    // Test 1: DIRECT cast - &raw const SMEM as u64
+    let mut smem_direct_ok = true;
+
+    // Test 1: DIRECT cast - &raw const SMEM as u64.
+    // This is a real pass/fail test: the direct cast must keep the address
+    // in the shared address space (small value, no cvta round-trip).
     println!("Testing: test_smem_addr_direct_u64 (&raw const SMEM as u64)");
     {
         let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1)?;
@@ -815,12 +819,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if result[0] < 0x100000 {
             println!("  ✓ SMALL value = likely shared address (what we want!)");
         } else {
-            println!("  ✗ LARGE value = generic address (cvta happened)");
+            println!("  ✗ FAILED: LARGE value = generic address (cvta happened)");
+            smem_direct_ok = false;
         }
     }
 
-    // Test 2: Via *const u8 (current approach)
-    println!("\nTesting: test_smem_addr_via_ptr_u8 (&raw const SMEM as *const u8 as u64)");
+    // Test 2: Via *const u8 (informational, documents known limitation).
+    // The intermediate `*const u8` cast currently triggers a cvta round-trip;
+    // we print the observed address but don't fail on it. Whenever this lights
+    // up as "SMALL value" we know the upstream codegen quirk is gone and we
+    // can promote it to a real assertion.
+    println!("\nInfo: test_smem_addr_via_ptr_u8 (&raw const SMEM as *const u8 as u64)");
+    println!("  (known: today's lowering inserts a cvta round-trip here)");
     {
         let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1)?;
         unsafe {
@@ -833,14 +843,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let result = out_dev.to_host_vec(&stream)?;
         println!("  VIA PTR addr: 0x{:016x}", result[0]);
         if result[0] < 0x100000 {
-            println!("  ✓ SMALL value = likely shared address");
+            println!("  (small value — cvta round-trip elided)");
         } else {
-            println!("  ✗ LARGE value = generic address (cvta happened)");
+            println!("  (large value — cvta round-trip present, as documented)");
         }
     }
 
     println!("\n-----------------------------------------");
     println!("Check PTX for 'cvta' in each test function.");
+
+    if !smem_direct_ok {
+        println!("\n=== FAILED: at least one test did not pass ===");
+        std::process::exit(1);
+    }
 
     println!("\n=== ALL TESTS PASSED ✓ ===");
     Ok(())

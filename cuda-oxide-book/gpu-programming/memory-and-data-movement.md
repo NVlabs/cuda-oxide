@@ -184,13 +184,14 @@ the host's x86 ABI and the NVPTX ABI. cuda-oxide solves this by
 **scalarizing** aggregate types at the kernel boundary: decomposing them into
 primitive values that both sides interpret identically.
 
-| Kernel parameter type          | What the host actually passes      |
-|:-------------------------------|:-----------------------------------|
-| `&[T]`                         | `ptr: *const T` + `len: u64`       |
-| `DisjointSlice<T>`             | `ptr: *mut T` + `len: u64`         |
-| `T` (scalar)                   | `T` directly                       |
-| Struct `{ a: u32, b: f32 }`    | `a: u32` + `b: f32` (flattened)    |
-| Zero-sized types               | Stripped entirely                  |
+| Kernel parameter type          | What the host actually passes  |
+|:-------------------------------|:-------------------------------|
+| `&[T]`                         | `ptr: *const T` + `len: u64`   |
+| `DisjointSlice<T>`             | `ptr: *mut T` + `len: u64`     |
+| `T` (scalar)                   | `T` directly                   |
+| Struct `{ a: u32, b: f32 }`    | One byval value (whole struct) |
+| Closure (with N captures)      | One byval value (whole struct) |
+| Zero-sized types               | Stripped entirely              |
 
 This is why typed `#[cuda_module]` methods accept `&DeviceBuffer<T>` for `&[T]`
 and `&mut DeviceBuffer<T>` for writable slice-like parameters. The generated

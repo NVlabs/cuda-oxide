@@ -67,7 +67,17 @@ intrinsic signatures that cuda-oxide emits. The NVPTX backend must be enabled:
 ```bash
 # Ubuntu / Debian
 sudo apt install llvm-21
+```
 
+If your distro packages do not provide `llvm-21`, use LLVM's apt helper:
+
+```bash
+sudo apt-get install -y lsb-release wget software-properties-common gnupg
+wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh
+sudo ./llvm.sh 21
+```
+
+```bash
 # Verify NVPTX support
 llc-21 --version | grep nvptx
 ```
@@ -151,8 +161,8 @@ cargo oxide pipeline <example>
 # Debug with cuda-gdb
 cargo oxide debug <example> --tui
 
-# Build with LTOIR output (for C++ interop)
-cargo oxide build <example> --dlto
+# Build NVVM IR for libNVVM/nvJitLink interop
+cargo oxide build <example> --emit-nvvm-ir --arch sm_120
 ```
 
 ## Building the book

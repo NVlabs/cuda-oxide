@@ -15,6 +15,7 @@
 
 use crate::error::{DriverError, IntoResult};
 use cuda_bindings::CUdeviceptr;
+use std::ffi::c_void;
 use std::mem::MaybeUninit;
 
 /// Allocates `num_bytes` of device memory on `stream` using the stream-ordered
@@ -166,4 +167,34 @@ pub unsafe fn memset_d8_async(
     stream: cuda_bindings::CUstream,
 ) -> Result<(), DriverError> {
     unsafe { cuda_bindings::cuMemsetD8Async(dptr, value, num_bytes, stream) }.result()
+}
+
+/// Allocates `num_bytes` of page-locked host memory.
+///
+/// Pinned host memory can be used as a staging area for CUDA transfers that
+/// need higher bandwidth, and is required for host-device copies that are
+/// intended to overlap with GPU work. Pair with [`free_host`].
+///
+/// # Safety
+///
+/// - A CUDA context must be bound to the calling thread.
+/// - `num_bytes` must not exceed the host memory available for page-locked
+///   allocations. Passing zero bytes is not useful and the CUDA driver reports
+///   it as an error.
+pub unsafe fn malloc_host(num_bytes: usize) -> Result<*mut c_void, DriverError> {
+    let mut host_ptr = MaybeUninit::uninit();
+    unsafe {
+        cuda_bindings::cuMemAllocHost_v2(host_ptr.as_mut_ptr(), num_bytes).result()?;
+        Ok(host_ptr.assume_init())
+    }
+}
+
+/// Frees page-locked host memory previously allocated with [`malloc_host`].
+///
+/// # Safety
+///
+/// - `ptr` must have been returned by [`malloc_host`] and not yet freed.
+/// - No in-flight CUDA transfer or kernel may reference `ptr`.
+pub unsafe fn free_host(ptr: *mut c_void) -> Result<(), DriverError> {
+    unsafe { cuda_bindings::cuMemFreeHost(ptr) }.result()
 }

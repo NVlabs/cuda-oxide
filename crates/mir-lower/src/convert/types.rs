@@ -91,9 +91,36 @@ use dialect_mir::types::{MirDisjointSliceType, MirSliceType, MirStructType};
 use pliron::builtin::type_interfaces::FunctionTypeInterface;
 use pliron::builtin::types::{FP32Type, FP64Type, FunctionType, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
+use pliron::operation::Operation;
 use pliron::r#type::{TypeObj, type_cast};
 
 use crate::type_conversion_interface::MirTypeConversion;
+
+// =============================================================================
+// Kernel-Boundary Detection
+// =============================================================================
+
+/// Identifier of the attribute that marks a `MirFuncOp` / `llvm.func` as a
+/// GPU kernel entry point.
+///
+/// Kept as a function (rather than a `const`) because pliron `Identifier`
+/// construction needs the `try_into()` fallible path.
+fn gpu_kernel_attr() -> pliron::identifier::Identifier {
+    "gpu_kernel".try_into().expect("static identifier")
+}
+
+/// Returns `true` when `op` carries the `gpu_kernel` attribute.
+///
+/// The kernel-entry ABI differs from internal device-function ABI: at
+/// kernel boundaries, aggregate parameters (structs, closures) are passed
+/// as a single byval value to match what the host pushes via
+/// `cuLaunchKernel`. Internal call sites still flatten aggregates the
+/// same way they always did. This helper is the single source of truth
+/// for that branch and is consumed by both [`convert_function_type`] and
+/// the entry-block prologue in `lowering.rs`.
+pub fn is_kernel_func(ctx: &Context, op: Ptr<Operation>) -> bool {
+    op.deref(ctx).attributes.0.contains_key(&gpu_kernel_attr())
+}
 
 // =============================================================================
 // Zero-Sized Type (ZST) Detection
@@ -180,15 +207,24 @@ pub fn convert_type(ctx: &mut Context, ty: Ptr<TypeObj>) -> Result<Ptr<TypeObj>,
 ///
 /// ```text
 /// MIR:  fn kernel(slice: &[f32], point: Point)
-/// LLVM: fn kernel(ptr: !ptr, len: i64, x: f32, y: f32)
+/// LLVM: fn internal_fn(ptr: !ptr, len: i64, x: f32, y: f32)
 /// ```
 ///
-/// | MIR Argument | LLVM Arguments |
-/// |--------------|----------------|
-/// | `&[T]` | `(ptr, i64)` |
-/// | `DisjointSlice<T>` | `(ptr, i64)` |
-/// | `struct { a: A, b: B }` | `(a: A', b: B')` |
-/// | Other | Converted type |
+/// | MIR Argument            | Internal call ABI       | Kernel-entry ABI       |
+/// |-------------------------|-------------------------|------------------------|
+/// | `&[T]`                  | `(ptr, i64)`            | `(ptr, i64)`           |
+/// | `DisjointSlice<T>`      | `(ptr, i64)`            | `(ptr, i64)`           |
+/// | `struct { a: A, b: B }` | `(a: A', b: B')`        | one byval `{A', B'}`   |
+/// | closure with N captures | N separate field args   | one byval struct       |
+/// | Other                   | Converted type          | Converted type         |
+///
+/// Slices keep their `(ptr, len)` flattening on both sides because the
+/// host-side launch helpers push the pointer and length as two driver
+/// args. Structs and closures are unflattened only at kernel boundaries
+/// because the host pushes them as a single scalar — see
+/// `cuda_host::push_kernel_scalar`. Internal device-side call sites stay
+/// flattened: caller and callee are both inside this backend, so the ABI
+/// is private and there is no host to disagree with.
 ///
 /// ## Return Type Handling
 ///
@@ -200,6 +236,10 @@ pub fn convert_type(ctx: &mut Context, ty: Ptr<TypeObj>) -> Result<Ptr<TypeObj>,
 ///
 /// * `ctx` - The pliron context
 /// * `func_type` - The MIR function type to convert
+/// * `is_kernel_entry` - When `true`, treat aggregate (non-slice) params
+///   as single byval values to match the host-side push ABI. When `false`,
+///   keep the existing internal device-fn ABI that flattens struct fields
+///   into individual scalars.
 ///
 /// # Returns
 ///
@@ -217,11 +257,15 @@ pub fn convert_type(ctx: &mut Context, ty: Ptr<TypeObj>) -> Result<Ptr<TypeObj>,
 ///
 /// # Note
 ///
-/// This flattening must be reversed in the entry block of the generated
-/// LLVM function. See `lowering.rs` for the reconstruction logic.
+/// At internal device-function boundaries the struct flattening must be
+/// reversed in the entry block. At kernel-entry boundaries the param
+/// arrives as a single byval struct, so the entry block can pass it
+/// through unchanged. See `lowering.rs::build_entry_prologue` for both
+/// reconstruction paths.
 pub fn convert_function_type(
     ctx: &mut Context,
     func_type: pliron::r#type::TypePtr<FunctionType>,
+    is_kernel_entry: bool,
 ) -> Result<pliron::r#type::TypePtr<llvm_types::FuncType>, anyhow::Error> {
     // Extract input/output types before mutating context
     let (inputs_ptr, results_ptr) = {
@@ -231,7 +275,9 @@ pub fn convert_function_type(
         (interface.arg_types(), interface.res_types())
     };
 
-    // Convert inputs, flattening slice/struct types for ABI compatibility
+    // Convert inputs, flattening slice/struct types for ABI compatibility.
+    // Slices flatten on both ABIs; structs flatten only on the internal
+    // device-fn ABI.
     let mut inputs = Vec::new();
     let inputs_vec: Vec<_> = inputs_ptr.to_vec();
 
@@ -252,9 +298,16 @@ pub fn convert_function_type(
             if ty_ref.is::<MirSliceType>() || ty_ref.is::<MirDisjointSliceType>() {
                 FlattenKind::Slice
             } else if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
-                FlattenKind::Struct {
-                    field_types: struct_ty.field_types.clone(),
-                    mem_to_decl: struct_ty.memory_order(),
+                if is_kernel_entry {
+                    // Kernel-boundary ABI: keep the struct intact so the
+                    // host's single `push_kernel_scalar(&closure)` push
+                    // matches a single .param entry on the device side.
+                    FlattenKind::None
+                } else {
+                    FlattenKind::Struct {
+                        field_types: struct_ty.field_types.clone(),
+                        mem_to_decl: struct_ty.memory_order(),
+                    }
                 }
             } else {
                 FlattenKind::None

@@ -446,11 +446,6 @@ pub fn generate_device_code<'tcx>(
             })
             .collect();
 
-        // Check for LTOIR mode (set by cargo oxide --dlto)
-        let emit_ltoir = std::env::var("CUDA_OXIDE_EMIT_LTOIR").is_ok();
-        let ltoir_arch = std::env::var("CUDA_OXIDE_TARGET")
-            .or_else(|_| std::env::var("CUDA_OXIDE_ARCH"))
-            .unwrap_or_else(|_| "sm_100".to_string());
         // Check for NVVM IR mode (set by cargo oxide --emit-nvvm-ir)
         let emit_nvvm_ir = std::env::var("CUDA_OXIDE_EMIT_NVVM_IR").is_ok();
 
@@ -459,9 +454,6 @@ pub fn generate_device_code<'tcx>(
                 "[device_codegen] Converted {} functions to stable_mir format",
                 stable_functions.len()
             );
-            if emit_ltoir {
-                eprintln!("[device_codegen] LTOIR mode enabled (arch: {})", ltoir_arch);
-            }
             if emit_nvvm_ir {
                 eprintln!("[device_codegen] NVVM IR mode enabled");
             }
@@ -474,8 +466,6 @@ pub fn generate_device_code<'tcx>(
             verbose,
             show_mir_dialect: show_mir,
             show_llvm_dialect: show_llvm,
-            emit_ltoir,
-            ltoir_arch: ltoir_arch.clone(),
             emit_nvvm_ir,
         };
 

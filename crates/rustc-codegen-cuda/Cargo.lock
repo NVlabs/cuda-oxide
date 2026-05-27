@@ -105,6 +105,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "bytemuck"
+version = "1.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+
+[[package]]
 name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -230,6 +236,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
+name = "hi_sparse_bitset"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad02fc3cac722c3c44c3ed708f6653e7d149b7912f7342fc1e8530455f84f0eb"
+dependencies = [
+ "wide",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,12 +353,13 @@ dependencies = [
 [[package]]
 name = "pliron"
 version = "0.14.0"
-source = "git+https://github.com/vaivaswatha/pliron#733b54212a24fd463d81bc2cf7424bcfaf811f5d"
+source = "git+https://github.com/vaivaswatha/pliron?rev=b51e73b11648508188184451adebdcf63957b7fe#b51e73b11648508188184451adebdcf63957b7fe"
 dependencies = [
  "awint",
  "combine",
  "downcast-rs",
  "dyn-clone",
+ "hi_sparse_bitset",
  "inventory",
  "linkme",
  "log",
@@ -359,7 +375,7 @@ dependencies = [
 [[package]]
 name = "pliron-derive"
 version = "0.14.0"
-source = "git+https://github.com/vaivaswatha/pliron#733b54212a24fd463d81bc2cf7424bcfaf811f5d"
+source = "git+https://github.com/vaivaswatha/pliron?rev=b51e73b11648508188184451adebdcf63957b7fe#b51e73b11648508188184451adebdcf63957b7fe"
 dependencies = [
  "combine",
  "convert_case",
@@ -468,6 +484,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "safe_arch"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "slotmap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -548,3 +573,13 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wide"
+version = "0.7.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
+]
