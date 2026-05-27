@@ -8,6 +8,7 @@
 //! Handles translation of debug/profiling primitives including:
 //! - `clock()` - 32-bit GPU clock counter
 //! - `clock64()` - 64-bit GPU clock counter
+//! - `globaltimer()` - 64-bit GPU global timer
 //! - `trap()` - Abort kernel execution
 //! - `breakpoint()` - cuda-gdb breakpoint
 //! - `prof_trigger()` - Profiler event trigger
@@ -17,7 +18,8 @@ use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
-    BreakpointOp, PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp, TrapOp, VprintfOp,
+    BreakpointOp, PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp, ReadPtxSregGlobaltimerOp,
+    TrapOp, VprintfOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -134,6 +136,58 @@ pub fn emit_clock64(
         block_map,
         loc,
         "clock64 call without target block",
+    )
+}
+
+/// Emits `globaltimer()`: Read 64-bit GPU global timer.
+///
+/// # Generated Operation
+///
+/// `nvvm.read_ptx_sreg_globaltimer` - Maps to PTX `mov.u64 %rd, %globaltimer;`
+///
+/// # Returns
+///
+/// u64 global timer tick count
+pub fn emit_globaltimer(
+    ctx: &mut Context,
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    let i64_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
+
+    let timer_op = Operation::new(
+        ctx,
+        ReadPtxSregGlobaltimerOp::get_concrete_op_info(),
+        vec![i64_type.to_ptr()],
+        vec![],
+        vec![],
+        0,
+    );
+    timer_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = prev_op {
+        timer_op.insert_after(ctx, prev);
+    } else {
+        timer_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = timer_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        timer_op,
+        value_map,
+        block_map,
+        loc,
+        "globaltimer call without target block",
     )
 }
 

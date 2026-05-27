@@ -293,20 +293,14 @@ pub fn convert_shared_alloc_dc(
         (alloc_key, mir_elem_type, size, alignment)
     };
 
-    let global_name = if let Some(key) = &alloc_key {
-        if let Some(existing_name) = shared_globals.get(key) {
-            existing_name.clone()
-        } else {
-            create_shared_global(
-                ctx,
-                op,
-                shared_globals,
-                mir_elem_type,
-                size,
-                alignment,
-                Some(key),
-            )?
-        }
+    // Cache hit only when the op carries a key AND that key is already in
+    // `shared_globals`. `as_ref()` borrows for the if-let scope so the else
+    // branch can still move `alloc_key` into `create_shared_global` (which
+    // takes ownership and inserts it into the cache).
+    let global_name = if let Some(key) = alloc_key.as_ref()
+        && let Some(existing_name) = shared_globals.get(key)
+    {
+        existing_name.clone()
     } else {
         create_shared_global(
             ctx,
@@ -315,7 +309,7 @@ pub fn convert_shared_alloc_dc(
             mir_elem_type,
             size,
             alignment,
-            None,
+            alloc_key,
         )?
     };
 
@@ -334,8 +328,10 @@ pub fn convert_shared_alloc_dc(
 /// - Optional alignment
 /// - Unique generated name (`__shared_mem_N`)
 ///
-/// The global is inserted at the front of the module block.
-/// If `alloc_key` is provided, the name is cached for deduplication.
+/// The global is inserted at the front of the module block. When
+/// `alloc_key` is `Some`, the key is moved into `shared_globals` so that
+/// later allocations with the same key reuse this global (caller is
+/// expected to have already checked the cache for a hit).
 fn create_shared_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
@@ -343,7 +339,7 @@ fn create_shared_global(
     mir_elem_type: Ptr<TypeObj>,
     size: u64,
     alignment: u64,
-    alloc_key: Option<&String>,
+    alloc_key: Option<String>,
 ) -> Result<pliron::identifier::Identifier> {
     let llvm_elem_type = convert_type(ctx, mir_elem_type).map_err(anyhow_to_pliron)?;
     let array_type = ArrayType::get(ctx, llvm_elem_type, size);
@@ -375,7 +371,7 @@ fn create_shared_global(
     global_op.get_operation().insert_at_front(module_block, ctx);
 
     if let Some(key) = alloc_key {
-        shared_globals.insert(key.clone(), name.clone());
+        shared_globals.insert(key, name.clone());
     }
 
     Ok(name)

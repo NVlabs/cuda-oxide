@@ -61,6 +61,35 @@ pub struct FieldIndexAttr(pub u32);
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct VariantIndexAttr(pub u32);
 
+/// Niche encoding for a `Cast(Transmute)` whose destination is a
+/// niche-optimised enum.
+///
+/// rustc stores `Option<NonZeroT>`, `Option<&T>`, `Option<Box<T>>`,
+/// `Option<NonNull<T>>`, `Option<bool>`, `Option<char>`, etc. as a single
+/// scalar where one forbidden bit pattern of the inner type stands in for
+/// the niche variant (typically `None`) and any other bit pattern means
+/// the active variant (typically `Some(x)`).
+///
+/// When mir-lower has to rebuild the un-niched `{ discriminant, payload }`
+/// aggregate from such a scalar it needs:
+///
+/// * `niche_start` -- the bit pattern that signals the niche variant.
+/// * `niche_variant_idx` -- the discriminant value for the niche variant.
+/// * `untagged_variant_idx` -- the discriminant value for the active variant.
+///
+/// All three come from `ty.layout().shape().variants` when the tag
+/// encoding is `TagEncoding::Niche`. `niche_start` is stored as `u64`
+/// rather than the `u128` rustc-public exposes: niched scalars are at
+/// most 64 bits wide, so the bit pattern always fits. The importer
+/// rejects wider niches up front rather than truncating silently.
+#[pliron_attr(name = "mir.niche_encoding", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub struct NicheEncodingAttr {
+    pub niche_start: u64,
+    pub niche_variant_idx: u32,
+    pub untagged_variant_idx: u32,
+}
+
 /// IEEE 754 binary16 floating-point attribute for Rust MIR `f16` constants.
 #[pliron_attr(name = "mir.fp16_attr", format = "$0", verifier = "succ")]
 #[derive(PartialEq, Clone, Debug)]
@@ -125,5 +154,6 @@ pub fn register(ctx: &mut Context) {
     MutabilityAttr::register(ctx);
     FieldIndexAttr::register(ctx);
     VariantIndexAttr::register(ctx);
+    NicheEncodingAttr::register(ctx);
     MirFP16Attr::register(ctx);
 }

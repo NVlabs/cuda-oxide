@@ -406,6 +406,11 @@ The codegen backend receives very limited information from rustc's argument
 parser -- environment variables are the simplest way to pass configuration
 without fighting the compiler driver's flag plumbing.
 
+`CUDA_OXIDE_TARGET` sits in the middle of a precedence chain that
+`cargo oxide` honours: explicit `--arch` wins, then `CUDA_OXIDE_TARGET`,
+then `cargo oxide run`'s host-CC auto-detect (only for `run`, not `build`
+or `pipeline`), and finally the backend's feature-based default.
+
 ```{note}
 `CUDA_OXIDE_VERBOSE=1 cargo oxide build` is your best friend when debugging
 the compiler. It shows exactly which functions were collected, which crates

@@ -535,20 +535,21 @@ impl CodegenBackend for CudaCodegenBackend {
                     &device_config,
                 ) {
                     Ok(result) => {
-                        if self.config.verbose {
+                        if self.config.verbose
+                            && let Some(artifact) = result.artifact.as_ref()
+                        {
                             eprintln!(
-                                "[rustc_codegen_cuda] Device codegen complete: {} (target: {})",
-                                result.ptx_path.display(),
-                                result.target
+                                "[rustc_codegen_cuda] Device codegen complete: {} ({:?}, target: {})",
+                                artifact.name, artifact.kind, result.target
                             );
                         }
-                        if let Some(ptx_content) = result.ptx_content.as_deref() {
-                            match write_ptx_artifact_object(
+                        if let Some(artifact) = result.artifact.as_ref() {
+                            match write_device_artifact_object(
                                 &device_config.output_dir,
                                 &device_config.output_name,
                                 tcx.sess.target.llvm_target.as_ref(),
                                 &result,
-                                ptx_content,
+                                artifact,
                                 device_functions,
                             ) {
                                 Ok(path) => {
@@ -562,13 +563,13 @@ impl CodegenBackend for CudaCodegenBackend {
                                 }
                                 Err(e) => {
                                     tcx.dcx().fatal(format!(
-                                        "[rustc_codegen_cuda] Failed to embed PTX artifact: {e}"
+                                        "[rustc_codegen_cuda] Failed to embed device artifact: {e}"
                                     ));
                                 }
                             }
-                        } else if self.config.verbose {
-                            eprintln!(
-                                "[rustc_codegen_cuda] Skipping embedded PTX artifact: no PTX output"
+                        } else {
+                            tcx.dcx().fatal(
+                                "[rustc_codegen_cuda] Device codegen did not produce an embeddable artifact",
                             );
                         }
                         Some(result)
@@ -641,21 +642,32 @@ impl CodegenBackend for CudaCodegenBackend {
     }
 }
 
-fn write_ptx_artifact_object(
+fn write_device_artifact_object(
     output_dir: &Path,
     output_name: &str,
     host_target: &str,
     result: &device_codegen::DeviceCodegenResult,
-    ptx_content: &str,
+    artifact: &device_codegen::DeviceCodegenArtifact,
     functions: &[collector::CollectedFunction<'_>],
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let ptx_name = format!("{output_name}.ptx");
     let bundle_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| output_name.to_string());
+    let payload_kind = match artifact.kind {
+        device_codegen::DeviceCodegenArtifactKind::Ptx => oxide_artifacts::ArtifactPayloadKind::Ptx,
+        device_codegen::DeviceCodegenArtifactKind::NvvmIr => {
+            oxide_artifacts::ArtifactPayloadKind::NvvmIr
+        }
+        device_codegen::DeviceCodegenArtifactKind::Ltoir => {
+            oxide_artifacts::ArtifactPayloadKind::Ltoir
+        }
+        device_codegen::DeviceCodegenArtifactKind::Cubin => {
+            oxide_artifacts::ArtifactPayloadKind::Cubin
+        }
+    };
     let mut spec = oxide_artifacts::ArtifactBundleSpec::new(&bundle_name, &result.target)
         .with_payload(oxide_artifacts::ArtifactPayloadSpec::new(
-            oxide_artifacts::ArtifactPayloadKind::Ptx,
-            &ptx_name,
-            ptx_content.as_bytes(),
+            payload_kind,
+            &artifact.name,
+            &artifact.bytes,
         ));
     for function in functions {
         let kind = if function.is_kernel {

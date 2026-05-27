@@ -121,13 +121,24 @@ A stock LLVM build without the NVPTX backend will not work. The `llvm-21` Ubuntu
 
 ## Clang (host `cuda-bindings`)
 
-The host `cuda-bindings` crate runs [`bindgen`](https://github.com/rust-lang/rust-bindgen), which loads libclang and needs clang's own resource-dir `stddef.h` — a bare `libclang1-*` runtime is not enough.
+The host `cuda-bindings` crate runs [`bindgen`](https://github.com/rust-lang/rust-bindgen), which loads `libclang.so` at runtime and needs clang's own resource-dir `stddef.h` — a bare `libclang1-*` runtime is not enough. Three packages cover both halves:
 
 ```bash
-sudo apt install clang-21   # or libclang-common-21-dev
+sudo apt install libclang-21-dev libclang-cpp21-dev libclang-common-21-dev
 ```
 
 `cargo oxide doctor` catches this up front; the symptom otherwise is `'stddef.h' file not found` during the host build.
+
+:::{note}
+**Fresh Ubuntu 24.04 / DGX-OS:** after installing LLVM 21 via `apt.llvm.org/llvm.sh` as shown above, the versioned `clang-21` / `clang++-21` binaries are present but the unversioned aliases `cargo oxide doctor` looks for are not. Add them with `update-alternatives`:
+
+```bash
+sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-21   100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100
+```
+
+Validated on Asus GX10 / NVIDIA DGX Spark.
+:::
 
 ---
 

@@ -119,19 +119,36 @@ use pliron::operation::Operation;
 use pliron::printable::Printable;
 use std::path::Path;
 
-/// Output paths and target from successful compilation.
+/// Device artifact format produced by a successful pipeline run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilationArtifactKind {
+    /// Textual PTX assembly, loadable by the CUDA driver.
+    Ptx,
+    /// NVVM-compatible LLVM IR, intended for libNVVM/nvJitLink.
+    NvvmIr,
+    /// Binary LTOIR, intended for nvJitLink.
+    Ltoir,
+    /// Final cubin image, loadable by the CUDA driver.
+    Cubin,
+}
+
+/// Output paths, target, and artifact format from successful compilation.
 pub struct CompilationResult {
     /// Path to generated LLVM IR (`.ll` file).
     pub ll_path: std::path::PathBuf,
     /// Path to generated PTX assembly (`.ptx` file).
     pub ptx_path: std::path::PathBuf,
+    /// Path to the artifact that should be embedded or consumed by the caller.
+    pub artifact_path: std::path::PathBuf,
+    /// Format of `artifact_path`.
+    pub artifact_kind: CompilationArtifactKind,
     /// GPU target architecture used (e.g., `sm_90a`, `sm_80`).
     pub target: String,
 }
 
 /// Configuration for the compilation pipeline.
 pub struct PipelineConfig {
-    /// Directory for output files (`.ll`, `.ptx`, `.ltoir`).
+    /// Directory for output files (`.ll`, `.ptx`).
     pub output_dir: std::path::PathBuf,
     /// Base name for output files (e.g., `"kernel"` → `kernel.ll`, `kernel.ptx`).
     pub output_name: String,
@@ -141,17 +158,6 @@ pub struct PipelineConfig {
     pub show_mir_dialect: bool,
     /// Dump the `dialect-llvm` module after lowering (for debugging).
     pub show_llvm_dialect: bool,
-    /// Enable LTOIR generation instead of PTX (for Blackwell+ GPUs).
-    ///
-    /// When true:
-    /// - Generates NVVM-compatible LLVM IR
-    /// - Wraps IR in LTOIR YAML container format
-    /// - Outputs `.ltoir` file instead of `.ptx`
-    /// - Skips `llc` invocation (LTOIR is consumed by nvJitLink, not llc)
-    pub emit_ltoir: bool,
-    /// Target architecture for LTOIR (e.g., "sm_100", "sm_90").
-    /// Only used when `emit_ltoir` is true.
-    pub ltoir_arch: String,
     /// Emit NVVM IR suitable for libNVVM or other NVVM-compatible tools.
     ///
     /// When true:
@@ -176,8 +182,6 @@ impl Default for PipelineConfig {
             verbose: true,
             show_mir_dialect: false,
             show_llvm_dialect: false,
-            emit_ltoir: false,
-            ltoir_arch: "sm_100".to_string(),
             emit_nvvm_ir: false,
         }
     }
@@ -374,50 +378,41 @@ pub fn run_pipeline(
 
     // Step 7: Export to LLVM IR
     if config.verbose {
-        let mode = if config.emit_ltoir {
-            "LTOIR"
-        } else if emit_nvvm_ir {
-            "NVVM IR"
-        } else {
-            "PTX"
-        };
+        let mode = if emit_nvvm_ir { "NVVM IR" } else { "PTX" };
         eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
     }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
-    let _llvm_ir = export_llvm_ir(
-        &ctx,
-        module_op_ptr,
-        device_externs,
-        &ll_path,
-        config.emit_ltoir,
-        emit_nvvm_ir,
-    )?;
+    let _llvm_ir = export_llvm_ir(&ctx, module_op_ptr, device_externs, &ll_path, emit_nvvm_ir)?;
     if config.verbose {
         eprintln!("LLVM IR written to {}", ll_path.display());
     }
 
-    // Step 8: Generate PTX or LTOIR
-    if config.emit_ltoir {
-        Err(PipelineError::Export(
-            "LTOIR container generation (--dlto) is not supported. \
-             Use --emit-nvvm-ir instead, which produces NVVM-compatible LLVM IR \
-             that can be compiled to LTOIR via libNVVM."
-                .to_string(),
-        ))
-    } else if needs_libdevice {
-        // Skip llc -- see `needs_libdevice` comment above. Return a
-        // would-be ptx_path so callers see a stable shape; the file does
-        // not exist and the example must build its own cubin from `ll_path`.
+    // Step 8: Generate PTX or stop at NVVM IR for libNVVM-owned paths.
+    if emit_nvvm_ir {
+        // Skip llc. Return a would-be ptx_path so callers see a stable shape;
+        // the file does not exist and the consumer must build its own cubin
+        // from `ll_path` via libNVVM + nvJitLink.
         let ptx_path = config
             .output_dir
             .join(format!("{}.ptx", config.output_name));
         if config.verbose {
-            eprintln!("\n=== Skipping llc (libdevice present); example owns LTOIR build ===");
+            let reason = if needs_libdevice {
+                "libdevice present"
+            } else {
+                "NVVM IR requested"
+            };
+            eprintln!("\n=== Skipping llc ({reason}); consumer owns libNVVM/nvJitLink build ===");
         }
+        // Record the real GPU arch in the bundle target when the caller
+        // pinned one via CUDA_OXIDE_TARGET; otherwise leave the legacy
+        // "nvvm-ir" sentinel that cuda-host's loader knows to re-resolve.
+        let target = std::env::var("CUDA_OXIDE_TARGET").unwrap_or_else(|_| "nvvm-ir".to_string());
         Ok(CompilationResult {
+            artifact_path: ll_path.clone(),
+            artifact_kind: CompilationArtifactKind::NvvmIr,
             ll_path,
             ptx_path,
-            target: "libdevice".to_string(),
+            target,
         })
     } else {
         // PTX mode: invoke llc
@@ -437,6 +432,8 @@ pub fn run_pipeline(
         }
 
         Ok(CompilationResult {
+            artifact_path: ptx_path.clone(),
+            artifact_kind: CompilationArtifactKind::Ptx,
             ll_path,
             ptx_path,
             target,
@@ -625,20 +622,12 @@ fn export_llvm_ir(
     module_op_ptr: Ptr<Operation>,
     device_externs: &[DeviceExternDecl],
     path: &Path,
-    emit_ltoir: bool,
     emit_nvvm_ir: bool,
 ) -> Result<String, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
-    let llvm_ir = if emit_ltoir {
-        let _ = device_externs;
-        return Err(PipelineError::Export(
-            "LTOIR container generation (--dlto) is not supported. \
-             Use --emit-nvvm-ir instead."
-                .to_string(),
-        ));
-    } else if emit_nvvm_ir {
+    let llvm_ir = if emit_nvvm_ir {
         let config = dialect_llvm::export::NvvmExportConfig;
         dialect_llvm::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
@@ -1020,8 +1009,6 @@ mod tests {
         assert!(config.verbose);
         assert!(!config.show_mir_dialect);
         assert!(!config.show_llvm_dialect);
-        assert!(!config.emit_ltoir);
-        assert_eq!(config.ltoir_arch, "sm_100");
         assert!(!config.emit_nvvm_ir);
     }
 

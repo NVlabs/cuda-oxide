@@ -191,6 +191,7 @@ name = "cargo-oxide"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "cuda-core",
  "cuda-host",
  "libnvvm-sys",
  "nvjitlink-sys",

@@ -86,13 +86,12 @@ pub fn resolve_context() -> Context {
 ///
 /// Cleans stale artifacts, sets `RUSTFLAGS` to point at the backend `.so`,
 /// and invokes `cargo run --release` from the example directory. Environment
-/// variables control output format (PTX / LTOIR / NVVM IR) and verbosity.
+/// variables control output format (PTX / NVVM IR) and verbosity.
 #[allow(clippy::too_many_arguments)]
 pub fn codegen_run(
     ctx: &Context,
     example: &str,
     verbose: bool,
-    dlto: bool,
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
@@ -106,18 +105,38 @@ pub fn codegen_run(
 
     clean_generated_files(&example_dir, example);
 
-    let output_format = format_label(dlto, emit_nvvm_ir);
-    let target_arch = arch.unwrap_or(if dlto { "sm_100" } else { "sm_90" });
+    let output_format = format_label(emit_nvvm_ir);
+    // Target precedence for `cargo oxide run` (highest first):
+    //   1. --arch <sm_XX>           explicit user override
+    //   2. CUDA_OXIDE_TARGET=<sm_XX>  explicit env override (set by parent process)
+    //   3. Host GPU compute capability detected from CUDA device 0
+    //   4. Backend feature-based default (`select_target` in mir-importer)
+    //
+    // (3) is the auto-detect added here so the generated module can load on
+    // the local GPU. We only do it for `run`, not `build`/`pipeline`, because
+    // `run` immediately loads the cubin on device 0 — whereas the other
+    // commands may be cross-compiling for a different machine.
+    let detected_run_arch = detect_run_target_arch(arch, emit_nvvm_ir);
+    let forwarded_arch = arch.or(detected_run_arch.as_deref());
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA: {}", example);
     println!("=========================================");
     println!();
-    if dlto || emit_nvvm_ir {
+    if emit_nvvm_ir {
         println!("Output format: {}", output_format);
-        if dlto {
-            println!("Target arch: {}", target_arch);
-        }
+        println!(
+            "Target arch: {}",
+            arch.expect("--emit-nvvm-ir requires --arch")
+        );
+        println!();
+    } else if detected_run_arch.is_some() {
+        // Surface the auto-detect outcome so it isn't silent magic; users
+        // chasing a JIT/load failure can see exactly which arch was picked.
+        println!(
+            "Target arch: {} (auto-detected from CUDA device 0)",
+            detected_run_arch.as_deref().unwrap()
+        );
         println!();
     }
     println!("This is the proper cargo workflow:");
@@ -149,7 +168,7 @@ pub fn codegen_run(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, forwarded_arch);
     apply_ld_library_path(&mut cmd);
 
     if let Some(bin) = bin {
@@ -179,7 +198,6 @@ pub fn codegen_build_example(
     ctx: &Context,
     example: &str,
     verbose: bool,
-    dlto: bool,
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
@@ -191,8 +209,6 @@ pub fn codegen_build_example(
     };
 
     clean_generated_files(&example_dir, example);
-
-    let target_arch = arch.unwrap_or(if dlto { "sm_100" } else { "sm_90" });
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA BUILD: {}", example);
@@ -221,7 +237,7 @@ pub fn codegen_build_example(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, arch);
     apply_ld_library_path(&mut cmd);
 
     println!("Building {}...", example);
@@ -246,27 +262,25 @@ pub fn codegen_build_example(
 /// Enables all diagnostic env vars (`CUDA_OXIDE_VERBOSE`, `SHOW_RUSTC_MIR`,
 /// `DUMP_MIR`, `DUMP_LLVM`) so the user can see MIR collection, the
 /// `dialect-mir` module (pre- and post-`mem2reg`), the `dialect-llvm`
-/// module, textual LLVM IR, and the final PTX or LTOIR. After the build,
+/// module, textual LLVM IR, and the final PTX or NVVM IR. After the build,
 /// generated artifacts are printed to stdout.
-pub fn codegen_show_pipeline(
-    ctx: &Context,
-    example: &str,
-    dlto: bool,
-    emit_nvvm_ir: bool,
-    arch: Option<&str>,
-) {
+pub fn codegen_show_pipeline(ctx: &Context, example: &str, emit_nvvm_ir: bool, arch: Option<&str>) {
     let example_dir = resolve_example_dir(ctx, example);
 
     clean_generated_files(&example_dir, example);
-
-    let output_format = format_label(dlto, emit_nvvm_ir);
-    let target_arch = arch.unwrap_or(if dlto { "sm_100" } else { "sm_90" });
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA PIPELINE: {}", example);
     println!("=========================================");
     println!();
-    println!("Output format: {} (arch: {})", output_format, target_arch);
+    match (emit_nvvm_ir, arch) {
+        (true, Some(target_arch)) => println!("Output format: NVVM IR (arch: {})", target_arch),
+        (false, Some(target_arch)) => {
+            println!("Output format: PTX (arch override: {})", target_arch)
+        }
+        (false, None) => println!("Output format: PTX (auto-detected arch)"),
+        (true, None) => unreachable!("--emit-nvvm-ir requires --arch"),
+    }
     println!();
     println!("Required flags (applied via RUSTFLAGS):");
     println!("  -C opt-level=3              MIR optimization");
@@ -292,7 +306,7 @@ pub fn codegen_show_pipeline(
     cmd.env("CUDA_OXIDE_DUMP_MIR", "1");
     cmd.env("CUDA_OXIDE_DUMP_LLVM", "1");
 
-    apply_output_mode(&mut cmd, dlto, emit_nvvm_ir, arch, target_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, arch);
     apply_ld_library_path(&mut cmd);
 
     println!("Building {}...", example);
@@ -305,7 +319,7 @@ pub fn codegen_show_pipeline(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    show_generated_artifacts(&example_dir, example, dlto);
+    show_generated_artifacts(&example_dir, example);
 }
 
 // =============================================================================
@@ -827,25 +841,78 @@ fn build_rustflags_with_existing(
     flags
 }
 
-/// Set environment variables that tell the codegen backend which output
-/// format to produce (LTOIR, NVVM IR) and the target GPU architecture.
-fn apply_output_mode(
-    cmd: &mut Command,
-    dlto: bool,
-    emit_nvvm_ir: bool,
-    arch: Option<&str>,
-    target_arch: &str,
-) {
-    if dlto {
-        cmd.env("CUDA_OXIDE_EMIT_LTOIR", "1");
-        cmd.env("CUDA_OXIDE_ARCH", target_arch);
-    }
-    if emit_nvvm_ir || arch.is_some() {
+/// Set environment variables for the codegen backend.
+fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) {
+    if let Some(target_arch) = arch {
         cmd.env("CUDA_OXIDE_TARGET", target_arch);
     }
     if emit_nvvm_ir {
         cmd.env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
     }
+}
+
+/// Pick a runnable target for `cargo oxide run` when the user has not pinned
+/// one explicitly.
+///
+/// # Precedence
+///
+/// `cargo oxide run` resolves the target architecture in this order, highest
+/// priority first:
+///
+/// 1. `--arch <sm_XX>`            — explicit user override
+/// 2. `CUDA_OXIDE_TARGET=<sm_XX>` — explicit env override (set in the parent
+///    process before invoking `cargo oxide run`)
+/// 3. **This function** — host GPU compute capability of CUDA device 0
+/// 4. Backend feature-based default (`select_target` in
+///    `mir-importer::pipeline`), which picks the minimum `sm_XX` required by
+///    the IR shape (e.g. `Basic → sm_80`, `Cluster → sm_90`, `Tma → sm_100`)
+///
+/// This function returns `Some(sm_XY)` to fill slot 3, or `None` (falling
+/// through to slot 4) when the host has no usable GPU.
+///
+/// # Why only `run`
+///
+/// `run` immediately loads the generated module on device 0 and launches the
+/// kernel, so a target older than the local GPU's compute capability is the
+/// only safe default. `build` and `pipeline` may legitimately cross-compile
+/// to a different machine, so they keep the backend's feature-based default
+/// untouched.
+///
+/// # Why this is needed even with the backend default
+///
+/// The backend's `select_target` picks the minimum `sm_XX` the IR requires.
+/// `Basic → sm_80` is a fine *compilation* baseline, but PTX for `sm_80` will
+/// not load on a Turing (`sm_75`) GPU because the JIT refuses
+/// forward-incompatible PTX. Detecting the host CC in `run` keeps the
+/// generated module loadable on the actual hardware that will execute it.
+///
+/// # When this returns `None`
+///
+/// - The user passed `--arch` (slot 1 wins).
+/// - `CUDA_OXIDE_TARGET` is set in the environment (slot 2 wins).
+/// - `--emit-nvvm-ir` is in effect (NVVM IR mode requires explicit `--arch`,
+///   enforced by the CLI parser).
+/// - No CUDA driver / device 0 is available on the host (CI runners without
+///   GPUs, headless build boxes). The caller falls through to slot 4 and
+///   the backend's feature-based default applies.
+fn detect_run_target_arch(arch: Option<&str>, emit_nvvm_ir: bool) -> Option<String> {
+    if arch.is_some() || emit_nvvm_ir || std::env::var_os("CUDA_OXIDE_TARGET").is_some() {
+        return None;
+    }
+
+    cuda_core::CudaContext::new(0)
+        .and_then(|ctx| ctx.compute_capability())
+        .ok()
+        .map(format_sm_arch)
+}
+
+/// Format a `(major, minor)` compute-capability tuple as the `sm_XX` /
+/// `sm_XXX` string the codegen backend expects on `CUDA_OXIDE_TARGET`.
+///
+/// Concatenates without a separator, matching CUDA conventions:
+/// `(7, 5)` → `"sm_75"`, `(12, 0)` → `"sm_120"`.
+fn format_sm_arch((major, minor): (i32, i32)) -> String {
+    format!("sm_{}{}", major, minor)
 }
 
 /// Forward an env var to the child process if it's set in the parent, otherwise remove it.
@@ -895,10 +962,10 @@ fn touch_main_rs(example_dir: &Path) {
     }
 }
 
-/// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`) from a
+/// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`, `.cubin`) from a
 /// previous run so we can verify the build produces fresh output.
 fn clean_generated_files(example_dir: &Path, example: &str) {
-    for ext in &["ptx", "ll", "ltoir"] {
+    for ext in &["ptx", "ll", "ltoir", "cubin"] {
         let file = example_dir.join(format!("{}.{}", example, ext));
         if file.exists() {
             let _ = std::fs::remove_file(&file);
@@ -907,23 +974,14 @@ fn clean_generated_files(example_dir: &Path, example: &str) {
 }
 
 /// Human-readable label for the selected output format.
-fn format_label(dlto: bool, emit_nvvm_ir: bool) -> &'static str {
-    if dlto {
-        "LTOIR"
-    } else if emit_nvvm_ir {
-        "NVVM IR"
-    } else {
-        "PTX"
-    }
+fn format_label(emit_nvvm_ir: bool) -> &'static str {
+    if emit_nvvm_ir { "NVVM IR" } else { "PTX" }
 }
 
-/// Print generated artifacts (LLVM IR, PTX, or LTOIR) to stdout after a
-/// pipeline build. For LTOIR (binary), prints the file path and disassembly
-/// instructions instead of raw content.
-fn show_generated_artifacts(example_dir: &Path, example: &str, dlto: bool) {
+/// Print generated artifacts (LLVM IR or PTX) to stdout after a pipeline build.
+fn show_generated_artifacts(example_dir: &Path, example: &str) {
     let ll_file = example_dir.join(format!("{}.ll", example));
     let ptx_file = example_dir.join(format!("{}.ptx", example));
-    let ltoir_file = example_dir.join(format!("{}.ltoir", example));
 
     if ll_file.exists() {
         println!();
@@ -935,19 +993,7 @@ fn show_generated_artifacts(example_dir: &Path, example: &str, dlto: bool) {
         }
     }
 
-    if dlto && ltoir_file.exists() {
-        println!();
-        println!("=========================================");
-        println!("LTOIR ({}.ltoir)", example);
-        println!("=========================================");
-        println!("Binary LTOIR file generated: {}", ltoir_file.display());
-        println!();
-        println!("To disassemble, use nvvm-dis (NVVM 2.0 dialect for Blackwell+):");
-        println!(
-            "  export LD_LIBRARY_PATH=/path/to/nvvm-tools-next/Linux_amd64_release:$LD_LIBRARY_PATH"
-        );
-        println!("  nvvm-dis {}.ltoir", example);
-    } else if ptx_file.exists() {
+    if ptx_file.exists() {
         println!();
         println!("=========================================");
         println!("PTX ({}.ptx)", example);
@@ -1202,6 +1248,13 @@ fn find_executable(name: &str, fallback_paths: &[&str]) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
+
+    fn command_env(cmd: &Command, key: &str) -> Option<String> {
+        cmd.get_envs()
+            .find(|(name, _)| *name == OsStr::new(key))
+            .and_then(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+    }
 
     #[test]
     fn build_rustflags_appends_existing_rustflags_after_required_flags() {
@@ -1228,5 +1281,80 @@ mod tests {
 
         assert!(rustflags.contains(" -C debuginfo=2"));
         assert!(!rustflags.ends_with(' '));
+    }
+
+    #[test]
+    fn apply_output_mode_sets_target_for_arch_override() {
+        let mut cmd = Command::new("cargo");
+
+        apply_output_mode(&mut cmd, false, Some("sm_120"));
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_TARGET").as_deref(),
+            Some("sm_120")
+        );
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR"), None);
+    }
+
+    #[test]
+    fn apply_output_mode_sets_nvvm_ir_flag_and_target() {
+        let mut cmd = Command::new("cargo");
+
+        apply_output_mode(&mut cmd, true, Some("sm_100a"));
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_TARGET").as_deref(),
+            Some("sm_100a")
+        );
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR").as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn apply_output_mode_leaves_auto_detect_ptx_unset() {
+        let mut cmd = Command::new("cargo");
+
+        apply_output_mode(&mut cmd, false, None);
+
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_TARGET"), None);
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_EMIT_NVVM_IR"), None);
+    }
+
+    #[test]
+    fn format_sm_arch_uses_cuda_target_spelling() {
+        assert_eq!(format_sm_arch((7, 5)), "sm_75");
+        assert_eq!(format_sm_arch((12, 0)), "sm_120");
+        // sm_90a / sm_100a etc. are not produced by this helper because
+        // compute_capability() returns plain integers; the `a` suffix is
+        // applied by the backend's feature selector when arch-specific
+        // tcgen05 / wgmma intrinsics are used.
+    }
+
+    #[test]
+    fn detect_run_target_arch_skips_when_arch_explicit() {
+        // --arch wins; never query the GPU.
+        assert_eq!(detect_run_target_arch(Some("sm_120"), false), None);
+    }
+
+    #[test]
+    fn detect_run_target_arch_skips_when_emit_nvvm_ir() {
+        // NVVM IR mode requires explicit --arch; auto-detect must not run.
+        assert_eq!(detect_run_target_arch(None, true), None);
+    }
+
+    #[test]
+    fn detect_run_target_arch_skips_when_env_target_set() {
+        // Test in isolation; the `CUDA_OXIDE_TARGET` env handle is process-wide.
+        // SAFETY: single-threaded test serialised by the cargo test harness.
+        unsafe {
+            std::env::set_var("CUDA_OXIDE_TARGET", "sm_75");
+        }
+        let result = detect_run_target_arch(None, false);
+        unsafe {
+            std::env::remove_var("CUDA_OXIDE_TARGET");
+        }
+        assert_eq!(result, None);
     }
 }

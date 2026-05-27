@@ -285,16 +285,16 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
 
             pub fn load(
                 ctx: &::std::sync::Arc<::cuda_core::CudaContext>,
-            ) -> ::core::result::Result<LoadedModule, ::cuda_core::EmbeddedModuleError> {
+            ) -> ::core::result::Result<LoadedModule, ::cuda_host::EmbeddedModuleError> {
                 load_named(ctx, env!("CARGO_PKG_NAME"))
             }
 
             pub fn load_named(
                 ctx: &::std::sync::Arc<::cuda_core::CudaContext>,
                 name: &str,
-            ) -> ::core::result::Result<LoadedModule, ::cuda_core::EmbeddedModuleError> {
-                let module = ::cuda_core::embedded::load_embedded_module(ctx, name)?;
-                from_module(module).map_err(::cuda_core::EmbeddedModuleError::Driver)
+            ) -> ::core::result::Result<LoadedModule, ::cuda_host::EmbeddedModuleError> {
+                let module = ::cuda_host::load_embedded_module(ctx, name)?;
+                from_module(module).map_err(::cuda_host::EmbeddedModuleError::Driver)
             }
 
             pub fn from_module(

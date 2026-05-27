@@ -397,6 +397,15 @@ where you need a specific target. For example, `sm_100a` enables
 Blackwell-specific `tcgen05` features that are not available under the generic
 `sm_100` target.
 
+`cargo oxide run` adds a second layer of auto-detection on top of the
+backend's feature-based default: when neither `--arch` nor `CUDA_OXIDE_TARGET`
+is set, it queries the compute capability of CUDA device 0 and forwards that
+to the backend so the generated module is guaranteed to load on the local GPU.
+The full precedence is `--arch` > `CUDA_OXIDE_TARGET` > host CC (for `run`
+only) > backend feature-based default. `cargo oxide build` and
+`cargo oxide pipeline` deliberately skip the host-CC step so they remain
+usable for cross-compilation.
+
 ```{note}
 Why LLVM 21? The 2-D bulk TMA load intrinsic used by `tma_copy`,
 `gemm_sol`, and `tcgen05_matmul` gained a 10-operand form with `addrspace(7)`

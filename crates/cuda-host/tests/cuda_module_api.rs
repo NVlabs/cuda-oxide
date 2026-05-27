@@ -13,6 +13,9 @@ use cuda_host::cuda_async::device_operation::DeviceOperation;
 use cuda_host::cuda_module;
 use cuda_macros::kernel;
 
+#[cfg(feature = "async")]
+type TwoF32Buffers = (DeviceBox<[f32]>, DeviceBox<[f32]>);
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct AffineParams {
@@ -52,11 +55,7 @@ fn assert_unit_operation<O: DeviceOperation<Output = ()>>(op: O) {
 }
 
 #[cfg(feature = "async")]
-fn assert_owned_two_f32_buffers<
-    O: DeviceOperation<Output = (DeviceBox<[f32]>, DeviceBox<[f32]>)>,
->(
-    op: O,
-) {
+fn assert_owned_two_f32_buffers<O: DeviceOperation<Output = TwoF32Buffers>>(op: O) {
     let _ = op;
 }
 
@@ -150,7 +149,7 @@ fn generated_owned_async_methods_accept_owned_buffers(
     let raw = core::ptr::null::<f32>();
     let raw_mut = core::ptr::null_mut::<f32>();
 
-    let launch: cuda_host::OwnedAsyncKernelLaunch<(DeviceBox<[f32]>, DeviceBox<[f32]>)> =
+    let launch: cuda_host::OwnedAsyncKernelLaunch<TwoF32Buffers> =
         module.scalar_args_async_owned(config, 2.0, params, raw, async_input, async_output)?;
     assert_owned_two_f32_buffers(launch);
 

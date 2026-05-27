@@ -1,0 +1,25 @@
+[package]
+name = "step_by"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+# Regression example for issue #21.
+#
+# Exercises a `for i in (a..b).step_by(s)` loop. The `StepBy` adapter holds
+# its `step` as a `NonZeroUsize`, which `core` encodes via `TyKind::Pat`,
+# and rustc emits a Transmute between a niche-optimised `i64` and the
+# un-niched `Option<NonZeroUsize>` aggregate `{ i8, { { i64 } } }` when
+# inlining `StepBy::next`.
+#
+# Before the fix this crashed inside llc with
+#   "invalid cast opcode for cast from 'i64' to '{ i8, { { i64 } } }'"
+# Run with:
+#   cargo oxide run step_by
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

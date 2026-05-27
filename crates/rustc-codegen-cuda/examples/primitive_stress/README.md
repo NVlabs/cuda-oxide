@@ -31,18 +31,18 @@ The float-math kernel lowers to `__nv_*` libdevice calls (`__nv_sinf`,
 
 1. Auto-detects the `__nv_*` calls in the lowered LLVM module.
 2. Forces NVVM IR mode and emits only `primitive_stress.ll` (no `.ptx`).
-3. The example calls `cuda_host::ltoir::load_kernel_module(&ctx, "primitive_stress")`,
-   which transparently:
+3. The example calls the generated `kernels::load(&ctx)` loader, which
+   reads the embedded NVVM IR payload and transparently:
      - `dlopen`s `libnvvm.so` and `libnvJitLink.so` from the CUDA Toolkit
        (via the [`libnvvm-sys`](../../../libnvvm-sys) and
        [`nvjitlink-sys`](../../../nvjitlink-sys) crates).
-     - Compiles `primitive_stress.ll` + `libdevice.10.bc` to LTOIR via libNVVM.
+     - Compiles the embedded NVVM IR + `libdevice.10.bc` to LTOIR via libNVVM.
      - Links the LTOIR to a cubin via nvJitLink.
-     - Loads the cubin via `CudaContext::load_module_from_file`.
+     - Loads the cubin and launches every kernel through the generated typed API.
 
 There are no external C tools, no symlinked `tools/` directory, and no
-build-pipeline boilerplate to maintain per example. The same helper works
-for any standalone project that depends on `cuda-host` and has the CUDA
+build-pipeline boilerplate to maintain per example. The same embedded loader
+works for any standalone project that depends on `cuda-host` and has the CUDA
 Toolkit installed.
 
 `CUDA_OXIDE_TARGET` (set automatically when you pass `--arch=<sm_XX>`)

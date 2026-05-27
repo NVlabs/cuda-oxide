@@ -555,6 +555,45 @@ pub fn translate_rvalue(
             let cast_op = MirCastOp::new(op);
             cast_op.set_attr_cast_kind(ctx, cast_kind_attr);
 
+            // Record rustc's niche encoding on the cast so mir-lower can
+            // rebuild our un-niched `MirEnumType` aggregate (issue #21).
+            // The attribute is a typed `NicheEncodingAttr` so the contract
+            // between importer and lowering is enforced by pliron rather
+            // than by a hand-rolled string key.
+            if matches!(kind, mir::CastKind::Transmute)
+                && let Ok(layout) = ty.layout()
+                && let rustc_public::abi::VariantsShape::Multiple {
+                    tag_encoding:
+                        rustc_public::abi::TagEncoding::Niche {
+                            untagged_variant,
+                            niche_variants,
+                            niche_start,
+                        },
+                    ..
+                } = &layout.shape().variants
+            {
+                // Niched scalars are at most 64 bits wide. If rustc ever
+                // hands us something wider, fail loudly instead of
+                // truncating: the wrong bit pattern would silently match a
+                // different enum variant at runtime.
+                let niche_start_u64 = u64::try_from(*niche_start).map_err(|_| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "Niche start {} exceeds u64; niched-enum Transmute with > 64-bit scalar is not supported",
+                        niche_start
+                    )))
+                })?;
+                let niche_variant_idx = niche_variants.start().to_index() as u32;
+                let untagged_variant_idx = untagged_variant.to_index() as u32;
+                cast_op.set_attr_niche_encoding(
+                    ctx,
+                    dialect_mir::attributes::NicheEncodingAttr {
+                        niche_start: niche_start_u64,
+                        niche_variant_idx,
+                        untagged_variant_idx,
+                    },
+                );
+            }
+
             let result = op.deref(ctx).get_result(0);
 
             Ok((Some(op), result, prev_op_after_operand))
@@ -5956,3 +5995,7 @@ fn create_ghost_enum_default(
         .set_attr_construct_enum_variant_index(ctx, dialect_mir::attributes::VariantIndexAttr(0));
     op
 }
+
+// (The hand-rolled niche-attribute writer that lived here was replaced
+// by `MirCastOp::set_attr_niche_encoding(...)`, generated from the typed
+// `NicheEncodingAttr` slot declared on the op.)

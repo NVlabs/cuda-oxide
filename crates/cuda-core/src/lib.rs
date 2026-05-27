@@ -20,6 +20,7 @@
 //!   ordering and elapsed-time measurement.
 //! - [`CudaModule`] / [`CudaFunction`] -- PTX/cubin loading and kernel handle
 //!   extraction.
+//! - [`PinnedHostBuffer`] -- page-locked host memory for CUDA transfers.
 //! - [`LaunchConfig`] -- grid/block dimension helper.
 //! - [`memory`] -- free functions for device allocation, transfer, and memset
 //!   (both stream-ordered async and synchronous variants).
@@ -55,6 +56,8 @@ pub mod memory;
 pub mod module;
 /// Peer-to-peer (P2P) access between GPU contexts.
 pub mod peer;
+/// Page-locked host memory for CUDA transfers.
+pub mod pinned_host_buffer;
 /// CUDA stream management (RAII, host callbacks, fork/join).
 pub mod stream;
 /// CUDA Virtual Memory Management (VMM) for physical alloc, VA reservation, and mapping.
@@ -69,6 +72,7 @@ pub use error::{DriverError, IntoResult};
 pub use event::CudaEvent;
 pub use launch::LaunchConfig;
 pub use module::{CudaFunction, CudaModule};
+pub use pinned_host_buffer::PinnedHostBuffer;
 pub use stream::CudaStream;
 
 use std::ffi::c_uint;

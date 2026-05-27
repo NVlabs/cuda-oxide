@@ -161,8 +161,8 @@ cargo oxide pipeline <example>
 # Debug with cuda-gdb
 cargo oxide debug <example> --tui
 
-# Build with LTOIR output (for C++ interop)
-cargo oxide build <example> --dlto
+# Build NVVM IR for libNVVM/nvJitLink interop
+cargo oxide build <example> --emit-nvvm-ir --arch sm_120
 ```
 
 ## Building the book
