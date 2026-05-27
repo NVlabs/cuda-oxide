@@ -9,6 +9,7 @@
 //!
 //! Tests GPU debug/utility features:
 //! - `clock64()` - Read GPU clock cycles
+//! - `globaltimer()` - Read the GPU global timer
 //! - `trap()` - Abort kernel execution
 //! - `gpu_assert!()` - Runtime assertion
 //! - `breakpoint()` - cuda-gdb breakpoint
@@ -27,13 +28,14 @@ use cuda_host::cuda_module;
 mod kernels {
     use super::*;
 
-    /// Test kernel: measures clock cycles for a simple operation
+    /// Test kernel: measures clock and global timer ticks for a simple operation.
     #[kernel]
     #[launch_bounds(256, 2)] // Max 256 threads/block, min 2 blocks/SM
     pub fn clock_test(mut output: DisjointSlice<u64>) {
         let idx = thread::index_1d();
         if let Some(output_elem) = output.get_mut(idx) {
-            let start = debug::clock64();
+            let start_cycles = debug::clock64();
+            let start_timer = debug::globaltimer();
 
             // Some work to measure
             let mut sum: u64 = 0;
@@ -41,10 +43,14 @@ mod kernels {
                 sum = sum.wrapping_add(i);
             }
 
-            let end = debug::clock64();
+            let end_timer = debug::globaltimer();
+            let end_cycles = debug::clock64();
 
-            // Write elapsed cycles (use sum to prevent optimization)
-            *output_elem = (end - start) + (sum & 0);
+            // Write elapsed ticks (use sum to prevent optimization)
+            *output_elem = end_cycles
+                .wrapping_sub(start_cycles)
+                .wrapping_add(end_timer.wrapping_sub(start_timer))
+                .wrapping_add(sum & 0);
         }
     }
 
@@ -146,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ====================================================================
     // Test 1: Clock cycles measurement
     // ====================================================================
-    println!("--- Test 1: clock64() cycle measurement ---");
+    println!("--- Test 1: clock64() / globaltimer() measurement ---");
     {
         const N: usize = 256;
         let mut output_dev = DeviceBuffer::<u64>::zeroed(&stream, N)?;

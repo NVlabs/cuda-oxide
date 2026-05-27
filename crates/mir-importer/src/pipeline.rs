@@ -119,12 +119,29 @@ use pliron::operation::Operation;
 use pliron::printable::Printable;
 use std::path::Path;
 
-/// Output paths and target from successful compilation.
+/// Device artifact format produced by a successful pipeline run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilationArtifactKind {
+    /// Textual PTX assembly, loadable by the CUDA driver.
+    Ptx,
+    /// NVVM-compatible LLVM IR, intended for libNVVM/nvJitLink.
+    NvvmIr,
+    /// Binary LTOIR, intended for nvJitLink.
+    Ltoir,
+    /// Final cubin image, loadable by the CUDA driver.
+    Cubin,
+}
+
+/// Output paths, target, and artifact format from successful compilation.
 pub struct CompilationResult {
     /// Path to generated LLVM IR (`.ll` file).
     pub ll_path: std::path::PathBuf,
     /// Path to generated PTX assembly (`.ptx` file).
     pub ptx_path: std::path::PathBuf,
+    /// Path to the artifact that should be embedded or consumed by the caller.
+    pub artifact_path: std::path::PathBuf,
+    /// Format of `artifact_path`.
+    pub artifact_kind: CompilationArtifactKind,
     /// GPU target architecture used (e.g., `sm_90a`, `sm_80`).
     pub target: String,
 }
@@ -373,8 +390,8 @@ pub fn run_pipeline(
     // Step 8: Generate PTX or stop at NVVM IR for libNVVM-owned paths.
     if emit_nvvm_ir {
         // Skip llc. Return a would-be ptx_path so callers see a stable shape;
-        // the file does not exist and the example must build its own cubin
-        // from `ll_path`.
+        // the file does not exist and the consumer must build its own cubin
+        // from `ll_path` via libNVVM + nvJitLink.
         let ptx_path = config
             .output_dir
             .join(format!("{}.ptx", config.output_name));
@@ -384,15 +401,18 @@ pub fn run_pipeline(
             } else {
                 "NVVM IR requested"
             };
-            eprintln!(
-                "\n=== Skipping llc ({}); consumer owns libNVVM/nvJitLink build ===",
-                reason
-            );
+            eprintln!("\n=== Skipping llc ({reason}); consumer owns libNVVM/nvJitLink build ===");
         }
+        // Record the real GPU arch in the bundle target when the caller
+        // pinned one via CUDA_OXIDE_TARGET; otherwise leave the legacy
+        // "nvvm-ir" sentinel that cuda-host's loader knows to re-resolve.
+        let target = std::env::var("CUDA_OXIDE_TARGET").unwrap_or_else(|_| "nvvm-ir".to_string());
         Ok(CompilationResult {
+            artifact_path: ll_path.clone(),
+            artifact_kind: CompilationArtifactKind::NvvmIr,
             ll_path,
             ptx_path,
-            target: "nvvm-ir".to_string(),
+            target,
         })
     } else {
         // PTX mode: invoke llc
@@ -412,6 +432,8 @@ pub fn run_pipeline(
         }
 
         Ok(CompilationResult {
+            artifact_path: ptx_path.clone(),
+            artifact_kind: CompilationArtifactKind::Ptx,
             ll_path,
             ptx_path,
             target,

@@ -157,6 +157,57 @@ pub fn build_cubin_from_ll(ll_path: &Path, arch: &str) -> Result<PathBuf, LtoirE
         source,
     })?;
 
+    let ltoir = compile_nvvm_ir_to_ltoir(&ll_bytes, &ll_path.display().to_string(), arch)?;
+
+    std::fs::write(&ltoir_path, &ltoir).map_err(|source| LtoirError::Io {
+        path: ltoir_path.clone(),
+        source,
+    })?;
+
+    // ---- nvJitLink: LTOIR -> cubin --------------------------------------
+    let cubin = link_ltoir_to_cubin(&ltoir, &ltoir_path.display().to_string(), arch)?;
+
+    std::fs::write(&cubin_path, &cubin).map_err(|source| LtoirError::Io {
+        path: cubin_path.clone(),
+        source,
+    })?;
+
+    Ok(cubin_path)
+}
+
+/// Compile NVVM IR bytes to a loadable cubin image in memory.
+///
+/// This is the embedded-artifact counterpart of [`build_cubin_from_ll`]. It
+/// adds `libdevice.10.bc`, asks libNVVM for LTOIR, links that LTOIR with
+/// nvJitLink, and returns the final cubin bytes without creating sidecar files.
+pub fn build_cubin_from_nvvm_ir(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    arch: &str,
+) -> Result<Vec<u8>, LtoirError> {
+    let ltoir = compile_nvvm_ir_to_ltoir(nvvm_ir, module_name, arch)?;
+    let ltoir_name = format!("{module_name}.ltoir");
+    link_ltoir_to_cubin(&ltoir, &ltoir_name, arch)
+}
+
+/// Link a single LTOIR payload to a loadable cubin image in memory.
+pub fn link_ltoir_to_cubin(
+    ltoir: &[u8],
+    module_name: &str,
+    arch: &str,
+) -> Result<Vec<u8>, LtoirError> {
+    let nvj = LibNvJitLink::load()?;
+    let arch_opt = format!("-arch={arch}");
+    let mut linker = Linker::new(&nvj, &[&arch_opt, "-lto"])?;
+    linker.add(InputType::Ltoir, ltoir, module_name)?;
+    Ok(linker.finish()?)
+}
+
+fn compile_nvvm_ir_to_ltoir(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    arch: &str,
+) -> Result<Vec<u8>, LtoirError> {
     let libdevice_path = find_libdevice()?;
     let libdevice_bytes = std::fs::read(&libdevice_path).map_err(|source| LtoirError::Io {
         path: libdevice_path.clone(),
@@ -173,29 +224,10 @@ pub fn build_cubin_from_ll(ll_path: &Path, arch: &str) -> Result<PathBuf, LtoirE
     // does its own symbol resolution -- but this matches the pattern used
     // by NVCC and the device_ffi_test C tools.
     prog.add_module(&libdevice_bytes, "libdevice.10.bc")?;
-    prog.add_module(&ll_bytes, &ll_path.display().to_string())?;
+    prog.add_module(nvvm_ir, module_name)?;
 
     let arch_opt = format!("-arch={arch_compute}");
-    let ltoir = prog.compile(&[&arch_opt, "-gen-lto"])?;
-
-    std::fs::write(&ltoir_path, &ltoir).map_err(|source| LtoirError::Io {
-        path: ltoir_path.clone(),
-        source,
-    })?;
-
-    // ---- nvJitLink: LTOIR -> cubin --------------------------------------
-    let nvj = LibNvJitLink::load()?;
-    let arch_opt = format!("-arch={arch}");
-    let mut linker = Linker::new(&nvj, &[&arch_opt, "-lto"])?;
-    linker.add(InputType::Ltoir, &ltoir, &ltoir_path.display().to_string())?;
-    let cubin = linker.finish()?;
-
-    std::fs::write(&cubin_path, &cubin).map_err(|source| LtoirError::Io {
-        path: cubin_path.clone(),
-        source,
-    })?;
-
-    Ok(cubin_path)
+    Ok(prog.compile(&[&arch_opt, "-gen-lto"])?)
 }
 
 // ============================================================================

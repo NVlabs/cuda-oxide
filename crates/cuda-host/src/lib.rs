@@ -25,8 +25,12 @@
 //!
 //! ## Modules
 //!
-//! - [`tiling`]: Layout transformations for tensor core operations (tcgen05)
+//! - [`embedded`]: Load `#[cuda_module]` artifact bundles embedded in the host
+//!   binary (PTX, cubin, NVVM IR, LTOIR)
 //! - [`launch`]: Kernel launch traits (`CudaKernel`, `GenericCudaKernel`)
+//! - [`ltoir`]: libNVVM + nvJitLink wrappers (`load_kernel_module`, in-memory
+//!   `build_cubin_from_nvvm_ir`, `link_ltoir_to_cubin`)
+//! - [`tiling`]: Layout transformations for tensor core operations (tcgen05)
 //!
 //! ## Macros
 //!
@@ -71,6 +75,7 @@
 //! let c_host = c_dev.to_host_vec(&stream)?;
 //! ```
 
+pub mod embedded;
 pub mod launch;
 pub mod ltoir;
 pub mod tiling;
@@ -96,6 +101,7 @@ pub use cuda_async;
 #[cfg(feature = "async")]
 pub use cuda_async::launch::{AsyncKernelLaunch, OwnedAsyncKernelLaunch};
 
+pub use embedded::{EmbeddedModuleError, load_embedded_module, load_first_embedded_module};
 /// Loads a compiled kernel module by name. Tries `<name>.cubin`, then
 /// `<name>.ptx`, and finally falls through to the LTOIR build path
 /// (`<name>.ll` plus libdevice → cubin) when cuda-oxide auto-detected
@@ -107,7 +113,6 @@ pub use ltoir::{LtoirError, load_kernel_module};
 // Re-export launch macros from cuda-macros for convenience.
 pub use cuda_macros::{cuda_launch, cuda_module};
 
-pub use cuda_core::embedded;
 /// Re-export of [`cuda_macros::cuda_launch_async`].
 ///
 /// Returns a lazy `cuda_async::launch::AsyncKernelLaunch`. Stream assignment is

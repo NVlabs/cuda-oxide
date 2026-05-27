@@ -121,10 +121,12 @@ borrows, and generated owned async methods move buffers into the operation for
 spawned tasks.
 
 `#[cuda_module]` owns launch ergonomics, not target-selection policy. It loads
-whatever embedded payload the compiler produced for the current crate. LTOIR,
-fatbin, or multi-architecture packaging decisions belong in the compiler and
-artifact layers, so the typed launch API does not need to change when those
-payload formats evolve.
+whatever embedded payload the compiler produced for the current crate. PTX and
+cubin payloads load directly; embedded NVVM IR/LTOIR is built to a cubin with
+the same libNVVM/nvJitLink path used by the sidecar loader. Fatbin or
+multi-architecture packaging decisions belong in the compiler and artifact
+layers, so the typed launch API does not need to change when those payload
+formats evolve.
 
 ## Tiling Utilities (tcgen05)
 

@@ -291,7 +291,9 @@ pub fn push_async_kernel_scalar<'a, T: KernelScalar + 'a>(
     launch: &mut cuda_async::launch::AsyncKernelLaunch<'a>,
     value: T,
 ) {
-    launch.push_scalar_arg(value);
+    if std::mem::size_of::<T>() != 0 {
+        launch.push_scalar_arg(value);
+    }
 }
 
 #[doc(hidden)]
@@ -325,10 +327,10 @@ pub fn load_cuda_module_from_async_context<F, R>(
     f: F,
 ) -> Result<R, cuda_async::error::DeviceError>
 where
-    F: FnOnce(&Arc<cuda_core::CudaContext>) -> Result<R, cuda_core::EmbeddedModuleError>,
+    F: FnOnce(&Arc<cuda_core::CudaContext>) -> Result<R, crate::EmbeddedModuleError>,
 {
     cuda_async::device_context::with_cuda_context(device_id, |ctx| f(ctx))?.map_err(|error| {
-        if let cuda_core::EmbeddedModuleError::Driver(error) = error {
+        if let crate::EmbeddedModuleError::Driver(error) = error {
             cuda_async::error::DeviceError::Driver(error)
         } else {
             cuda_async::error::DeviceError::KernelCache(error.to_string())

@@ -154,10 +154,12 @@ fn rustc_ty_to_llvm_type_string(ty: Ty<'_>) -> String {
 
 /// Result of device code generation.
 ///
-/// Contains paths to all generated artifacts and any PTX content
-/// available for embedding in the host binary.
+/// Contains paths to generated artifacts and the payload selected for
+/// embedding in the host binary.
 pub struct DeviceCodegenResult {
     /// Path to generated PTX assembly file.
+    ///
+    /// In NVVM IR modes this is the would-be PTX path and may not exist.
     pub ptx_path: PathBuf,
     /// Path to generated LLVM IR file.
     pub ll_path: PathBuf,
@@ -170,6 +172,22 @@ pub struct DeviceCodegenResult {
     ///
     /// NVVM IR / LTOIR flows intentionally skip PTX generation.
     pub ptx_content: Option<String>,
+    /// Device artifact payload selected for embedding.
+    pub artifact: Option<DeviceCodegenArtifact>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceCodegenArtifactKind {
+    Ptx,
+    NvvmIr,
+    Ltoir,
+    Cubin,
+}
+
+pub struct DeviceCodegenArtifact {
+    pub kind: DeviceCodegenArtifactKind,
+    pub name: String,
+    pub bytes: Vec<u8>,
 }
 
 /// Configuration for device codegen.
@@ -428,6 +446,7 @@ pub fn generate_device_code<'tcx>(
             })
             .collect();
 
+        // Check for NVVM IR mode (set by cargo oxide --emit-nvvm-ir)
         let emit_nvvm_ir = std::env::var("CUDA_OXIDE_EMIT_NVVM_IR").is_ok();
 
         if verbose {
@@ -461,24 +480,27 @@ pub fn generate_device_code<'tcx>(
     match result {
         Ok(pipeline_result) => match pipeline_result {
             Ok(compilation_result) => {
-                // Read PTX content for embedding in host binaries. Some flows, notably
-                // libdevice/NVVM IR, intentionally stop at `.ll` and do not create PTX.
-                let ptx_content = match std::fs::read_to_string(&compilation_result.ptx_path) {
-                    Ok(content) => Some(content),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(DeviceCodegenError::Io(e)),
+                let artifact = read_compilation_artifact(&compilation_result)?;
+                let ptx_content = match artifact.as_ref() {
+                    Some(artifact) if artifact.kind == DeviceCodegenArtifactKind::Ptx => {
+                        Some(String::from_utf8(artifact.bytes.clone()).map_err(|e| {
+                            DeviceCodegenError::PtxGeneration(format!(
+                                "generated PTX is not valid UTF-8: {e}"
+                            ))
+                        })?)
+                    }
+                    _ => None,
                 };
 
                 if config.verbose {
-                    if ptx_content.is_some() {
+                    if let Some(artifact) = artifact.as_ref() {
                         eprintln!(
-                            "[device_codegen] PTX generated: {} (target: {})",
-                            compilation_result.ptx_path.display(),
-                            compilation_result.target
+                            "[device_codegen] Embeddable artifact generated: {} ({:?}, target: {})",
+                            artifact.name, artifact.kind, compilation_result.target
                         );
                     } else {
                         eprintln!(
-                            "[device_codegen] NVVM IR generated without PTX: {} (target: {})",
+                            "[device_codegen] No embeddable artifact found for {} (target: {})",
                             compilation_result.ll_path.display(),
                             compilation_result.target
                         );
@@ -490,6 +512,7 @@ pub fn generate_device_code<'tcx>(
                     ll_path: compilation_result.ll_path,
                     target: compilation_result.target,
                     ptx_content,
+                    artifact,
                 })
             }
             Err(pipeline_err) => Err(DeviceCodegenError::PtxGeneration(format!(
@@ -504,6 +527,32 @@ pub fn generate_device_code<'tcx>(
     }
 }
 
+fn read_compilation_artifact(
+    result: &mir_importer::CompilationResult,
+) -> Result<Option<DeviceCodegenArtifact>, DeviceCodegenError> {
+    let kind = match result.artifact_kind {
+        mir_importer::CompilationArtifactKind::Ptx => DeviceCodegenArtifactKind::Ptx,
+        mir_importer::CompilationArtifactKind::NvvmIr => DeviceCodegenArtifactKind::NvvmIr,
+        mir_importer::CompilationArtifactKind::Ltoir => DeviceCodegenArtifactKind::Ltoir,
+        mir_importer::CompilationArtifactKind::Cubin => DeviceCodegenArtifactKind::Cubin,
+    };
+
+    match std::fs::read(&result.artifact_path) {
+        Ok(bytes) => Ok(Some(DeviceCodegenArtifact {
+            kind,
+            name: result
+                .artifact_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("device-artifact")
+                .to_string(),
+            bytes,
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(DeviceCodegenError::Io(e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,5 +562,63 @@ mod tests {
         let config = DeviceCodegenConfig::default();
         assert!(!config.verbose);
         assert_eq!(config.output_name, "kernel");
+    }
+
+    #[test]
+    fn read_compilation_artifact_uses_declared_nvvm_ir_path() {
+        let temp_dir = unique_temp_dir("cuda-codegen-artifact");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let ll_path = temp_dir.join("demo.ll");
+        let ptx_path = temp_dir.join("demo.ptx");
+        std::fs::write(&ll_path, b"nvvm ir").unwrap();
+        std::fs::write(&ptx_path, b"stale ptx").unwrap();
+
+        let result = mir_importer::CompilationResult {
+            ll_path: ll_path.clone(),
+            ptx_path,
+            artifact_path: ll_path,
+            artifact_kind: mir_importer::CompilationArtifactKind::NvvmIr,
+            target: "sm_90".to_string(),
+        };
+
+        let artifact = read_compilation_artifact(&result).unwrap().unwrap();
+        assert_eq!(artifact.kind, DeviceCodegenArtifactKind::NvvmIr);
+        assert_eq!(artifact.name, "demo.ll");
+        assert_eq!(artifact.bytes, b"nvvm ir");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn read_compilation_artifact_reads_declared_cubin_path() {
+        let temp_dir = unique_temp_dir("cuda-codegen-artifact");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let ll_path = temp_dir.join("demo.ll");
+        let cubin_path = temp_dir.join("demo.cubin");
+        let ptx_path = temp_dir.join("demo.ptx");
+        std::fs::write(&cubin_path, b"cubin").unwrap();
+
+        let result = mir_importer::CompilationResult {
+            ll_path,
+            ptx_path,
+            artifact_path: cubin_path,
+            artifact_kind: mir_importer::CompilationArtifactKind::Cubin,
+            target: "sm_90".to_string(),
+        };
+
+        let artifact = read_compilation_artifact(&result).unwrap().unwrap();
+        assert_eq!(artifact.kind, DeviceCodegenArtifactKind::Cubin);
+        assert_eq!(artifact.name, "demo.cubin");
+        assert_eq!(artifact.bytes, b"cubin");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{name}-{}-{nanos}", std::process::id()))
     }
 }

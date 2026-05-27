@@ -143,6 +143,10 @@ packaging live in the compiler and artifact/runtime loader layers. Keeping that
 policy separate lets the generated Rust launch methods stay stable as payload
 formats evolve.
 
+PTX and cubin embedded payloads are loaded directly. Embedded NVVM IR/LTOIR is
+compiled or linked to a cubin through the same libNVVM/nvJitLink path used by
+the lower-level sidecar loader.
+
 ## `LaunchConfig`
 
 `LaunchConfig` specifies the grid shape:
