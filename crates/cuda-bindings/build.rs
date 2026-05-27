@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::{env, error::Error, path::Path, path::PathBuf, process::exit};
+use std::{env, error::Error, fs, path::Path, path::PathBuf, process::exit};
 
 /// Returns the CUDA toolkit install root: `CUDA_TOOLKIT_PATH` or `CUDA_HOME` if set,
 /// otherwise `/usr/local/cuda`. Used for include paths, library search paths,
@@ -39,7 +39,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .find(|path| path.is_file())
         .ok_or_else(|| {
             format!(
-                "cuda-bindings: could not find cuda.h under {}. Set CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA Toolkit install that contains include/cuda.h or targets/x86_64-linux/include/cuda.h.",
+                "cuda-bindings: could not find cuda.h under {}. Set CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA Toolkit install that contains include/cuda.h or targets/*/include/cuda.h.",
                 toolkit
             )
         })?;
@@ -88,20 +88,32 @@ fn collect_include_paths(toolkit: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     paths.push(base.join("include"));
-
-    let targets_include = base.join("targets/x86_64-linux/include");
-    if targets_include.join("cuda.h").is_file() {
-        paths.push(targets_include);
+    for target in collect_target_roots(&base) {
+        paths.push(target.join("include"));
     }
 
     paths
 }
 
+/// CUDA target-layout roots such as `targets/x86_64-linux` or `targets/sbsa-linux`.
+fn collect_target_roots(base: &Path) -> Vec<PathBuf> {
+    let targets_dir = base.join("targets");
+    let mut roots: Vec<_> = fs::read_dir(targets_dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.join("include/cuda.h").is_file())
+        .collect();
+    roots.sort();
+    roots
+}
+
 /// Candidate directories for `rustc-link-search=native` when linking against the driver library.
 ///
 /// Adds `{toolkit}/lib64` and `{toolkit}/lib64/stubs` when `lib64` exists. If
-/// `{toolkit}/targets/x86_64-linux/include/cuda.h` exists (redistributable / cross-layout install),
-/// also adds `targets/x86_64-linux/lib` and `.../lib/stubs`. Order is preserved; duplicates are not
+/// `{toolkit}/targets/*/include/cuda.h` exists (redistributable / cross-layout install),
+/// also adds each matching target's `lib` and `lib/stubs`. Order is preserved; duplicates are not
 /// filtered.
 fn collect_lib_paths(toolkit: &str) -> Vec<PathBuf> {
     let base = PathBuf::from(toolkit);
@@ -113,10 +125,9 @@ fn collect_lib_paths(toolkit: &str) -> Vec<PathBuf> {
         paths.push(lib64.join("stubs"));
     }
 
-    let targets = base.join("targets/x86_64-linux");
-    if targets.join("include/cuda.h").is_file() {
-        paths.push(targets.join("lib"));
-        paths.push(targets.join("lib/stubs"));
+    for target in collect_target_roots(&base) {
+        paths.push(target.join("lib"));
+        paths.push(target.join("lib/stubs"));
     }
 
     paths
