@@ -131,6 +131,10 @@ multi-architecture packaging decisions belong in the compiler and artifact
 layers, so the typed launch API does not need to change when those payload
 formats evolve.
 
+Embedded NVVM IR follows the dialect selected by the compiler for the target:
+pre-Blackwell targets use typed-pointer NVVM IR, while Blackwell targets
+(`sm_100` / `compute_100`) and newer use the modern opaque-pointer dialect.
+
 ## Tiling Utilities (tcgen05)
 
 Host-side layout transformations for Blackwell tensor cores. tcgen05 requires

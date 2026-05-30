@@ -209,13 +209,13 @@ fn compile_nvvm_ir_to_ltoir(
     module_name: &str,
     arch: &str,
 ) -> Result<Vec<u8>, LtoirError> {
+    let arch_compute = sm_to_compute(arch);
+
     let libdevice_path = find_libdevice()?;
     let libdevice_bytes = std::fs::read(&libdevice_path).map_err(|source| LtoirError::Io {
         path: libdevice_path.clone(),
         source,
     })?;
-
-    let arch_compute = sm_to_compute(arch);
 
     // ---- libNVVM: NVVM IR + libdevice -> LTOIR --------------------------
     let nvvm = LibNvvm::load()?;

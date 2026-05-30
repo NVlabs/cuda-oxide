@@ -152,6 +152,7 @@ pub struct LibNvvm {
     get_program_log: unsafe extern "C" fn(NvvmProgram, *mut c_char) -> NvvmResult,
     get_error_string: unsafe extern "C" fn(NvvmResult) -> *const c_char,
     version: unsafe extern "C" fn(*mut c_int, *mut c_int) -> NvvmResult,
+    llvm_version: Option<unsafe extern "C" fn(*const c_char, *mut c_int) -> NvvmResult>,
 }
 
 // SAFETY: After `load()`, the struct contains only `extern "C"` function
@@ -184,6 +185,16 @@ unsafe fn resolve<T: Copy>(lib: &Library, name: &'static str) -> Result<T, NvvmE
     Ok(unsafe { *sym.into_raw() })
 }
 
+/// Resolve an optional symbol to a function pointer of inferred type `T`.
+///
+/// Use this for libNVVM queries added after the baseline API that cuda-oxide
+/// supports. Missing optional symbols preserve compatibility with older CUDA
+/// Toolkit installations.
+unsafe fn resolve_optional<T: Copy>(lib: &Library, name: &'static str) -> Option<T> {
+    let sym: Symbol<T> = unsafe { lib.get(name.as_bytes()) }.ok()?;
+    Some(unsafe { *sym.into_raw() })
+}
+
 impl LibNvvm {
     /// Locate and load `libnvvm.so` at runtime, then resolve every libNVVM
     /// function this crate uses. Returns [`NvvmError::LibraryNotFound`] if
@@ -210,6 +221,7 @@ impl LibNvvm {
                 get_program_log: resolve(&lib, "nvvmGetProgramLog")?,
                 get_error_string: resolve(&lib, "nvvmGetErrorString")?,
                 version: resolve(&lib, "nvvmVersion")?,
+                llvm_version: resolve_optional(&lib, "nvvmLLVMVersion"),
                 _lib: lib,
             })
         }
@@ -226,6 +238,30 @@ impl LibNvvm {
         let r = unsafe { (self.version)(&mut major, &mut minor) };
         check(self, r, "nvvmVersion", None)?;
         Ok((major, minor))
+    }
+
+    /// Query the LLVM IR major version guaranteed by libNVVM for `arch`.
+    ///
+    /// `arch` must use the same form accepted by `nvvmCompileProgram`, such
+    /// as `"compute_75"` or `"compute_120"`. CUDA 13+ libNVVM exposes
+    /// `nvvmLLVMVersion` so callers can distinguish the LLVM 7 typed-pointer
+    /// dialect from the modern opaque-pointer dialect for a concrete target.
+    ///
+    /// Returns `Ok(None)` when the loaded libNVVM predates this query.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `arch` contains an interior NUL byte.
+    pub fn llvm_version(&self, arch: &str) -> Result<Option<i32>, NvvmError> {
+        let Some(llvm_version) = self.llvm_version else {
+            return Ok(None);
+        };
+
+        let carch = CString::new(arch).expect("arch has interior NUL");
+        let mut major = 0;
+        let r = unsafe { llvm_version(carch.as_ptr(), &mut major) };
+        check(self, r, "nvvmLLVMVersion", None)?;
+        Ok(Some(major))
     }
 }
 
