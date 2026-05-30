@@ -63,6 +63,12 @@ cargo oxide run gemm_sol
 cargo oxide run device_ffi_test --emit-nvvm-ir --arch sm_120
 ```
 
+`--emit-nvvm-ir` selects the NVVM IR dialect for the target architecture:
+pre-Blackwell targets use typed-pointer NVVM IR, while Blackwell targets
+(`sm_100` / `compute_100`) and newer use the modern opaque-pointer dialect.
+Kernels that call Rust float math such as `f32::exp`, `sqrt`, or `pow` also
+auto-enter this NVVM IR path so libdevice can be linked.
+
 ### `cargo oxide build <example>`
 
 Same as `run` but stops after compilation. Useful for examples that require hardware you don't have (e.g., Blackwell tensor cores).

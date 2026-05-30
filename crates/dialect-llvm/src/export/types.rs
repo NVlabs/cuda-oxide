@@ -10,21 +10,38 @@ use std::fmt::Write;
 use pliron::{
     builtin::types::{FP32Type, FP64Type, IntegerType},
     context::Ptr,
-    r#type::TypeObj,
+    operation::Operation,
+    r#type::{TypeObj, Typed},
+    value::Value,
 };
 
-use crate::types::{HalfType, PointerType, StructType, VoidType};
+use crate::{
+    ops,
+    types::{HalfType, PointerType, StructType, VoidType},
+};
 
-use super::state::ModuleExportState;
+use super::{config::NvvmIrDialect, state::ModuleExportState};
 
 impl<'a> ModuleExportState<'a> {
+    pub(super) fn type_to_string(&self, ty: Ptr<TypeObj>) -> Result<String, String> {
+        let mut output = String::new();
+        self.export_type(ty, &mut output)?;
+        Ok(output)
+    }
+
     pub(super) fn export_type(&self, ty: Ptr<TypeObj>, output: &mut String) -> Result<(), String> {
         let ty_ref = ty.deref(self.ctx);
         if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
             write!(output, "i{}", int_ty.width()).unwrap();
         } else if let Some(ptr_ty) = ty_ref.downcast_ref::<PointerType>() {
             let addrspace = ptr_ty.address_space();
-            if addrspace != 0 {
+            if self.nvvm_ir_dialect == Some(NvvmIrDialect::TypedPointers) {
+                if addrspace != 0 {
+                    write!(output, "i8 addrspace({addrspace})*").unwrap();
+                } else {
+                    write!(output, "i8*").unwrap();
+                }
+            } else if addrspace != 0 {
                 write!(output, "ptr addrspace({addrspace})").unwrap();
             } else {
                 write!(output, "ptr").unwrap();
@@ -60,6 +77,66 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    pub(super) fn pointer_type_for_pointee(
+        &self,
+        pointee_ty: Ptr<TypeObj>,
+        addrspace: u32,
+    ) -> Result<String, String> {
+        let mut ty = self.type_to_string(pointee_ty)?;
+        if addrspace != 0 {
+            ty.push_str(&format!(" addrspace({addrspace})*"));
+        } else {
+            ty.push('*');
+        }
+        Ok(ty)
+    }
+
+    pub(super) fn pointer_value_type(&self, val: Value) -> Result<String, String> {
+        if let Some(ty) = self.pointer_value_type_from_defining_op(val)? {
+            return Ok(ty);
+        }
+
+        if let Some(ty) = self.typed_pointer_value_types.get(&val) {
+            return Ok(ty.clone());
+        }
+
+        self.type_to_string(val.get_type(self.ctx))
+    }
+
+    fn pointer_value_type_from_defining_op(&self, val: Value) -> Result<Option<String>, String> {
+        let Some(defining_op) = val.defining_op() else {
+            return Ok(None);
+        };
+        let op_ref = defining_op.deref(self.ctx);
+        let op_obj = Operation::get_op_dyn(defining_op, self.ctx);
+        let op_dyn = op_obj.as_ref();
+
+        if let Some(alloca) = op_dyn.downcast_ref::<ops::AllocaOp>() {
+            let elem_ty = alloca
+                .get_attr_alloca_element_type(self.ctx)
+                .ok_or("Missing alloca_element_type")?
+                .get_type(self.ctx);
+            return self.pointer_type_for_pointee(elem_ty, 0).map(Some);
+        }
+
+        if let Some(gep) = op_dyn.downcast_ref::<ops::GetElementPtrOp>() {
+            let ptr = op_ref.get_operand(0);
+            let elem_ty = gep
+                .get_attr_gep_src_elem_type(self.ctx)
+                .ok_or("Missing gep_src_elem_type")?
+                .get_type(self.ctx);
+            let addrspace = pointer_addrspace(ptr.get_type(self.ctx), self.ctx);
+            let indices = gep.indices(self.ctx);
+            let result_pointee =
+                ops::GetElementPtrOp::indexed_type(self.ctx, elem_ty, &indices).unwrap_or(elem_ty);
+            return self
+                .pointer_type_for_pointee(result_pointee, addrspace)
+                .map(Some);
+        }
+
+        Ok(None)
+    }
+
     /// Compute natural alignment (in bytes) for a type.
     /// Used for atomic load/store which require explicit alignment in LLVM IR.
     pub(super) fn natural_alignment(&self, ty: Ptr<TypeObj>) -> u32 {
@@ -77,4 +154,10 @@ impl<'a> ModuleExportState<'a> {
             8
         }
     }
+}
+
+fn pointer_addrspace(ty: Ptr<TypeObj>, ctx: &pliron::context::Context) -> u32 {
+    ty.deref(ctx)
+        .downcast_ref::<PointerType>()
+        .map_or(0, PointerType::address_space)
 }

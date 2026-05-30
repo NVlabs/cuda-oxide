@@ -34,6 +34,7 @@ use crate::{
 };
 
 use super::{
+    config::NvvmIrDialect,
     literals::{format_float_literal, format_half_literal},
     names::{has_device_prefix, strip_device_prefix},
     state::{
@@ -99,6 +100,10 @@ impl<'a> ModuleExportState<'a> {
             writeln!(output, " zeroinitializer, align {alignment}").unwrap();
         }
 
+        let pointer_type = self.pointer_type_for_pointee(ty, address_space)?;
+        self.global_pointer_types
+            .insert(name.to_string(), pointer_type);
+
         Ok(())
     }
 
@@ -124,10 +129,21 @@ impl<'a> ModuleExportState<'a> {
         let attrs = &func.get_operation().deref(self.ctx).attributes.0;
         let is_kernel = attrs.contains_key(&kernel_key);
 
+        use pliron::r#type::TypeObj;
+        let func_type = func.get_type(self.ctx);
+        let ft = Ptr::<TypeObj>::from(func_type);
+        let ft_ref = ft.deref(self.ctx);
+        let func_ty = ft_ref
+            .downcast_ref::<FuncType>()
+            .ok_or("Not a function type")?;
+        let annotation_ref = self.function_annotation_ref(func_ty, &fixed_func_name)?;
+        let llvm_used_ref = self.function_llvm_used_ref(func_ty, &fixed_func_name)?;
+
         // Track ALL kernels if backend requires annotations for every kernel
         if is_kernel && self.track_all_kernels {
             self.all_kernels.push(KernelInfo {
-                name: fixed_func_name.clone(),
+                annotation_ref: annotation_ref.clone(),
+                llvm_used_ref: llvm_used_ref.clone(),
             });
         }
 
@@ -135,7 +151,7 @@ impl<'a> ModuleExportState<'a> {
         // in standalone device function compilation. Extern declarations are excluded
         // because they're resolved at link time — only definitions need DCE protection.
         if !is_kernel && has_device_prefix(&func_name) {
-            self.device_functions.push(fixed_func_name.clone());
+            self.device_function_used_refs.push(llvm_used_ref.clone());
         }
 
         // Check for cluster dimension attributes (from #[cluster(x,y,z)])
@@ -158,7 +174,7 @@ impl<'a> ModuleExportState<'a> {
                     (get_int(x_attr), get_int(y_attr), get_int(z_attr))
                 {
                     self.cluster_kernels.push(KernelClusterConfig {
-                        name: fixed_func_name.clone(),
+                        annotation_ref: annotation_ref.clone(),
                         dim_x,
                         dim_y,
                         dim_z,
@@ -181,7 +197,7 @@ impl<'a> ModuleExportState<'a> {
                 if let Some(max_threads) = get_int(max_attr) {
                     let min_blocks = attrs.get(&minctasm_key).and_then(get_int);
                     self.launch_bounds_kernels.push(KernelLaunchBounds {
-                        name: fixed_func_name.clone(),
+                        annotation_ref: annotation_ref.clone(),
                         max_threads,
                         min_blocks: if min_blocks == Some(0) {
                             None
@@ -192,14 +208,6 @@ impl<'a> ModuleExportState<'a> {
                 }
             }
         }
-
-        use pliron::r#type::TypeObj;
-        let func_type = func.get_type(self.ctx);
-        let ft = Ptr::<TypeObj>::from(func_type);
-        let ft_ref = ft.deref(self.ctx);
-        let func_ty = ft_ref
-            .downcast_ref::<FuncType>()
-            .ok_or("Not a function type")?;
 
         let ret_ty = func_ty.result_type();
 
@@ -277,6 +285,14 @@ impl<'a> ModuleExportState<'a> {
                 self.export_type(arg_ty, output)?;
                 let name = format!("%v{next_value_id}");
                 value_names.insert(arg, name.clone());
+                if arg_ty
+                    .deref(self.ctx)
+                    .downcast_ref::<crate::types::PointerType>()
+                    .is_some()
+                {
+                    let pointer_type = self.type_to_string(arg_ty)?;
+                    self.typed_pointer_value_types.insert(arg, pointer_type);
+                }
                 write!(output, " {name}").unwrap();
                 next_value_id += 1;
             }
@@ -319,6 +335,15 @@ impl<'a> ModuleExportState<'a> {
                         let name = format!("%v{next_value_id}");
                         next_value_id += 1;
                         value_names.insert(arg, name);
+                        let arg_ty = arg.get_type(self.ctx);
+                        if arg_ty
+                            .deref(self.ctx)
+                            .downcast_ref::<crate::types::PointerType>()
+                            .is_some()
+                        {
+                            let pointer_type = self.type_to_string(arg_ty)?;
+                            self.typed_pointer_value_types.insert(arg, pointer_type);
+                        }
                     }
                 }
 
@@ -377,8 +402,17 @@ impl<'a> ModuleExportState<'a> {
                         let global_name = address_of.get_global_name(self.ctx);
                         let res = op_ref.get_result(0);
                         value_names.insert(res, format!("@{global_name}"));
+                        if let Some(pointer_type) = self
+                            .global_pointer_types
+                            .get(&global_name.to_string())
+                            .cloned()
+                        {
+                            self.typed_pointer_value_types.insert(res, pointer_type);
+                        }
                         continue;
                     }
+
+                    self.pre_register_typed_pointer_results(op_dyn, &op_ref)?;
 
                     for res in op_ref.results() {
                         let name = format!("%v{next_value_id}");
@@ -478,6 +512,88 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    fn pre_register_typed_pointer_results(
+        &mut self,
+        op_dyn: &dyn Op,
+        op_ref: &Operation,
+    ) -> Result<(), String> {
+        if self.nvvm_ir_dialect != Some(NvvmIrDialect::TypedPointers) {
+            return Ok(());
+        }
+
+        if let Some(alloca) = op_dyn.downcast_ref::<ops::AllocaOp>() {
+            let res = op_ref.get_result(0);
+            let elem_ty = alloca
+                .get_attr_alloca_element_type(self.ctx)
+                .ok_or("Missing alloca_element_type")?
+                .get_type(self.ctx);
+            let pointer_type = self.pointer_type_for_pointee(elem_ty, 0)?;
+            self.typed_pointer_value_types.insert(res, pointer_type);
+            return Ok(());
+        }
+
+        if let Some(gep) = op_dyn.downcast_ref::<ops::GetElementPtrOp>() {
+            let res = op_ref.get_result(0);
+            let ptr = op_ref.get_operand(0);
+            let elem_ty = gep
+                .get_attr_gep_src_elem_type(self.ctx)
+                .ok_or("Missing gep_src_elem_type")?
+                .get_type(self.ctx);
+            let addrspace = pointer_addrspace(ptr.get_type(self.ctx), self.ctx);
+            let indices = gep.indices(self.ctx);
+            let result_pointee =
+                ops::GetElementPtrOp::indexed_type(self.ctx, elem_ty, &indices).unwrap_or(elem_ty);
+            let pointer_type = self.pointer_type_for_pointee(result_pointee, addrspace)?;
+            self.typed_pointer_value_types.insert(res, pointer_type);
+            return Ok(());
+        }
+
+        for res in op_ref.results() {
+            let res_ty = res.get_type(self.ctx);
+            if res_ty
+                .deref(self.ctx)
+                .downcast_ref::<crate::types::PointerType>()
+                .is_some()
+            {
+                let pointer_type = self.type_to_string(res_ty)?;
+                self.typed_pointer_value_types.insert(res, pointer_type);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn function_annotation_ref(&self, func_ty: &FuncType, name: &str) -> Result<String, String> {
+        if self.nvvm_ir_dialect != Some(NvvmIrDialect::TypedPointers) {
+            return Ok(format!("ptr @{name}"));
+        }
+
+        Ok(format!("{} @{name}", self.function_pointer_type(func_ty)?))
+    }
+
+    fn function_llvm_used_ref(&self, func_ty: &FuncType, name: &str) -> Result<String, String> {
+        if self.nvvm_ir_dialect != Some(NvvmIrDialect::TypedPointers) {
+            return Ok(format!("ptr @{name}"));
+        }
+
+        let pointer_type = self.function_pointer_type(func_ty)?;
+        Ok(format!("i8* bitcast ({pointer_type} @{name} to i8*)"))
+    }
+
+    fn function_pointer_type(&self, func_ty: &FuncType) -> Result<String, String> {
+        let mut ty = String::new();
+        self.export_type(func_ty.result_type(), &mut ty)?;
+        ty.push_str(" (");
+        for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
+            if index > 0 {
+                ty.push_str(", ");
+            }
+            self.export_type(*arg_ty, &mut ty)?;
+        }
+        ty.push_str(")*");
+        Ok(ty)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn export_block(
         &mut self,
@@ -544,4 +660,10 @@ impl<'a> ModuleExportState<'a> {
         }
         Ok(())
     }
+}
+
+fn pointer_addrspace(ty: Ptr<pliron::r#type::TypeObj>, ctx: &pliron::context::Context) -> u32 {
+    ty.deref(ctx)
+        .downcast_ref::<crate::types::PointerType>()
+        .map_or(0, crate::types::PointerType::address_space)
 }
