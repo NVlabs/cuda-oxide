@@ -6,6 +6,8 @@ Runtime (`dlopen`) bindings to NVIDIA's libNVVM. libNVVM is the front-end of NVI
 
 - `LibNvvm` — RAII wrapper around the loaded library + resolved function pointers.
 - `Program` — RAII wrapper around an `nvvmProgram` handle, with `add_module` / `compile` methods.
+- `LibNvvm::llvm_version` — optional `nvvmLLVMVersion` query for target-specific
+  NVVM IR dialect selection on toolkits that expose it.
 - `NvvmError` — typed errors with the libNVVM error log captured.
 
 ## Build requirements

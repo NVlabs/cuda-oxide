@@ -21,7 +21,7 @@ use pliron::{
 use crate::ops;
 
 use super::{
-    config::ExportBackendConfig,
+    config::{ExportBackendConfig, NvvmIrDialect},
     externs::DeviceExternDecl,
     metadata::{emit_nvvm_annotations, md_id_after_annotations},
     state::ModuleExportState,
@@ -37,7 +37,12 @@ pub(super) fn export_module_with_externs_impl(
     let mut output = String::new();
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
-    let mut state = ModuleExportState::new(ctx, emit_all_annotations, emit_ptx_kernel_keyword);
+    let mut state = ModuleExportState::new(
+        ctx,
+        emit_all_annotations,
+        emit_ptx_kernel_keyword,
+        config.nvvm_ir_dialect(),
+    );
 
     // 1. Header
     writeln!(
@@ -138,22 +143,22 @@ pub(super) fn export_module_with_externs_impl(
 
         // Include all kernels
         for k in &state.all_kernels {
-            used_refs.push(format!("ptr @{}", k.name));
+            used_refs.push(k.llvm_used_ref.clone());
         }
 
         // Include standalone device functions (when no kernels present)
         if state.all_kernels.is_empty() {
-            for name in &state.device_functions {
-                used_refs.push(format!("ptr @{}", name));
-            }
+            used_refs.extend(state.device_function_used_refs.iter().cloned());
         }
 
         if !used_refs.is_empty() {
+            let used_element_type = llvm_used_element_type(&state);
             writeln!(&mut output).unwrap();
             writeln!(
                 &mut output,
-                "@llvm.used = appending global [{} x ptr] [{}], section \"llvm.metadata\"",
+                "@llvm.used = appending global [{} x {}] [{}], section \"llvm.metadata\"",
                 used_refs.len(),
+                used_element_type,
                 used_refs.join(", ")
             )
             .unwrap();
@@ -207,7 +212,12 @@ pub(super) fn export_module_to_string_with_config(
     let mut output = String::new();
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
-    let mut state = ModuleExportState::new(ctx, emit_all_annotations, emit_ptx_kernel_keyword);
+    let mut state = ModuleExportState::new(
+        ctx,
+        emit_all_annotations,
+        emit_ptx_kernel_keyword,
+        config.nvvm_ir_dialect(),
+    );
 
     // 1. Header
     writeln!(
@@ -277,22 +287,22 @@ pub(super) fn export_module_to_string_with_config(
         let mut used_refs: Vec<String> = Vec::new();
 
         for k in &state.all_kernels {
-            used_refs.push(format!("ptr @{}", k.name));
+            used_refs.push(k.llvm_used_ref.clone());
         }
 
         // Include standalone device functions when no kernels are present
         if state.all_kernels.is_empty() {
-            for name in &state.device_functions {
-                used_refs.push(format!("ptr @{}", name));
-            }
+            used_refs.extend(state.device_function_used_refs.iter().cloned());
         }
 
         if !used_refs.is_empty() {
+            let used_element_type = llvm_used_element_type(&state);
             writeln!(&mut output).unwrap();
             writeln!(
                 &mut output,
-                "@llvm.used = appending global [{} x ptr] [{}], section \"llvm.metadata\"",
+                "@llvm.used = appending global [{} x {}] [{}], section \"llvm.metadata\"",
                 used_refs.len(),
+                used_element_type,
                 used_refs.join(", ")
             )
             .unwrap();
@@ -326,18 +336,23 @@ pub(super) fn export_module_to_string_with_config(
             let special_kernel_names: std::collections::HashSet<&str> = state
                 .cluster_kernels
                 .iter()
-                .map(|k| k.name.as_str())
-                .chain(state.launch_bounds_kernels.iter().map(|k| k.name.as_str()))
+                .map(|k| k.annotation_ref.as_str())
+                .chain(
+                    state
+                        .launch_bounds_kernels
+                        .iter()
+                        .map(|k| k.annotation_ref.as_str()),
+                )
                 .collect();
 
             // Emit basic annotation for kernels WITHOUT special configs
             for kernel in state.all_kernels.iter() {
-                if !special_kernel_names.contains(kernel.name.as_str()) {
-                    // Basic kernel annotation: !{ptr @kernel_name, !"kernel", i32 1}
+                if !special_kernel_names.contains(kernel.annotation_ref.as_str()) {
+                    // Basic kernel annotation: !{<function-ref>, !"kernel", i32 1}
                     writeln!(
                         &mut output,
-                        "!{} = !{{ptr @{}, !\"kernel\", i32 1}}",
-                        md_id, kernel.name
+                        "!{} = !{{{}, !\"kernel\", i32 1}}",
+                        md_id, kernel.annotation_ref
                     )
                     .unwrap();
                     metadata_refs.push(format!("!{}", md_id));
@@ -347,12 +362,12 @@ pub(super) fn export_module_to_string_with_config(
         }
 
         // Each kernel with cluster config gets its own metadata node
-        // Format: !{ptr @kernel_name, !"kernel", i32 1, !"cluster_dim_x", i32 X, ...}
+        // Format: !{<function-ref>, !"kernel", i32 1, !"cluster_dim_x", i32 X, ...}
         for cfg in state.cluster_kernels.iter() {
             writeln!(
                 &mut output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
-                md_id, cfg.name, cfg.dim_x, cfg.dim_y, cfg.dim_z
+                "!{} = !{{{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
+                md_id, cfg.annotation_ref, cfg.dim_x, cfg.dim_y, cfg.dim_z
             )
             .unwrap();
             metadata_refs.push(format!("!{}", md_id));
@@ -366,8 +381,8 @@ pub(super) fn export_module_to_string_with_config(
             // Emit maxntidx (we use the single max_threads value for 1D block size)
             writeln!(
                 &mut output,
-                "!{} = !{{ptr @{}, !\"maxntidx\", i32 {}}}",
-                md_id, cfg.name, cfg.max_threads
+                "!{} = !{{{}, !\"maxntidx\", i32 {}}}",
+                md_id, cfg.annotation_ref, cfg.max_threads
             )
             .unwrap();
             metadata_refs.push(format!("!{}", md_id));
@@ -376,8 +391,8 @@ pub(super) fn export_module_to_string_with_config(
             // Emit maxntidy = 1 (for complete 3D specification)
             writeln!(
                 &mut output,
-                "!{} = !{{ptr @{}, !\"maxntidy\", i32 1}}",
-                md_id, cfg.name
+                "!{} = !{{{}, !\"maxntidy\", i32 1}}",
+                md_id, cfg.annotation_ref
             )
             .unwrap();
             metadata_refs.push(format!("!{}", md_id));
@@ -386,8 +401,8 @@ pub(super) fn export_module_to_string_with_config(
             // Emit maxntidz = 1 (for complete 3D specification)
             writeln!(
                 &mut output,
-                "!{} = !{{ptr @{}, !\"maxntidz\", i32 1}}",
-                md_id, cfg.name
+                "!{} = !{{{}, !\"maxntidz\", i32 1}}",
+                md_id, cfg.annotation_ref
             )
             .unwrap();
             metadata_refs.push(format!("!{}", md_id));
@@ -397,8 +412,8 @@ pub(super) fn export_module_to_string_with_config(
             if let Some(min_blocks) = cfg.min_blocks {
                 writeln!(
                     &mut output,
-                    "!{} = !{{ptr @{}, !\"minctasm\", i32 {}}}",
-                    md_id, cfg.name, min_blocks
+                    "!{} = !{{{}, !\"minctasm\", i32 {}}}",
+                    md_id, cfg.annotation_ref, min_blocks
                 )
                 .unwrap();
                 metadata_refs.push(format!("!{}", md_id));
@@ -438,4 +453,12 @@ pub(super) fn export_module_to_string_with_config(
     }
 
     Ok(output)
+}
+
+fn llvm_used_element_type(state: &ModuleExportState<'_>) -> &'static str {
+    if state.nvvm_ir_dialect == Some(NvvmIrDialect::TypedPointers) {
+        "i8*"
+    } else {
+        "ptr"
+    }
 }

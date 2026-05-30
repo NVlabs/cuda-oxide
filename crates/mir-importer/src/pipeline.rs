@@ -169,8 +169,11 @@ pub struct PipelineConfig {
     ///
     /// The output can be compiled to LTOIR using `nvvmCompileProgram -gen-lto`.
     ///
-    /// Currently supports NVVM 20 dialect (Blackwell+). Architecture is
-    /// controlled by `--arch` flag.
+    /// The NVVM IR dialect is selected from the requested architecture:
+    /// pre-Blackwell targets use the typed-pointer dialect expected by older
+    /// libNVVM paths, while Blackwell and newer targets use the modern
+    /// opaque-pointer dialect. Architecture is controlled by the `--arch` flag
+    /// or `CUDA_OXIDE_TARGET`.
     pub emit_nvvm_ir: bool,
 }
 
@@ -382,7 +385,15 @@ pub fn run_pipeline(
         eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
     }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
-    let _llvm_ir = export_llvm_ir(&ctx, module_op_ptr, device_externs, &ll_path, emit_nvvm_ir)?;
+    let target_override = std::env::var("CUDA_OXIDE_TARGET").ok();
+    let _llvm_ir = export_llvm_ir(
+        &ctx,
+        module_op_ptr,
+        device_externs,
+        &ll_path,
+        emit_nvvm_ir,
+        target_override.as_deref(),
+    )?;
     if config.verbose {
         eprintln!("LLVM IR written to {}", ll_path.display());
     }
@@ -623,12 +634,13 @@ fn export_llvm_ir(
     device_externs: &[DeviceExternDecl],
     path: &Path,
     emit_nvvm_ir: bool,
+    target: Option<&str>,
 ) -> Result<String, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
     let llvm_ir = if emit_nvvm_ir {
-        let config = dialect_llvm::export::NvvmExportConfig;
+        let config = dialect_llvm::export::NvvmExportConfig::for_target(target);
         dialect_llvm::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
     } else {

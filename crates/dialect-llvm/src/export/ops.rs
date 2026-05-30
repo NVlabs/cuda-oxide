@@ -14,6 +14,7 @@ use pliron::{
     builtin::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr},
         op_interfaces::{CallOpCallable, CallOpInterface},
+        types::IntegerType,
     },
     context::Ptr,
     op::Op,
@@ -28,6 +29,7 @@ use crate::{
 };
 
 use super::{
+    config::NvvmIrDialect,
     literals::{format_float_literal, format_half_literal},
     state::ModuleExportState,
 };
@@ -122,6 +124,62 @@ enum LlvmOp<'op> {
     Undef(&'op ops::UndefOp),
     Constant(&'op ops::ConstantOp),
     AddressOf(&'op ops::AddressOfOp),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SaturatingIntrinsic {
+    SignedAdd,
+    SignedSub,
+    UnsignedAdd,
+    UnsignedSub,
+}
+
+impl SaturatingIntrinsic {
+    fn from_name(name: &str) -> Option<Self> {
+        let (prefix, intrinsic) = [
+            ("llvm.sadd.sat.i", Self::SignedAdd),
+            ("llvm.ssub.sat.i", Self::SignedSub),
+            ("llvm.uadd.sat.i", Self::UnsignedAdd),
+            ("llvm.usub.sat.i", Self::UnsignedSub),
+        ]
+        .into_iter()
+        .find(|(prefix, _)| name.starts_with(prefix))?;
+
+        let suffix = &name[prefix.len()..];
+        if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            None
+        } else {
+            Some(intrinsic)
+        }
+    }
+
+    fn arithmetic_opcode(self) -> &'static str {
+        match self {
+            Self::SignedAdd | Self::UnsignedAdd => "add",
+            Self::SignedSub | Self::UnsignedSub => "sub",
+        }
+    }
+}
+
+fn signed_integer_limits(width: u32) -> Result<(String, String), String> {
+    if !(1..=128).contains(&width) {
+        return Err(format!(
+            "cannot lower signed saturating intrinsic for i{width}"
+        ));
+    }
+
+    let max = if width == 128 {
+        i128::MAX.to_string()
+    } else {
+        ((1_i128 << (width - 1)) - 1).to_string()
+    };
+    let min = if width == 128 {
+        i128::MIN.to_string()
+    } else {
+        format!("-{}", 1_i128 << (width - 1))
+    };
+
+    Ok((min, max))
 }
 
 /// Try each `(Variant, OpType)` pair in order; return the first match.
@@ -314,7 +372,7 @@ impl<'a> ModuleExportState<'a> {
             Some(LlvmOp::FCmp(op)) => self.emit_fcmp(op, value_names, output)?,
             Some(LlvmOp::Select(op)) => self.emit_select(op, value_names, output)?,
             // Calls and inline assembly
-            Some(LlvmOp::Call(op)) => self.emit_call(op, value_names, output)?,
+            Some(LlvmOp::Call(op)) => self.emit_call(op, value_names, next_value_id, output)?,
             Some(LlvmOp::InlineAsm(op)) => self.emit_inline_asm(op, value_names, output)?,
             Some(LlvmOp::InlineAsmMulti(op)) => {
                 self.emit_inline_asm_multi(op, value_names, output)?
@@ -442,11 +500,12 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let ty = res.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name = self.pointer_operand(ptr, ty, addrspace, value_names, output)?;
 
         write!(output, "  {res_name} = load ").unwrap();
         self.export_type(ty, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        write!(output, ", {}", self.ptr_operand_type(ty, addrspace)?).unwrap();
+        write!(output, "{ptr_name}").unwrap();
         writeln!(output).unwrap();
         Ok(())
     }
@@ -460,14 +519,16 @@ impl<'a> ModuleExportState<'a> {
         let op_ref = op.get_operation().deref(self.ctx);
         let val = op_ref.get_operand(0);
         let ptr = op_ref.get_operand(1);
+        let val_ty = val.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name = self.pointer_operand(ptr, val_ty, addrspace, value_names, output)?;
 
         write!(output, "  store ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
+        self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
         self.export_value(val, value_names, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        write!(output, ", {}", self.ptr_operand_type(val_ty, addrspace)?).unwrap();
+        write!(output, "{ptr_name}").unwrap();
         writeln!(output).unwrap();
         Ok(())
     }
@@ -488,6 +549,8 @@ impl<'a> ModuleExportState<'a> {
         write!(output, "  {res_name} = alloca ").unwrap();
         self.export_type(elem_ty.get_type(self.ctx), output)?;
         writeln!(output).unwrap();
+        let pointer_type = self.pointer_type_for_pointee(elem_ty.get_type(self.ctx), 0)?;
+        self.typed_pointer_value_types.insert(res, pointer_type);
         Ok(())
     }
 
@@ -506,11 +569,12 @@ impl<'a> ModuleExportState<'a> {
             .expect("Missing gep_src_elem_type")
             .get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name = self.pointer_operand(ptr, elem_ty, addrspace, value_names, output)?;
 
         write!(output, "  {res_name} = getelementptr inbounds ").unwrap();
         self.export_type(elem_ty, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        write!(output, ", {}", self.ptr_operand_type(elem_ty, addrspace)?).unwrap();
+        write!(output, "{ptr_name}").unwrap();
 
         for idx_attr in &op.get_attr_gep_indices(self.ctx).unwrap().0 {
             write!(output, ", ").unwrap();
@@ -527,6 +591,12 @@ impl<'a> ModuleExportState<'a> {
             }
         }
         writeln!(output).unwrap();
+        let indices = op.indices(self.ctx);
+        let result_pointee =
+            ops::GetElementPtrOp::indexed_type(self.ctx, elem_ty, &indices).unwrap_or(elem_ty);
+        let result_pointer_type = self.pointer_type_for_pointee(result_pointee, addrspace)?;
+        self.typed_pointer_value_types
+            .insert(res, result_pointer_type);
         Ok(())
     }
 
@@ -544,11 +614,12 @@ impl<'a> ModuleExportState<'a> {
         let syncscope = ops::atomic::format_syncscope(&op.syncscope(self.ctx));
         let ordering = ops::atomic::format_ordering(&op.ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name = self.pointer_operand(ptr, ty, addrspace, value_names, output)?;
 
         write!(output, "  {res_name} = load atomic ").unwrap();
         self.export_type(ty, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        write!(output, ", {}", self.ptr_operand_type(ty, addrspace)?).unwrap();
+        write!(output, "{ptr_name}").unwrap();
         let align = self.natural_alignment(ty);
         writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
         Ok(())
@@ -563,17 +634,19 @@ impl<'a> ModuleExportState<'a> {
         let op_ref = op.get_operation().deref(self.ctx);
         let val = op_ref.get_operand(0);
         let ptr = op_ref.get_operand(1);
+        let val_ty = val.get_type(self.ctx);
         let syncscope = ops::atomic::format_syncscope(&op.syncscope(self.ctx));
         let ordering = ops::atomic::format_ordering(&op.ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name = self.pointer_operand(ptr, val_ty, addrspace, value_names, output)?;
 
         write!(output, "  store atomic ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
+        self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
         self.export_value(val, value_names, output)?;
-        write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
-        let align = self.natural_alignment(val.get_type(self.ctx));
+        write!(output, ", {}", self.ptr_operand_type(val_ty, addrspace)?).unwrap();
+        write!(output, "{ptr_name}").unwrap();
+        let align = self.natural_alignment(val_ty);
         writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
         Ok(())
     }
@@ -593,10 +666,17 @@ impl<'a> ModuleExportState<'a> {
         let syncscope = ops::atomic::format_syncscope(&op.syncscope(self.ctx));
         let ordering = ops::atomic::format_ordering(&op.ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name =
+            self.pointer_operand(ptr, val.get_type(self.ctx), addrspace, value_names, output)?;
 
         write!(output, "  {res_name} = atomicrmw {rmw_kind} ").unwrap();
-        write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        write!(
+            output,
+            "{}",
+            self.ptr_operand_type(val.get_type(self.ctx), addrspace)?
+        )
+        .unwrap();
+        write!(output, "{ptr_name}").unwrap();
         write!(output, ", ").unwrap();
         self.export_type(val.get_type(self.ctx), output)?;
         write!(output, " ").unwrap();
@@ -622,12 +702,13 @@ impl<'a> ModuleExportState<'a> {
         let syncscope = ops::atomic::format_syncscope(&op.syncscope(self.ctx));
         let val_ty = cmp.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let ptr_name = self.pointer_operand(ptr, val_ty, addrspace, value_names, output)?;
 
         // Emit cmpxchg returning { T, i1 }
         let struct_name = format!("{res_name}.cx");
         write!(output, "  {struct_name} = cmpxchg ").unwrap();
-        write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
-        self.export_value(ptr, value_names, output)?;
+        write!(output, "{}", self.ptr_operand_type(val_ty, addrspace)?).unwrap();
+        write!(output, "{ptr_name}").unwrap();
         write!(output, ", ").unwrap();
         self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
@@ -662,6 +743,15 @@ impl<'a> ModuleExportState<'a> {
         let res = op_ref.get_result(0);
         let res_name = value_names.get(&res).unwrap();
         let arg = op_ref.get_operand(0);
+
+        if self.nvvm_ir_dialect == Some(NvvmIrDialect::TypedPointers) {
+            write!(output, "  {res_name} = fsub ").unwrap();
+            self.export_type(arg.get_type(self.ctx), output)?;
+            write!(output, " -0.000000e+00, ").unwrap();
+            self.export_value(arg, value_names, output)?;
+            writeln!(output).unwrap();
+            return Ok(());
+        }
 
         write!(output, "  {res_name} = fneg ").unwrap();
         self.export_type(arg.get_type(self.ctx), output)?;
@@ -777,6 +867,7 @@ impl<'a> ModuleExportState<'a> {
         &mut self,
         op: &ops::CallOp,
         value_names: &HashMap<Value, String>,
+        next_value_id: &mut usize,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -786,6 +877,31 @@ impl<'a> ModuleExportState<'a> {
         let llvm_func_ty = func_ty_ref.downcast_ref::<FuncType>().unwrap();
         let ret_ty = llvm_func_ty.result_type();
         let is_void = ret_ty.deref(self.ctx).is::<VoidType>();
+
+        let direct_callee = if let CallOpCallable::Direct(identifier) = &callee {
+            let name = identifier.to_string();
+            Some(if name.starts_with("llvm_") {
+                name.replace('_', ".")
+            } else {
+                super::names::strip_device_prefix(&name)
+            })
+        } else {
+            None
+        };
+
+        if self.nvvm_ir_dialect == Some(NvvmIrDialect::TypedPointers)
+            && let Some(intrinsic) = direct_callee
+                .as_deref()
+                .and_then(SaturatingIntrinsic::from_name)
+        {
+            return self.emit_typed_nvvm_saturating_intrinsic(
+                op,
+                intrinsic,
+                value_names,
+                next_value_id,
+                output,
+            );
+        }
 
         // Void calls: "call void @func(...)"
         // Non-void:   "%vN = call <type> @func(...)"
@@ -800,14 +916,8 @@ impl<'a> ModuleExportState<'a> {
 
         let mut is_convergent = false;
         match callee {
-            CallOpCallable::Direct(identifier) => {
-                let name = identifier.to_string();
-                // LLVM intrinsics use dots in IR; Pliron IR identifiers use underscores.
-                let fixed = if name.starts_with("llvm_") {
-                    name.replace('_', ".")
-                } else {
-                    super::names::strip_device_prefix(&name)
-                };
+            CallOpCallable::Direct(_) => {
+                let fixed = direct_callee.expect("direct callee should have been normalized");
                 is_convergent = Self::is_convergent_intrinsic(&fixed);
                 write!(output, " @{fixed}(").unwrap();
             }
@@ -834,6 +944,148 @@ impl<'a> ModuleExportState<'a> {
             writeln!(output, ")").unwrap();
         }
         Ok(())
+    }
+
+    fn emit_typed_nvvm_saturating_intrinsic(
+        &mut self,
+        op: &ops::CallOp,
+        intrinsic: SaturatingIntrinsic,
+        value_names: &HashMap<Value, String>,
+        next_value_id: &mut usize,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let op_ref = op.get_operation().deref(self.ctx);
+        if op_ref.get_num_results() != 1 || op_ref.operands().count() != 2 {
+            return Err("saturating intrinsic calls must have one result and two operands".into());
+        }
+
+        let result = op_ref.get_result(0);
+        let result_name = value_names
+            .get(&result)
+            .ok_or("saturating intrinsic result was not named")?;
+        let ty = result.get_type(self.ctx);
+        let width = ty
+            .deref(self.ctx)
+            .downcast_ref::<IntegerType>()
+            .ok_or("saturating intrinsic result must be an integer")?
+            .width();
+        let ty_text = self.type_to_string(ty)?;
+
+        let lhs = op_ref.get_operand(0);
+        let rhs = op_ref.get_operand(1);
+        let lhs_text = self.value_to_string(lhs, value_names)?;
+        let rhs_text = self.value_to_string(rhs, value_names)?;
+
+        let arithmetic = Self::next_ssa_name(next_value_id);
+        writeln!(
+            output,
+            "  {arithmetic} = {} {ty_text} {lhs_text}, {rhs_text}",
+            intrinsic.arithmetic_opcode()
+        )
+        .unwrap();
+
+        match intrinsic {
+            SaturatingIntrinsic::UnsignedAdd => {
+                let overflow = Self::next_ssa_name(next_value_id);
+                writeln!(
+                    output,
+                    "  {overflow} = icmp ult {ty_text} {arithmetic}, {lhs_text}"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {result_name} = select i1 {overflow}, {ty_text} -1, {ty_text} {arithmetic}"
+                )
+                .unwrap();
+            }
+            SaturatingIntrinsic::UnsignedSub => {
+                let underflow = Self::next_ssa_name(next_value_id);
+                writeln!(
+                    output,
+                    "  {underflow} = icmp ult {ty_text} {lhs_text}, {rhs_text}"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {result_name} = select i1 {underflow}, {ty_text} 0, {ty_text} {arithmetic}"
+                )
+                .unwrap();
+            }
+            SaturatingIntrinsic::SignedAdd | SaturatingIntrinsic::SignedSub => {
+                let lhs_negative = Self::next_ssa_name(next_value_id);
+                let rhs_negative = Self::next_ssa_name(next_value_id);
+                let result_negative = Self::next_ssa_name(next_value_id);
+                let sign_relationship = Self::next_ssa_name(next_value_id);
+                let result_sign_changed = Self::next_ssa_name(next_value_id);
+                let overflow = Self::next_ssa_name(next_value_id);
+                let saturated_value = Self::next_ssa_name(next_value_id);
+                let (min_value, max_value) = signed_integer_limits(width)?;
+                let sign_relationship_predicate = match intrinsic {
+                    SaturatingIntrinsic::SignedAdd => "eq",
+                    SaturatingIntrinsic::SignedSub => "ne",
+                    _ => unreachable!(),
+                };
+
+                writeln!(
+                    output,
+                    "  {lhs_negative} = icmp slt {ty_text} {lhs_text}, 0"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {rhs_negative} = icmp slt {ty_text} {rhs_text}, 0"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {result_negative} = icmp slt {ty_text} {arithmetic}, 0"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {sign_relationship} = icmp {sign_relationship_predicate} i1 {lhs_negative}, {rhs_negative}"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {result_sign_changed} = icmp ne i1 {lhs_negative}, {result_negative}"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {overflow} = and i1 {sign_relationship}, {result_sign_changed}"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {saturated_value} = select i1 {lhs_negative}, {ty_text} {min_value}, {ty_text} {max_value}"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  {result_name} = select i1 {overflow}, {ty_text} {saturated_value}, {ty_text} {arithmetic}"
+                )
+                .unwrap();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn value_to_string(
+        &self,
+        val: Value,
+        value_names: &HashMap<Value, String>,
+    ) -> Result<String, String> {
+        let mut output = String::new();
+        self.export_value(val, value_names, &mut output)?;
+        Ok(output)
+    }
+
+    fn next_ssa_name(next_value_id: &mut usize) -> String {
+        let name = format!("%v{next_value_id}");
+        *next_value_id += 1;
+        name
     }
 
     fn emit_inline_asm(
@@ -1119,7 +1371,7 @@ impl<'a> ModuleExportState<'a> {
 
     /// Export a cast: `%res = <op_name> <src_type> <val> to <dst_type>`
     pub(super) fn export_cast(
-        &self,
+        &mut self,
         op_name: &str,
         op: Ptr<Operation>,
         value_names: &HashMap<Value, String>,
@@ -1131,11 +1383,32 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
 
         write!(output, "  {res_name} = {op_name} ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
+        let val_ty = val.get_type(self.ctx);
+        let res_ty = res.get_type(self.ctx);
+        let val_is_ptr = val_ty
+            .deref(self.ctx)
+            .downcast_ref::<crate::types::PointerType>()
+            .is_some();
+        let res_is_ptr = res_ty
+            .deref(self.ctx)
+            .downcast_ref::<crate::types::PointerType>()
+            .is_some();
+
+        if self.nvvm_ir_dialect == Some(NvvmIrDialect::TypedPointers) && val_is_ptr {
+            write!(output, "{}", self.pointer_value_type(val)?).unwrap();
+        } else {
+            self.export_type(val_ty, output)?;
+        }
         write!(output, " ").unwrap();
         self.export_value(val, value_names, output)?;
         write!(output, " to ").unwrap();
-        self.export_type(res.get_type(self.ctx), output)?;
+        if self.nvvm_ir_dialect == Some(NvvmIrDialect::TypedPointers) && res_is_ptr {
+            let res_type = self.type_to_string(res_ty)?;
+            write!(output, "{res_type}").unwrap();
+            self.typed_pointer_value_types.insert(res, res_type);
+        } else {
+            self.export_type(res_ty, output)?;
+        }
         writeln!(output).unwrap();
         Ok(())
     }
@@ -1152,6 +1425,62 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "undef").unwrap();
         }
         Ok(())
+    }
+
+    fn ptr_operand_type(
+        &self,
+        pointee_ty: Ptr<pliron::r#type::TypeObj>,
+        addrspace: u32,
+    ) -> Result<String, String> {
+        if self.nvvm_ir_dialect != Some(NvvmIrDialect::TypedPointers) {
+            return Ok(ptr_qualifier(addrspace));
+        }
+
+        let mut ty = String::new();
+        self.export_type(pointee_ty, &mut ty)?;
+        if addrspace != 0 {
+            ty.push_str(&format!(" addrspace({addrspace})* "));
+        } else {
+            ty.push_str("* ");
+        }
+        Ok(ty)
+    }
+
+    fn pointer_operand(
+        &mut self,
+        ptr: Value,
+        pointee_ty: Ptr<pliron::r#type::TypeObj>,
+        addrspace: u32,
+        value_names: &HashMap<Value, String>,
+        output: &mut String,
+    ) -> Result<String, String> {
+        let mut ptr_name = String::new();
+        self.export_value(ptr, value_names, &mut ptr_name)?;
+
+        if self.nvvm_ir_dialect != Some(NvvmIrDialect::TypedPointers) {
+            return Ok(ptr_name);
+        }
+
+        let desired_type = self.pointer_type_for_pointee(pointee_ty, addrspace)?;
+        let current_type = self.pointer_value_type(ptr)?;
+        if current_type == desired_type {
+            return Ok(ptr_name);
+        }
+
+        let cast_name = format!("%ptrcast{}", self.next_pointer_cast_id);
+        self.next_pointer_cast_id += 1;
+        let current_addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let cast_op = if current_addrspace == addrspace {
+            "bitcast"
+        } else {
+            "addrspacecast"
+        };
+        writeln!(
+            output,
+            "  {cast_name} = {cast_op} {current_type} {ptr_name} to {desired_type}"
+        )
+        .unwrap();
+        Ok(cast_name)
     }
 }
 

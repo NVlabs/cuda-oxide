@@ -24,18 +24,23 @@ pub(super) fn emit_nvvm_annotations(
     let special_kernel_names: std::collections::HashSet<&str> = state
         .cluster_kernels
         .iter()
-        .map(|k| k.name.as_str())
-        .chain(state.launch_bounds_kernels.iter().map(|k| k.name.as_str()))
+        .map(|k| k.annotation_ref.as_str())
+        .chain(
+            state
+                .launch_bounds_kernels
+                .iter()
+                .map(|k| k.annotation_ref.as_str()),
+        )
         .collect();
 
     // Emit basic annotation for kernels WITHOUT special configs
     if emit_all_annotations {
         for kernel in state.all_kernels.iter() {
-            if !special_kernel_names.contains(kernel.name.as_str()) {
+            if !special_kernel_names.contains(kernel.annotation_ref.as_str()) {
                 writeln!(
                     output,
-                    "!{} = !{{ptr @{}, !\"kernel\", i32 1}}",
-                    md_id, kernel.name
+                    "!{} = !{{{}, !\"kernel\", i32 1}}",
+                    md_id, kernel.annotation_ref
                 )
                 .unwrap();
                 metadata_refs.push(format!("!{}", md_id));
@@ -48,8 +53,8 @@ pub(super) fn emit_nvvm_annotations(
     for cfg in state.cluster_kernels.iter() {
         writeln!(
             output,
-            "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
-            md_id, cfg.name, cfg.dim_x, cfg.dim_y, cfg.dim_z
+            "!{} = !{{{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
+            md_id, cfg.annotation_ref, cfg.dim_x, cfg.dim_y, cfg.dim_z
         )
         .unwrap();
         metadata_refs.push(format!("!{}", md_id));
@@ -61,15 +66,15 @@ pub(super) fn emit_nvvm_annotations(
         if let Some(min_blocks) = bounds.min_blocks {
             writeln!(
                 output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
-                md_id, bounds.name, bounds.max_threads, min_blocks
+                "!{} = !{{{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}, !\"minctasm\", i32 {}}}",
+                md_id, bounds.annotation_ref, bounds.max_threads, min_blocks
             )
             .unwrap();
         } else {
             writeln!(
                 output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
-                md_id, bounds.name, bounds.max_threads
+                "!{} = !{{{}, !\"kernel\", i32 1, !\"maxntidx\", i32 {}}}",
+                md_id, bounds.annotation_ref, bounds.max_threads
             )
             .unwrap();
         }
@@ -96,12 +101,17 @@ pub(super) fn md_id_after_annotations(state: &ModuleExportState) -> usize {
     let special_kernel_names: std::collections::HashSet<&str> = state
         .cluster_kernels
         .iter()
-        .map(|k| k.name.as_str())
-        .chain(state.launch_bounds_kernels.iter().map(|k| k.name.as_str()))
+        .map(|k| k.annotation_ref.as_str())
+        .chain(
+            state
+                .launch_bounds_kernels
+                .iter()
+                .map(|k| k.annotation_ref.as_str()),
+        )
         .collect();
 
     for kernel in &state.all_kernels {
-        if special_kernel_names.contains(kernel.name.as_str()) {
+        if special_kernel_names.contains(kernel.annotation_ref.as_str()) {
             count -= 1;
         }
     }
