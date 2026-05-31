@@ -268,6 +268,28 @@ impl Parse for KernelArgs {
 /// - `Copy` scalar/struct/closure/raw-pointer arguments keep their original
 ///   type and pass through `cuda_host::KernelScalar`
 ///
+/// # Nested modules
+///
+/// Kernels may be organized in modules nested inside the annotated module.
+/// The walk descends into inline `mod` items, out-of-line `mod foo;` /
+/// `#[path = "..."]` declarations, and `include!("...")` invocations,
+/// resolving files the way rustc resolves the emitted tokens (out-of-line
+/// modules by module directory, `include!` relative to the containing file).
+/// Generated launcher methods keep their flat names, so kernel names must be
+/// unique across nested modules. Limitations:
+///
+/// - `include!` arguments that are not plain string literals (for example
+///   `include!(concat!(env!("OUT_DIR"), ...))`) cannot be resolved at macro
+///   expansion time; kernels inside them are not collected.
+/// - `#[cfg]`-gated out-of-line modules and includes are not read, because
+///   cfg predicates cannot be evaluated inside a proc macro.
+/// - Out-of-line resolution assumes the `#[cuda_module]` module is declared
+///   at the top level of its file.
+/// - Out-of-line `mod foo;` inside the macro input additionally requires
+///   `#![feature(proc_macro_hygiene)]` on the using crate: rustc gates
+///   non-inline modules in proc-macro input (rust-lang/rust#54727). Inline
+///   nested modules and `include!` need no feature gate.
+///
 /// # Example
 ///
 /// ```ignore
@@ -310,6 +332,7 @@ pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 struct CudaModuleKernel {
+    module_path: Vec<Ident>,
     vis: syn::Visibility,
     cfg_attrs: Vec<syn::Attribute>,
     method_attrs: Vec<syn::Attribute>,
@@ -346,7 +369,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
         ));
     };
 
-    let kernels = collect_cuda_module_kernels(items)?;
+    let kernels = collect_cuda_module_kernels(ident, items)?;
     if kernels.is_empty() {
         return Err(syn::Error::new_spanned(
             &module.ident,
@@ -369,7 +392,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
     let function_initializers = non_generic_kernels.map(|kernel| {
         let cfg_attrs = &kernel.cfg_attrs;
         let field = cuda_module_function_field(&kernel.fn_name);
-        let marker = cuda_kernel_marker_name(&kernel.fn_name);
+        let marker = cuda_module_kernel_marker_path(kernel);
         quote! {
             #(#cfg_attrs)*
             #field: module.load_function(<#marker as ::cuda_host::CudaKernel>::PTX_NAME)?,
@@ -496,36 +519,65 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
     })
 }
 
-fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKernel>> {
+fn collect_cuda_module_kernels(
+    module_ident: &Ident,
+    items: &[Item],
+) -> syn::Result<Vec<CudaModuleKernel>> {
     let mut kernels = Vec::new();
-    for item in items {
-        let Item::Fn(item_fn) = item else {
-            continue;
-        };
-        if !has_attr_named(&item_fn.attrs, "kernel") {
-            continue;
-        }
-        if let Some(err) = impl_trait_parameter_error(item_fn, "kernel") {
-            return Err(err);
-        }
-        let cluster_dim = cuda_module_cluster_dim(&item_fn.attrs)?;
-        let cooperative = cuda_module_cooperative(&item_fn.attrs)?;
-        let params = cuda_module_params(item_fn)?;
-        let is_generic = has_codegen_generics(&item_fn.sig.generics);
-        kernels.push(CudaModuleKernel {
-            vis: item_fn.vis.clone(),
-            cfg_attrs: cuda_module_cfg_attrs(&item_fn.attrs),
-            method_attrs: cuda_module_method_attrs(&item_fn.attrs),
-            unsafety: item_fn.sig.unsafety,
-            fn_name: item_fn.sig.ident.clone(),
-            generics: item_fn.sig.generics.clone(),
-            params,
-            cluster_dim,
-            cooperative,
-            is_generic,
-        });
-    }
+    let ctx = cuda_module_file_context(module_ident);
+    collect_cuda_module_kernels_in(items, &mut Vec::new(), &ctx, &mut kernels)?;
+    reject_conflicting_kernel_names(&kernels)?;
     Ok(kernels)
+}
+
+/// Reject two kernels that would generate the same launcher method and
+/// function-cache field on `LoadedModule`.
+///
+/// The generated API is flat: methods and fields are named after the bare
+/// kernel fn name, so `stage1::step` and `stage2::step` collide. Rejecting
+/// the collision here names both modules instead of leaving the user with
+/// rustc's duplicate-field errors inside macro-generated code. Kernels that
+/// both carry `#[cfg]` attributes are exempt: the classic
+/// `#[cfg(a)] fn k` / `#[cfg(not(a))] fn k` pair is legitimate, and cfg
+/// predicates cannot be evaluated inside a proc macro. If such a pair is
+/// actually enabled together, rustc still reports the duplicate definitions.
+fn reject_conflicting_kernel_names(kernels: &[CudaModuleKernel]) -> syn::Result<()> {
+    let mut unconditional: std::collections::HashMap<String, &CudaModuleKernel> =
+        std::collections::HashMap::new();
+    for kernel in kernels {
+        if !kernel.cfg_attrs.is_empty() {
+            continue;
+        }
+        if let Some(previous) = unconditional.insert(kernel.fn_name.to_string(), kernel) {
+            return Err(syn::Error::new(
+                kernel.fn_name.span(),
+                format!(
+                    "#[cuda_module] generates one flat launcher API, so kernel names must be \
+                     unique across nested modules: `{name}` in {second} conflicts with \
+                     `{name}` in {first}; rename one of the kernels",
+                    name = kernel.fn_name,
+                    first = cuda_module_path_description(&previous.module_path),
+                    second = cuda_module_path_description(&kernel.module_path),
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn cuda_module_path_description(module_path: &[Ident]) -> String {
+    if module_path.is_empty() {
+        "the module root".to_string()
+    } else {
+        format!(
+            "`{}`",
+            module_path
+                .iter()
+                .map(Ident::to_string)
+                .collect::<Vec<_>>()
+                .join("::")
+        )
+    }
 }
 
 /// Generate the statements that pin this crate's embedded device artifact
@@ -911,6 +963,279 @@ fn generate_cuda_module_set_constant_method(constant: &CudaModuleConstant) -> To
             }
         }
     }
+}
+
+fn collect_cuda_module_kernels_in(
+    items: &[Item],
+    module_path: &mut Vec<Ident>,
+    ctx: &CudaModuleFileContext,
+    kernels: &mut Vec<CudaModuleKernel>,
+) -> syn::Result<()> {
+    for item in items {
+        match item {
+            Item::Fn(item_fn) => {
+                if !has_attr_named(&item_fn.attrs, "kernel") {
+                    continue;
+                }
+                if let Some(err) = impl_trait_parameter_error(item_fn, "kernel") {
+                    return Err(err);
+                }
+                let cluster_dim = cuda_module_cluster_dim(&item_fn.attrs)?;
+                let cooperative = cuda_module_cooperative(&item_fn.attrs)?;
+                let params = cuda_module_params(item_fn)?;
+                let is_generic = has_codegen_generics(&item_fn.sig.generics);
+                kernels.push(CudaModuleKernel {
+                    module_path: module_path.clone(),
+                    vis: item_fn.vis.clone(),
+                    cfg_attrs: cuda_module_cfg_attrs(&item_fn.attrs),
+                    method_attrs: cuda_module_method_attrs(&item_fn.attrs),
+                    unsafety: item_fn.sig.unsafety,
+                    fn_name: item_fn.sig.ident.clone(),
+                    generics: item_fn.sig.generics.clone(),
+                    params,
+                    cluster_dim,
+                    cooperative,
+                    is_generic,
+                });
+            }
+            Item::Mod(item_mod) => {
+                module_path.push(item_mod.ident.clone());
+                if let Some((_brace, nested_items)) = &item_mod.content {
+                    let nested_ctx = ctx.enter_inline_module(&item_mod.ident);
+                    collect_cuda_module_kernels_in(
+                        nested_items,
+                        module_path,
+                        &nested_ctx,
+                        kernels,
+                    )?;
+                } else if let Some((file, nested_items)) = read_out_of_line_module(item_mod, ctx)? {
+                    let nested_ctx = CudaModuleFileContext::for_module_file(&file);
+                    collect_cuda_module_kernels_in(
+                        &nested_items,
+                        module_path,
+                        &nested_ctx,
+                        kernels,
+                    )?;
+                }
+                module_path.pop();
+            }
+            Item::Macro(item_macro) => {
+                if let Some((file, nested_items)) = read_included_items(item_macro, ctx)? {
+                    // include! splices tokens without opening a module, so the
+                    // module path and the out-of-line directory are unchanged;
+                    // only the file that nested include! literals resolve
+                    // against moves to the included file.
+                    let nested_ctx = CudaModuleFileContext {
+                        file_dir: file.parent().map(std::path::Path::to_path_buf),
+                        mod_dir: ctx.mod_dir.clone(),
+                    };
+                    collect_cuda_module_kernels_in(
+                        &nested_items,
+                        module_path,
+                        &nested_ctx,
+                        kernels,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// File-system context threaded through the `#[cuda_module]` item walk so
+/// nested out-of-line modules and `include!` invocations resolve to the same
+/// files rustc will read when it compiles the emitted tokens.
+///
+/// Either directory is `None` when the invocation's source file cannot be
+/// determined — tokens produced by another macro, or expansion outside a real
+/// proc-macro context (unit tests). Resolution is then skipped: inline nested
+/// modules are still walked, file-backed ones are ignored, which matches the
+/// pre-nested-module behavior of not collecting them.
+struct CudaModuleFileContext {
+    /// Directory of the file whose tokens are being walked. rustc resolves
+    /// `include!("...")` relative to the file containing the invocation, so
+    /// include literals join against this.
+    file_dir: Option<std::path::PathBuf>,
+    /// Directory holding the current module's out-of-line children:
+    /// `mod foo;` reads `<mod_dir>/foo.rs` or `<mod_dir>/foo/mod.rs`, and a
+    /// `#[path = "..."]` attribute joins against it (the rule for modules
+    /// nested inside inline modules).
+    mod_dir: Option<std::path::PathBuf>,
+}
+
+impl CudaModuleFileContext {
+    /// Context for the `#[cuda_module]` module itself.
+    ///
+    /// Assumes the annotated module is declared at the top level of its file:
+    /// its out-of-line children then live in `<owner dir of file>/<module>/`.
+    /// If the macro is nested inside another inline module, out-of-line
+    /// children would resolve one directory too high and simply not be found
+    /// (and therefore not collected) — inline nesting and `include!` remain
+    /// fully supported in that position.
+    fn for_cuda_module(module_ident: &Ident) -> Self {
+        let Some(file) = span_local_file(module_ident.span()) else {
+            return Self {
+                file_dir: None,
+                mod_dir: None,
+            };
+        };
+        Self {
+            file_dir: file.parent().map(std::path::Path::to_path_buf),
+            mod_dir: module_owner_dir(&file).map(|dir| dir.join(module_ident.to_string())),
+        }
+    }
+
+    /// Context for the items of an out-of-line module read from `file`.
+    fn for_module_file(file: &std::path::Path) -> Self {
+        Self {
+            file_dir: file.parent().map(std::path::Path::to_path_buf),
+            mod_dir: module_owner_dir(file),
+        }
+    }
+
+    fn enter_inline_module(&self, ident: &Ident) -> Self {
+        Self {
+            file_dir: self.file_dir.clone(),
+            mod_dir: self.mod_dir.as_ref().map(|dir| dir.join(ident.to_string())),
+        }
+    }
+}
+
+fn cuda_module_file_context(module_ident: &Ident) -> CudaModuleFileContext {
+    CudaModuleFileContext::for_cuda_module(module_ident)
+}
+
+/// Real path of the file a span points into, when one exists.
+///
+/// `proc_macro::is_available()` guards direct expansion calls in unit tests,
+/// where `proc_macro2::Span::unwrap()` would panic. `local_file()` is `None`
+/// for virtual or remapped sources.
+fn span_local_file(span: proc_macro2::Span) -> Option<std::path::PathBuf> {
+    if !proc_macro::is_available() {
+        return None;
+    }
+    span.unwrap().local_file()
+}
+
+/// Directory whose subpaths hold the out-of-line children of the module
+/// defined by `file`: `mod.rs`, `lib.rs`, and `main.rs` own their containing
+/// directory; a named file `foo.rs` owns the sibling directory `foo/`.
+fn module_owner_dir(file: &std::path::Path) -> Option<std::path::PathBuf> {
+    let name = file.file_name()?.to_str()?;
+    let parent = file.parent()?;
+    if matches!(name, "mod.rs" | "lib.rs" | "main.rs") {
+        Some(parent.to_path_buf())
+    } else {
+        Some(parent.join(file.file_stem()?))
+    }
+}
+
+/// Read the file backing an out-of-line `mod foo;` declaration.
+///
+/// Returns `Ok(None)` — leaving the module uncollected, exactly as before
+/// nested-module support — when the file context is unknown, when the module
+/// carries `#[cfg]` attributes (predicates cannot be evaluated inside a proc
+/// macro, and the file legitimately may not exist for disabled
+/// configurations), or when no candidate file exists (rustc reports missing
+/// modules itself when it compiles the emitted tokens). A file that exists
+/// but cannot be read or parsed is an error: rustc would fail on it too, and
+/// the macro-level message carries the resolved path.
+fn read_out_of_line_module(
+    item_mod: &syn::ItemMod,
+    ctx: &CudaModuleFileContext,
+) -> syn::Result<Option<(std::path::PathBuf, Vec<Item>)>> {
+    let Some(mod_dir) = &ctx.mod_dir else {
+        return Ok(None);
+    };
+    if item_mod
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("cfg"))
+    {
+        return Ok(None);
+    }
+    let path_attr = item_mod
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("path"));
+    let candidates = match path_attr {
+        Some(attr) => vec![mod_dir.join(attr.parse_args::<syn::LitStr>()?.value())],
+        None => vec![
+            mod_dir.join(format!("{}.rs", item_mod.ident)),
+            mod_dir.join(item_mod.ident.to_string()).join("mod.rs"),
+        ],
+    };
+    let Some(file) = candidates.into_iter().find(|path| path.exists()) else {
+        return Ok(None);
+    };
+    let items = parse_cuda_module_file(&file, item_mod)?;
+    Ok(Some((file, items)))
+}
+
+/// Read the file spliced in by an `include!("...")` item.
+///
+/// Only plain string literals are resolvable; computed paths such as
+/// `include!(concat!(env!("OUT_DIR"), ...))` are skipped, so kernels inside
+/// them are not collected. A missing file is also skipped rather than
+/// reported: rustc expands the same `include!` from the emitted tokens with
+/// identical file-relative resolution and produces the canonical error.
+fn read_included_items(
+    item_macro: &syn::ItemMacro,
+    ctx: &CudaModuleFileContext,
+) -> syn::Result<Option<(std::path::PathBuf, Vec<Item>)>> {
+    if !item_macro.mac.path.is_ident("include") {
+        return Ok(None);
+    }
+    if item_macro
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("cfg"))
+    {
+        return Ok(None);
+    }
+    let Ok(relative) = item_macro.mac.parse_body::<syn::LitStr>() else {
+        return Ok(None);
+    };
+    let relative = std::path::PathBuf::from(relative.value());
+    let file = if relative.is_absolute() {
+        relative
+    } else {
+        let Some(file_dir) = &ctx.file_dir else {
+            return Ok(None);
+        };
+        file_dir.join(relative)
+    };
+    if !file.exists() {
+        return Ok(None);
+    }
+    let items = parse_cuda_module_file(&file, item_macro)?;
+    Ok(Some((file, items)))
+}
+
+fn parse_cuda_module_file(
+    path: &std::path::Path,
+    span: &impl quote::ToTokens,
+) -> syn::Result<Vec<Item>> {
+    let source = std::fs::read_to_string(path).map_err(|error| {
+        syn::Error::new_spanned(
+            span,
+            format!(
+                "#[cuda_module] failed to read nested module file {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    let file = syn::parse_file(&source).map_err(|error| {
+        syn::Error::new_spanned(
+            span,
+            format!(
+                "#[cuda_module] failed to parse nested module file {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(file.items)
 }
 
 fn cuda_module_method_attrs(attrs: &[syn::Attribute]) -> Vec<syn::Attribute> {
@@ -1439,8 +1764,7 @@ fn cuda_module_async_arg_marshalling(param: &CudaModuleParam) -> TokenStream2 {
 fn cuda_module_function_binding(kernel: &CudaModuleKernel) -> TokenStream2 {
     let function = internal_ident("__cuda_oxide_function");
     if kernel.is_generic {
-        let fn_name = &kernel.fn_name;
-        let ptx_name_fn = format_ident!("{}_ptx_name", fn_name);
+        let ptx_name_fn = cuda_module_kernel_ptx_name_path(kernel);
         let codegen_args = codegen_generic_arguments(&kernel.generics);
         let turbofish = if codegen_args.is_empty() {
             quote! {}
@@ -1629,6 +1953,18 @@ fn cuda_module_function_field(fn_name: &Ident) -> Ident {
 
 fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
     format_ident!("__{}_CudaKernel", fn_name)
+}
+
+fn cuda_module_kernel_marker_path(kernel: &CudaModuleKernel) -> TokenStream2 {
+    let path = &kernel.module_path;
+    let marker = cuda_kernel_marker_name(&kernel.fn_name);
+    quote! { #(#path::)* #marker }
+}
+
+fn cuda_module_kernel_ptx_name_path(kernel: &CudaModuleKernel) -> TokenStream2 {
+    let path = &kernel.module_path;
+    let ptx_name_fn = format_ident!("{}_ptx_name", kernel.fn_name);
+    quote! { #(#path::)* #ptx_name_fn }
 }
 
 /// Marks a function as a CUDA kernel.
@@ -4560,6 +4896,102 @@ mod tests {
                 .contains("cooperative_launch takes no arguments"),
             "unexpected error message: {error}"
         );
+    }
+
+    #[test]
+    fn nested_inline_module_kernels_generate_qualified_launchers() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn top(mut out: DisjointSlice<u32>) {}
+
+                pub mod stage1 {
+                    #[kernel]
+                    pub fn scale(mut out: DisjointSlice<f32>) {}
+                }
+
+                pub mod stage2 {
+                    pub mod inner {
+                        #[kernel]
+                        pub fn shift(mut out: DisjointSlice<f32>) {}
+                    }
+                }
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        assert!(
+            expanded.contains("stage1::__scale_CudaKernel"),
+            "expected the stage1 kernel marker to be module-qualified:\n{expanded}"
+        );
+        assert!(
+            expanded.contains("stage2::inner::__shift_CudaKernel"),
+            "expected the doubly nested kernel marker to be module-qualified:\n{expanded}"
+        );
+        assert!(
+            expanded.contains("pubfnscale") && expanded.contains("pubfnshift"),
+            "expected flat launcher methods for nested kernels:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn nested_generic_kernel_uses_qualified_ptx_name_helper() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn top(mut out: DisjointSlice<u32>) {}
+
+                pub mod stage1 {
+                    #[kernel]
+                    pub fn map<F: Fn(f32) -> f32 + Copy>(f: F, mut out: DisjointSlice<f32>) {}
+                }
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        assert!(
+            expanded.contains("stage1::map_ptx_name"),
+            "expected the generic binding to call the module-qualified ptx-name helper:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn conflicting_kernel_names_across_modules_are_rejected() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                pub mod stage1 {
+                    #[kernel]
+                    pub fn step(mut out: DisjointSlice<f32>) {}
+                }
+
+                pub mod stage2 {
+                    #[kernel]
+                    pub fn step(mut out: DisjointSlice<f32>) {}
+                }
+            }
+        };
+        let error = expand_cuda_module(module).expect_err("expected expansion to fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("must be unique")
+                && message.contains("stage1")
+                && message.contains("stage2"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    #[test]
+    fn cfg_gated_duplicate_kernel_names_are_allowed() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[cfg(feature = "fast")]
+                pub fn step(mut out: DisjointSlice<f32>) {}
+
+                #[kernel]
+                #[cfg(not(feature = "fast"))]
+                pub fn step(mut out: DisjointSlice<f32>) {}
+            }
+        };
+        expand_cuda_module(module).expect("cfg-gated same-name kernels must expand");
     }
 
     /// Runs the per-loop `#[unroll]` visitor over `func`'s body and returns the
