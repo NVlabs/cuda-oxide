@@ -37,14 +37,13 @@ use core::any::TypeId;
 /// rustc using its internal `Ty<'tcx>` representation, so the call site
 /// only ever sees a constant `u128`.
 ///
-/// Bound is intentionally `T: ?Sized` (not `T: 'static`). The typed launch
-/// path must keep accepting non-`'static` borrowing closures, the same way
-/// the legacy `type_name`-based path did. Adding `'static` here would
-/// silently tighten the typed API without enforcing the actual launch-
-/// outlives-borrow invariant — that responsibility still sits with the
-/// caller (the borrow must outlive `stream.synchronize()`).
+/// Current pinned rustc exposes `core::intrinsics::type_id` with the same
+/// lifetime bound as `TypeId::of`, so this helper must carry `T: 'static`.
+/// The launcher API passes the generated kernel marker type here, not the
+/// borrow-carrying argument values, so this remains compatible with stack
+/// borrows captured by kernel argument slices.
 #[inline]
-pub fn type_id_u128<T: ?Sized>() -> u128 {
+pub fn type_id_u128<T: ?Sized + 'static>() -> u128 {
     let id = const { core::intrinsics::type_id::<T>() };
     unsafe { core::mem::transmute::<TypeId, u128>(id) }
 }
