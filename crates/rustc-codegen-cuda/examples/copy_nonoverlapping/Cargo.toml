@@ -1,5 +1,5 @@
 [package]
-name = "error_copy_nonoverlapping_unhandled"
+name = "copy_nonoverlapping"
 version = "0.1.0"
 edition = "2024"
 authors = ["Nihal Pasham <nihalp@nvidia.com>"]

@@ -48,23 +48,31 @@
 //! ```
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
-use crate::convert::types::convert_type;
+use crate::convert::types::{convert_type, get_type_size};
 use crate::helpers;
 use dialect_mir::types::MirPtrType;
+use llvm_export::attributes::IntegerOverflowFlagsAttr;
+use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
-use llvm_export::types::ArrayType;
+use llvm_export::types::{ArrayType, FuncType, VoidType};
+use pliron::attribute::AttrObj;
+use pliron::builtin::attributes::IntegerAttr;
+use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
+use pliron::identifier::Identifier;
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::linked_list::ContainsLinkedList;
+use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 use pliron::r#type::{TypeObj, Typed};
+use pliron::utils::apint::APInt;
 
 fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     pliron::create_error!(
@@ -109,6 +117,121 @@ fn copy_alignment(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operat
     if let Some(align) = llvm_export::ops::op_alignment(ctx, mir_op) {
         llvm_export::ops::set_op_alignment(ctx, llvm_op, align);
     }
+}
+
+/// Convert `mir.memcpy` to `llvm.memcpy.p0.p0.i64`.
+///
+/// MIR's count is measured in pointee elements, while LLVM's memcpy intrinsic
+/// expects bytes. The pre-conversion destination pointer type still carries the
+/// MIR pointee, so use it to scale the count before emitting the call.
+pub(crate) fn convert_memcpy(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let (dst, src, count) = match operands.as_slice() {
+        [dst, src, count] => (*dst, *src, *count),
+        _ => {
+            return pliron::input_err_noloc!("Memcpy operation requires exactly 3 operands");
+        }
+    };
+
+    let pointee = {
+        let dst_ptr_ty = operands_info
+            .lookup_most_recent_of_type::<MirPtrType>(ctx, dst)
+            .ok_or_else(|| {
+                pliron::create_error!(
+                    op.deref(ctx).loc(),
+                    pliron::result::ErrorKind::VerificationFailed,
+                    pliron::result::StringError(
+                        "Memcpy destination must be a MIR pointer before lowering".to_string()
+                    )
+                )
+            })?;
+        dst_ptr_ty.pointee
+    };
+    let elem_ty = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
+    let elem_size = get_type_size(ctx, elem_ty);
+
+    let bytes = if elem_size == 1 {
+        count
+    } else {
+        let count_ty = count.get_type(ctx);
+        let bits = count_ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .map(|ty| ty.width())
+            .unwrap_or(64);
+        let count_int_ty = IntegerType::get(ctx, bits, Signedness::Signless);
+        let size_attr: AttrObj = IntegerAttr::new(
+            count_int_ty,
+            APInt::from_u64(
+                elem_size,
+                std::num::NonZeroUsize::new(bits as usize).unwrap(),
+            ),
+        )
+        .into();
+        let size_const = llvm::ConstantOp::new(ctx, size_attr);
+        let size_val = size_const.get_operation().deref(ctx).get_result(0);
+        rewriter.insert_operation(ctx, size_const.get_operation());
+
+        let flags = IntegerOverflowFlagsAttr::default();
+        let mul = llvm::MulOp::new_with_overflow_flag(ctx, count, size_val, flags);
+        rewriter.insert_operation(ctx, mul.get_operation());
+        mul.get_operation().deref(ctx).get_result(0)
+    };
+
+    let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+    let false_attr: AttrObj = IntegerAttr::new(
+        i1_ty,
+        APInt::from_u64(0, std::num::NonZeroUsize::new(1).unwrap()),
+    )
+    .into();
+    let volatile = llvm::ConstantOp::new(ctx, false_attr);
+    rewriter.insert_operation(ctx, volatile.get_operation());
+    let volatile_val = volatile.get_operation().deref(ctx).get_result(0);
+
+    let void_ty = VoidType::get(ctx);
+    let func_ty = FuncType::get(
+        ctx,
+        void_ty.into(),
+        vec![
+            dst.get_type(ctx),
+            src.get_type(ctx),
+            bytes.get_type(ctx),
+            volatile_val.get_type(ctx),
+        ],
+        false,
+    );
+    let parent_block = op.deref(ctx).get_parent_block().ok_or_else(|| {
+        pliron::create_error!(
+            op.deref(ctx).loc(),
+            pliron::result::ErrorKind::VerificationFailed,
+            pliron::result::StringError("Memcpy operation has no parent block".to_string())
+        )
+    })?;
+    let intrinsic_name = "llvm_memcpy_p0_p0_i64";
+    helpers::ensure_intrinsic_declared(ctx, parent_block, intrinsic_name, func_ty)
+        .map_err(anyhow_to_pliron)?;
+
+    let callee: Identifier = intrinsic_name.try_into().map_err(|e| {
+        pliron::create_error!(
+            op.deref(ctx).loc(),
+            pliron::result::ErrorKind::VerificationFailed,
+            pliron::result::StringError(format!("Invalid memcpy intrinsic name: {e:?}"))
+        )
+    })?;
+    let call = llvm::CallOp::new(
+        ctx,
+        CallOpCallable::Direct(callee),
+        func_ty,
+        vec![dst, src, bytes, volatile_val],
+    );
+    rewriter.insert_operation(ctx, call.get_operation());
+    rewriter.erase_operation(ctx, op);
+    Ok(())
 }
 
 /// Convert `mir.load` to `llvm.load`.

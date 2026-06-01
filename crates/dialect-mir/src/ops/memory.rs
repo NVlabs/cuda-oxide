@@ -294,6 +294,73 @@ impl PromotableOpInterface for MirStoreOp {
 }
 
 // ============================================================================
+// MirMemcpyOp
+// ============================================================================
+
+/// MIR memcpy operation.
+///
+/// Copies `count` elements from `src` to `dst`. The count is element-count, not
+/// byte-count, matching MIR's `CopyNonOverlapping` intrinsic statement.
+///
+/// # Operands
+///
+/// ```text
+/// | Name    | Type         | Description                         |
+/// |---------|--------------|-------------------------------------|
+/// | `dst`   | MirPtrType   | Destination pointer                 |
+/// | `src`   | MirPtrType   | Source pointer                      |
+/// | `count` | Integer      | Number of pointee elements to copy  |
+/// ```
+///
+/// # Verification
+///
+/// - Destination and source operands must be `MirPtrType`.
+/// - Destination and source pointee types must match.
+/// - Count operand must be an integer.
+#[pliron_op(
+    name = "mir.memcpy",
+    format,
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>]
+)]
+pub struct MirMemcpyOp;
+
+impl MirMemcpyOp {
+    /// Create a new MirMemcpyOp wrapper.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MirMemcpyOp { op }
+    }
+}
+
+impl Verify for MirMemcpyOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = &*self.get_operation().deref(ctx);
+        let dst_ty = op.get_operand(0).get_type(ctx);
+        let src_ty = op.get_operand(1).get_type(ctx);
+        let count_ty = op.get_operand(2).get_type(ctx);
+
+        let dst_ty_ref = dst_ty.deref(ctx);
+        let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
+            return verify_err!(op.loc(), "MirMemcpyOp destination must be a MirPtrType");
+        };
+        let src_ty_ref = src_ty.deref(ctx);
+        let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
+            return verify_err!(op.loc(), "MirMemcpyOp source must be a MirPtrType");
+        };
+        if dst_ptr_ty.pointee != src_ptr_ty.pointee {
+            return verify_err!(
+                op.loc(),
+                "MirMemcpyOp source and destination pointee types must match"
+            );
+        }
+        if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
+            return verify_err!(op.loc(), "MirMemcpyOp count must be an integer");
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
 // MirLoadOp
 // ============================================================================
 
@@ -909,6 +976,7 @@ pub fn register(ctx: &mut Context) {
     MirAllocaOp::register(ctx);
     MirAssignOp::register(ctx);
     MirStoreOp::register(ctx);
+    MirMemcpyOp::register(ctx);
     MirLoadOp::register(ctx);
     MirRefOp::register(ctx);
     MirPtrOffsetOp::register(ctx);
