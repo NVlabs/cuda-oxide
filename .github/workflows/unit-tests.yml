@@ -70,9 +70,9 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit
         with:
-          cuda: "13.0.0"
+          cuda: "13.1.1"
           method: network
-          sub-packages: '["nvcc", "cudart-dev"]'
+          sub-packages: '["nvcc", "cudart-dev", "curand-dev"]'
 
       - name: Run crate unit tests
         env:
@@ -84,7 +84,7 @@ jobs:
 
           # cuda-bindings emits `cargo:rustc-link-lib=dylib=cuda`, and the
           # linker stamps the stub's SONAME (`libcuda.so.1`) into the test
-          # binary's DT_NEEDED. The `cudart-dev` sub-package only ships the
+          # binary's DT_NEEDED. The CUDA dev sub-packages only ship the
           # link-time stub named `libcuda.so`, with no `libcuda.so.1` alias.
           # Binaries that actually reference `cu*` symbols (cuda-core,
           # cuda-async) keep the NEEDED entry and fail to load at runtime
