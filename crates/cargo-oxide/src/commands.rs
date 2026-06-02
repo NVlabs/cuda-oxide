@@ -436,7 +436,7 @@ fn run_host_cargo(
 /// Same as [`codegen_run`] but uses `cargo build --release` instead of
 /// `cargo run`. Useful for cross-compilation or when the target hardware
 /// (e.g., Blackwell tensor cores) isn't available on the build machine.
-pub fn codegen_build_example(
+pub fn codegen_build(
     ctx: &Context,
     example: &str,
     verbose: bool,
@@ -523,7 +523,11 @@ pub fn codegen_build_example(
 /// module, textual LLVM IR, and the final PTX or NVVM IR. After the build,
 /// generated artifacts are printed to stdout.
 pub fn codegen_show_pipeline(ctx: &Context, example: &str, emit_nvvm_ir: bool, arch: Option<&str>) {
-    let example_dir = resolve_example_dir(ctx, example);
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
 
     clean_generated_files(&example_dir, example);
 
@@ -617,7 +621,11 @@ pub fn codegen_debug(ctx: &Context, example: &str, use_cgdb: bool, use_tui: bool
         None
     };
 
-    let example_dir = resolve_example_dir(ctx, example);
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
 
     println!("Building {} with debug info...", example);
 

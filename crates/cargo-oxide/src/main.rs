@@ -92,7 +92,7 @@ enum Commands {
     /// Show the full compilation pipeline (MIR -> PTX/NVVM IR) with verbose output
     Pipeline {
         /// Example name (from crates/rustc-codegen-cuda/examples/)
-        example: String,
+        example: Option<String>,
         /// Generate NVVM IR (use with libNVVM -gen-lto)
         #[arg(long)]
         emit_nvvm_ir: bool,
@@ -103,7 +103,7 @@ enum Commands {
     /// Build with debug info and launch cuda-gdb
     Debug {
         /// Example name (from crates/rustc-codegen-cuda/examples/)
-        example: String,
+        example: Option<String>,
         /// Use cgdb frontend (better source view, vim keys)
         #[arg(long)]
         cgdb: bool,
@@ -178,7 +178,7 @@ fn main() {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx);
             validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
-            commands::codegen_build_example(
+            commands::codegen_build(
                 &ctx,
                 &example,
                 verbose,
@@ -192,12 +192,14 @@ fn main() {
             emit_nvvm_ir,
             arch,
         } => {
-            validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
             let ctx = commands::resolve_context();
+            let example = resolve_example_name(example, &ctx);
+            validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
             commands::codegen_show_pipeline(&ctx, &example, emit_nvvm_ir, arch.as_deref());
         }
         Commands::Debug { example, cgdb, tui } => {
             let ctx = commands::resolve_context();
+            let example = resolve_example_name(example, &ctx);
             commands::codegen_debug(&ctx, &example, cgdb, tui);
         }
         Commands::Fmt { check } => {
