@@ -125,8 +125,12 @@ pub(super) fn export_module_with_externs_impl(
                     filename: filename_from_loc(&func.loc(ctx), ctx),
                     directory: directory_from_loc(&func.loc(ctx), ctx),
                 });
-                let compile_unit = debug_op_registry.get_or_create(DebugOp::DICompileUnit {
-                    file: file_ref,
+                let compile_unit =
+                    debug_op_registry.get_or_create(DebugOp::DICompileUnit { file: file_ref });
+                // TODO: Use actual args
+                let empty_type = debug_op_registry.get_or_create(DebugOp::Raw("!{}".into()));
+                let program_type = debug_op_registry.get_or_create(DebugOp::DISubroutineType {
+                    types: empty_type,
                 });
                 let function_ref = debug_op_registry.get_or_create(DebugOp::DISubprogram {
                     name: func_name.into(),
@@ -134,6 +138,7 @@ pub(super) fn export_module_with_externs_impl(
                     file: file_ref,
                     line: line_from_loc(&func.loc(ctx)),
                     unit: compile_unit,
+                    r#type: program_type,
                 });
                 state.export_function(&func, function_ref, &mut output, &mut debug_op_registry)?;
                 last_was_decl = is_decl;
@@ -160,8 +165,11 @@ pub(super) fn export_module_with_externs_impl(
     .unwrap();
 
     write!(&mut output, "!llvm.dbg.cu = !{{").unwrap();
-    let mut cu_iter = debug_op_registry.ops.iter()
-        .enumerate().filter(|d| matches!(d.1, DebugOp::DICompileUnit { .. }))
+    let mut cu_iter = debug_op_registry
+        .ops
+        .iter()
+        .enumerate()
+        .filter(|d| matches!(d.1, DebugOp::DICompileUnit { .. }))
         .peekable();
     while let Some((index, _)) = cu_iter.next() {
         write!(&mut output, "!{index}").unwrap();
@@ -170,7 +178,6 @@ pub(super) fn export_module_with_externs_impl(
         }
     }
     writeln!(&mut output, "}}").unwrap();
-
 
     debug_op_registry.emit(&mut output);
 

@@ -53,11 +53,18 @@ pub enum DebugOp {
         file: DebugOpScopeRef,
         line: i32,
         unit: DebugOpScopeRef,
+        r#type: DebugOpScopeRef,
     },
     DILocation {
         line: i32,
         column: i32,
         scope: DebugOpScopeRef,
+    },
+    DISubroutineType {
+        types: DebugOpScopeRef,
+    },
+    DIRefList {
+        list: Vec<DebugOpScopeRef>,
     },
     Raw(String),
 }
@@ -88,8 +95,9 @@ impl DebugOp {
                 file,
                 line,
                 unit,
+                r#type,
             } => {
-                write!(output, r#"distinct !DISubprogram(name: "{name}", scope: !{scope}, file: !{file}, line: {line}, unit: !{unit})"#).unwrap();
+                write!(output, r#"distinct !DISubprogram(name: "{name}", scope: !{scope}, file: !{file}, line: {line}, unit: !{unit}, type: !{})"#, r#type).unwrap();
             }
             DebugOp::DILocation {
                 line,
@@ -104,6 +112,22 @@ impl DebugOp {
             }
             DebugOp::Raw(raw_str) => {
                 write!(output, "{}", raw_str).unwrap();
+            }
+            DebugOp::DISubroutineType { types } => {
+                write!(output, "!DISubroutineType(types: !{types})").unwrap();
+            }
+            DebugOp::DIRefList { list } => {
+                write!(output, "!{{").unwrap();
+
+                let mut refs = list.iter().peekable();
+                while let Some(r) = refs.next() {
+                    write!(output, "!{r}").unwrap();
+                    if refs.peek().is_some() {
+                        write!(output, ", ").unwrap();
+                    }
+                }
+
+                write!(output, "}}").unwrap();
             }
         }
     }
