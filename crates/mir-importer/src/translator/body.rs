@@ -23,6 +23,7 @@ use super::block;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
+use combine::stream::position::SourcePosition;
 use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
 use pliron::basic_block::BasicBlock;
@@ -30,10 +31,10 @@ use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::context::{Context, Ptr};
 use pliron::identifier::{Identifier, Legaliser};
 use pliron::input_err_noloc;
-use pliron::location::{Located, Location};
+use pliron::location::{Located, Location, Source};
 use pliron::op::Op;
 use pliron::operation::Operation;
-
+use std::path::PathBuf;
 // Re-export rustc_public types for convenience
 use rustc_public::CrateDef;
 use rustc_public::mir;
@@ -422,9 +423,12 @@ pub fn translate_body(
 
     // Set function location
     // Use body span for location
-    let loc = Location::Named {
-        name: format!("{:?}", body.span),
-        child_loc: Box::new(Location::Unknown),
+    let loc = Location::SrcPos {
+        src: Source::new_from_file(ctx, PathBuf::from(body.span.get_filename()).canonicalize().unwrap()),
+        pos: SourcePosition {
+            line: body.span.get_lines().start_line as i32,
+            column: body.span.get_lines().start_col as i32,
+        },
     };
     op_ptr.deref_mut(ctx).set_loc(loc);
 

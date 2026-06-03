@@ -35,8 +35,10 @@
 //! - [`types`] — LLVM type printing
 //! - [`literals`] — constant/literal formatting
 //! - [`metadata`] — nvvm annotations and version, llvm.used
+//! - [`debug`] - debugging information (DWARF)
 
 mod config;
+mod debug;
 mod externs;
 mod function;
 mod literals;
@@ -56,6 +58,7 @@ use pliron::{builtin::ops::ModuleOp, context::Context};
 ///
 /// Uses default PTX export mode. For alternate backends, use [`export_module_to_string_with_config`].
 pub fn export_module_to_string(ctx: &Context, module: &ModuleOp) -> Result<String, String> {
+    eprintln!("export_module_to_string");
     module::export_module_to_string_with_config(ctx, module, &config::PtxExportConfig)
 }
 
@@ -73,6 +76,7 @@ pub fn export_module_with_externs<T: AsDeviceExtern>(
     device_externs: &[T],
     config: &dyn ExportBackendConfig,
 ) -> Result<String, String> {
+    eprintln!("export_module_with_externs");
     let externs: Vec<DeviceExternDecl> = device_externs
         .iter()
         .map(|e| e.as_device_extern())
@@ -89,5 +93,6 @@ pub fn export_module_to_string_with_config(
     module: &ModuleOp,
     config: &dyn ExportBackendConfig,
 ) -> Result<String, String> {
+    eprintln!("export_module_to_string_with_config");
     module::export_module_to_string_with_config(ctx, module, config)
 }

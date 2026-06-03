@@ -32,7 +32,7 @@ use crate::{
     ops::{self, FuncOp},
     types::FuncType,
 };
-
+use crate::export::debug::{DebugOpRegistry, DebugOpScopeRef};
 use super::{
     literals::{format_float_literal, format_half_literal},
     names::{has_device_prefix, strip_device_prefix},
@@ -105,7 +105,9 @@ impl<'a> ModuleExportState<'a> {
     pub(super) fn export_function(
         &mut self,
         func: &FuncOp,
+        debug_reference: DebugOpScopeRef,
         output: &mut String,
+        debug_op_registry: &mut DebugOpRegistry
     ) -> Result<(), String> {
         let func_name = func.get_symbol_name(self.ctx);
         // LLVM intrinsics (NVVM and standard, e.g. llvm.fptosi.sat) use dots in IR
@@ -280,7 +282,7 @@ impl<'a> ModuleExportState<'a> {
                 write!(output, " {name}").unwrap();
                 next_value_id += 1;
             }
-            writeln!(output, ") {{").unwrap();
+            writeln!(output, ") !dbg !{debug_reference} {{").unwrap();
 
             // Assign labels to all blocks
             let mut block_labels = HashMap::new();
@@ -452,6 +454,8 @@ impl<'a> ModuleExportState<'a> {
                     &block_labels,
                     &pred_map,
                     i == 0,
+                    debug_reference,
+                    debug_op_registry,
                     output,
                 )?;
             }
@@ -487,6 +491,8 @@ impl<'a> ModuleExportState<'a> {
         block_labels: &HashMap<Ptr<BasicBlock>, String>,
         pred_map: &PredecessorMap,
         is_entry: bool,
+        scope_reference: DebugOpScopeRef,
+        debug_op_registry: &mut DebugOpRegistry,
         output: &mut String,
     ) -> Result<(), String> {
         // Always print label to ensure it can be referenced by PHI nodes
@@ -540,7 +546,7 @@ impl<'a> ModuleExportState<'a> {
         }
 
         for op in block.deref(self.ctx).iter(self.ctx) {
-            self.export_op(op, value_names, next_value_id, block_labels, output)?;
+            self.export_op(op, value_names, next_value_id, block_labels, scope_reference, debug_op_registry,  output)?;
         }
         Ok(())
     }

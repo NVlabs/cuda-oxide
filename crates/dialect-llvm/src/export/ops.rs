@@ -8,6 +8,18 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
+use super::{
+    literals::{format_float_literal, format_half_literal},
+    state::ModuleExportState,
+};
+use crate::export::debug::{DebugOp, DebugOpRegistry, DebugOpScopeRef};
+use crate::export::module::{col_from_loc, line_from_loc};
+use crate::{
+    attributes::{FCmpPredicateAttr, FPHalfAttr, GepIndexAttr, ICmpPredicateAttr},
+    ops::{self, LlvmAtomicOpInterface},
+    types::{FuncType, VoidType},
+};
+use pliron::location::Located;
 use pliron::r#type::Typed;
 use pliron::{
     basic_block::BasicBlock,
@@ -20,17 +32,7 @@ use pliron::{
     operation::Operation,
     value::Value,
 };
-
-use crate::{
-    attributes::{FCmpPredicateAttr, FPHalfAttr, GepIndexAttr, ICmpPredicateAttr},
-    ops::{self, LlvmAtomicOpInterface},
-    types::{FuncType, VoidType},
-};
-
-use super::{
-    literals::{format_float_literal, format_half_literal},
-    state::ModuleExportState,
-};
+use pliron::printable::Printable;
 
 /// Typed view of a dispatched LLVM dialect operation.
 ///
@@ -221,10 +223,13 @@ impl<'a> ModuleExportState<'a> {
         value_names: &mut HashMap<Value, String>,
         next_value_id: &mut usize,
         block_labels: &HashMap<Ptr<BasicBlock>, String>,
+        scope_reference: DebugOpScopeRef,
+        debug_op_registry: &mut DebugOpRegistry,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.deref(self.ctx);
         let op_obj = Operation::get_op_dyn(op, self.ctx);
+        eprintln!("op: {:#?}", op_ref.loc());
 
         // Register result names (skip if already named in pre-pass)
         for res in op_ref.results() {
@@ -235,6 +240,8 @@ impl<'a> ModuleExportState<'a> {
             });
         }
 
+        // TODO: this is ugly AF
+        let output_before = output.clone();
         match LlvmOp::try_from(op_obj.as_ref()).ok() {
             // Terminators
             Some(LlvmOp::Return(op)) => self.emit_return(op, value_names, output)?,
@@ -372,6 +379,15 @@ impl<'a> ModuleExportState<'a> {
             )
             .unwrap(),
         }
+        if &output_before != output {
+            *output = output.trim_end().into();
+            let debug_ref = debug_op_registry.get_or_create(DebugOp::DILocation {
+                scope: scope_reference,
+                line: line_from_loc(&op_ref.loc()),
+                column: col_from_loc(&op_ref.loc()),
+            });
+            writeln!(output, ", !dbg !{debug_ref}").unwrap();
+        }
 
         Ok(())
     }
@@ -392,7 +408,7 @@ impl<'a> ModuleExportState<'a> {
             write!(output, " ").unwrap();
             self.export_value(val, value_names, output)?;
         }
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -447,7 +463,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_type(ty, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -468,7 +484,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(val, value_names, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -487,7 +503,7 @@ impl<'a> ModuleExportState<'a> {
 
         write!(output, "  {res_name} = alloca ").unwrap();
         self.export_type(elem_ty.get_type(self.ctx), output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -526,7 +542,7 @@ impl<'a> ModuleExportState<'a> {
                 }
             }
         }
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -667,7 +683,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_type(arg.get_type(self.ctx), output)?;
         write!(output, " ").unwrap();
         self.export_value(arg, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -701,7 +717,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(lhs, value_names, output)?;
         write!(output, ", ").unwrap();
         self.export_value(rhs, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -741,7 +757,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(lhs, value_names, output)?;
         write!(output, ", ").unwrap();
         self.export_value(rhs, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -769,7 +785,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
         self.export_value(false_val, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -995,7 +1011,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(val, value_names, output)?;
         write!(output, " to ").unwrap();
         self.export_type(res.get_type(self.ctx), output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -1017,7 +1033,7 @@ impl<'a> ModuleExportState<'a> {
         for idx in op.indices(self.ctx) {
             write!(output, ", {idx}").unwrap();
         }
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -1044,7 +1060,7 @@ impl<'a> ModuleExportState<'a> {
         for idx in op.indices(self.ctx) {
             write!(output, ", {idx}").unwrap();
         }
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -1113,7 +1129,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(lhs, value_names, output)?;
         write!(output, ", ").unwrap();
         self.export_value(rhs, value_names, output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
@@ -1136,7 +1152,7 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(val, value_names, output)?;
         write!(output, " to ").unwrap();
         self.export_type(res.get_type(self.ctx), output)?;
-        writeln!(output).unwrap();
+
         Ok(())
     }
 
