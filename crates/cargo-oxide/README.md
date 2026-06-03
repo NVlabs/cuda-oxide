@@ -61,7 +61,17 @@ cross-target workflow.
 cargo oxide run vecadd
 cargo oxide run gemm_sol
 cargo oxide run device_ffi_test --emit-nvvm-ir --arch sm_120
+cargo oxide run cutile_inter_kernel
 ```
+
+Interop examples can declare extra cuda-oxide device crates with
+`[[package.metadata.cuda-oxide.device-crates]]`, plus optional
+`[package.metadata.cuda-oxide.interop]` metadata. `cargo oxide run` builds those
+device crates with `rustc-codegen-cuda`, writes their PTX to the
+configured location, and then builds/runs the host crate normally.
+`cutile_inter_kernel` uses this path:
+the host crate is a cutile-rs program, while `simt/` is a cuda-oxide SIMT PTX
+crate loaded by the host at runtime.
 
 ### `cargo oxide build <example>`
 

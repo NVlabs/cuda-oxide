@@ -391,7 +391,7 @@ pub fn convert_global_alloc_dc(
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let (global_key, mir_global_type, alignment) = {
+    let (global_key, mir_global_type, alignment, addr_space) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
@@ -425,7 +425,27 @@ pub fn convert_global_alloc_dc(
 
         let alignment = global_op.get_alignment_value(ctx).unwrap_or(0);
 
-        (global_key, mir_global_type, alignment)
+        // Read the address space the op's result already carries — set by
+        // mir-importer based on the static's type (`ConstantMemory<T>` → 4,
+        // ordinary → 1). The dialect verifier accepts both.
+        let res_ty = op_ref.get_result(0).get_type(ctx);
+        let addr_space = res_ty
+            .deref(ctx)
+            .downcast_ref::<dialect_mir::types::MirPtrType>()
+            .map(|p| {
+                if p.address_space == dialect_mir::types::address_space::CONSTANT {
+                    dialect_llvm::types::address_space::CONSTANT
+                } else {
+                    dialect_llvm::types::address_space::GLOBAL
+                }
+            })
+            .ok_or_else(|| {
+                anyhow_to_pliron(anyhow::anyhow!(
+                    "MirGlobalAllocOp result is not a MirPtrType"
+                ))
+            })?;
+
+        (global_key, mir_global_type, alignment, addr_space)
     };
 
     let global_name = if let Some(existing_name) = device_globals.get(&global_key) {
@@ -438,11 +458,11 @@ pub fn convert_global_alloc_dc(
             &global_key,
             mir_global_type,
             alignment,
+            addr_space,
         )?
     };
 
-    let address_of_op =
-        llvm::AddressOfOp::new(ctx, global_name, dialect_llvm::types::address_space::GLOBAL);
+    let address_of_op = llvm::AddressOfOp::new(ctx, global_name, addr_space);
     rewriter.insert_operation(ctx, address_of_op.get_operation());
     rewriter.replace_operation(ctx, op, address_of_op.get_operation());
 
@@ -456,21 +476,33 @@ fn create_device_global(
     global_key: &str,
     mir_global_type: Ptr<TypeObj>,
     alignment: u64,
+    addr_space: u32,
 ) -> Result<pliron::identifier::Identifier> {
     let llvm_global_type = convert_type(ctx, mir_global_type).map_err(anyhow_to_pliron)?;
 
-    static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
-        std::sync::atomic::AtomicUsize::new(0);
-    let counter = DEVICE_GLOBAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // Constant-memory globals reuse the Rust-side mangled name so host code can
+    // resolve them by name via `cuModuleGetGlobal`. Ordinary device globals
+    // are private to the kernel and get a counter-based unique name.
     let name: pliron::identifier::Identifier =
-        format!("__device_global_{counter}").try_into().unwrap();
+        if addr_space == dialect_llvm::types::address_space::CONSTANT {
+            global_key.try_into().map_err(|e| {
+                anyhow_to_pliron(anyhow::anyhow!(
+                    "constant global_key {global_key:?} is not a valid identifier: {e:?}"
+                ))
+            })?
+        } else {
+            static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            let counter = DEVICE_GLOBAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            format!("__device_global_{counter}").try_into().unwrap()
+        };
 
     let global_op = if alignment > 0 {
         llvm::GlobalOp::new_with_alignment(ctx, name.clone(), llvm_global_type, alignment)
     } else {
         llvm::GlobalOp::new(ctx, name.clone(), llvm_global_type)
     };
-    global_op.set_address_space(ctx, dialect_llvm::types::address_space::GLOBAL);
+    global_op.set_address_space(ctx, addr_space);
 
     let parent_block = op
         .deref(ctx)

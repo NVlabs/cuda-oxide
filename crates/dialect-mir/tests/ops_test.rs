@@ -7,8 +7,8 @@ use dialect_mir::{
     attributes::MirCastKindAttr,
     ops::{
         MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCondBranchOp,
-        MirConstantOp, MirDivOp, MirEqOp, MirExtractFieldOp, MirFuncOp, MirGeOp, MirGotoOp,
-        MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
+        MirConstantOp, MirDivOp, MirEqOp, MirExtractFieldOp, MirFuncOp, MirGeOp, MirGlobalAllocOp,
+        MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
         MirPtrOffsetOp, MirRemOp, MirReturnOp, MirStoreOp, MirSubOp,
     },
     types::{MirPtrType, MirTupleType},
@@ -729,5 +729,65 @@ fn test_mir_store_verify() {
     assert!(
         MirStoreOp::new(op_bad_type).verify(&ctx).is_err(),
         "MirStoreOp type mismatch"
+    );
+}
+
+#[test]
+fn test_mir_global_alloc_verify() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+
+    // Helper: build a MirGlobalAllocOp whose result pointer is in `ptr_ty`
+    // address space, with valid attributes.
+    let build = |ctx: &mut Context, ptr_ty: pliron::r#type::TypePtr<MirPtrType>| {
+        let op = Operation::new(
+            ctx,
+            MirGlobalAllocOp::get_concrete_op_info(),
+            vec![ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let alloc = MirGlobalAllocOp::new(op);
+        alloc.set_attr_global_type(ctx, TypeAttr::new(f32_ty.into()));
+        alloc.set_attr_global_key(ctx, StringAttr::new("k".to_string()));
+        alloc
+    };
+
+    // Global memory (addrspace 1) — the original allowed space.
+    let ptr_global = MirPtrType::get_global(&mut ctx, f32_ty.into(), true);
+    assert!(
+        build(&mut ctx, ptr_global).verify(&ctx).is_ok(),
+        "global addrspace accepted"
+    );
+
+    // Constant memory (addrspace 4) — added for `#[constant]` support.
+    let ptr_const = MirPtrType::get_constant(&mut ctx, f32_ty.into(), true);
+    assert!(
+        build(&mut ctx, ptr_const).verify(&ctx).is_ok(),
+        "constant addrspace accepted"
+    );
+
+    // Shared memory (addrspace 3) — must be rejected.
+    let ptr_shared = MirPtrType::get_shared(&mut ctx, f32_ty.into(), true);
+    assert!(
+        build(&mut ctx, ptr_shared).verify(&ctx).is_err(),
+        "shared addrspace rejected"
+    );
+
+    // Missing required attributes.
+    let no_attrs = Operation::new(
+        &mut ctx,
+        MirGlobalAllocOp::get_concrete_op_info(),
+        vec![ptr_global.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(
+        MirGlobalAllocOp::new(no_attrs).verify(&ctx).is_err(),
+        "missing attributes rejected"
     );
 }

@@ -110,6 +110,24 @@ pub unsafe fn memcpy_htod_async<T>(
     unsafe { cuda_bindings::cuMemcpyHtoDAsync_v2(dst, src as *const _, num_bytes, stream) }.result()
 }
 
+/// Copies `num_bytes` from host memory at `src` to device memory at `dst`,
+/// synchronously (host-to-device).
+///
+/// Blocks the calling thread until the copy is complete.
+///
+/// # Safety
+///
+/// - `dst` must be a valid device pointer with at least `num_bytes` allocated.
+/// - `src` must point to at least `num_bytes` of readable host memory.
+/// - The active CUDA context must own `dst` (caller binds the context).
+pub unsafe fn memcpy_htod_sync<T>(
+    dst: CUdeviceptr,
+    src: *const T,
+    num_bytes: usize,
+) -> Result<(), DriverError> {
+    unsafe { cuda_bindings::cuMemcpyHtoD_v2(dst, src as *const _, num_bytes) }.result()
+}
+
 /// Copies `num_bytes` from device memory at `src` to host memory at `dst`,
 /// enqueued on `stream` (device-to-host, async).
 ///

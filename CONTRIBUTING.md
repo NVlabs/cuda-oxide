@@ -110,6 +110,10 @@ sign-off will not be merged.
 cuda-oxide requires the Rust nightly toolchain with `rustc_private` support.
 See the [README](README.md) for setup instructions.
 
+The repository includes a `flake.nix` that provides a fully reproducible development
+environment (CUDA 13, LLVM 22, Clang, pinned Rust nightly). If you have Nix with
+flakes enabled, `nix develop` is the quickest way to get everything in place.
+
 ### Formatting and Style
 
 - Run `cargo fmt` before submitting. All code must be formatted with

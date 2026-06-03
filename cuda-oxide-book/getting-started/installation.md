@@ -62,6 +62,37 @@ Rust setup sections below.
 
 ---
 
+## Nix / flake.nix
+
+The repository also ships a `flake.nix` providing a reproducible dev shell
+(CUDA 13, LLVM 22, Clang, pinned Rust nightly). Requires
+[Nix](https://nixos.org/download/) with flakes enabled, an NVIDIA driver on
+the host, and Linux (x86\_64 or aarch64).
+
+Inside the cuda-oxide repo — `cargo-oxide` is included in the shell:
+
+```bash
+nix develop
+cargo oxide run vecadd
+```
+
+To bootstrap a new project without cloning:
+
+```bash
+nix run github:NVlabs/cuda-oxide#new my-project
+cd my-project && nix develop
+```
+
+This scaffolds via `cargo oxide new` and drops in a `flake.nix` that inherits
+this repo's dev shell. The shellHook auto-discovers host NVIDIA driver
+libraries on NixOS and non-NixOS systems; if the host driver is too old,
+update it rather than changing what's inside the Nix shell.
+
+If you use the Nix flake, you can skip the manual CUDA, LLVM, Clang, and
+Rust setup sections below.
+
+---
+
 ## CUDA Toolkit
 
 Install the CUDA Toolkit from the [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads) page, then make sure it is on your `PATH`:

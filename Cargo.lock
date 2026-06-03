@@ -195,6 +195,7 @@ dependencies = [
  "cuda-host",
  "libnvvm-sys",
  "nvjitlink-sys",
+ "toml",
 ]
 
 [[package]]

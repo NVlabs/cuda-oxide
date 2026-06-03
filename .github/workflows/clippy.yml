@@ -26,30 +26,43 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit
         with:
-          cuda: "13.0.0"
+          cuda: "13.1.1"
           method: network
           sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcurand-dev"]'
 
       - name: Run clippy (workspace crates)
         env:
           CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
         run: cargo clippy --workspace -- -D warnings
 
-      # `rustc-codegen-cuda` has its own [workspace] because it links
-      # against the rustc-private dylibs. The root --workspace clippy
-      # doesn't see it.
+      # `rustc-codegen-cuda` and each example under examples/ are their own
+      # standalone workspaces (the codegen backend is swapped in via
+      # RUSTFLAGS, so they can't live in the root [workspace]). That's 60+
+      # cargo invocations from different workspace roots. By default each
+      # one materializes its own `target/` dir and rebuilds the whole dep
+      # tree (proc-macro2, syn, bindgen, regex-automata, ...) from scratch,
+      # which blows the GitHub-hosted runner's ~14 GB disk well before the
+      # loop finishes.
+      #
+      # Point all of those invocations at one shared CARGO_TARGET_DIR under
+      # ${RUNNER_TEMP}. Cargo fingerprints each unit by package + features
+      # + workspace_root + toolchain, so co-located workspaces using the
+      # same pinned nightly deduplicate on identical deps and compile each
+      # one once. This is intentionally scoped *not* to cover the
+      # `cargo clippy --workspace` step above, which already has a
+      # well-defined `target/` at the repo root.
       - name: Run clippy (rustc-codegen-cuda)
         env:
           CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/clippy-shared-target
         working-directory: crates/rustc-codegen-cuda
         run: cargo clippy --all-targets -- -D warnings
 
-      # Each example under examples/ is its own standalone workspace
-      # (so the codegen backend can be swapped in via RUSTFLAGS). They're
-      # invisible to the root --workspace clippy too, so loop here.
       - name: Run clippy (rustc-codegen-cuda examples)
         env:
           CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/clippy-shared-target
         run: |
           set -e
           for ex in crates/rustc-codegen-cuda/examples/*/; do

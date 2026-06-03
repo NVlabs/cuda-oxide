@@ -17,3 +17,4 @@ libnvvm-sys = { workspace = true }
 nvjitlink-sys = { workspace = true }
 cuda-host = { workspace = true }
 cuda-core = { workspace = true }
+toml = "1"

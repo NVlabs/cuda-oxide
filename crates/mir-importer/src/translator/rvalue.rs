@@ -1741,16 +1741,39 @@ pub fn translate_operand(
             }
 
             // Ordinary Rust `static` / `static mut` values in device code live in
-            // CUDA global memory (addrspace 1). SharedArray/Barrier statics have
-            // already been intercepted above and remain addrspace 3.
+            // CUDA global memory (addrspace 1) by default. SharedArray/Barrier
+            // statics have already been intercepted above and remain addrspace 3.
+            // Statics tagged `#[constant]` (detected by the mangled symbol
+            // prefix) instead lower into constant memory (addrspace 4).
             if let Some(static_def) = static_def_from_constant(constant)?
                 && let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
             {
+                // All device-side statics — `#[constant]` and ordinary — must
+                // currently be zero-initialized. Lowering honored initializers
+                // into PTX `.const` (or `.global`) bytes is on the roadmap;
+                // for now use `ConstantMemory::UNINIT` and populate from host.
                 ensure_zero_initializer(&static_def, loc.clone())?;
+                let is_constant = is_constant_wrapper_type(&pointee_ty);
+
+                // Constants need the linker-visible mangled name (honors
+                // `#[export_name]`) so mir-lower can emit a matching LLVM
+                // symbol that the host resolves via `cuModuleGetGlobal`.
+                // Ordinary statics only need a unique key for in-pass
+                // deduplication, so we take the cheaper definition-path name.
+                let global_key: String = if is_constant {
+                    rustc_public::mir::mono::Instance::from(static_def)
+                        .mangled_name()
+                        .to_string()
+                } else {
+                    static_def.name()
+                };
 
                 let global_ty = types::translate_type(ctx, &pointee_ty)?;
-                let ptr_ty =
-                    dialect_mir::types::MirPtrType::get_global(ctx, global_ty, is_mutable).into();
+                let ptr_ty = if is_constant {
+                    dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
+                } else {
+                    dialect_mir::types::MirPtrType::get_global(ctx, global_ty, is_mutable).into()
+                };
 
                 let op = Operation::new(
                     ctx,
@@ -1766,7 +1789,7 @@ pub fn translate_operand(
 
                 use pliron::builtin::attributes::{StringAttr, TypeAttr};
                 global_alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
-                global_alloc.set_attr_global_key(ctx, StringAttr::new(static_def.name()));
+                global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
 
                 if let Some(alignment) = static_alignment(&static_def)? {
                     global_alloc.set_alignment_value(ctx, alignment);
@@ -5813,6 +5836,8 @@ fn static_alignment(
 
 /// Check if a type is a pointer/reference to a static allocation.
 /// Returns `(pointee_ty, is_mutable)` when the type can carry a static address.
+use super::values::is_constant_wrapper_type;
+
 fn get_static_pointer_info(ty: &rustc_public::ty::Ty) -> Option<(rustc_public::ty::Ty, bool)> {
     use rustc_public::mir::Mutability;
     use rustc_public::ty::{RigidTy, TyKind};

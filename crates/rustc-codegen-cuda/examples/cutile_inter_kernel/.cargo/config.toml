@@ -1,0 +1,2 @@
+[env]
+CUDA_TOOLKIT_PATH = { value = "/usr/local/cuda", force = false }

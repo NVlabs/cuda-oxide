@@ -51,12 +51,12 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{
     DEVICE_EXTERN_PREFIX, DEVICE_PREFIX, INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL,
-    RESERVED_ROOT, kernel_symbol,
+    RESERVED_ROOT, constant_symbol, kernel_symbol,
 };
 use syn::{
     Expr, ExprCall, ExprMethodCall, ExprPath, FnArg, ForeignItem, GenericArgument, GenericParam,
-    Ident, Item, ItemFn, ItemForeignMod, ItemMod, Pat, Path, PathArguments, Stmt, Token, Type,
-    bracketed, parenthesized,
+    Ident, Item, ItemFn, ItemForeignMod, ItemMod, LitStr, Pat, Path, PathArguments, Stmt, Token,
+    Type, bracketed, parenthesized,
     parse::{Parse, ParseStream},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
@@ -214,6 +214,8 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
             "cuda_module found no #[kernel] functions in this module",
         ));
     }
+    let constants = collect_cuda_module_constants(items, ident)?;
+    let module_items = cuda_module_items_with_constant_symbols(items, &constants);
 
     let non_generic_kernels = kernels.iter().filter(|kernel| !kernel.is_generic);
     let function_fields = non_generic_kernels.clone().map(|kernel| {
@@ -235,7 +237,17 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
         }
     });
 
+    let constant_fields = constants.iter().map(generate_cuda_module_constant_field);
+    let constant_initializers = constants
+        .iter()
+        .map(generate_cuda_module_constant_initializer);
     let launch_methods = kernels.iter().map(generate_cuda_module_launch_method);
+    let constant_resolver_methods = constants
+        .iter()
+        .map(generate_cuda_module_constant_resolver_method);
+    let set_constant_methods = constants
+        .iter()
+        .map(generate_cuda_module_set_constant_method);
     let async_module_items = if cfg!(feature = "async") {
         quote! {
             pub fn load_async(
@@ -270,9 +282,10 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
     Ok(quote! {
         #(#module_attrs)*
         #vis mod #ident {
-            #(#items)*
+            #(#module_items)*
 
             #[derive(Clone, Debug)]
+            #[allow(non_snake_case)]
             pub struct LoadedModule {
                 __module: ::std::sync::Arc<::cuda_core::CudaModule>,
                 __generic_functions: ::std::sync::Arc<
@@ -281,6 +294,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                     >
                 >,
                 #(#function_fields)*
+                #(#constant_fields)*
             }
 
             pub fn load(
@@ -306,6 +320,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                         ::std::sync::Mutex::new(::std::collections::HashMap::new())
                     ),
                     #(#function_initializers)*
+                    #(#constant_initializers)*
                 })
             }
 
@@ -317,6 +332,8 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                 }
 
                 #(#launch_methods)*
+                #(#constant_resolver_methods)*
+                #(#set_constant_methods)*
                 #async_launch_methods
             }
         }
@@ -353,6 +370,265 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
         });
     }
     Ok(kernels)
+}
+
+/// A `#[constant]` static collected from a `#[cuda_module]` body.
+struct CudaModuleConstant {
+    ident: Ident,
+    ty: Box<Type>,
+    cfg_attrs: Vec<syn::Attribute>,
+    method_attrs: Vec<syn::Attribute>,
+    symbol: String,
+}
+
+fn collect_cuda_module_constants(
+    items: &[Item],
+    module_ident: &Ident,
+) -> syn::Result<Vec<CudaModuleConstant>> {
+    let mut constants = Vec::new();
+    for item in items {
+        let Item::Static(item_static) = item else {
+            continue;
+        };
+        if !has_attr_named(&item_static.attrs, "constant") {
+            continue;
+        }
+        if extract_constant_inner_ty(&item_static.ty).is_none() {
+            return Err(syn::Error::new_spanned(
+                &item_static.ty,
+                concat!(
+                    "#[constant] static must have type `ConstantMemory<T>` ",
+                    "(e.g. `static FOO: ConstantMemory<[f32; 4]> = ConstantMemory::UNINIT;`). ",
+                    "The wrapper prevents the compiler from constant-folding the initializer into kernel bodies.",
+                ),
+            ));
+        }
+        constants.push(CudaModuleConstant {
+            ident: item_static.ident.clone(),
+            ty: item_static.ty.clone(),
+            cfg_attrs: cuda_module_cfg_attrs(&item_static.attrs),
+            method_attrs: cuda_module_method_attrs(&item_static.attrs),
+            symbol: cuda_module_constant_symbol(module_ident, &item_static.ident),
+        });
+    }
+    Ok(constants)
+}
+
+fn cuda_module_constant_symbol(module_ident: &Ident, ident: &Ident) -> String {
+    let start = ident.span().start();
+    let base = format!(
+        "{}_L{}C{}_{}",
+        module_ident, start.line, start.column, ident
+    );
+    constant_symbol(&base)
+}
+
+fn cuda_module_items_with_constant_symbols(
+    items: &[Item],
+    constants: &[CudaModuleConstant],
+) -> Vec<TokenStream2> {
+    let mut constants = constants.iter();
+    items
+        .iter()
+        .map(|item| {
+            let Item::Static(item_static) = item else {
+                return quote! { #item };
+            };
+            if !has_attr_named(&item_static.attrs, "constant") {
+                return quote! { #item };
+            }
+            let constant = constants
+                .next()
+                .expect("constant collection and rewrite order drifted");
+
+            let mut item_static = item_static.clone();
+            let symbol = LitStr::new(&constant.symbol, constant.ident.span());
+            item_static.attrs = item_static
+                .attrs
+                .into_iter()
+                .map(|attr| {
+                    if attr_path_ends_with(&attr, "constant") {
+                        let path = attr.path().clone();
+                        parse_quote!(#[#path(export_name = #symbol)])
+                    } else {
+                        attr
+                    }
+                })
+                .collect();
+            quote! { #item_static }
+        })
+        .collect()
+}
+
+fn cuda_module_constant_field_ident(ident: &Ident) -> Ident {
+    format_ident!("__{}", ident)
+}
+
+fn cuda_module_constant_resolver_ident(ident: &Ident) -> Ident {
+    format_ident!("__resolve_{}", ident)
+}
+
+/// Extract `T` from a `ConstantMemory<T>` type path. Returns `None` for anything
+/// that's not a path ending in `ConstantMemory<...>` with one generic argument.
+fn extract_constant_inner_ty(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let last = type_path.path.segments.last()?;
+    if last.ident != "ConstantMemory" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    if args.args.len() != 1 {
+        return None;
+    }
+    args.args.iter().find_map(|a| match a {
+        syn::GenericArgument::Type(t) => Some(t),
+        _ => None,
+    })
+}
+
+/// Like [`extract_constant_inner_ty`] but for sites that have already been
+/// gated by `#[constant]`'s type-path validation, so extraction failure is
+/// a compiler-internal invariant violation, not a user error.
+fn constant_inner_ty(ty: &Type) -> &Type {
+    extract_constant_inner_ty(ty).unwrap_or_else(|| {
+        panic!(
+            "#[cuda_module] collected a #[constant] static whose type is not ConstantMemory<T>; \
+             this should have been rejected by the #[constant] attribute"
+        )
+    })
+}
+
+fn generate_cuda_module_constant_field(constant: &CudaModuleConstant) -> TokenStream2 {
+    let CudaModuleConstant {
+        ident, cfg_attrs, ..
+    } = constant;
+    let field = cuda_module_constant_field_ident(ident);
+    quote! {
+        #(#cfg_attrs)*
+        #field: ::std::sync::Arc<::std::sync::Mutex<::core::option::Option<::cuda_core::ConstantHandle>>>,
+    }
+}
+
+fn generate_cuda_module_constant_initializer(constant: &CudaModuleConstant) -> TokenStream2 {
+    let CudaModuleConstant {
+        ident, cfg_attrs, ..
+    } = constant;
+    let field = cuda_module_constant_field_ident(ident);
+    quote! {
+        #(#cfg_attrs)*
+        #field: ::std::sync::Arc::new(::std::sync::Mutex::new(::core::option::Option::None)),
+    }
+}
+
+fn generate_cuda_module_constant_resolver_method(constant: &CudaModuleConstant) -> TokenStream2 {
+    let CudaModuleConstant {
+        ident,
+        ty,
+        cfg_attrs,
+        symbol,
+        ..
+    } = constant;
+    let field = cuda_module_constant_field_ident(ident);
+    let resolver = cuda_module_constant_resolver_ident(ident);
+    let symbol_lit = LitStr::new(symbol, ident.span());
+    let inner_ty = constant_inner_ty(ty);
+    let mismatch_msg = format!(
+        "host/device size mismatch for #[constant] static `{ident}`: \
+         device size {{}} bytes, host expected {{}} bytes (PTX symbol `{symbol}`)"
+    );
+    quote! {
+        #(#cfg_attrs)*
+        #[allow(non_snake_case)]
+        fn #resolver(&self) -> ::core::result::Result<::cuda_core::ConstantHandle, ::cuda_core::DriverError> {
+            let mut slot = self
+                .#field
+                .lock()
+                .expect("cuda constant handle cache mutex poisoned");
+            if let ::core::option::Option::Some(handle) = *slot {
+                return ::core::result::Result::Ok(handle);
+            }
+
+            let (dptr, size) = self.__module.get_global(#symbol_lit)?;
+            assert_eq!(
+                size,
+                ::core::mem::size_of::<#inner_ty>(),
+                #mismatch_msg,
+                size,
+                ::core::mem::size_of::<#inner_ty>(),
+            );
+            // SAFETY: `dptr` was just resolved by `cuModuleGetGlobal` for a
+            // module that the LoadedModule keeps alive, and the size matches
+            // `size_of::<#inner_ty>()` (asserted above).
+            let handle = unsafe { ::cuda_core::ConstantHandle::from_raw(dptr) };
+            *slot = ::core::option::Option::Some(handle);
+            ::core::result::Result::Ok(handle)
+        }
+    }
+}
+
+/// Generate stream-ordered `set_<name>` and one-shot `set_<name>_blocking`
+/// methods on `LoadedModule`. The async setter stages owned host bytes so
+/// temporaries remain valid until CUDA reaches the stream callback.
+fn generate_cuda_module_set_constant_method(constant: &CudaModuleConstant) -> TokenStream2 {
+    let CudaModuleConstant {
+        ident,
+        ty,
+        cfg_attrs,
+        method_attrs,
+        ..
+    } = constant;
+    let method_suffix = ident.to_string().to_ascii_lowercase();
+    let method_name = format_ident!("set_{}", method_suffix);
+    let blocking_name = format_ident!("set_{}_blocking", method_suffix);
+    let resolver = cuda_module_constant_resolver_ident(ident);
+    let inner_ty = constant_inner_ty(ty);
+
+    quote! {
+        #(#cfg_attrs)*
+        #(#method_attrs)*
+        #[allow(non_snake_case)]
+        pub fn #method_name(
+            &self,
+            stream: &::cuda_core::CudaStream,
+            value: &#inner_ty,
+        ) -> ::core::result::Result<(), ::cuda_core::DriverError> {
+            let handle = self.#resolver()?;
+            let num_bytes = ::core::mem::size_of::<#inner_ty>();
+            let mut bytes = ::std::boxed::Box::<[u8]>::new_uninit_slice(num_bytes);
+            unsafe {
+                ::core::ptr::copy_nonoverlapping(
+                    value as *const #inner_ty as *const u8,
+                    bytes.as_mut_ptr() as *mut u8,
+                    num_bytes,
+                );
+            }
+            handle.write_async_staged(stream, bytes)
+        }
+
+        #(#cfg_attrs)*
+        #(#method_attrs)*
+        #[allow(non_snake_case)]
+        pub fn #blocking_name(
+            &self,
+            value: &#inner_ty,
+        ) -> ::core::result::Result<(), ::cuda_core::DriverError> {
+            let handle = self.#resolver()?;
+            // SAFETY: handle was size-checked against `#inner_ty` by the lazy
+            // resolver; `value` is a valid host pointer for
+            // `size_of::<#inner_ty>()`.
+            unsafe {
+                handle.write_blocking(
+                    &self.__module,
+                    value as *const #inner_ty as *const u8,
+                    ::core::mem::size_of::<#inner_ty>(),
+                )
+            }
+        }
+    }
 }
 
 fn cuda_module_method_attrs(attrs: &[syn::Attribute]) -> Vec<syn::Attribute> {
@@ -1005,6 +1281,123 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Simple non-generic kernel
         generate_simple_kernel(input)
     }
+}
+
+struct ConstantArgs {
+    export_name: Option<LitStr>,
+}
+
+impl Parse for ConstantArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(Self { export_name: None });
+        }
+
+        let key: Ident = input.parse()?;
+        if key != "export_name" {
+            return Err(syn::Error::new_spanned(
+                key,
+                "#[constant] does not take public arguments",
+            ));
+        }
+        input.parse::<Token![=]>()?;
+        let export_name = input.parse()?;
+        if !input.is_empty() {
+            input.parse::<Token![,]>()?;
+            if !input.is_empty() {
+                return Err(input.error("unexpected tokens after #[constant] export_name"));
+            }
+        }
+        Ok(Self {
+            export_name: Some(export_name),
+        })
+    }
+}
+
+/// Mark a module-scope `static` as a CUDA constant-memory global.
+///
+/// The static must be typed `ConstantMemory<T>` (see
+/// [`cuda_device::ConstantMemory`](../../cuda_device/struct.ConstantMemory.html)). The
+/// `ConstantMemory<T>` wrapper has `UnsafeCell<T>` semantics on the device,
+/// preventing the compiler from constant-folding the initializer and making
+/// the host's `cuMemcpyHtoD` updates observable from kernels.
+///
+/// The macro adds a reserved `#[unsafe(export_name = "cuda_oxide_const_246e25db_...")]`
+/// so the PTX symbol carries a name the host can resolve via
+/// `cuModuleGetGlobal`. When used inside `#[cuda_module]`, the generated name
+/// includes module/source-location context to avoid collisions between constants
+/// that share the same Rust identifier. The host-side `#[cuda_module]` expansion
+/// separately generates per-constant setter methods on the loaded module:
+///
+/// - `module.set_<name>(&stream, &value)` — stream-ordered async write
+///   (recommended; orders correctly against surrounding kernel launches).
+/// - `module.set_<name>_blocking(&value)` — synchronous `cuMemcpyHtoD`
+///   for one-shot initialization where no stream is in scope.
+///
+/// # Restrictions
+///
+/// - The static must be typed `ConstantMemory<T>`.
+/// - The initializer must be `ConstantMemory::UNINIT` (or any other all-zeros
+///   value). Honoring arbitrary non-zero initializers is not yet
+///   implemented; populate from the host before any kernel reads the value.
+/// - The attribute must appear inside a `#[cuda_module]`. Placed elsewhere
+///   it silently produces an unreachable symbol (no setter is generated).
+/// - The identifier must not start with the reserved cuda-oxide prefix.
+///
+/// # Example
+///
+/// ```ignore
+/// #[cuda_module]
+/// mod kernels {
+///     #[constant]
+///     static COEFFS: ConstantMemory<[f32; 4]> = ConstantMemory::UNINIT;
+///
+///     #[kernel]
+///     pub fn compute(mut out: DisjointSlice<f32>) {
+///         let c = COEFFS.get();
+///         let i = thread::index_1d().get();
+///         if let Some(e) = out.get_mut(thread::index_1d()) {
+///             *e = c[0] * (i as f32) + c[1];
+///         }
+///     }
+/// }
+///
+/// // Host
+/// module.set_coeffs(&stream, &[1.0, 2.0, 3.0, 4.0])?;
+/// ```
+#[proc_macro_attribute]
+pub fn constant(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as ConstantArgs);
+    let input = parse_macro_input!(item as syn::ItemStatic);
+
+    if let Some(err) = reject_reserved_name(&input.ident) {
+        return err;
+    }
+
+    if extract_constant_inner_ty(&input.ty).is_none() {
+        return syn::Error::new_spanned(
+            &input.ty,
+            "#[constant] static must have type `ConstantMemory<T>` \
+             (e.g. `static FOO: ConstantMemory<[f32; 4]> = ConstantMemory::UNINIT;`). \
+             The wrapper prevents the compiler from constant-folding the \
+             initializer into kernel bodies.",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    let export_name = args.export_name.unwrap_or_else(|| {
+        LitStr::new(
+            &constant_symbol(&input.ident.to_string()),
+            input.ident.span(),
+        )
+    });
+
+    quote! {
+        #[unsafe(export_name = #export_name)]
+        #input
+    }
+    .into()
 }
 
 /// Find the generic type parameter that has a Fn/FnMut/FnOnce bound (the closure type).

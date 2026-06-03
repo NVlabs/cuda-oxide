@@ -71,7 +71,7 @@ pub use embedded::{EmbeddedModule, EmbeddedModuleError};
 pub use error::{DriverError, IntoResult};
 pub use event::CudaEvent;
 pub use launch::LaunchConfig;
-pub use module::{CudaFunction, CudaModule};
+pub use module::{ConstantHandle, CudaFunction, CudaModule};
 pub use pinned_host_buffer::PinnedHostBuffer;
 pub use stream::CudaStream;
 

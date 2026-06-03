@@ -498,9 +498,31 @@ fn classify_constant(const_op: &mir::ConstOperand) -> WriteClass {
         return WriteClass::Unclassified;
     };
     match GlobalAlloc::from(prov.0) {
-        GlobalAlloc::Static(_) => WriteClass::Classified(address_space::GLOBAL),
+        GlobalAlloc::Static(static_def) => {
+            // `#[constant]` statics live in addrspace(4) and are recognised
+            // by the `ConstantMemory<T>` wrapper on the static's declared type.
+            // Other statics live in addrspace(1).
+            let static_ty = static_def.ty();
+            if is_constant_wrapper_type(&static_ty) {
+                WriteClass::Classified(address_space::CONSTANT)
+            } else {
+                WriteClass::Classified(address_space::GLOBAL)
+            }
+        }
         _ => WriteClass::Unclassified,
     }
+}
+
+/// `true` if `ty` is `cuda_device::ConstantMemory<_>`. Detection by trimmed ADT
+/// name, mirroring the `SharedArray | Barrier` check above in
+/// [`classify_constant`].
+pub(super) fn is_constant_wrapper_type(ty: &rustc_public::ty::Ty) -> bool {
+    use rustc_public::ty::{RigidTy, TyKind};
+    let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = ty.kind() else {
+        return false;
+    };
+    adt_def.krate().name.as_str() == "cuda_device"
+        && adt_def.trimmed_name().as_str() == "ConstantMemory"
 }
 
 /// Classify the write produced by a `Call` terminator's destination.

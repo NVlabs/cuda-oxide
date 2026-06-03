@@ -103,7 +103,7 @@ pub fn codegen_run(
         ctx.workspace_root.clone()
     };
 
-    clean_generated_files(&example_dir, example);
+    let interop = load_interop_config(&example_dir);
 
     let output_format = format_label(emit_nvvm_ir);
     // Target precedence for `cargo oxide run` (highest first):
@@ -118,6 +118,24 @@ pub fn codegen_run(
     // commands may be cross-compiling for a different machine.
     let detected_run_arch = detect_run_target_arch(arch, emit_nvvm_ir);
     let forwarded_arch = arch.or(detected_run_arch.as_deref());
+
+    if let Some(interop) = interop.filter(|config| !config.device_crates.is_empty()) {
+        codegen_run_interop(
+            ctx,
+            example,
+            &example_dir,
+            &interop,
+            verbose,
+            emit_nvvm_ir,
+            forwarded_arch,
+            detected_run_arch.as_deref(),
+            features,
+            bin,
+        );
+        return;
+    }
+
+    clean_generated_files(&example_dir, example);
 
     println!("=========================================");
     println!("RUSTC-CODEGEN-CUDA: {}", example);
@@ -186,6 +204,230 @@ pub fn codegen_run(
 }
 
 // =============================================================================
+// Interop host/device workflow
+// =============================================================================
+
+#[derive(Debug, Clone)]
+struct InteropConfig {
+    kind: Option<String>,
+    device_crates: Vec<DeviceCrateConfig>,
+}
+
+#[derive(Debug, Clone)]
+struct DeviceCrateConfig {
+    manifest_path: PathBuf,
+    ptx_dir: PathBuf,
+    artifact_name: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn codegen_run_interop(
+    ctx: &Context,
+    example: &str,
+    example_dir: &Path,
+    interop: &InteropConfig,
+    verbose: bool,
+    emit_nvvm_ir: bool,
+    arch: Option<&str>,
+    detected_run_arch: Option<&str>,
+    features: Option<&str>,
+    bin: Option<&str>,
+) {
+    reject_interop_nvvm_ir(emit_nvvm_ir);
+
+    println!("=========================================");
+    println!("RUSTC-CODEGEN-CUDA INTEROP: {}", example);
+    println!("=========================================");
+    if let Some(kind) = &interop.kind {
+        println!("Interop kind: {}", kind);
+    }
+    if let Some(detected) = detected_run_arch {
+        println!(
+            "Target arch: {} (auto-detected from CUDA device 0)",
+            detected
+        );
+    }
+    println!();
+
+    build_interop_device_crates(ctx, example_dir, interop, verbose, arch);
+    run_host_cargo(example, example_dir, "run", features, bin, verbose);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn codegen_build_interop(
+    ctx: &Context,
+    example: &str,
+    example_dir: &Path,
+    interop: &InteropConfig,
+    verbose: bool,
+    emit_nvvm_ir: bool,
+    arch: Option<&str>,
+    features: Option<&str>,
+) {
+    reject_interop_nvvm_ir(emit_nvvm_ir);
+
+    println!("=========================================");
+    println!("RUSTC-CODEGEN-CUDA INTEROP BUILD: {}", example);
+    println!("=========================================");
+    if let Some(kind) = &interop.kind {
+        println!("Interop kind: {}", kind);
+    }
+    println!();
+
+    build_interop_device_crates(ctx, example_dir, interop, verbose, arch);
+    run_host_cargo(example, example_dir, "build", features, None, verbose);
+
+    println!();
+    println!("✓ Build succeeded");
+}
+
+fn reject_interop_nvvm_ir(emit_nvvm_ir: bool) {
+    if emit_nvvm_ir {
+        eprintln!("Error: --emit-nvvm-ir is not supported for metadata interop examples yet.");
+        eprintln!("Interop host crates embed PTX artifacts produced by nested device crates.");
+        std::process::exit(2);
+    }
+}
+
+fn build_interop_device_crates(
+    ctx: &Context,
+    example_dir: &Path,
+    interop: &InteropConfig,
+    verbose: bool,
+    arch: Option<&str>,
+) {
+    for device_crate in &interop.device_crates {
+        build_interop_device_crate(ctx, example_dir, device_crate, verbose, arch);
+    }
+}
+
+fn build_interop_device_crate(
+    ctx: &Context,
+    example_dir: &Path,
+    device_crate: &DeviceCrateConfig,
+    verbose: bool,
+    arch: Option<&str>,
+) {
+    let manifest_path = example_dir.join(&device_crate.manifest_path);
+    let manifest_path = manifest_path.canonicalize().unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not resolve device crate manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+    let device_dir = manifest_path.parent().unwrap_or(example_dir);
+    let ptx_dir = example_dir.join(&device_crate.ptx_dir);
+    std::fs::create_dir_all(&ptx_dir).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not create device artifact directory {}: {}",
+            ptx_dir.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+
+    let package_name = package_name_from_manifest(&manifest_path);
+    let artifact_name = device_crate
+        .artifact_name
+        .clone()
+        .unwrap_or_else(|| normalize_crate_name(&package_name));
+    clean_generated_files(&ptx_dir, &artifact_name);
+    touch_main_rs(device_dir);
+
+    println!("Building device crate {}...", manifest_path.display());
+
+    let rustflags = build_rustflags(&ctx.backend_so, false);
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--release", "--manifest-path"])
+        .arg(&manifest_path)
+        .current_dir(device_dir)
+        .env("RUSTFLAGS", &rustflags)
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env("CUDA_OXIDE_PTX_DIR", &ptx_dir);
+
+    if verbose || std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {
+        cmd.env("CUDA_OXIDE_VERBOSE", "1");
+    } else {
+        cmd.env_remove("CUDA_OXIDE_VERBOSE");
+    }
+    forward_env_var(&mut cmd, "CUDA_OXIDE_SHOW_RUSTC_MIR");
+    forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
+    forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
+    apply_output_mode(&mut cmd, false, arch);
+    apply_ld_library_path(&mut cmd);
+
+    let status = cmd.status().expect("Failed to build interop device crate");
+    if !status.success() {
+        eprintln!(
+            "\nDevice crate build failed with exit code: {:?}",
+            status.code()
+        );
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    let ptx_path = ptx_dir.join(format!("{}.ptx", artifact_name));
+    if !ptx_path.exists() {
+        eprintln!(
+            "Error: device crate build succeeded but did not produce {}",
+            ptx_path.display()
+        );
+        std::process::exit(1);
+    }
+    println!("PTX written: {}", ptx_path.display());
+}
+
+fn run_host_cargo(
+    example: &str,
+    example_dir: &Path,
+    cargo_subcommand: &str,
+    features: Option<&str>,
+    bin: Option<&str>,
+    verbose: bool,
+) {
+    let mut cmd = Command::new("cargo");
+    cmd.arg(cargo_subcommand)
+        .arg("--release")
+        .current_dir(example_dir);
+
+    if cargo_subcommand == "run"
+        && let Some(bin) = bin
+    {
+        cmd.args(["--bin", bin]);
+    }
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+
+    apply_ld_library_path(&mut cmd);
+
+    if cargo_subcommand == "run" {
+        if let Some(bin) = bin {
+            println!("Building and running {} (bin: {})...", example, bin);
+        } else {
+            println!("Building and running {}...", example);
+        }
+    } else {
+        println!("Building host crate {}...", example);
+    }
+    println!();
+
+    if verbose {
+        cmd.env("CUDA_OXIDE_VERBOSE", "1");
+    }
+
+    let status = cmd.status().expect("Failed to run host cargo command");
+    if !status.success() {
+        eprintln!(
+            "\nHost cargo command failed with exit code: {:?}",
+            status.code()
+        );
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
+// =============================================================================
 // Build command (compile only, don't run)
 // =============================================================================
 
@@ -207,6 +449,22 @@ pub fn codegen_build_example(
     } else {
         ctx.workspace_root.clone()
     };
+
+    if let Some(interop) =
+        load_interop_config(&example_dir).filter(|config| !config.device_crates.is_empty())
+    {
+        codegen_build_interop(
+            ctx,
+            example,
+            &example_dir,
+            &interop,
+            verbose,
+            emit_nvvm_ir,
+            arch,
+            features,
+        );
+        return;
+    }
 
     clean_generated_files(&example_dir, example);
 
@@ -829,6 +1087,137 @@ pub fn setup(ctx: &Context) {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+fn load_interop_config(example_dir: &Path) -> Option<InteropConfig> {
+    let manifest_path = example_dir.join("Cargo.toml");
+    let source = std::fs::read_to_string(&manifest_path).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not read manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+    let document: toml::Value = toml::from_str(&source).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not parse manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+
+    let oxide = document
+        .get("package")
+        .and_then(|value| value.get("metadata"))
+        .and_then(|value| value.get("cuda-oxide"))?;
+
+    let kind = oxide.get("interop").and_then(|value| {
+        value.as_str().map(str::to_string).or_else(|| {
+            value
+                .get("kind")
+                .and_then(|kind| kind.as_str())
+                .map(str::to_string)
+        })
+    });
+
+    let device_crates = oxide
+        .get("device-crates")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| parse_device_crate_config(item, &manifest_path))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(InteropConfig {
+        kind,
+        device_crates,
+    })
+}
+
+fn parse_device_crate_config(value: &toml::Value, manifest_path: &Path) -> DeviceCrateConfig {
+    let table = value.as_table().unwrap_or_else(|| {
+        eprintln!(
+            "Error: each package.metadata.cuda-oxide.device-crates entry in {} must be a table",
+            manifest_path.display()
+        );
+        std::process::exit(1);
+    });
+
+    let device_manifest = required_metadata_string(table, "manifest-path", manifest_path);
+    let ptx_dir = optional_metadata_string(table, "ptx-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(&device_manifest)
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf()
+        });
+    let artifact_name = optional_metadata_string(table, "artifact-name");
+
+    DeviceCrateConfig {
+        manifest_path: PathBuf::from(device_manifest),
+        ptx_dir,
+        artifact_name,
+    }
+}
+
+fn required_metadata_string(table: &toml::Table, key: &str, manifest_path: &Path) -> String {
+    optional_metadata_string(table, key).unwrap_or_else(|| {
+        eprintln!(
+            "Error: package.metadata.cuda-oxide.device-crates entry in {} is missing string field `{}`",
+            manifest_path.display(),
+            key
+        );
+        std::process::exit(1);
+    })
+}
+
+fn optional_metadata_string(table: &toml::Table, key: &str) -> Option<String> {
+    table
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn package_name_from_manifest(manifest_path: &Path) -> String {
+    let source = std::fs::read_to_string(manifest_path).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not read device manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+    let document: toml::Value = toml::from_str(&source).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not parse device manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+
+    document
+        .get("package")
+        .and_then(|value| value.get("name"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            eprintln!(
+                "Error: device manifest {} is missing package.name",
+                manifest_path.display()
+            );
+            std::process::exit(1);
+        })
+}
+
+fn normalize_crate_name(package_name: &str) -> String {
+    package_name.replace('-', "_")
+}
 
 /// Resolve an example name to its directory path, or exit with a list of
 /// available examples if not found.

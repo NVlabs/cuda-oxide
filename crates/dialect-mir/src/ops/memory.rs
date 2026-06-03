@@ -692,9 +692,10 @@ impl Verify for MirSharedAllocOp {
 /// MIR device-global address operation.
 ///
 /// Represents the address of an ordinary Rust `static` / `static mut` reachable
-/// from device code. This is lowered to an LLVM global in CUDA global memory
-/// (`addrspace(1)`), unlike [`MirSharedAllocOp`] which is block-local shared
-/// memory.
+/// from device code. Lowered to an LLVM global in CUDA global memory
+/// (`addrspace(1)`) by default, or constant memory (`addrspace(4)`) when the
+/// static was tagged `#[constant]`. The choice is reflected in the result
+/// pointer's address space; the verifier accepts both.
 ///
 /// # Attributes
 ///
@@ -768,10 +769,13 @@ impl Verify for MirGlobalAllocOp {
         let res_ty_obj = res_ty.deref(ctx);
 
         if let Some(ptr_ty) = res_ty_obj.downcast_ref::<MirPtrType>() {
-            if ptr_ty.address_space != crate::types::address_space::GLOBAL {
+            let as_ = ptr_ty.address_space;
+            if as_ != crate::types::address_space::GLOBAL
+                && as_ != crate::types::address_space::CONSTANT
+            {
                 return verify_err!(
                     op.loc(),
-                    "MirGlobalAllocOp result must be in global address space (1)"
+                    "MirGlobalAllocOp result must be in global (1) or constant (4) address space"
                 );
             }
         } else {
