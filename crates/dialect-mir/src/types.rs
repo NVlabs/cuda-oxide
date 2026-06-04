@@ -291,7 +291,7 @@ impl Verify for MirDisjointSliceType {
 /// * Field types must be valid.
 #[pliron_type(
     name = "mir.struct",
-    format = "`<` $name `,` `[` vec($field_names, CharSpace(`,`)) `]` `,` `[` vec($field_types, CharSpace(`,`)) `]` `,` `[` vec($mem_to_decl, CharSpace(`,`)) `]` `,` `[` vec($field_offsets, CharSpace(`,`)) `]` `,` $total_size `>`"
+    format = "`<` $name `,` `[` vec($field_names, CharSpace(`,`)) `]` `,` `[` vec($field_types, CharSpace(`,`)) `]` `,` `[` vec($mem_to_decl, CharSpace(`,`)) `]` `,` `[` vec($field_offsets, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `>`"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirStructType {
@@ -310,6 +310,13 @@ pub struct MirStructType {
     /// Total struct size in bytes (including trailing padding).
     /// 0 means size is not known (fallback to LLVM layout).
     pub total_size: u64,
+    /// ABI alignment in bytes, from rustc layout. 0 means unknown.
+    ///
+    /// This captures `repr(align(N))` raises that the lowered (anonymous) LLVM
+    /// struct type cannot express — over-alignment is an *operation* property
+    /// in LLVM, so this is carried here and stamped as `align N` on the
+    /// load/store of the struct during lowering.
+    pub abi_align: u64,
 }
 
 impl MirStructType {
@@ -334,7 +341,16 @@ impl MirStructType {
         field_types: Vec<Ptr<TypeObj>>,
         mem_to_decl: Vec<usize>,
     ) -> TypePtr<Self> {
-        Self::get_with_full_layout(ctx, name, field_names, field_types, mem_to_decl, vec![], 0)
+        Self::get_with_full_layout(
+            ctx,
+            name,
+            field_names,
+            field_types,
+            mem_to_decl,
+            vec![],
+            0,
+            0,
+        )
     }
 
     /// Create a new struct type with complete layout information from rustc.
@@ -346,6 +362,8 @@ impl MirStructType {
     /// * `mem_to_decl` - Memory order mapping (empty = identity)
     /// * `field_offsets` - Byte offset of each field in declaration order (empty = unknown)
     /// * `total_size` - Total struct size in bytes (0 = unknown)
+    /// * `abi_align` - ABI alignment in bytes (0 = unknown)
+    #[allow(clippy::too_many_arguments)]
     pub fn get_with_full_layout(
         ctx: &mut Context,
         name: String,
@@ -354,6 +372,7 @@ impl MirStructType {
         mem_to_decl: Vec<usize>,
         field_offsets: Vec<u64>,
         total_size: u64,
+        abi_align: u64,
     ) -> TypePtr<Self> {
         Type::register_instance(
             MirStructType {
@@ -363,6 +382,7 @@ impl MirStructType {
                 mem_to_decl,
                 field_offsets,
                 total_size,
+                abi_align,
             },
             ctx,
         )
@@ -383,6 +403,7 @@ impl MirStructType {
                 mem_to_decl: vec![],
                 field_offsets: vec![],
                 total_size: 0,
+                abi_align: 0,
             },
             ctx,
         )

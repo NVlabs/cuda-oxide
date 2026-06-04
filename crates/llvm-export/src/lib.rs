@@ -141,6 +141,7 @@ pub mod ops {
         context::{Context, Ptr},
         identifier::Identifier,
         op::Op,
+        operation::Operation,
         r#type::TypeObj,
         value::Value,
     };
@@ -220,6 +221,32 @@ pub mod ops {
                 .get::<AlignmentAttr>(&key)
                 .map(|a| a.0 as u64)
         }
+    }
+
+    /// Op-attribute key under which a memory op's (`load` / `store` / `alloca`)
+    /// explicit ABI alignment is stashed. pliron-llvm's memory ops carry no
+    /// native alignment attribute, so — exactly like [`GlobalOpExt`] does for
+    /// globals — we keep it in the op's generic attribute dictionary. Stamped
+    /// by the mir-lower alignment pre-pass (while types are still MIR, so a
+    /// `repr(align(N))` struct reports its true alignment) and emitted as
+    /// `align N` on export.
+    pub fn alignment_attr_key() -> Identifier {
+        Identifier::try_new("cuda_oxide_op_alignment".to_string()).expect("valid identifier")
+    }
+
+    /// Stamp the ABI alignment (in bytes) onto a memory op.
+    pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
+        op.deref_mut(ctx)
+            .attributes
+            .set(alignment_attr_key(), AlignmentAttr(align));
+    }
+
+    /// Read the ABI alignment (in bytes) stamped on a memory op, if any.
+    pub fn op_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
+        op.deref(ctx)
+            .attributes
+            .get::<AlignmentAttr>(&alignment_attr_key())
+            .map(|a| a.0)
     }
 }
 

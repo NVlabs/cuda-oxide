@@ -479,7 +479,7 @@ pub fn translate_type(
                     }
 
                     // Query rustc for complete memory layout info
-                    let (mem_to_decl, field_offsets, total_size) =
+                    let (mem_to_decl, field_offsets, total_size, abi_align) =
                         if let Ok(layout) = rust_ty.layout() {
                             let shape = layout.shape();
 
@@ -496,10 +496,12 @@ pub fn translate_type(
 
                             // Total struct size (bytes)
                             let size: u64 = shape.size.bytes() as u64;
+                            // True ABI alignment (captures repr(align(N)) raises)
+                            let align: u64 = shape.abi_align as u64;
 
-                            (mem_order, offsets, size)
+                            (mem_order, offsets, size, align)
                         } else {
-                            (vec![], vec![], 0u64)
+                            (vec![], vec![], 0u64, 0u64)
                         };
 
                     // Create the struct type with full layout info
@@ -511,6 +513,7 @@ pub fn translate_type(
                         mem_to_decl,
                         field_offsets,
                         total_size,
+                        abi_align,
                     )
                     .into())
                 } else {
@@ -582,19 +585,25 @@ pub fn translate_type(
                 }
             }
 
-            let (mem_to_decl, field_offsets, total_size) = if let Ok(layout) = rust_ty.layout() {
-                let shape = layout.shape();
-                let mem_to_decl = shape.fields.fields_by_offset_order();
-                let field_offsets = match &shape.fields {
-                    rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
-                        offsets.iter().map(|offset| offset.bytes() as u64).collect()
-                    }
-                    _ => vec![],
+            let (mem_to_decl, field_offsets, total_size, abi_align) =
+                if let Ok(layout) = rust_ty.layout() {
+                    let shape = layout.shape();
+                    let mem_to_decl = shape.fields.fields_by_offset_order();
+                    let field_offsets = match &shape.fields {
+                        rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
+                            offsets.iter().map(|offset| offset.bytes() as u64).collect()
+                        }
+                        _ => vec![],
+                    };
+                    (
+                        mem_to_decl,
+                        field_offsets,
+                        shape.size.bytes() as u64,
+                        shape.abi_align as u64,
+                    )
+                } else {
+                    (vec![], vec![], 0, 0)
                 };
-                (mem_to_decl, field_offsets, shape.size.bytes() as u64)
-            } else {
-                (vec![], vec![], 0)
-            };
 
             Ok(dialect_mir::types::MirStructType::get_with_full_layout(
                 ctx,
@@ -604,6 +613,7 @@ pub fn translate_type(
                 mem_to_decl,
                 field_offsets,
                 total_size,
+                abi_align,
             )
             .into())
         }

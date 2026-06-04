@@ -94,9 +94,19 @@ pub(crate) fn convert_store(
     };
 
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
+    copy_alignment(ctx, op, llvm_store.get_operation());
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
+}
+
+/// Copy the `llvm_alignment` attribute (true ABI alignment, stamped in the
+/// pre-pass) from a MIR memory op onto its lowered llvm op, so export can emit
+/// it as `align N`.
+fn copy_alignment(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
+    if let Some(align) = llvm_export::ops::op_alignment(ctx, mir_op) {
+        llvm_export::ops::set_op_alignment(ctx, llvm_op, align);
+    }
 }
 
 /// Convert `mir.load` to `llvm.load`.
@@ -114,6 +124,7 @@ pub(crate) fn convert_load(
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
+    copy_alignment(ctx, op, llvm_load.get_operation());
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
@@ -157,6 +168,7 @@ pub(crate) fn convert_alloca(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val);
+    copy_alignment(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
 

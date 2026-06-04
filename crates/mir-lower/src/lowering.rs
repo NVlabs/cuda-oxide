@@ -33,8 +33,9 @@ use crate::convert::types::{
 };
 
 use dialect_mir::ops::MirFuncOp;
-use dialect_mir::types::{MirDisjointSliceType, MirSliceType, MirStructType};
+use dialect_mir::types::{MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType};
 use llvm_export::ops as llvm;
+use pliron::r#type::Typed;
 use pliron::{
     basic_block::BasicBlock,
     builtin::op_interfaces::SymbolOpInterface,
@@ -98,6 +99,12 @@ pub fn convert_func(
         // Must happen BEFORE inline_region empties the MIR region.
         let mir_blocks: Vec<_> = mir_region.deref(ctx).iter(ctx).collect();
         let max_align = compute_max_dynamic_smem_alignment(ctx, &mir_blocks);
+
+        // Stamp the real ABI alignment onto load/store ops while their types
+        // are still MIR (so a `repr(align(N))` struct reports its true
+        // alignment). In LLVM, over-alignment is an operation property, so this
+        // becomes `align N` on the load/store during op conversion + export.
+        stamp_memory_op_alignment(ctx, &mir_blocks);
 
         if let Some(align) = max_align {
             let symbol_name: pliron::identifier::Identifier =
@@ -441,6 +448,64 @@ fn compute_max_dynamic_smem_alignment(
     }
 
     max_alignment
+}
+
+/// The over-alignment (in bytes) carried by `ty` if it is a `MirStructType`
+/// with a known `repr(align)`-raised alignment, else `None`.
+fn struct_over_align(ctx: &Context, ty: Ptr<TypeObj>) -> Option<u64> {
+    ty.deref(ctx)
+        .downcast_ref::<MirStructType>()
+        .map(|s| s.abi_align)
+        .filter(|a| *a > 0)
+}
+
+/// Stamp `llvm_alignment` (true ABI alignment in bytes) onto every `mir.load` /
+/// `mir.store` / `mir.alloca` whose accessed/allocated type is a
+/// `MirStructType` carrying a known alignment. Must run BEFORE conversion,
+/// while operand/result types are still MIR (after conversion, a store's value
+/// type or an alloca's pointee may already be a llvm struct, which cannot
+/// express a repr(align) raise).
+///
+/// alloca is included for soundness: if a stack slot holds an over-aligned
+/// type, the `align N` we claim on its loads/stores must be backed by the
+/// alloca actually being N-aligned.
+fn stamp_memory_op_alignment(ctx: &mut Context, mir_blocks: &[Ptr<BasicBlock>]) {
+    let load_id = dialect_mir::ops::MirLoadOp::get_opid_static();
+    let store_id = dialect_mir::ops::MirStoreOp::get_opid_static();
+    let alloca_id = dialect_mir::ops::MirAllocaOp::get_opid_static();
+
+    // Collect (op, align) first (immutable), then stamp (mutable).
+    let mut to_stamp: Vec<(Ptr<Operation>, u64)> = Vec::new();
+    for mir_block in mir_blocks {
+        let ops: Vec<_> = mir_block.deref(ctx).iter(ctx).collect();
+        for op in ops {
+            let op_id = Operation::get_opid(op, ctx);
+            let align = if op_id == load_id {
+                // load: result(0) is the loaded value.
+                struct_over_align(ctx, op.deref(ctx).get_result(0).get_type(ctx))
+            } else if op_id == store_id {
+                // store: operand(1) is the stored value.
+                struct_over_align(ctx, op.deref(ctx).get_operand(1).get_type(ctx))
+            } else if op_id == alloca_id {
+                // alloca: the slot type is the pointee of the result pointer.
+                let res_ty = op.deref(ctx).get_result(0).get_type(ctx);
+                res_ty
+                    .deref(ctx)
+                    .downcast_ref::<MirPtrType>()
+                    .map(|p| p.pointee)
+                    .and_then(|pointee| struct_over_align(ctx, pointee))
+            } else {
+                None
+            };
+            if let Some(a) = align {
+                to_stamp.push((op, a));
+            }
+        }
+    }
+
+    for (op, align) in to_stamp {
+        llvm_export::ops::set_op_alignment(ctx, op, align as u32);
+    }
 }
 
 // ============================================================================
