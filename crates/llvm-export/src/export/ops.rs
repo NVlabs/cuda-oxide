@@ -446,7 +446,9 @@ impl<'a> ModuleExportState<'a> {
         self.export_type(ty, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
-        writeln!(output).unwrap();
+        let align = ops::op_alignment(self.ctx, op.get_operation())
+            .unwrap_or_else(|| self.natural_alignment(ty));
+        writeln!(output, ", align {align}").unwrap();
         Ok(())
     }
 
@@ -462,12 +464,15 @@ impl<'a> ModuleExportState<'a> {
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
 
         write!(output, "  store ").unwrap();
-        self.export_type(val.get_type(self.ctx), output)?;
+        let val_ty = val.get_type(self.ctx);
+        self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
         self.export_value(val, value_names, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
-        writeln!(output).unwrap();
+        let align = ops::op_alignment(self.ctx, op.get_operation())
+            .unwrap_or_else(|| self.natural_alignment(val_ty));
+        writeln!(output, ", align {align}").unwrap();
         Ok(())
     }
 
@@ -485,8 +490,11 @@ impl<'a> ModuleExportState<'a> {
             .expect("Missing alloca_element_type");
 
         write!(output, "  {res_name} = alloca ").unwrap();
-        self.export_type(elem_ty.get_type(self.ctx), output)?;
-        writeln!(output).unwrap();
+        let elem_llvm_ty = elem_ty.get_type(self.ctx);
+        self.export_type(elem_llvm_ty, output)?;
+        let align = ops::op_alignment(self.ctx, op.get_operation())
+            .unwrap_or_else(|| self.natural_alignment(elem_llvm_ty));
+        writeln!(output, ", align {align}").unwrap();
         Ok(())
     }
 
