@@ -30,12 +30,13 @@ use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
+use combine::stream::position::SourcePosition;
 use dialect_mir::ops::{MirStorageDeadOp, MirStorageLiveOp, MirStoreOp};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
-use pliron::location::{Located, Location};
+use pliron::location::{Located, Location, Source};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
@@ -43,6 +44,7 @@ use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use rustc_public::mir;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 /// Translates a MIR statement to one or more `dialect-mir` operations.
 ///
@@ -59,9 +61,12 @@ pub fn translate_statement(
     prev_op: Option<Ptr<Operation>>,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
     // Use Debug representation of the span as location
-    let loc = Location::Named {
-        name: format!("{:?}", stmt.span),
-        child_loc: Box::new(Location::Unknown),
+    let loc = Location::SrcPos {
+        src: Source::new_from_file(ctx, PathBuf::from(stmt.span.get_filename()).canonicalize().unwrap()),
+        pos: SourcePosition {
+            line: stmt.span.get_lines().start_line as i32,
+            column: stmt.span.get_lines().start_col as i32,
+        },
     };
 
     match &stmt.kind {

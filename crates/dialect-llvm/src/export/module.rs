@@ -5,8 +5,13 @@
 
 //! Module-level export flow.
 
+use std::ffi::OsStr;
 use std::fmt::Write;
 
+use crate::export::debug::{DebugOp, DebugOpRegistry};
+use crate::ops;
+use pliron::location::{Location, Source};
+use pliron::uniqued_any::get;
 use pliron::{
     builtin::{
         op_interfaces::{OneRegionInterface, SymbolOpInterface},
@@ -17,8 +22,6 @@ use pliron::{
     op::Op,
     operation::Operation,
 };
-
-use crate::ops;
 
 use super::{
     config::ExportBackendConfig,
@@ -89,6 +92,13 @@ pub(super) fn export_module_with_externs_impl(
 
     // 3. Process Globals and Functions (including intrinsic declarations)
     // Skip device extern declarations - they were already emitted in section 2 with proper attributes
+    let mut debug_op_registry = DebugOpRegistry::new();
+    let dwarf_version =
+        debug_op_registry.get_or_create(DebugOp::Raw("!{i32 7, !\"Dwarf Version\", i32 2}".into()));
+    let debug_info_version = debug_op_registry.get_or_create(DebugOp::Raw(
+        "!{i32 2, !\"Debug Info Version\", i32 3}".into(),
+    ));
+
     let device_extern_names: std::collections::HashSet<&str> = device_externs
         .iter()
         .map(|d| d.export_name.as_str())
@@ -111,7 +121,26 @@ pub(super) fn export_module_with_externs_impl(
                     writeln!(&mut output).unwrap();
                 }
 
-                state.export_function(&func, &mut output)?;
+                let file_ref = debug_op_registry.get_or_create(DebugOp::DIFile {
+                    filename: filename_from_loc(&func.loc(ctx), ctx),
+                    directory: directory_from_loc(&func.loc(ctx), ctx),
+                });
+                let compile_unit =
+                    debug_op_registry.get_or_create(DebugOp::DICompileUnit { file: file_ref });
+                // TODO: Use actual args
+                let empty_type = debug_op_registry.get_or_create(DebugOp::Raw("!{}".into()));
+                let program_type = debug_op_registry.get_or_create(DebugOp::DISubroutineType {
+                    types: empty_type,
+                });
+                let function_ref = debug_op_registry.get_or_create(DebugOp::DISubprogram {
+                    name: func_name.into(),
+                    scope: file_ref,
+                    file: file_ref,
+                    line: line_from_loc(&func.loc(ctx)),
+                    unit: compile_unit,
+                    r#type: program_type,
+                });
+                state.export_function(&func, function_ref, &mut output, &mut debug_op_registry)?;
                 last_was_decl = is_decl;
             } else if let Some(global) = Operation::get_op::<ops::GlobalOp>(op, ctx) {
                 state.export_global(&global, &mut output)?;
@@ -127,6 +156,30 @@ pub(super) fn export_module_with_externs_impl(
             }
         }
     }
+
+    // 3.5 Dump debug info
+    writeln!(
+        &mut output,
+        "!llvm.module.flags = !{{!{dwarf_version}, !{debug_info_version}}}"
+    )
+    .unwrap();
+
+    write!(&mut output, "!llvm.dbg.cu = !{{").unwrap();
+    let mut cu_iter = debug_op_registry
+        .ops
+        .iter()
+        .enumerate()
+        .filter(|d| matches!(d.1, DebugOp::DICompileUnit { .. }))
+        .peekable();
+    while let Some((index, _)) = cu_iter.next() {
+        write!(&mut output, "!{index}").unwrap();
+        if cu_iter.peek().is_some() {
+            write!(&mut output, ", ").unwrap();
+        }
+    }
+    writeln!(&mut output, "}}").unwrap();
+
+    debug_op_registry.emit(&mut output);
 
     // 4. @llvm.used — preserve kernels and/or standalone device functions from DCE
     //
@@ -246,8 +299,8 @@ pub(super) fn export_module_to_string_with_config(
                 if !is_decl && last_was_decl {
                     writeln!(&mut output).unwrap();
                 }
-
-                state.export_function(&func, &mut output)?;
+                todo!();
+                //state.export_function(&func, &mut output)?;
                 last_was_decl = is_decl;
             } else if let Some(global) = Operation::get_op::<ops::GlobalOp>(op, ctx) {
                 // Export global variable (typically shared memory)
@@ -354,7 +407,7 @@ pub(super) fn export_module_to_string_with_config(
                 "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
                 md_id, cfg.name, cfg.dim_x, cfg.dim_y, cfg.dim_z
             )
-            .unwrap();
+                .unwrap();
             metadata_refs.push(format!("!{}", md_id));
             md_id += 1;
         }
@@ -438,4 +491,64 @@ pub(super) fn export_module_to_string_with_config(
     }
 
     Ok(output)
+}
+
+pub fn line_from_loc(location: &Location) -> i32 {
+    match location {
+        Location::SrcPos { src: _src, pos } => pos.line,
+        Location::Fused {
+            metadata: _metadata,
+            locations,
+        } => locations.get(0).map(|l| line_from_loc(l)).unwrap_or(0),
+        Location::Named {
+            name: _name,
+            child_loc,
+        } => line_from_loc(child_loc),
+        Location::CallSite { callee, caller } => line_from_loc(callee),
+        Location::Unknown => 0,
+    }
+}
+
+pub fn col_from_loc(location: &Location) -> i32 {
+    match location {
+        Location::SrcPos { src: _src, pos } => pos.column,
+        Location::Fused {
+            metadata: _metadata,
+            locations,
+        } => locations.get(0).map(|l| line_from_loc(l)).unwrap_or(0),
+        Location::Named {
+            name: _name,
+            child_loc,
+        } => line_from_loc(child_loc),
+        Location::CallSite { callee, caller } => line_from_loc(callee),
+        Location::Unknown => 0,
+    }
+}
+
+pub fn filename_from_loc(location: &Location, ctx: &Context) -> String {
+    match location {
+        Location::SrcPos {
+            src: Source::File(src),
+            pos: _pos,
+        } => get(ctx, *src)
+            .file_name()
+            .unwrap_or(OsStr::new("<unknown>"))
+            .display()
+            .to_string(),
+        _ => "<unknown>".into(),
+    }
+}
+
+pub fn directory_from_loc(location: &Location, ctx: &Context) -> String {
+    match location {
+        Location::SrcPos {
+            src: Source::File(src),
+            pos: _pos,
+        } => {
+            let mut p = get(ctx, *src).clone();
+            p.pop();
+            p.display().to_string()
+        }
+        _ => "<unknown>".into(),
+    }
 }
