@@ -29,7 +29,8 @@
 
 use crate::convert::types::convert_type;
 use llvm_export::attributes::{
-    FCmpPredicateAttr, FastmathFlagsAttr, ICmpPredicateAttr, IntegerOverflowFlagsAttr,
+    FCmpPredicateAttr, FastmathFlags, FastmathFlagsAttr, ICmpPredicateAttr,
+    IntegerOverflowFlagsAttr,
 };
 use llvm_export::op_interfaces::{BinArithOp, CastOpInterface, IntBinArithOpWithOverflowFlag};
 use llvm_export::ops as llvm;
@@ -94,9 +95,18 @@ fn is_signed_int_op(
     }
 }
 
-/// Add fastmath flags attribute to a floating-point operation.
+/// Add fastmath flags to a floating-point operation.
+///
+/// Sets ONLY `contract`, which lets LLVM's NVPTX backend fuse an `fmul`
+/// feeding an `fadd`/`fsub` into a single `fma.rn.f32`. This matches nvcc's
+/// default `--fmad=true`: it is the one fast-math relaxation NVIDIA enables out
+/// of the box, and the only IEEE deviation is the (more accurate) single
+/// rounding of the fused op. Without it cuda-oxide emits a separate `mul.rn` +
+/// `add.rn` for every butterfly, ~37% more instructions than nvcc on the same
+/// kernel. We deliberately do NOT set reassoc/nnan/ninf/nsz/arcp, so results
+/// stay bit-comparable to a contracted reference (no algebraic reordering).
 fn add_fastmath_flags(ctx: &mut Context, op: Ptr<Operation>) {
-    let flags = FastmathFlagsAttr::default();
+    let flags = FastmathFlagsAttr(FastmathFlags::CONTRACT);
     let key: pliron::identifier::Identifier = "llvm_fast_math_flags".try_into().unwrap();
     op.deref_mut(ctx).attributes.0.insert(key, flags.into());
 }

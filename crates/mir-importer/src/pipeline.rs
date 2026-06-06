@@ -835,6 +835,12 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         let result = std::process::Command::new(&llc_path)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", target))
+            // Fuse mul+add into fma.rn.f32, matching nvcc's default --fmad=true.
+            // Without this llc keeps every multiply-add as a separate mul.rn +
+            // add.rn (~37% more instructions than nvcc on FFT butterflies). The
+            // only IEEE deviation is the single (more accurate) rounding of the
+            // fused op; no algebraic reassociation.
+            .arg("-fp-contract=fast")
             .arg(ll_path)
             .arg("-o")
             .arg(ptx_path)
@@ -899,6 +905,8 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         let result = std::process::Command::new(llc_cmd)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", llc_target))
+            // See note above: fma contraction to match nvcc's default fmad=true.
+            .arg("-fp-contract=fast")
             .arg(ll_path)
             .arg("-o")
             .arg(ptx_path)
