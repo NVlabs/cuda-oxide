@@ -117,7 +117,7 @@ use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::printable::Printable;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Device artifact format produced by a successful pipeline run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,14 +419,25 @@ pub fn run_pipeline(
             target,
         })
     } else {
-        // PTX mode: invoke llc
+        // PTX mode: run the LLVM mid-level optimizer, then invoke llc.
+        //
+        // Our own pipeline only runs mem2reg; everything else (GVN/CSE,
+        // instcombine, reassociate, strength reduction, regalloc-friendly
+        // canonicalization) is left to LLVM. Without an `opt` pass the IR
+        // reaches llc essentially unoptimized, so kernels carry redundant
+        // computation that nvcc/NVRTC (which runs the full -O3 pipeline)
+        // eliminates -- measured as ~25% more dynamic instructions and several
+        // extra registers on an identical FFT kernel. `optimize_ll` closes
+        // that. Falls back to the raw IR if `opt` is missing or
+        // `CUDA_OXIDE_NO_OPT` is set.
         if config.verbose {
             eprintln!("\n=== Generating PTX ===");
         }
         let ptx_path = config
             .output_dir
             .join(format!("{}.ptx", config.output_name));
-        let target = generate_ptx(&ll_path, &ptx_path)?;
+        let opt_ll = optimize_ll(&ll_path, config.verbose);
+        let target = generate_ptx(&opt_ll, &ptx_path)?;
         if config.verbose {
             eprintln!(
                 "✓ PTX written to {} (target: {})",
@@ -791,6 +802,64 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 /// risk (most examples will still compile but modern intrinsics will not).
 /// Auto-detects GPU features to select target, or uses `CUDA_OXIDE_TARGET`
 /// if set.
+/// Runs the LLVM mid-level optimizer (`opt -O3`) on the exported `.ll`,
+/// returning the path to the optimized IR (or the original on any problem).
+///
+/// cuda-oxide's pipeline only runs mem2reg, so without this the IR reaches llc
+/// unoptimized and kernels keep redundant computation that nvcc's full -O3
+/// pipeline removes. Tries `CUDA_OXIDE_OPT`, then `opt-22`, `opt-21`, `opt`.
+/// Set `CUDA_OXIDE_NO_OPT` to skip. Any failure (missing binary, pass error)
+/// falls back to the unoptimized IR so PTX still builds.
+fn optimize_ll(ll_path: &Path, verbose: bool) -> PathBuf {
+    if std::env::var("CUDA_OXIDE_NO_OPT").is_ok() {
+        return ll_path.to_path_buf();
+    }
+    let opt_path = ll_path.with_extension("opt.ll");
+    let candidates: Vec<String> = match std::env::var("CUDA_OXIDE_OPT") {
+        Ok(p) => vec![p],
+        Err(_) => vec!["opt-22".into(), "opt-21".into(), "opt".into()],
+    };
+    for opt_cmd in &candidates {
+        let result = std::process::Command::new(opt_cmd)
+            .arg("-O3")
+            .arg("-S")
+            .arg(ll_path)
+            .arg("-o")
+            .arg(&opt_path)
+            .output();
+        match result {
+            Ok(output) if output.status.success() => {
+                if verbose {
+                    eprintln!("Optimized IR with {opt_cmd} -O3");
+                }
+                return opt_path;
+            }
+            Ok(output) => {
+                if verbose {
+                    eprintln!(
+                        "warning: {opt_cmd} -O3 failed, using unoptimized IR:\n{}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    );
+                }
+                return ll_path.to_path_buf();
+            }
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => continue,
+                _ => {
+                    if verbose {
+                        eprintln!("warning: {opt_cmd}: {e}");
+                    }
+                    return ll_path.to_path_buf();
+                }
+            },
+        }
+    }
+    if verbose {
+        eprintln!("warning: no opt-22/opt-21/opt on PATH, using unoptimized IR");
+    }
+    ll_path.to_path_buf()
+}
+
 fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError> {
     // Check for user-specified target override
     let target_override = std::env::var("CUDA_OXIDE_TARGET").ok();
@@ -835,6 +904,12 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         let result = std::process::Command::new(&llc_path)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", target))
+            // Fuse mul+add into fma.rn.f32, matching nvcc's default --fmad=true.
+            // Without this llc keeps every multiply-add as a separate mul.rn +
+            // add.rn (~37% more instructions than nvcc on FFT butterflies). The
+            // only IEEE deviation is the single (more accurate) rounding of the
+            // fused op; no algebraic reassociation.
+            .arg("-fp-contract=fast")
             .arg(ll_path)
             .arg("-o")
             .arg(ptx_path)
@@ -899,6 +974,8 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         let result = std::process::Command::new(llc_cmd)
             .arg("-march=nvptx64")
             .arg(format!("-mcpu={}", llc_target))
+            // See note above: fma contraction to match nvcc's default fmad=true.
+            .arg("-fp-contract=fast")
             .arg(ll_path)
             .arg("-o")
             .arg(ptx_path)

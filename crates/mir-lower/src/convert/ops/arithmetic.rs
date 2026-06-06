@@ -29,7 +29,8 @@
 
 use crate::convert::types::convert_type;
 use llvm_export::attributes::{
-    FCmpPredicateAttr, FastmathFlagsAttr, ICmpPredicateAttr, IntegerOverflowFlagsAttr,
+    FCmpPredicateAttr, FastmathFlags, FastmathFlagsAttr, ICmpPredicateAttr,
+    IntegerOverflowFlagsAttr,
 };
 use llvm_export::op_interfaces::{BinArithOp, CastOpInterface, IntBinArithOpWithOverflowFlag};
 use llvm_export::ops as llvm;
@@ -94,9 +95,18 @@ fn is_signed_int_op(
     }
 }
 
-/// Add fastmath flags attribute to a floating-point operation.
+/// Add fastmath flags to a floating-point operation.
+///
+/// Sets ONLY `contract`, which lets LLVM's NVPTX backend fuse an `fmul`
+/// feeding an `fadd`/`fsub` into a single `fma.rn.f32`. This matches nvcc's
+/// default `--fmad=true`: it is the one fast-math relaxation NVIDIA enables out
+/// of the box, and the only IEEE deviation is the (more accurate) single
+/// rounding of the fused op. Without it cuda-oxide emits a separate `mul.rn` +
+/// `add.rn` for every butterfly, ~37% more instructions than nvcc on the same
+/// kernel. We deliberately do NOT set reassoc/nnan/ninf/nsz/arcp, so results
+/// stay bit-comparable to a contracted reference (no algebraic reordering).
 fn add_fastmath_flags(ctx: &mut Context, op: Ptr<Operation>) {
-    let flags = FastmathFlagsAttr::default();
+    let flags = FastmathFlagsAttr(FastmathFlags::CONTRACT);
     let key: pliron::identifier::Identifier = "llvm_fast_math_flags".try_into().unwrap();
     op.deref_mut(ctx).attributes.0.insert(key, flags.into());
 }
@@ -654,5 +664,83 @@ pub(crate) fn convert_cmp(
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for arithmetic conversion
+    //! Lowering tests for floating-point fast-math flags on arithmetic ops.
+    //!
+    //! `add_fastmath_flags` runs during conversion, so each test builds a
+    //! minimal MIR module, runs the full `lower_mir_to_llvm` pass, and inspects
+    //! the lowered `llvm` op, same pattern as the memory-op tests.
+
+    use super::*;
+    use crate::convert::ops::test_util::*;
+    use dialect_mir::ops as mir;
+    use llvm_export::op_interfaces::FastMathFlags;
+    use pliron::r#type::TypeObj;
+
+    /// A float `mir.mul` lowers to `llvm.fmul` carrying exactly the `contract`
+    /// fast-math flag: enough for the NVPTX backend to fuse a feeding multiply
+    /// into `fma.rn.f32`, with none of the reassoc/nnan/ninf/nsz relaxations
+    /// that would permit broader IEEE drift.
+    #[test]
+    fn convert_mul_float_sets_only_contract_flag() {
+        let mut ctx = make_ctx();
+        let f32_ty: Ptr<TypeObj> = FP32Type::get(&ctx).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![f32_ty, f32_ty], vec![]);
+        let lhs = block.deref(&ctx).get_argument(0);
+        let rhs = block.deref(&ctx).get_argument(1);
+
+        let mul_op = Operation::new(
+            &mut ctx,
+            mir::MirMulOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![lhs, rhs],
+            vec![],
+            0,
+        );
+        mul_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let fmul = find_first::<llvm::FMulOp>(&ctx, &body).expect("expected one llvm.fmul");
+        assert_eq!(
+            fmul.fast_math_flags(&ctx).0,
+            FastmathFlags::CONTRACT,
+            "float mul must carry exactly the contract fast-math flag"
+        );
+    }
+
+    /// The same contraction flag is set on `mir.add` -> `llvm.fadd`, so the
+    /// behavior is not multiply-specific.
+    #[test]
+    fn convert_add_float_sets_only_contract_flag() {
+        let mut ctx = make_ctx();
+        let f32_ty: Ptr<TypeObj> = FP32Type::get(&ctx).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![f32_ty, f32_ty], vec![]);
+        let lhs = block.deref(&ctx).get_argument(0);
+        let rhs = block.deref(&ctx).get_argument(1);
+
+        let add_op = Operation::new(
+            &mut ctx,
+            mir::MirAddOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![lhs, rhs],
+            vec![],
+            0,
+        );
+        add_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let fadd = find_first::<llvm::FAddOp>(&ctx, &body).expect("expected one llvm.fadd");
+        assert_eq!(
+            fadd.fast_math_flags(&ctx).0,
+            FastmathFlags::CONTRACT,
+            "float add must carry exactly the contract fast-math flag"
+        );
+    }
 }
