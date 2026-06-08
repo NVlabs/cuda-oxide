@@ -586,7 +586,32 @@ pub fn generate_device_code<'tcx>(
         // Run the cuda-oxide pipeline!
         // Rust MIR → `dialect-mir` → mem2reg → LLVM dialect → LLVM IR → PTX.
         // Device externs are emitted as `declare` statements in LLVM IR
-        mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config)
+        // Install a TyCtxt-backed array-length const evaluator for the type
+        // translator (stable_mir can't evaluate `Unevaluated` length consts).
+        // The closure borrows `tcx`; we erase its lifetime to store it in a
+        // thread-local and CLEAR it before this `run` scope ends (tcx alive
+        // throughout). Sound because install/use/clear all happen here.
+        {
+            use rustc_public::rustc_internal;
+            let eval = move |tc: &rustc_public::ty::TyConst| -> Option<u64> {
+                let internal: rustc_middle::ty::Const<'_> =
+                    rustc_internal::internal(tcx, tc.clone());
+                let env = rustc_middle::ty::TypingEnv::fully_monomorphized();
+                tcx.normalize_erasing_regions(env, internal)
+                    .try_to_target_usize(tcx)
+            };
+            let boxed: Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + 'static> = unsafe {
+                std::mem::transmute::<
+                    Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + '_>,
+                    Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + 'static>,
+                >(Box::new(eval))
+            };
+            mir_importer::install_array_len_eval(boxed);
+        }
+        let __pipeline_result =
+            mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config);
+        mir_importer::clear_array_len_eval();
+        __pipeline_result
     });
 
     // Handle the result from rustc_internal::run.

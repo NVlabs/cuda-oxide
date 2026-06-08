@@ -475,30 +475,19 @@ pub fn translate_type(
             // Translate the element type
             let elem = translate_type(ctx, &elem_ty)?;
 
-            // Extract the array length from the const
-            let len = match &len_const.kind() {
-                rustc_public::ty::TyConstKind::Value(_, alloc) => {
-                    // The allocation contains the length as bytes
-                    // For usize, it's 8 bytes on 64-bit systems
-                    let bytes = &alloc.bytes;
-                    if bytes.len() >= 8 {
-                        let mut arr = [0u8; 8];
-                        for (i, b) in bytes.iter().take(8).enumerate() {
-                            arr[i] = b.unwrap_or(0);
-                        }
-                        u64::from_le_bytes(arr)
-                    } else {
-                        return input_err_noloc!(TranslationErr::unsupported(
-                            "Array length constant has unexpected size"
-                        ));
-                    }
-                }
-                _ => {
-                    return input_err_noloc!(TranslationErr::unsupported(format!(
-                        "Array length must be a value constant, got: {:?}",
-                        len_const.kind()
-                    )));
-                }
+            // Array length: evaluate the const (handles both already-evaluated
+            // `Value` consts and `Unevaluated` const exprs like
+            // `[T; some_const_fn()]`).
+            let len = match len_const.eval_target_usize() {
+                Ok(n) => n,
+                // stable_mir cannot evaluate an `Unevaluated` length const
+                // (e.g. a `const SUB_LEN` reference) -> use the backend-installed
+                // TyCtxt eval bridge.
+                Err(_) => crate::eval_array_len(&len_const).ok_or_else(|| {
+                    input_error_noloc!(TranslationErr::unsupported(
+                        "Array length const could not be evaluated (no TyCtxt bridge)".to_string()
+                    ))
+                })?,
             };
 
             Ok(dialect_mir::types::MirArrayType::get(ctx, elem, len).into())

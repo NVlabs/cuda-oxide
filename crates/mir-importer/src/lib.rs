@@ -87,3 +87,29 @@ pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DeviceExternAttrs,
     DeviceExternDecl, PipelineConfig, PipelineError, run_pipeline,
 };
+
+// ── Array-length const evaluation bridge ─────────────────────────────────────
+// The type translator must turn `[T; N]` array lengths into concrete values,
+// but stable_mir cannot *evaluate* an `Unevaluated` length const (e.g. a `const
+// SUB_LEN: usize = 2` reference) at the type-translation layer. The codegen
+// backend (which holds `TyCtxt`) installs a lifetime-erased eval callback here
+// for the duration of one `rustc_internal::run` scope, while tcx is alive.
+type ArrayLenEval = Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64>>;
+thread_local! {
+    static ARRAY_LEN_EVAL: std::cell::RefCell<Option<ArrayLenEval>> =
+        const { std::cell::RefCell::new(None) };
+}
+/// Install the array-length eval callback. SAFETY CONTRACT: `f` borrows the
+/// compiler `TyCtxt`; the caller MUST `clear_array_len_eval()` before that tcx
+/// is released (i.e. within the same `rustc_internal::run` scope).
+pub fn install_array_len_eval(f: ArrayLenEval) {
+    ARRAY_LEN_EVAL.with(|c| *c.borrow_mut() = Some(f));
+}
+/// Remove the array-length eval callback.
+pub fn clear_array_len_eval() {
+    ARRAY_LEN_EVAL.with(|c| *c.borrow_mut() = None);
+}
+/// Evaluate an array-length const via the installed callback (if any).
+pub(crate) fn eval_array_len(tc: &rustc_public::ty::TyConst) -> Option<u64> {
+    ARRAY_LEN_EVAL.with(|c| c.borrow().as_ref().and_then(|f| f(tc)))
+}
