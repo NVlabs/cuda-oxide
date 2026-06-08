@@ -607,6 +607,139 @@ pub fn translate_statement(
 
                         Ok(Some(store_op))
                     }
+                    (mir::ProjectionElem::Deref, mir::ProjectionElem::Index(_))
+                    | (
+                        mir::ProjectionElem::Deref,
+                        mir::ProjectionElem::ConstantIndex { from_end: false, .. },
+                    ) => {
+                        // `(*buf)[i] = value` for a slice ref `&mut [T]` or an
+                        // array ref `&mut [T; N]`, with a runtime (`Index`) or
+                        // compile-time (`ConstantIndex`) index. khal_std
+                        // `write(i, v)` inlines to `&mut (*buf)[i]`.
+                        use dialect_mir::ops::{MirExtractFieldOp, MirPtrOffsetOp};
+
+                        let mut current_prev = prev_op;
+                        if let Some(rvalue_op) = rvalue_op_opt {
+                            if let Some(prev) = last_inserted {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else if let Some(prev) = prev_op {
+                                rvalue_op.insert_after(ctx, prev);
+                                current_prev = Some(rvalue_op);
+                            } else {
+                                rvalue_op.insert_at_front(block_ptr, ctx);
+                                current_prev = Some(rvalue_op);
+                            }
+                        } else if let Some(prev) = last_inserted {
+                            current_prev = Some(prev);
+                        }
+
+                        // Translate the base local to the slice fat-pointer value.
+                        let base_place = mir::Place {
+                            local: place.local,
+                            projection: vec![],
+                        };
+                        let (slice_val, prev_after_base) = rvalue::translate_place(
+                            ctx,
+                            body,
+                            &base_place,
+                            value_map,
+                            block_ptr,
+                            current_prev,
+                            loc.clone(),
+                        )?;
+                        current_prev = prev_after_base.or(current_prev);
+
+                        // Element type from the slice type.
+                        let slice_ty = slice_val.get_type(ctx);
+                        let element_ty_opt = slice_ty
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirSliceType>()
+                            .map(|s| s.element_type());
+                        let Some(element_ty) = element_ty_opt else {
+                            // Not a slice fat pointer -> an array reference
+                            // `&mut [T; N]` (e.g. shared-memory workspace). The
+                            // base is a pointer-to-array; index it directly.
+                            let (index_value, prev_after_index) = emit_index_operand(
+                                ctx, body, &place.projection[1], value_map, block_ptr, current_prev, loc.clone(),
+                            )?;
+                            current_prev = prev_after_index.or(current_prev);
+                            let (arr_elem_ty, addr_space) =
+                                slot_array_element_ty(ctx, slice_val, &loc)?;
+                            let store_op = emit_array_element_store(
+                                ctx, slice_val, index_value, result_value, arr_elem_ty,
+                                addr_space, block_ptr, current_prev, loc,
+                            );
+                            return Ok(Some(store_op));
+                        };
+                        let elem_ptr_ty =
+                            dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, true)
+                                .into();
+
+                        // data_ptr = slice.field0
+                        let extract_op = Operation::new(
+                            ctx,
+                            MirExtractFieldOp::get_concrete_op_info(),
+                            vec![elem_ptr_ty],
+                            vec![slice_val],
+                            vec![],
+                            0,
+                        );
+                        extract_op.deref_mut(ctx).set_loc(loc.clone());
+                        let extract = MirExtractFieldOp::new(extract_op);
+                        extract.set_attr_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(0),
+                        );
+                        if let Some(prev) = current_prev {
+                            extract.get_operation().insert_after(ctx, prev);
+                        } else {
+                            extract.get_operation().insert_at_front(block_ptr, ctx);
+                        }
+                        current_prev = Some(extract.get_operation());
+                        let data_ptr = extract.get_operation().deref(ctx).get_result(0);
+
+                        // index value (Index local or ConstantIndex)
+                        let (index_value, prev_after_index) = emit_index_operand(
+                            ctx, body, &place.projection[1], value_map, block_ptr, current_prev, loc.clone(),
+                        )?;
+                        current_prev = prev_after_index.or(current_prev);
+
+                        // elem_ptr = data_ptr + index
+                        let offset_op = Operation::new(
+                            ctx,
+                            MirPtrOffsetOp::get_concrete_op_info(),
+                            vec![elem_ptr_ty],
+                            vec![data_ptr, index_value],
+                            vec![],
+                            0,
+                        );
+                        offset_op.deref_mut(ctx).set_loc(loc.clone());
+                        if let Some(prev) = current_prev {
+                            offset_op.insert_after(ctx, prev);
+                        } else {
+                            offset_op.insert_at_front(block_ptr, ctx);
+                        }
+                        current_prev = Some(offset_op);
+                        let elem_ptr = offset_op.deref(ctx).get_result(0);
+
+                        // store value
+                        let store_op = Operation::new(
+                            ctx,
+                            MirStoreOp::get_concrete_op_info(),
+                            vec![],
+                            vec![elem_ptr, result_value],
+                            vec![],
+                            0,
+                        );
+                        store_op.deref_mut(ctx).set_loc(loc);
+                        if let Some(prev) = current_prev {
+                            store_op.insert_after(ctx, prev);
+                        } else {
+                            store_op.insert_at_front(block_ptr, ctx);
+                        }
+                        Ok(Some(store_op))
+                    }
                     _ => input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
@@ -616,13 +749,91 @@ pub fn translate_statement(
                     ),
                 }
             } else {
-                input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "Complex places ({} projections) not yet implemented",
-                        place.projection.len()
-                    ))
-                )
+                // General N-level place store for a leading `Deref` followed by
+                // a chain of `Field` projections, e.g. `(*self).0.0 = value`
+                // (produced by iterator `next()` mutating nested struct state).
+                let supported = place.projection.iter().all(|p| matches!(
+                    p,
+                    mir::ProjectionElem::Deref
+                        | mir::ProjectionElem::Field(_, _)
+                        | mir::ProjectionElem::Index(_)
+                        | mir::ProjectionElem::ConstantIndex { from_end: false, .. }
+                ));
+
+                if !supported {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Complex places ({} projections) not yet implemented",
+                            place.projection.len()
+                        ))
+                    );
+                }
+
+                let mut current_prev = prev_op;
+                if let Some(rvalue_op) = rvalue_op_opt {
+                    if let Some(prev) = last_inserted {
+                        rvalue_op.insert_after(ctx, prev);
+                        current_prev = Some(rvalue_op);
+                    } else if let Some(prev) = prev_op {
+                        rvalue_op.insert_after(ctx, prev);
+                        current_prev = Some(rvalue_op);
+                    } else {
+                        rvalue_op.insert_at_front(block_ptr, ctx);
+                        current_prev = Some(rvalue_op);
+                    }
+                } else if let Some(prev) = last_inserted {
+                    current_prev = Some(prev);
+                }
+
+                // Compute the target address with the shared, slice-aware place
+                // folder (handles arbitrary `[Field, Deref, Index, ...]` chains,
+                // including derefs through `&mut [T]` slice fields as used by
+                // `SliceMut`). This keeps store addresses identical to the
+                // Ref/AddressOf paths and, crucially, GLOBAL (not a stack copy).
+                let slot = match value_map.get_slot(place.local) {
+                    Some(s) => s,
+                    None => {
+                        return input_err!(loc, TranslationErr::unsupported(format!(
+                            "Complex place: local {:?} has no slot", place.local)));
+                    }
+                };
+                let (cur_ptr, fold_prev) = match rvalue::translate_place_addr_from_slot(
+                    ctx,
+                    body,
+                    value_map,
+                    slot,
+                    &place.projection,
+                    true,
+                    block_ptr,
+                    current_prev,
+                    loc.clone(),
+                )? {
+                    Some((p, pp)) => (p, pp),
+                    None => {
+                        return input_err!(loc, TranslationErr::unsupported(format!(
+                            "Complex store place ({} projections) not lowerable to an address",
+                            place.projection.len()
+                        )));
+                    }
+                };
+                current_prev = fold_prev.or(current_prev);
+
+                let store_op = Operation::new(
+                    ctx,
+                    MirStoreOp::get_concrete_op_info(),
+                    vec![],
+                    vec![cur_ptr, result_value],
+                    vec![],
+                    0,
+                );
+                store_op.deref_mut(ctx).set_loc(loc);
+                if let Some(prev) = current_prev {
+                    store_op.insert_after(ctx, prev);
+                } else {
+                    store_op.insert_at_front(block_ptr, ctx);
+                }
+                Ok(Some(store_op))
             }
         }
         mir::StatementKind::StorageLive(_local) => {
@@ -712,6 +923,43 @@ pub fn translate_statement(
 /// error when the pointer's pointee isn't a [`MirArrayType`], which signals
 /// a structural mismatch (most likely the wrong MIR projection reaching
 /// this path).
+/// Produce the index Value for a slice/array `Index` or `ConstantIndex`
+/// projection element (used by Deref->Index/ConstantIndex stores and refs).
+fn emit_index_operand(
+    ctx: &mut Context,
+    body: &mir::Body,
+    proj: &mir::ProjectionElem,
+    value_map: &mut ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(pliron::value::Value, Option<Ptr<Operation>>)> {
+    match proj {
+        mir::ProjectionElem::Index(index_local) => {
+            let index_place = mir::Place { local: *index_local, projection: vec![] };
+            rvalue::translate_place(ctx, body, &index_place, value_map, block_ptr, prev_op, loc)
+        }
+        mir::ProjectionElem::ConstantIndex { offset, from_end: false, .. } => {
+            use dialect_mir::ops::MirConstantOp;
+            use pliron::builtin::attributes::IntegerAttr;
+            let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
+            let apint = APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
+            let const_op = Operation::new(
+                ctx, MirConstantOp::get_concrete_op_info(), vec![i64_ty.into()], vec![], vec![], 0,
+            );
+            const_op.deref_mut(ctx).set_loc(loc.clone());
+            MirConstantOp::new(const_op).set_attr_value(ctx, IntegerAttr::new(i64_ty, apint));
+            match prev_op {
+                Some(prev) => const_op.insert_after(ctx, prev),
+                None => const_op.insert_at_front(block_ptr, ctx),
+            }
+            Ok((const_op.deref(ctx).get_result(0), Some(const_op)))
+        }
+        _ => input_err!(loc, TranslationErr::unsupported(
+            "emit_index_operand: unsupported index projection".to_string())),
+    }
+}
+
 fn slot_array_element_ty(
     ctx: &pliron::context::Context,
     arr_ptr: Value,
