@@ -1011,3 +1011,61 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// cp.async copy intrinsic lowering tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cp_async_cg_16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into()]);
+
+    let shared_dst = entry.deref(&ctx).get_argument(0);
+    let global_src = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCg16Op::get_concrete_op_info(),
+        vec![],
+        vec![shared_dst, global_src],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.cg.shared.global")
+}
+
+#[test]
+fn test_cp_async_ca_16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into()]);
+
+    let shared_dst = entry.deref(&ctx).get_argument(0);
+    let global_src = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCa16Op::get_concrete_op_info(),
+        vec![],
+        vec![shared_dst, global_src],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+}
