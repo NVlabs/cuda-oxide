@@ -17,7 +17,7 @@
 //! | `LdmatrixX2Trans`    | `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16` |
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::types as llvm_types;
+use llvm_export::types as llvm_types;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::rewriter::Rewriter;
