@@ -158,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "dialect-mir"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "linkme",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "dialect-nvvm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "dyn-clone",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "llvm-export"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bitflags",
  "combine",
@@ -298,7 +298,7 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "mir-importer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "dialect-mir",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "mir-lower"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "dialect-mir",
@@ -346,7 +346,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
 name = "oxide-artifacts"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "object",
 ]
@@ -453,7 +453,7 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "reserved-oxide-symbols"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "rustc-hash"
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "rustc_codegen_cuda"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "dialect-mir",

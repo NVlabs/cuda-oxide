@@ -188,7 +188,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cargo-oxide"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "cuda-core",
@@ -312,7 +312,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "cuda-async"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -323,14 +323,14 @@ dependencies = [
 
 [[package]]
 name = "cuda-bindings"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bindgen",
 ]
 
 [[package]]
 name = "cuda-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-device"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cuda-macros",
  "trybuild",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-host"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cuda-async",
  "cuda-core",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "dialect-mir"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "linkme",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "dialect-nvvm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "dyn-clone",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "fuzzer"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "glob"
@@ -637,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "libnvvm-sys"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "llvm-export"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bitflags",
  "combine",
@@ -701,7 +701,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "mir-importer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "dialect-mir",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "mir-lower"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "dialect-mir",
@@ -741,7 +741,7 @@ dependencies = [
 
 [[package]]
 name = "nvjitlink-sys"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -773,7 +773,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oxide-artifacts"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "object",
 ]
@@ -896,7 +896,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reserved-oxide-symbols"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "rustc-hash"
