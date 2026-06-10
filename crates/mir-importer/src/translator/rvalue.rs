@@ -3340,7 +3340,21 @@ pub fn translate_place_iterative(
             }
         };
 
-    // Track the current Rust type for enum projections
+    // Track the Rust type of `current_value` alongside the pliron value.
+    // Each iteration below advances it through rustc_public's own projection
+    // typing (`ProjectionElem::ty`) AFTER the arm has processed the element,
+    // so every arm observes the type *before* its own projection applies and
+    // the next iteration sees the narrowed type. `Downcast` deliberately
+    // leaves the type unchanged (still the enum ADT), which is exactly what
+    // `apply_enum_field_projection` expects when the following `Field` fires.
+    //
+    // This single fold is the only place `current_rust_ty` is updated;
+    // individual arms must not update it themselves. Per-arm updates were
+    // the cause of issue #131: only `Field` advanced the type, so chains
+    // like `[Index, Downcast, Field]` (from `match xs[i]` over an array of
+    // enums) handed the stale Array type to the Downcast/Field handler,
+    // which bailed with "Downcast on non-ADT type: Array". The same
+    // staleness affected `Deref` and `ConstantIndex`.
     let mut current_rust_ty = body.locals()[local].ty;
 
     // Track pending downcast (Downcast is a no-op, but we need variant info for Field on enums)
@@ -3388,7 +3402,6 @@ pub fn translate_place_iterative(
                         loc.clone(),
                     )?;
                 }
-                current_rust_ty = *field_ty;
             }
 
             ProjectionElem::Downcast(variant_idx) => {
@@ -3699,6 +3712,21 @@ pub fn translate_place_iterative(
                 );
             }
         }
+
+        // Advance the running Rust type with rustc_public's own projection
+        // typing (single source of truth; see the comment on
+        // `current_rust_ty` above). For well-formed MIR this never fails;
+        // if it does, surface the projection element and the type it was
+        // applied to so the bail-out is actionable.
+        current_rust_ty = projection.ty(current_rust_ty).map_err(|e| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Failed to type projection {:?} applied to {:?}: {:?}",
+                    projection, current_rust_ty, e
+                ))
+            )
+        })?;
     }
 
     Ok((current_value, current_prev_op))
