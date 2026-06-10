@@ -70,11 +70,14 @@
 //! Rust enums are represented as structs with discriminant + payload:
 //!
 //! ```text
-//! MIR: MirEnumType { discriminant: i8, variants: [A(), B(i32)] }
+//! MIR: MirEnumType { discriminant: i8, discriminants: [0, 1], variants: [A(), B(i32)] }
 //! LLVM: struct { i8, i32 }  ; discriminant + max payload size
 //! ```
 //!
 //! All variant payloads are included in the struct, sized for the largest.
+//! The discriminant type is rustc's layout-truth tag (width and
+//! signedness), and the tag slot stores the variant's DECLARED
+//! discriminant value from `discriminants`, not its variant index.
 //!
 //! # Function Type Conversion
 //!

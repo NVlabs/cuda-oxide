@@ -24,6 +24,14 @@
 //!
 //! Enums are represented as `{ discriminant, field0, field1, ... }` structs where
 //! fields from all variants are flattened into a single struct.
+//!
+//! The discriminant slot (field 0) holds the variant's DECLARED
+//! discriminant value, not its variant index. For `core::cmp::Ordering`
+//! that means `Less` stores -1 (i8 bit pattern 255), `Equal` 0,
+//! `Greater` 1; a variant-index tag would make `Less` match the `Equal`
+//! arm (issue #146). The value-to-store comes from
+//! `MirEnumType::variant_discriminants`, which the importer fills from
+//! `rustc`'s `discriminant_for_variant`.
 
 use crate::convert::types::{convert_type, is_zero_sized_type};
 use dialect_mir::ops::{
@@ -655,7 +663,10 @@ pub(crate) fn convert_construct_enum(
 /// Convert `mir.get_discriminant` to `llvm.extractvalue`.
 ///
 /// Extracts the discriminant (tag) from an enum value. The discriminant
-/// is always at index 0 in the LLVM struct representation.
+/// is always at index 0 in the LLVM struct representation, and it holds
+/// the variant's DECLARED discriminant value (what `construct_enum`
+/// stored), so downstream `SwitchInt` comparisons match against
+/// discriminant values, never variant indices.
 pub(crate) fn convert_get_discriminant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,

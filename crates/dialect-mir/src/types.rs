@@ -564,7 +564,10 @@ impl EnumVariant {
 /// Represents Rust enums like `Option<T>`, `Result<T,E>`, and custom enums.
 ///
 /// Memory layout follows Rust's enum representation:
-/// - Discriminant (integer type based on variant count)
+/// - Discriminant tag (rustc's layout-truth integer type for Direct-tag
+///   enums; a synthetic unsigned variant-count tag otherwise). The tag
+///   holds the variant's DECLARED discriminant value, never its variant
+///   index.
 /// - Payload (union of all variant payloads, sized to largest)
 ///
 /// Note: For simplicity, we store variant info in flattened vectors
