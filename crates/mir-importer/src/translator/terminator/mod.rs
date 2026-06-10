@@ -505,9 +505,23 @@ fn translate_switch(
                     (64, Signedness::Unsigned) // Default to 64-bit unsigned if we can't determine
                 };
 
-            // Create constant for val with SAME type as discriminant
+            // Create constant for val with SAME type as discriminant.
+            // SwitchInt values are u128 bit patterns at the discriminant's
+            // width; the dialect stores tags as u64 (same limit as
+            // MirEnumType::variant_discriminants in types.rs), so values
+            // that need more than 64 bits must fail loudly instead of
+            // silently truncating.
+            let switch_val = u64::try_from(val).map_err(|_| {
+                input_error!(
+                    loc.clone(),
+                    TranslationErr::unsupported(format!(
+                        "SwitchInt value {} does not fit in 64 bits",
+                        val
+                    ))
+                )
+            })?;
             let width_nz = NonZeroUsize::new(width).unwrap();
-            let apint = APInt::from_u64(val as u64, width_nz);
+            let apint = APInt::from_u64(switch_val, width_nz);
             let int_attr = pliron::builtin::attributes::IntegerAttr::new(
                 IntegerType::get(ctx, width as u32, signedness),
                 apint,
@@ -633,9 +647,21 @@ fn translate_switch(
             block_map[otherwise_idx]
         };
 
-        // Create constant for comparison with SAME type as discriminant
+        // Create constant for comparison with SAME type as discriminant.
+        // Same checked u128 -> u64 narrowing as the single-branch path
+        // above: a silently truncated switch value would compare against
+        // the wrong arm.
+        let switch_val = u64::try_from(*val).map_err(|_| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "SwitchInt value {} does not fit in 64 bits",
+                    val
+                ))
+            )
+        })?;
         let width_nz = NonZeroUsize::new(width).unwrap();
-        let apint = APInt::from_u64(*val as u64, width_nz);
+        let apint = APInt::from_u64(switch_val, width_nz);
         let int_attr = pliron::builtin::attributes::IntegerAttr::new(
             IntegerType::get(ctx, width as u32, signedness),
             apint,

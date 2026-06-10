@@ -24,6 +24,14 @@
 //!
 //! Enums are represented as `{ discriminant, field0, field1, ... }` structs where
 //! fields from all variants are flattened into a single struct.
+//!
+//! The discriminant slot (field 0) holds the variant's DECLARED
+//! discriminant value, not its variant index. For `core::cmp::Ordering`
+//! that means `Less` stores -1 (i8 bit pattern 255), `Equal` 0,
+//! `Greater` 1; a variant-index tag would make `Less` match the `Equal`
+//! arm (issue #146). The value-to-store comes from
+//! `MirEnumType::variant_discriminants`, which the importer fills from
+//! `rustc`'s `discriminant_for_variant`.
 
 use crate::convert::types::{
     StructLayoutInfo, StructSlotMap, build_struct_slot_map, convert_type, make_slice_struct,
@@ -514,10 +522,13 @@ pub(crate) fn convert_construct_enum(
         (result_ty, operands, variant_index)
     };
 
-    let variant_field_counts: Vec<u32> = {
+    let (variant_discriminants, variant_field_counts): (Vec<u64>, Vec<u32>) = {
         let ty_ref = result_ty.deref(ctx);
         match ty_ref.downcast_ref::<MirEnumType>() {
-            Some(e) => e.variant_field_counts.clone(),
+            Some(e) => (
+                e.variant_discriminants.clone(),
+                e.variant_field_counts.clone(),
+            ),
             None => {
                 return pliron::input_err_noloc!(
                     "MirConstructEnumOp result type must be MirEnumType"
@@ -548,13 +559,37 @@ pub(crate) fn convert_construct_enum(
     rewriter.insert_operation(ctx, undef_op.get_operation());
     let mut current_struct = undef_op.get_operation().deref(ctx).get_result(0);
 
-    let discr_width = llvm_discriminant_ty
+    // The tag width comes from the enum's discriminant type; assuming a
+    // width (the old `unwrap_or(8)`) would silently store a wrong-sized
+    // tag for any enum whose discriminant is not an integer type.
+    let discr_width = match llvm_discriminant_ty
         .deref(ctx)
         .downcast_ref::<IntegerType>()
         .map(|t| t.width())
-        .unwrap_or(8);
+    {
+        Some(w) => w,
+        None => {
+            return pliron::input_err_noloc!(
+                "MirConstructEnumOp discriminant type must be an integer type"
+            );
+        }
+    };
+    // The stored tag is the variant's declared discriminant VALUE (not the
+    // variant index). A variant index without a discriminant entry means
+    // the MirEnumType is malformed; falling back to the index would
+    // silently resurrect the issue #146 miscompile.
+    let discr_value = match variant_discriminants.get(variant_index).copied() {
+        Some(v) => v,
+        None => {
+            return pliron::input_err_noloc!(
+                "MirConstructEnumOp variant index {} has no discriminant ({} discriminants recorded)",
+                variant_index,
+                variant_discriminants.len()
+            );
+        }
+    };
     let discr_apint = APInt::from_u64(
-        variant_index as u64,
+        discr_value,
         NonZeroUsize::new(discr_width as usize).unwrap(),
     );
     let llvm_discr_ty = IntegerType::get(ctx, discr_width, Signedness::Signless);
@@ -591,7 +626,10 @@ pub(crate) fn convert_construct_enum(
 /// Convert `mir.get_discriminant` to `llvm.extractvalue`.
 ///
 /// Extracts the discriminant (tag) from an enum value. The discriminant
-/// is always at index 0 in the LLVM struct representation.
+/// is always at index 0 in the LLVM struct representation, and it holds
+/// the variant's DECLARED discriminant value (what `construct_enum`
+/// stored), so downstream `SwitchInt` comparisons match against
+/// discriminant values, never variant indices.
 pub(crate) fn convert_get_discriminant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,

@@ -566,11 +566,14 @@ impl EnumVariant {
 /// Lowered as a `{tag, variant fields...}` struct:
 /// - Discriminant tag sourced from rustc's layout (width AND signedness of
 ///   the tag scalar for Direct-tag enums; a variant-count fallback for the
-///   niched / single-variant models, which are deliberately un-niched)
+///   niched / single-variant models, which are deliberately un-niched).
+///   The tag holds the variant's DECLARED discriminant value, never its
+///   variant index.
 /// - All variants' payload fields concatenated in declaration order (NOT
 ///   overlapped like Rust's real layout). mir-lower uses `total_size` to pad
-///   the struct to rustc's size, or to reject memory traversal loudly when
-///   concatenation makes the struct larger than the Rust object.
+///   the struct to rustc's size, or to reject such enums loudly at the
+///   kernel ABI boundary when concatenation makes the struct larger than
+///   the Rust object (device-local use stays self-consistent and allowed).
 ///
 /// Note: For simplicity, we store variant info in flattened vectors
 /// since the `#[format_type]` macro has trouble with nested structs.
@@ -580,7 +583,7 @@ impl EnumVariant {
 /// * Discriminant type must be an integer type.
 #[pliron_type(
     name = "mir.enum",
-    format = "`<` $name `,` $discriminant_ty `,` `[` vec($variant_names, CharSpace(`,`)) `]` `,` `[` vec($variant_field_counts, CharSpace(`,`)) `]` `,` `[` vec($all_field_types, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `>`"
+    format = "`<` $name `,` $discriminant_ty `,` `[` vec($variant_names, CharSpace(`,`)) `]` `,` `[` vec($variant_discriminants, CharSpace(`,`)) `]` `,` `[` vec($variant_field_counts, CharSpace(`,`)) `]` `,` `[` vec($all_field_types, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `>`"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirEnumType {
@@ -593,6 +596,10 @@ pub struct MirEnumType {
     pub discriminant_ty: Ptr<TypeObj>,
     /// Variant names in order
     pub variant_names: Vec<String>,
+    /// Declared discriminant VALUES in variant order, as the unsigned bit
+    /// pattern at tag width (e.g. `Ordering::Less` = -1 is stored as 255
+    /// for an i8 tag). These are values, not variant indices.
+    pub variant_discriminants: Vec<u64>,
     /// Number of fields for each variant (parallel to variant_names)
     pub variant_field_counts: Vec<u32>,
     /// All field types concatenated (use variant_field_counts to split)
@@ -610,26 +617,35 @@ pub struct MirEnumType {
 }
 
 impl MirEnumType {
-    /// Create a new enum type from EnumVariant definitions, without
-    /// rustc layout information (size/align unknown).
+    /// Create a new enum type from EnumVariant definitions.
+    ///
+    /// Size and alignment are left 0 ("unknown"); use
+    /// [`Self::get_with_layout`] when rustc layout information is available.
     pub fn get(
         ctx: &mut Context,
         name: String,
         discriminant_ty: Ptr<TypeObj>,
+        variant_discriminants: Vec<u64>,
         variants: Vec<EnumVariant>,
     ) -> TypePtr<Self> {
-        Self::get_with_layout(ctx, name, discriminant_ty, variants, 0, 0)
+        Self::get_with_layout(
+            ctx,
+            name,
+            discriminant_ty,
+            variant_discriminants,
+            variants,
+            0,
+            0,
+        )
     }
 
-    /// Create a new enum type with rustc layout information.
-    ///
-    /// # Arguments
-    /// * `total_size` - Total enum size in bytes from rustc layout (0 = unknown)
-    /// * `abi_align` - ABI alignment in bytes (0 = unknown)
+    /// Create a new enum type from EnumVariant definitions plus rustc layout
+    /// information (total size and ABI alignment in bytes; 0 = unknown).
     pub fn get_with_layout(
         ctx: &mut Context,
         name: String,
         discriminant_ty: Ptr<TypeObj>,
+        variant_discriminants: Vec<u64>,
         variants: Vec<EnumVariant>,
         total_size: u64,
         abi_align: u64,
@@ -650,6 +666,7 @@ impl MirEnumType {
                 name,
                 discriminant_ty,
                 variant_names,
+                variant_discriminants,
                 variant_field_counts,
                 all_field_types,
                 total_size,
@@ -735,6 +752,18 @@ impl Verify for MirEnumType {
             return verify_err!(
                 Location::Unknown,
                 "MirEnumType must have at least one variant"
+            );
+        }
+        if self.variant_names.len() != self.variant_discriminants.len() {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType variant discriminant count must match variant count"
+            );
+        }
+        if self.variant_names.len() != self.variant_field_counts.len() {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType variant field count must match variant count"
             );
         }
         Ok(())

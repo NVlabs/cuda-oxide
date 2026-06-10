@@ -71,13 +71,16 @@
 //! then every variant's payload fields concatenated in declaration order:
 //!
 //! ```text
-//! MIR: MirEnumType { discriminant: i8, variants: [A(), B(i32)] }
+//! MIR: MirEnumType { discriminant: i8, discriminants: [0, 1], variants: [A(), B(i32)] }
 //! LLVM: struct { i8, i32 }  ; tag + concatenated variant fields
 //! ```
 //!
+//! The discriminant type is rustc's layout-truth tag (width and
+//! signedness), and the tag slot stores the variant's DECLARED
+//! discriminant value from `discriminants`, not its variant index.
 //! When rustc's total size is known (Direct-tag enums), the struct is padded
 //! with a trailing `[N x i8]` to match it; multi-payload enums whose
-//! concatenation exceeds rustc's size are rejected at memory-traversal sites.
+//! concatenation exceeds rustc's size are rejected at the kernel ABI boundary.
 //! See `convert_enum_to_llvm` in this module.
 //!
 //! # Function Type Conversion
@@ -660,10 +663,12 @@ pub(crate) fn natural_struct_layout(ctx: &Context, fields: &[Ptr<TypeObj>]) -> (
 ///   but concatenate in this model, e.g. `#[repr(u32)] enum E { A(u32),
 ///   B(u32) }` is 8 bytes in Rust vs 12 structural): padding is impossible,
 ///   so the concatenated struct is returned as-is. It stays self-consistent
-///   for in-kernel SSA construct + match, but payload field OFFSETS remain
-///   the concatenated model, NOT Rust's overlapped layout. Memory traversal
-///   of such enums is rejected loudly instead of mis-striding; see
-///   [`enum_memory_divergence`].
+///   for ALL device-local use (construct, match, allocas, loads/stores and
+///   GEPs over device-written memory), but payload field OFFSETS remain the
+///   concatenated model, NOT Rust's overlapped layout. Such enums are
+///   therefore rejected at the kernel ABI boundary, where the host side is
+///   laid out with rustc's real layout; see [`enum_memory_divergence`] and
+///   [`find_divergent_enum_in_abi`].
 pub(crate) fn convert_enum_to_llvm(
     ctx: &mut Context,
     ty: Ptr<TypeObj>,
@@ -738,6 +743,66 @@ pub(crate) fn enum_memory_divergence(
     let (_end, size, _align) = natural_struct_layout(ctx, &llvm_fields);
 
     Ok((size > total_size).then_some(name))
+}
+
+/// Find a layout-divergent enum reachable from `ty` through the kernel ABI.
+///
+/// Walks the pre-conversion MIR type tree: pointer pointees, slice and
+/// array elements, struct/tuple fields, and enum payload fields. Returns
+/// the first divergent enum's name (see [`enum_memory_divergence`]), or
+/// `None` when the whole tree is memory-faithful.
+///
+/// Used only for KERNEL signatures: a kernel parameter is laid out by the
+/// host with rustc's real layout (by value via `cuLaunchKernel`, or behind
+/// pointers/slices into `DeviceBuffer` memory), so a divergent enum there
+/// means host and device disagree on stride and field offsets. Device-local
+/// use of the same enum (locals, construct, match, loads/stores of allocas)
+/// is self-consistent because every access uses the same lowered struct
+/// type, and is deliberately NOT rejected.
+///
+/// `visited` breaks cycles through recursive types (`Ptr<TypeObj>` is
+/// interned, so equality is identity).
+pub(crate) fn find_divergent_enum_in_abi(
+    ctx: &mut Context,
+    ty: Ptr<TypeObj>,
+    visited: &mut Vec<Ptr<TypeObj>>,
+) -> Result<Option<String>, anyhow::Error> {
+    if visited.contains(&ty) {
+        return Ok(None);
+    }
+    visited.push(ty);
+
+    if let Some(name) = enum_memory_divergence(ctx, ty)? {
+        return Ok(Some(name));
+    }
+
+    let children: Vec<Ptr<TypeObj>> = {
+        let ty_ref = ty.deref(ctx);
+        if let Some(p) = ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
+            vec![p.pointee]
+        } else if let Some(s) = ty_ref.downcast_ref::<MirSliceType>() {
+            vec![s.element_ty]
+        } else if let Some(s) = ty_ref.downcast_ref::<MirDisjointSliceType>() {
+            vec![s.element_ty]
+        } else if let Some(a) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+            vec![a.element_ty]
+        } else if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
+            s.field_types.clone()
+        } else if let Some(t) = ty_ref.downcast_ref::<MirTupleType>() {
+            t.get_types().to_vec()
+        } else if let Some(e) = ty_ref.downcast_ref::<MirEnumType>() {
+            e.all_field_types.clone()
+        } else {
+            vec![]
+        }
+    };
+
+    for child in children {
+        if let Some(name) = find_divergent_enum_in_abi(ctx, child, visited)? {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
 }
 
 /// Get the size of an LLVM type in bytes (approximate).
@@ -977,6 +1042,7 @@ mod tests {
             &mut ctx,
             "Layout".into(),
             discr,
+            vec![0, 1, 2],
             vec![
                 EnumVariant::unit("Aos".into()),
                 EnumVariant::unit("Soa".into()),

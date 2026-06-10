@@ -38,6 +38,7 @@ use pliron::context::{Context, Ptr};
 use pliron::r#type::TypeObj;
 use pliron::{input_err_noloc, input_error_noloc};
 use rustc_public::CrateDef;
+use rustc_public_bridge::IndexedVal;
 
 // Re-export types from dialect_mir for convenience
 pub use dialect_mir::types::{
@@ -645,6 +646,23 @@ pub fn translate_type(
                             }
                         };
 
+                    // Declared discriminant VALUES (not variant indices),
+                    // truncated by rustc to the tag width's unsigned bit
+                    // pattern. They must fit in the u64 the dialect stores;
+                    // 128-bit discriminants would silently alias otherwise.
+                    let mut variant_discriminants = Vec::with_capacity(variants.len());
+                    for idx in 0..variants.len() {
+                        let variant_idx = rustc_public::ty::VariantIdx::to_val(idx);
+                        let discr = adt_def.discriminant_for_variant(variant_idx);
+                        let discr_val = u64::try_from(discr.val).map_err(|_| {
+                            input_error_noloc!(TranslationErr::unsupported(format!(
+                                "Enum discriminant {} for {} variant {} does not fit in 64 bits",
+                                discr.val, enum_name, idx
+                            )))
+                        })?;
+                        variant_discriminants.push(discr_val);
+                    }
+
                     // Translate each variant
                     let mut enum_variants = Vec::with_capacity(variants.len());
                     for variant in variants.iter() {
@@ -664,6 +682,7 @@ pub fn translate_type(
                         ctx,
                         enum_name,
                         discriminant_ty,
+                        variant_discriminants,
                         enum_variants,
                         total_size,
                         abi_align,

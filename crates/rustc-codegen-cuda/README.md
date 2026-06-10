@@ -105,6 +105,7 @@ The `examples/` directory contains standalone kernel crates that exercise differ
 |------------------------------|------------------------------------------------------------|
 | `vecadd`                     | Basic vector addition -- the "hello world" kernel          |
 | `generic`                    | Generic kernels (`scale<T>`)                               |
+| `ord_cmp`                    | Device-side `Ord::cmp` for signed and unsigned integers    |
 | `manual_launch_generic`      | Lower-level generic launch API regression                  |
 | `cuda_module_contract`       | Typed launch ABI argument marshalling                      |
 | `abi_hmm`                    | HMM pointers, struct layout, closures                      |

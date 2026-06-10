@@ -80,6 +80,40 @@ pub fn convert_func(
     let is_kernel = is_kernel_func(ctx, op);
 
     let func_type = mir_func.get_type(ctx);
+
+    // Kernel parameters cross the host/device ABI boundary: the host lays
+    // them out with rustc's real layout (by value via cuLaunchKernel, or
+    // behind pointers/slices into DeviceBuffer memory). A multi-payload
+    // enum whose concatenated lowering model is larger than rustc's layout
+    // would make host and device disagree on stride and field offsets, so
+    // reject it here, at the boundary. Device-local use of the same enum
+    // (locals, construct, match) is self-consistent and stays allowed.
+    if is_kernel {
+        let mir_arg_types = {
+            use pliron::builtin::type_interfaces::FunctionTypeInterface;
+            let ft_ref = func_type.deref(ctx);
+            ft_ref.arg_types().to_vec()
+        };
+        for (i, arg_ty) in mir_arg_types.iter().enumerate() {
+            let mut visited = Vec::new();
+            if let Some(enum_name) =
+                crate::convert::types::find_divergent_enum_in_abi(ctx, *arg_ty, &mut visited)
+                    .map_err(anyhow_to_pliron)?
+            {
+                return pliron::input_err_noloc!(
+                    "kernel `{}` parameter {} carries enum `{}` across the host/device ABI \
+                     boundary, but its multi-payload memory layout is not yet field-faithful \
+                     (variants overlap in Rust but are concatenated in the lowering model), so \
+                     host and device would disagree on its size and field offsets. Device-local \
+                     use of `{}` (locals, construct, match) is unaffected.",
+                    func_name_str,
+                    i,
+                    enum_name,
+                    enum_name
+                );
+            }
+        }
+    }
     let llvm_func_type =
         convert_function_type(ctx, func_type, is_kernel).map_err(anyhow_to_pliron)?;
 

@@ -36,10 +36,10 @@ use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
-    MirCheckedSubOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp, MirDivOp,
-    MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp,
-    MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp, MirShrOp,
-    MirSubOp,
+    MirCheckedSubOp, MirCmpOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
+    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirLeOp, MirLoadOp,
+    MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp,
+    MirShrOp, MirSubOp,
 };
 use dialect_mir::types::MirFP16Type;
 use pliron::basic_block::BasicBlock;
@@ -383,6 +383,37 @@ pub fn translate_rvalue(
                     MirNeOp::get_concrete_op_info(),
                     types::get_bool_type(ctx).to_ptr(),
                 ),
+                // Three-way comparison (`Ord::cmp`) - returns
+                // `core::cmp::Ordering`. rustc's `BinOp::ty` knows the
+                // result type of every binop (including `Cmp`, for which it
+                // returns the `Ordering` enum), so derive it locally from
+                // the operand types instead of threading the assignment
+                // destination type through every translate_rvalue caller.
+                mir::BinOp::Cmp => {
+                    let left_ty = left.ty(body.locals()).map_err(|e| {
+                        pliron::input_error!(
+                            loc.clone(),
+                            TranslationErr::unsupported(format!(
+                                "Failed to resolve BinOp::Cmp lhs type: {:?}",
+                                e
+                            ))
+                        )
+                    })?;
+                    let right_ty = right.ty(body.locals()).map_err(|e| {
+                        pliron::input_error!(
+                            loc.clone(),
+                            TranslationErr::unsupported(format!(
+                                "Failed to resolve BinOp::Cmp rhs type: {:?}",
+                                e
+                            ))
+                        )
+                    })?;
+                    let ordering_ty = bin_op.ty(left_ty, right_ty);
+                    (
+                        MirCmpOp::get_concrete_op_info(),
+                        types::translate_type(ctx, &ordering_ty)?,
+                    )
+                }
 
                 // Pointer offset - ptr.add(n) returns ptr + n * sizeof(element)
                 mir::BinOp::Offset => (
@@ -403,16 +434,6 @@ pub fn translate_rvalue(
                 mir::BinOp::BitAnd => (MirBitAndOp::get_concrete_op_info(), left_val.get_type(ctx)),
                 mir::BinOp::BitOr => (MirBitOrOp::get_concrete_op_info(), left_val.get_type(ctx)),
                 mir::BinOp::BitXor => (MirBitXorOp::get_concrete_op_info(), left_val.get_type(ctx)),
-
-                _ => {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "BinaryOp {:?} not yet implemented",
-                            bin_op
-                        ))
-                    );
-                }
             };
 
             let op = Operation::new(
@@ -5616,8 +5637,38 @@ fn enum_variant_index_from_bytes(
 
             match tag_encoding {
                 rustc_public::abi::TagEncoding::Direct => {
-                    Ok(discriminant_to_variant_index(rust_ty, tag_value as usize)
-                        .unwrap_or(tag_value as usize))
+                    // The tag bytes hold a declared discriminant VALUE
+                    // truncated to the PHYSICAL tag width; the caller wants
+                    // a variant INDEX. `discriminant_for_variant().val` is
+                    // at the declared discriminant type's width (isize for
+                    // default-repr enums), so the comparison must mask both
+                    // sides to the tag width (`Neg::N = -5` is byte 0xFB in
+                    // an i8 tag but 0xFFFF_FFFF_FFFF_FFFB as isize). A tag
+                    // that matches no declared discriminant means we
+                    // misread the constant; falling back to
+                    // "value == index" would silently conflate the two
+                    // semantics (the issue #146 bug class).
+                    let primitive = match tag {
+                        rustc_public::abi::Scalar::Initialized { value, .. }
+                        | rustc_public::abi::Scalar::Union { value } => *value,
+                    };
+                    let scalar_size = primitive.size(&rustc_public::target::MachineInfo::target());
+                    let mask = scalar_size.unsigned_int_max().ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Enum tag width {} exceeds 128 bits",
+                            scalar_size.bits()
+                        )))
+                    })?;
+
+                    discriminant_to_variant_index(rust_ty, tag_value, mask).ok_or_else(|| {
+                        input_error!(
+                            loc.clone(),
+                            TranslationErr::unsupported(format!(
+                                "Enum constant tag value {} matches no declared discriminant",
+                                tag_value
+                            ))
+                        )
+                    })
                 }
                 rustc_public::abi::TagEncoding::Niche {
                     untagged_variant,
@@ -5797,10 +5848,18 @@ fn read_uint_from_bytes(bytes: &[u8]) -> u128 {
 /// - Variant index: position in the enum (0, 1, 2, ...)
 /// - Discriminant: the explicit or implicit value assigned to each variant
 ///
+/// `tag_value` is the raw tag read from memory, i.e. the discriminant
+/// truncated to the PHYSICAL tag width, while `discriminant_for_variant`
+/// reports values at the declared discriminant type's width (isize for
+/// default-repr enums). `mask` is the tag width's unsigned max; both
+/// sides are masked to it so negative discriminants compare correctly
+/// (`-5` is `0xFB` in an i8 tag but `0xFFFF_FFFF_FFFF_FFFB` as isize).
+///
 /// This function iterates through variants to find which one has the given discriminant.
 fn discriminant_to_variant_index(
     rust_ty: &rustc_public::ty::Ty,
-    discriminant_value: usize,
+    tag_value: u128,
+    mask: u128,
 ) -> Option<usize> {
     use rustc_public::ty::{RigidTy, TyKind};
 
@@ -5809,11 +5868,10 @@ fn discriminant_to_variant_index(
             for (idx, _variant_def) in adt_def.variants().iter().enumerate() {
                 let variant_idx = rustc_public::ty::VariantIdx::to_val(idx);
                 let discr = adt_def.discriminant_for_variant(variant_idx);
-                if discr.val as usize == discriminant_value {
+                if discr.val & mask == tag_value & mask {
                     return Some(idx);
                 }
             }
-            // If not found, the discriminant might equal the index (common case)
             None
         }
         _ => None,

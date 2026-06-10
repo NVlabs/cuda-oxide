@@ -231,6 +231,7 @@ compiles a Rust kernel to PTX, launches it on the GPU, and prints
 | `vecadd`             | Vector addition -- canonical first example                               |
 | `host_closure`       | Generic kernels with closures passed from host                           |
 | `generic`            | Generic kernels with monomorphization (`scale<T>`)                       |
+| `ord_cmp`            | Device-side `Ord::cmp` lowering for signed and unsigned integers         |
 | `gemm_sol`           | GEMM SoL: 868 TFLOPS, 58% cublasLt SoL on B200 (148 SMs); 8 kernels      |
 | `tcgen05`            | Blackwell tensor cores (sm_100a): TMEM, MMA, cta_group::2                |
 | `atomics`            | GPU atomics: 6 types x 3 scopes x 5 orderings (20 tests)                 |

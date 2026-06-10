@@ -420,7 +420,7 @@ fn emit_pointer_cast(
         && let Some(niche) = read_niche_info(ctx, op)
         && (src_is_int || src_is_ptr)
     {
-        return emit_scalar_to_niched_enum(ctx, rewriter, val, val_ty, llvm_ty, niche);
+        return emit_scalar_to_niched_enum(ctx, rewriter, op, val, val_ty, llvm_ty, niche);
     }
 
     if src_is_struct && dst_is_ptr {
@@ -582,6 +582,7 @@ fn read_niche_info(
 fn emit_scalar_to_niched_enum(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
     val: pliron::value::Value,
     val_ty: Ptr<pliron::r#type::TypeObj>,
     llvm_ty: Ptr<pliron::r#type::TypeObj>,
@@ -601,6 +602,41 @@ fn emit_scalar_to_niched_enum(
             );
         }
         (s.field_type(0), s.field_type(1))
+    };
+
+    // Field 0 carries ONE tag semantic everywhere: the variant's declared
+    // discriminant VALUE. The niche attribute records variant INDICES, so
+    // map them through the result enum's variant_discriminants before
+    // storing. For Option-likes (discriminants [0, 1]) this is the
+    // identity, but enums with explicit discriminants must not see a raw
+    // index in the tag slot (issue #132 groundwork).
+    let (niche_disc_value, untagged_disc_value) = {
+        let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+        let mir_result_ty_obj = mir_result_ty.deref(ctx);
+        let enum_ty = mir_result_ty_obj
+            .downcast_ref::<dialect_mir::types::MirEnumType>()
+            .ok_or_else(|| {
+                pliron::input_error_noloc!(
+                    "emit_scalar_to_niched_enum: niche-encoded cast result is not a MirEnumType"
+                )
+            })?;
+        let discr_of = |idx: u32| -> Result<u64> {
+            enum_ty
+                .variant_discriminants
+                .get(idx as usize)
+                .copied()
+                .ok_or_else(|| {
+                    pliron::input_error_noloc!(
+                        "emit_scalar_to_niched_enum: variant index {} has no discriminant ({} discriminants recorded)",
+                        idx,
+                        enum_ty.variant_discriminants.len()
+                    )
+                })
+        };
+        (
+            discr_of(niche.niche_variant_idx)?,
+            discr_of(niche.untagged_variant_idx)?,
+        )
     };
 
     // Build a comparison constant in the source's own type. For integer
@@ -628,8 +664,8 @@ fn emit_scalar_to_niched_enum(
     rewriter.insert_operation(ctx, icmp.get_operation());
     let is_niche = icmp.get_operation().deref(ctx).get_result(0);
 
-    let niche_disc = const_int_of(ctx, rewriter, disc_ty, niche.niche_variant_idx as i64)?;
-    let untagged_disc = const_int_of(ctx, rewriter, disc_ty, niche.untagged_variant_idx as i64)?;
+    let niche_disc = const_int_of(ctx, rewriter, disc_ty, niche_disc_value as i64)?;
+    let untagged_disc = const_int_of(ctx, rewriter, disc_ty, untagged_disc_value as i64)?;
     let disc_select = llvm::SelectOp::new(ctx, is_niche, niche_disc, untagged_disc);
     rewriter.insert_operation(ctx, disc_select.get_operation());
     let disc = disc_select.get_operation().deref(ctx).get_result(0);

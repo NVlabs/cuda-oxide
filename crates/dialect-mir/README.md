@@ -17,8 +17,22 @@ The dialect defines seven types that preserve Rust-level semantics:
 | `MirSliceType`        | Fat pointers (`&[T]` = ptr + len)                  | `mir.slice<f32, addrspace: 1>`        |
 | `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access     | `mir.disjoint_slice<f32, ...>`        |
 | `MirStructType`       | Named structs with layout metadata                 | `mir.struct<"Point", [f32, f32]>`     |
-| `MirEnumType`         | Rust enums with discriminant + variant payloads    | `mir.enum<"Option_i32", [...]>`       |
+| `MirEnumType`         | Rust enums with discriminant + variant payloads    | `mir.enum<"Ordering", i8, ...>`       |
 | `MirArrayType`        | Fixed-size arrays                                  | `mir.array<f32, 256>`                 |
+
+`MirEnumType` carries the layout-truth tag type (width and signedness
+from rustc's layout), the variant names, the declared discriminant
+VALUES (not variant indices), per-variant field counts, the flattened
+field types, and total size / ABI alignment in bytes (0 = unknown):
+
+```text
+mir.enum<"Ordering", si8, ["Less", "Equal", "Greater"], [255, 0, 1], [0, 0, 0], [], 1, 1>
+```
+
+`Ordering::Less` is declared as -1, stored as the unsigned i8 bit
+pattern 255. The tag slot of a lowered enum always holds these declared
+values; using variant indices instead made `Ordering::Less` match the
+`Equal` arm (issue #146).
 
 ### Address Spaces
 

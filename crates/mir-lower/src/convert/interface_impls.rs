@@ -25,7 +25,7 @@ use crate::conversion_interface::MirToLlvmConversion;
 
 use dialect_mir::ops::{
     MirAddOp, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirBitAndOp, MirBitOrOp,
-    MirBitXorOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp, MirCheckedSubOp,
+    MirBitXorOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp, MirCheckedSubOp, MirCmpOp,
     MirCondBranchOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
     MirConstructTupleOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractArrayElementOp,
     MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp, MirGetDiscriminantOp,
@@ -343,6 +343,23 @@ impl MirToLlvmConversion for MirGeOp {
             ICmpPredicateAttr::SGE,
             ICmpPredicateAttr::UGE,
             FCmpPredicateAttr::OGE,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MirCmpOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::arithmetic::convert_three_way_cmp(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
         )
     }
 }

@@ -658,6 +658,121 @@ pub(crate) fn convert_cmp(
     Ok(())
 }
 
+pub(crate) fn convert_three_way_cmp(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let (lhs, rhs) = get_binary_operands(op, ctx)?;
+    if is_float_type(ctx, lhs) {
+        // rustc never emits BinOp::Cmp for floats: f32/f64 are not Ord,
+        // and f32::total_cmp lowers to integer bit-twiddling, not Cmp.
+        // An OLT/OGT select chain would also miscompile: NaN compares
+        // false on both predicates and would silently yield Equal.
+        let loc = op.deref(ctx).loc();
+        return pliron::input_err!(
+            loc,
+            "BinOp::Cmp on floats is never emitted by rustc; total-order lowering unimplemented"
+        );
+    }
+    let is_signed = is_signed_int_op(ctx, op, operands_info)?;
+
+    let is_lt = emit_cmp_value(ctx, rewriter, op, lhs, rhs, is_signed, true);
+    let is_gt = emit_cmp_value(ctx, rewriter, op, lhs, rhs, is_signed, false);
+
+    let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let loc = op.deref(ctx).loc();
+    let (discr_ty, variant_discriminants) = {
+        let mir_result_ty_obj = mir_result_ty.deref(ctx);
+        let enum_ty = mir_result_ty_obj
+            .downcast_ref::<dialect_mir::types::MirEnumType>()
+            .ok_or_else(|| pliron::input_error!(loc.clone(), "mir.cmp result must be an enum"))?;
+        (
+            enum_ty.discriminant_ty,
+            enum_ty.variant_discriminants.clone(),
+        )
+    };
+    let llvm_result_ty =
+        convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error!(loc.clone(), "{e}"))?;
+    let llvm_discr_ty =
+        convert_type(ctx, discr_ty).map_err(|e| pliron::input_error!(loc.clone(), "{e}"))?;
+
+    if variant_discriminants.len() != 3 {
+        return pliron::input_err_noloc!("mir.cmp result enum must have three discriminants");
+    }
+
+    let less = emit_discriminant_const(ctx, rewriter, llvm_discr_ty, variant_discriminants[0])?;
+    let equal = emit_discriminant_const(ctx, rewriter, llvm_discr_ty, variant_discriminants[1])?;
+    let greater = emit_discriminant_const(ctx, rewriter, llvm_discr_ty, variant_discriminants[2])?;
+
+    let gt_or_equal = llvm::SelectOp::new(ctx, is_gt, greater, equal).get_operation();
+    rewriter.insert_operation(ctx, gt_or_equal);
+    let gt_or_equal_val = gt_or_equal.deref(ctx).get_result(0);
+
+    let selected = llvm::SelectOp::new(ctx, is_lt, less, gt_or_equal_val).get_operation();
+    rewriter.insert_operation(ctx, selected);
+    let selected_discr = selected.deref(ctx).get_result(0);
+
+    let undef = llvm::UndefOp::new(ctx, llvm_result_ty);
+    rewriter.insert_operation(ctx, undef.get_operation());
+    let enum_value = undef.get_operation().deref(ctx).get_result(0);
+
+    let insert_discr = llvm::InsertValueOp::new(ctx, enum_value, selected_discr, vec![0]);
+    rewriter.insert_operation(ctx, insert_discr.get_operation());
+    rewriter.replace_operation(ctx, op, insert_discr.get_operation());
+    Ok(())
+}
+
+/// Emit one integer comparison leg of the three-way compare.
+///
+/// Float operands are rejected by [`convert_three_way_cmp`] before this
+/// runs, so only integer predicates are needed.
+fn emit_cmp_value(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    lhs: Value,
+    rhs: Value,
+    is_signed: bool,
+    less: bool,
+) -> Value {
+    let pred = match (less, is_signed) {
+        (true, true) => ICmpPredicateAttr::SLT,
+        (true, false) => ICmpPredicateAttr::ULT,
+        (false, true) => ICmpPredicateAttr::SGT,
+        (false, false) => ICmpPredicateAttr::UGT,
+    };
+    let cmp_op = llvm::ICmpOp::new(ctx, pred, lhs, rhs).get_operation();
+    cmp_op.deref_mut(ctx).set_loc(op.deref(ctx).loc());
+    rewriter.insert_operation(ctx, cmp_op);
+    cmp_op.deref(ctx).get_result(0)
+}
+
+fn emit_discriminant_const(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    discr_ty: Ptr<pliron::r#type::TypeObj>,
+    value: u64,
+) -> Result<Value> {
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let width = discr_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .ok_or_else(|| pliron::input_error_noloc!("Ordering discriminant must be integer"))?
+        .width();
+    let signless_ty = IntegerType::get(ctx, width, Signedness::Signless);
+    let attr = IntegerAttr::new(
+        signless_ty,
+        APInt::from_u64(value, NonZeroUsize::new(width as usize).unwrap()),
+    );
+    let const_op = llvm::ConstantOp::new(ctx, attr.into()).get_operation();
+    rewriter.insert_operation(ctx, const_op);
+    Ok(const_op.deref(ctx).get_result(0))
+}
+
 // Conversion coverage for this module lives in the crate's integration
 // tests: `tests/lowering_test.rs::test_cmp_predicate_lowering` locks the
 // comparison predicate table (and empty fastmath flags) end-to-end through
