@@ -29,7 +29,8 @@
 
 use crate::context::{DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
-    convert_function_type, convert_type, is_kernel_func, is_zero_sized_type,
+    StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
+    is_zero_sized_type,
 };
 
 use dialect_mir::ops::MirFuncOp;
@@ -370,7 +371,14 @@ fn reconstruct_slice(
 
 /// Reconstruct a struct value from flattened field values.
 ///
-/// Generates: `undef → insertvalue field0[0] → insertvalue field1[1] → ...`.
+/// `field_vals` carries the flattened args in memory order with ZST fields
+/// skipped (the same walk `convert_function_type` for the callee signature
+/// and `flatten_arguments` at call sites use). Each value is inserted at the LLVM
+/// slot [`build_struct_slot_map`] assigned to its field, so reconstruction
+/// skips `[N x i8]` padding slots instead of inserting into them
+/// (issue #128).
+///
+/// Generates: `undef → insertvalue field[slot] → ...`.
 /// Returns the final reconstructed value and the last inserted operation.
 fn reconstruct_struct(
     ctx: &mut Context,
@@ -379,21 +387,45 @@ fn reconstruct_struct(
     mir_ty: Ptr<TypeObj>,
     field_vals: &[Value],
 ) -> std::result::Result<(Value, Ptr<Operation>), anyhow::Error> {
-    let struct_ty = convert_type(ctx, mir_ty)?;
+    let layout = {
+        let ty_ref = mir_ty.deref(ctx);
+        match ty_ref.downcast_ref::<MirStructType>() {
+            Some(s) => StructLayoutInfo::of_struct(s),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "reconstruct_struct: expected a MirStructType argument"
+                ));
+            }
+        }
+    };
+    let map = build_struct_slot_map(ctx, &layout)?;
 
-    let undef = llvm::UndefOp::new(ctx, struct_ty);
+    let undef = llvm::UndefOp::new(ctx, map.llvm_struct_ty);
     let undef_op = undef.get_operation();
     insert_op_sequentially(undef_op, llvm_block, prev_op, ctx);
     let mut current_struct = undef_op.deref(ctx).get_result(0);
     let mut last_op = undef_op;
 
-    for (field_idx, field_val) in field_vals.iter().enumerate() {
-        let insert_field =
-            llvm::InsertValueOp::new(ctx, current_struct, *field_val, vec![field_idx as u32]);
+    let mut vals = field_vals.iter();
+    for &decl_idx in &layout.mem_to_decl {
+        let Some(slot) = map.decl_to_llvm[decl_idx] else {
+            continue; // ZST field: never flattened into an arg.
+        };
+        let Some(field_val) = vals.next() else {
+            return Err(anyhow::anyhow!(
+                "reconstruct_struct: fewer flattened args than non-ZST struct fields"
+            ));
+        };
+        let insert_field = llvm::InsertValueOp::new(ctx, current_struct, *field_val, vec![slot]);
         let insert_op = insert_field.get_operation();
         insert_op.insert_after(ctx, last_op);
         current_struct = insert_op.deref(ctx).get_result(0);
         last_op = insert_op;
+    }
+    if vals.next().is_some() {
+        return Err(anyhow::anyhow!(
+            "reconstruct_struct: more flattened args than non-ZST struct fields"
+        ));
     }
 
     Ok((current_struct, last_op))

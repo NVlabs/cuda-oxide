@@ -23,8 +23,7 @@ use pliron::derive::type_interface_impl;
 use crate::type_conversion_interface::{ConvertMirTypeFn, MirConvertibleType, MirTypeConversion};
 
 use super::types::{
-    build_struct_with_explicit_padding, convert_enum_to_llvm, convert_type, is_zero_sized_type,
-    make_slice_struct,
+    StructLayoutInfo, build_struct_slot_map, convert_enum_to_llvm, convert_type, make_slice_struct,
 };
 
 // =============================================================================
@@ -85,25 +84,11 @@ impl MirConvertibleType for MirTupleType {}
 impl MirTypeConversion for MirTupleType {
     fn converter(&self) -> ConvertMirTypeFn {
         |ty, ctx| {
-            let fields = {
+            let layout = {
                 let r = ty.deref(ctx);
-                r.downcast_ref::<MirTupleType>()
-                    .unwrap()
-                    .get_types()
-                    .to_vec()
+                StructLayoutInfo::of_tuple(r.downcast_ref::<MirTupleType>().unwrap())
             };
-            if fields.is_empty() {
-                return Ok(llvm_types::StructType::get_unnamed(ctx, vec![]).into());
-            }
-            let llvm_fields: Vec<_> = fields
-                .into_iter()
-                .map(|f| convert_type(ctx, f))
-                .collect::<Result<Vec<_>, _>>()?;
-            let llvm_fields: Vec<_> = llvm_fields
-                .into_iter()
-                .filter(|f| !is_zero_sized_type(ctx, *f))
-                .collect();
-            Ok(llvm_types::StructType::get_unnamed(ctx, llvm_fields).into())
+            Ok(build_struct_slot_map(ctx, &layout)?.llvm_struct_ty)
         }
     }
 }
@@ -115,34 +100,11 @@ impl MirConvertibleType for MirStructType {}
 impl MirTypeConversion for MirStructType {
     fn converter(&self) -> ConvertMirTypeFn {
         |ty, ctx| {
-            let (field_types, mem_to_decl, field_offsets, total_size) = {
+            let layout = {
                 let r = ty.deref(ctx);
-                let s = r.downcast_ref::<MirStructType>().unwrap();
-                (
-                    s.field_types.clone(),
-                    s.memory_order(),
-                    s.field_offsets().to_vec(),
-                    s.total_size(),
-                )
+                StructLayoutInfo::of_struct(r.downcast_ref::<MirStructType>().unwrap())
             };
-            if !field_offsets.is_empty() && total_size > 0 {
-                return build_struct_with_explicit_padding(
-                    ctx,
-                    &field_types,
-                    &mem_to_decl,
-                    &field_offsets,
-                    total_size,
-                );
-            }
-            let mut llvm_fields = Vec::with_capacity(field_types.len());
-            for mem_idx in 0..field_types.len() {
-                let decl_idx = mem_to_decl[mem_idx];
-                let llvm_ty = convert_type(ctx, field_types[decl_idx])?;
-                if !is_zero_sized_type(ctx, llvm_ty) {
-                    llvm_fields.push(llvm_ty);
-                }
-            }
-            Ok(llvm_types::StructType::get_unnamed(ctx, llvm_fields).into())
+            Ok(build_struct_slot_map(ctx, &layout)?.llvm_struct_ty)
         }
     }
 }
