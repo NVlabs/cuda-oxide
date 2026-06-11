@@ -392,8 +392,8 @@ pub fn run_pipeline(
         eprintln!("LLVM IR written to {}", ll_path.display());
     }
 
-    // Step 7.5: Optional external post-IR hook. If it produced a final artifact,
-    // use it; otherwise continue to Step 8 on the (possibly-rewritten) `.ll`.
+    // Step 7.5: Optional external post-IR hook(s). If the last one produced a final
+    // artifact, use it; otherwise continue to Step 8 on the (possibly-rewritten) `.ll`.
     if let Some(result) = run_post_ir_hook(&ll_path, config)? {
         return Ok(result);
     }
@@ -452,45 +452,80 @@ pub fn run_pipeline(
     }
 }
 
-/// Runs an external post-IR hook when `CUDA_OXIDE_POST_IR` names an executable.
+/// Runs the external post-IR hooks listed in `CUDA_OXIDE_POST_IR`, if any.
 ///
-/// The IR-stage analogue of the `CUDA_OXIDE_LLC` override: after the `.ll` is
-/// exported but before PTX generation, the hook may rewrite the IR or take over
-/// the rest of code generation (a custom LLVM pass, instrumentation, an alternative
-/// IR→cubin backend, etc.). It is invoked as
-/// 
+/// The IR-stage analogue of the `CUDA_OXIDE_LLC` override. `CUDA_OXIDE_POST_IR` is a
+/// `:`-separated list of executables, run in order on the exported `.ll` between IR
+/// export (Step 7) and PTX generation (Step 8): each may rewrite the IR (the next
+/// hook sees the edits) or, the last one only, take over the rest of code generation.
+/// Uses include custom LLVM passes/plugins, instrumentation, external-bitcode
+/// linking, or an alternative IR→cubin backend. Each hook is invoked as
+///
 /// ```bash
-/// $CUDA_OXIDE_POST_IR <ll_path> <output_dir> <output_name> <target>
+/// <hook> <ll_path> <output_dir> <output_name> <target>
 /// ```
-/// 
-/// (`<target>` is `CUDA_OXIDE_TARGET`, possibly empty) and may modify `<ll_path>`
-/// in place and/or write artifacts under `<output_dir>`.
 ///
-/// The hook's first non-empty stdout line `<kind> <path> [<target>]` (kind one of
+/// (`<target>` is `CUDA_OXIDE_TARGET`, possibly empty) and may modify `<ll_path>` in
+/// place and/or write artifacts under `<output_dir>`.
+///
+/// A hook's first non-empty stdout line `<kind> <path> [<target>]` (kind one of
 /// `ptx`/`cubin`/`nvvm-ir`/`ltoir`) makes the pipeline return that artifact and skip
-/// Step 8 (`Some`); empty stdout continues to Step 8 on the rewritten IR (`None`).
-/// A non-zero exit aborts the build with the hook's stderr.
+/// Step 8; empty stdout continues. Only the last hook may take over — an earlier hook
+/// that emits an artifact is an error. A non-zero exit aborts the build with the
+/// hook's stderr. Returns `Some` if the last hook took over, else `None`.
 fn run_post_ir_hook(
     ll_path: &Path,
     config: &PipelineConfig,
 ) -> Result<Option<CompilationResult>, PipelineError> {
-    let Ok(hook) = std::env::var("CUDA_OXIDE_POST_IR") else {
+    let Ok(hooks_var) = std::env::var("CUDA_OXIDE_POST_IR") else {
         return Ok(None);
     };
-    if hook.trim().is_empty() {
+    let hooks: Vec<&str> = hooks_var
+        .split(':')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .collect();
+    if hooks.is_empty() {
         return Ok(None);
     }
 
     let target_env = std::env::var("CUDA_OXIDE_TARGET").unwrap_or_default();
+    let last = hooks.len() - 1;
+    for (i, hook) in hooks.iter().enumerate() {
+        match run_one_post_ir_hook(hook, ll_path, config, &target_env)? {
+            Some(result) if i == last => return Ok(Some(result)),
+            Some(_) => {
+                return Err(PipelineError::PostIr(format!(
+                    "hook '{hook}' (#{} of {}) produced a final artifact, but only the last \
+                     hook in CUDA_OXIDE_POST_IR may take over code generation",
+                    i + 1,
+                    hooks.len()
+                )));
+            }
+            None => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Runs a single post-IR hook program. Returns `Some(result)` when it takes over
+/// code generation (emits an artifact line), or `None` when it transforms the IR in
+/// place and continues. See [`run_post_ir_hook`] for the protocol.
+fn run_one_post_ir_hook(
+    hook: &str,
+    ll_path: &Path,
+    config: &PipelineConfig,
+    target_env: &str,
+) -> Result<Option<CompilationResult>, PipelineError> {
     if config.verbose {
         eprintln!("\n=== Running post-IR hook: {hook} ===");
     }
 
-    let output = std::process::Command::new(&hook)
+    let output = std::process::Command::new(hook)
         .arg(ll_path)
         .arg(&config.output_dir)
         .arg(&config.output_name)
-        .arg(&target_env)
+        .arg(target_env)
         .output()
         .map_err(|e| PipelineError::PostIr(format!("failed to spawn '{hook}': {e}")))?;
 
@@ -502,11 +537,11 @@ fn run_post_ir_hook(
         )));
     }
 
-    // First non-empty stdout line is the result; none means continue to Step 8.
+    // First non-empty stdout line is the result; none means transform-and-continue.
     let stdout = String::from_utf8_lossy(&output.stdout);
     let Some(line) = stdout.lines().map(str::trim).find(|l| !l.is_empty()) else {
         if config.verbose {
-            eprintln!("post-IR hook transformed the IR in place; continuing to Step 8");
+            eprintln!("post-IR hook transformed the IR in place; continuing");
         }
         return Ok(None);
     };
@@ -531,7 +566,7 @@ fn run_post_ir_hook(
         if target_env.is_empty() {
             "nvvm-ir".to_string()
         } else {
-            target_env.clone()
+            target_env.to_string()
         }
     });
 
