@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+mod device_copy;
 mod printf;
 
 use proc_macro::TokenStream;
@@ -46,6 +47,19 @@ use proc_macro::TokenStream;
 pub fn gpu_printf(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as printf::GpuPrintfInput);
     printf::gpu_printf_impl(input).into()
+}
+
+/// Derive `cuda_core::DeviceCopy` for a type whose fields are all themselves
+/// `DeviceCopy`.
+///
+/// Re-exported from `cuda_core` next to the `DeviceCopy` trait so that
+/// `use cuda_core::DeviceCopy;` brings both the trait and this derive into scope
+/// (the serde `Serialize` trait+derive pattern).
+#[proc_macro_derive(DeviceCopy)]
+pub fn device_copy(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    let code = device_copy::impl_device_copy(&ast, quote!(::cuda_core::DeviceCopy));
+    code.into()
 }
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};

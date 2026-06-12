@@ -338,8 +338,10 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
+ "cuda-macros",
  "half",
  "oxide-artifacts",
+ "trybuild",
 ]
 
 [[package]]

@@ -9,9 +9,11 @@ repository.workspace = true
 
 [dependencies]
 cuda-bindings = { path = "../cuda-bindings" }
+cuda-macros = { path = "../cuda-macros" }
 anyhow = { workspace = true }
 half = { workspace = true }
 oxide-artifacts = { workspace = true, features = ["object-read"] }
 
 [dev-dependencies]
 oxide-artifacts = { workspace = true, features = ["object-write"] }
+trybuild = "1"
