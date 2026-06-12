@@ -130,6 +130,8 @@ pub fn convert_func(
         propagate_kernel_attrs(ctx, op, &llvm_func, &kernel_key);
     }
 
+    propagate_alwaysinline_attr(ctx, op, &llvm_func);
+
     let llvm_entry = llvm_func.get_or_create_entry_block(ctx);
 
     let mir_region = op.deref(ctx).get_region(0);
@@ -223,6 +225,32 @@ fn propagate_kernel_attrs(
             .deref_mut(ctx)
             .attributes
             .set(key, attr);
+    }
+}
+
+/// Propagate the `alwaysinline` attribute from MIR func to LLVM func.
+///
+/// Set on the MIR func op by `mir-importer` when the source Rust function
+/// carries `#[inline(always)]`. The LLVM exporter then emits the
+/// `alwaysinline` keyword on the `define` line. Existing `opt -O2` runs can
+/// honor that attribute before `llc`, but this propagation is not a mandatory
+/// always-inline pass. The goal is to preserve Rust's inline intent for device
+/// helpers rather than leaving helper boundaries solely to optimizer
+/// heuristics.
+fn propagate_alwaysinline_attr(
+    ctx: &mut Context,
+    mir_op: Ptr<Operation>,
+    llvm_func: &llvm::FuncOp,
+) {
+    let key: pliron::identifier::Identifier = "alwaysinline".try_into().unwrap();
+    let attr_opt = mir_op.deref(ctx).attributes.0.get(&key).cloned();
+    if let Some(attr) = attr_opt {
+        llvm_func
+            .get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .0
+            .insert(key, attr);
     }
 }
 

@@ -94,8 +94,11 @@ pub fn translate_function(
 ) -> TranslationResult<Ptr<Operation>> {
     register_dialects(ctx);
 
-    // Translate the function body
-    let func_op = body::translate_body(ctx, body, instance, is_kernel, None, legaliser)?;
+    // Translate the function body. This helper is for tests/utilities that
+    // don't have access to rustc's CodegenFnAttrs, so `is_inline_always` is
+    // always false here. The real pipeline call (in `pipeline.rs`) threads
+    // the flag through from `rustc-codegen-cuda`.
+    let func_op = body::translate_body(ctx, body, instance, is_kernel, false, None, legaliser)?;
 
     // Create a builtin.module operation using ModuleOp::new
     let module_name = instance.name();

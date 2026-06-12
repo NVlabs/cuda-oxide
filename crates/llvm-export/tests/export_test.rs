@@ -11,6 +11,7 @@ use llvm_export::{
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
+        attributes::StringAttr,
         ops::ModuleOp,
         types::{IntegerType, Signedness},
     },
@@ -105,6 +106,58 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     // result was named `%v1` but never defined; this catches that and any
     // future regression that re-introduces a dangling SSA reference.
     assert_no_undefined_temporaries(&ir);
+}
+
+#[test]
+fn export_alwaysinline_function_attribute_uses_llvm_define_syntax() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = {
+        let existing = {
+            let region = module_region.deref(&ctx);
+            region.iter(&ctx).next()
+        };
+        if let Some(block) = existing {
+            block
+        } else {
+            let block = BasicBlock::new(&mut ctx, None, vec![]);
+            block.insert_at_back(module_region, &ctx);
+            block
+        }
+    };
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func = FuncOp::new(&mut ctx, "inline_helper".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+
+    let alwaysinline_key: pliron::identifier::Identifier = "alwaysinline".try_into().unwrap();
+    func.get_operation()
+        .deref_mut(&ctx)
+        .attributes
+        .set(alwaysinline_key, StringAttr::new("true".to_string()));
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
+    let define_line = ir
+        .lines()
+        .find(|line| line.starts_with("define void @inline_helper("))
+        .expect("inline helper definition");
+
+    assert_eq!(
+        define_line, "define void @inline_helper() alwaysinline #0 {",
+        "`alwaysinline` must be emitted as a function attribute after the parameter list \
+         and before the convergent attribute group:\n{ir}"
+    );
+    assert!(
+        ir.contains("attributes #0 = { convergent }"),
+        "convergent attribute group must still be emitted:\n{ir}"
+    );
 }
 
 /// Scans the textual LLVM IR and asserts that every `%vN` token appearing in

@@ -49,6 +49,19 @@ pub struct CollectedFunction {
     pub is_kernel: bool,
     /// The name to export in PTX. For kernels, this is the user-visible name.
     pub export_name: String,
+    /// True if the function is marked `#[inline(always)]` in rustc's
+    /// `CodegenFnAttrs`. The stable_mir API does not expose inline hints, so
+    /// this is queried via `rustc_middle::TyCtxt::codegen_fn_attrs` in
+    /// `rustc-codegen-cuda` and threaded through.
+    ///
+    /// When true, the LLVM `alwaysinline` attribute is emitted on the
+    /// function definition. The existing matched LLVM middle-end (`opt -O2`),
+    /// when available, can then honor the attribute before PTX generation;
+    /// this flag does not add a separate mandatory inliner pass.
+    ///
+    /// This preserves Rust's inline intent for device helpers and avoids
+    /// making helper boundaries depend entirely on later optimizer heuristics.
+    pub is_inline_always: bool,
 }
 
 /// An external device function declaration (for FFI with external LTOIR).
@@ -260,6 +273,7 @@ pub fn run_pipeline(
             &body,
             &func.instance,
             func.is_kernel,
+            func.is_inline_always,
             Some(&func.export_name),
             &mut legaliser,
         )
@@ -420,7 +434,6 @@ pub fn run_pipeline(
             target,
         })
     } else {
-        // PTX mode: invoke llc
         if config.verbose {
             eprintln!("\n=== Generating PTX ===");
         }

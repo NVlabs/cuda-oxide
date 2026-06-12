@@ -428,12 +428,29 @@ pub fn generate_device_code<'tcx>(
     // 2. Sets up thread-local CompilerCtxt
     // 3. Runs our closure with access to stable() conversion
     // 4. Tears down the context and returns our result
+    // Pre-compute `#[inline(always)]` flags before entering the stable_mir
+    // context, since the query lives on `rustc_middle::TyCtxt` and is not
+    // exposed through stable_mir. Preserving this hint avoids making helper
+    // boundaries depend entirely on later optimizer heuristics.
+    let inline_always_flags: Vec<bool> = functions
+        .iter()
+        .map(|func| {
+            let def_id = func.instance.def_id();
+            matches!(
+                tcx.codegen_fn_attrs(def_id).inline,
+                rustc_hir::attrs::InlineAttr::Always
+                    | rustc_hir::attrs::InlineAttr::Force { .. }
+            )
+        })
+        .collect();
+
     let result = rustc_internal::run(tcx, || {
         // Convert internal Instance<'tcx> to stable_mir Instance
         let stable_functions: Vec<mir_importer::CollectedFunction> = functions
             .iter()
             .zip(export_names.iter())
-            .map(|(func, (export_name, is_kernel))| {
+            .zip(inline_always_flags.iter())
+            .map(|((func, (export_name, is_kernel)), is_inline_always)| {
                 // Use rustc_internal::stable() to convert the Instance.
                 // This is the key bridge between rustc_middle and rustc_public types.
                 let stable_instance = rustc_internal::stable(func.instance);
@@ -442,6 +459,7 @@ pub fn generate_device_code<'tcx>(
                     instance: stable_instance,
                     is_kernel: *is_kernel,
                     export_name: export_name.clone(),
+                    is_inline_always: *is_inline_always,
                 }
             })
             .collect();
