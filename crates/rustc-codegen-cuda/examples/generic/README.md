@@ -8,6 +8,7 @@ Tests whether the collector correctly handles monomorphized generic kernels. Thi
 
 - Defines generic kernels `scale<T>` and `add<T>` with trait bounds
 - Host code calls `scale::<f32>` which triggers monomorphization
+- Defines a captured closure inside a generic kernel body
 - Verifies the monomorphized kernel executes correctly
 
 ## Key Concepts Demonstrated
