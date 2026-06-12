@@ -68,9 +68,10 @@ use crate::helpers;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
 use dialect_mir::rust_intrinsics;
 use dialect_mir::types::{MirDisjointSliceType, MirSliceType, MirStructType, MirTupleType};
-use llvm_export::attributes::IntegerOverflowFlagsAttr;
+use llvm_export::attributes::{FastmathFlags, FastmathFlagsAttr, IntegerOverflowFlagsAttr};
 use llvm_export::op_interfaces::{
-    BinArithOp, CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag,
+    BinArithOp, CastOpInterface, CastOpWithNNegInterface, FloatBinArithOpWithFastMathFlags,
+    IntBinArithOpWithOverflowFlag,
 };
 use llvm_export::ops as llvm;
 use llvm_export::types as llvm_types;
@@ -221,6 +222,11 @@ enum RustFloatMathIntrinsic {
     AtanF64,
     CbrtF32,
     CbrtF64,
+    FaddFast,
+    FsubFast,
+    FmulFast,
+    FdivFast,
+    FremFast,
 }
 
 impl RustFloatMathIntrinsic {
@@ -276,6 +282,11 @@ impl RustFloatMathIntrinsic {
             rust_intrinsics::CALLEE_ATAN_F64 => Some(Self::AtanF64),
             rust_intrinsics::CALLEE_CBRT_F32 => Some(Self::CbrtF32),
             rust_intrinsics::CALLEE_CBRT_F64 => Some(Self::CbrtF64),
+            rust_intrinsics::CALLEE_FADD_FAST => Some(Self::FaddFast),
+            rust_intrinsics::CALLEE_FSUB_FAST => Some(Self::FsubFast),
+            rust_intrinsics::CALLEE_FMUL_FAST => Some(Self::FmulFast),
+            rust_intrinsics::CALLEE_FDIV_FAST => Some(Self::FdivFast),
+            rust_intrinsics::CALLEE_FREM_FAST => Some(Self::FremFast),
             _ => None,
         }
     }
@@ -342,6 +353,17 @@ impl RustFloatMathIntrinsic {
             Self::AtanF64 => Ok("__nv_atan"),
             Self::CbrtF32 => Ok("__nv_cbrtf"),
             Self::CbrtF64 => Ok("__nv_cbrt"),
+            Self::FaddFast | Self::FsubFast | Self::FmulFast | Self::FdivFast | Self::FremFast => {
+                // The `f*_fast` intrinsics lower directly to LLVM `fadd`/`fsub`/
+                // `fmul`/`fdiv`/`frem` with fast-math flags, not to a libdevice
+                // call. The caller (`convert_rust_float_math_intrinsic`) routes
+                // them through `lower_fast_binop` and never reaches this branch.
+                pliron::input_err!(
+                    loc,
+                    "f*_fast intrinsics have no libdevice equivalent; \
+                     they lower to llvm float binops with fast-math flags"
+                )
+            }
         }
     }
 
@@ -359,11 +381,38 @@ impl RustFloatMathIntrinsic {
             | Self::MinNumNszF32
             | Self::MinNumNszF64
             | Self::Atan2F32
-            | Self::Atan2F64 => 2,
+            | Self::Atan2F64
+            | Self::FaddFast
+            | Self::FsubFast
+            | Self::FmulFast
+            | Self::FdivFast
+            | Self::FremFast => 2,
             Self::FmaF32 | Self::FmaF64 | Self::FmuladdF32 | Self::FmuladdF64 => 3,
             _ => 1,
         }
     }
+
+    /// Return the equivalent fast-math binop kind, if this intrinsic is one.
+    fn fast_binop(self) -> Option<FastFloatBinop> {
+        match self {
+            Self::FaddFast => Some(FastFloatBinop::Add),
+            Self::FsubFast => Some(FastFloatBinop::Sub),
+            Self::FmulFast => Some(FastFloatBinop::Mul),
+            Self::FdivFast => Some(FastFloatBinop::Div),
+            Self::FremFast => Some(FastFloatBinop::Rem),
+            _ => None,
+        }
+    }
+}
+
+/// Which `llvm.f*` binary op a `core::intrinsics::f*_fast` intrinsic lowers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FastFloatBinop {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
 }
 
 fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
@@ -891,6 +940,14 @@ fn convert_rust_float_math_intrinsic(
         );
     }
 
+    // `f*_fast` intrinsics lower to LLVM float binops with fast-math flags,
+    // not to a libdevice call. Route them off the libdevice path before any
+    // intrinsic-name lookup so polymorphic-over-T arithmetic on `f32` and
+    // `f64` both work without per-type intrinsic dispatch.
+    if let Some(binop) = intrinsic.fast_binop() {
+        return lower_fast_binop(ctx, rewriter, op, &args, binop, loc);
+    }
+
     let result_mir_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let result_ty = convert_type(ctx, result_mir_ty).map_err(anyhow_to_pliron)?;
     let intrinsic_name = intrinsic.libdevice_name(ctx, result_ty, loc.clone())?;
@@ -912,6 +969,60 @@ fn convert_rust_float_math_intrinsic(
     rewriter.insert_operation(ctx, llvm_call.get_operation());
     rewriter.replace_operation(ctx, op, llvm_call.get_operation());
 
+    Ok(())
+}
+
+/// Lower a `core::intrinsics::f*_fast` placeholder call to the matching
+/// LLVM float binop with fast-math flags.
+///
+/// The `f*_fast` family is generic over `T: FloatPrimitive`; rustc gives it
+/// no MIR body, so the importer emitted a placeholder `mir.call` and any
+/// downstream attempt to resolve the call as a symbol fails LLVM module
+/// verification. Replacing the call with a binop here gives LLVM the explicit
+/// `fast` fast-math flag set promised by the Rust intrinsic contract, so f32
+/// and f64 monomorphizations both work without per-type intrinsic dispatch.
+fn fast_float_intrinsic_flags() -> FastmathFlagsAttr {
+    // pliron-llvm's `FastmathFlagsAttr::default()` is `FastmathFlags::empty()`;
+    // `core::intrinsics::f*_fast` needs the explicit LLVM `fast` flag group.
+    FastmathFlags::FAST.into()
+}
+
+fn lower_fast_binop(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    args: &[Value],
+    binop: FastFloatBinop,
+    loc: pliron::location::Location,
+) -> Result<()> {
+    let (lhs, rhs) = match args {
+        [a, b] => (*a, *b),
+        _ => {
+            return pliron::input_err!(loc, "f*_fast intrinsic call must have exactly 2 operands");
+        }
+    };
+
+    let flags = fast_float_intrinsic_flags();
+    let llvm_op = match binop {
+        FastFloatBinop::Add => {
+            llvm::FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, flags).get_operation()
+        }
+        FastFloatBinop::Sub => {
+            llvm::FSubOp::new_with_fast_math_flags(ctx, lhs, rhs, flags).get_operation()
+        }
+        FastFloatBinop::Mul => {
+            llvm::FMulOp::new_with_fast_math_flags(ctx, lhs, rhs, flags).get_operation()
+        }
+        FastFloatBinop::Div => {
+            llvm::FDivOp::new_with_fast_math_flags(ctx, lhs, rhs, flags).get_operation()
+        }
+        FastFloatBinop::Rem => {
+            llvm::FRemOp::new_with_fast_math_flags(ctx, lhs, rhs, flags).get_operation()
+        }
+    };
+
+    rewriter.insert_operation(ctx, llvm_op);
+    rewriter.replace_operation(ctx, op, llvm_op);
     Ok(())
 }
 

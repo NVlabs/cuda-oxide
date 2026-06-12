@@ -152,3 +152,18 @@ pub const CALLEE_ATAN_F64: &str = placeholder!("atanf64");
 pub const CALLEE_CBRT_F32: &str = placeholder!("cbrtf32");
 /// Placeholder call used for `f64::cbrt` / `std::sys::cmath::cbrt`.
 pub const CALLEE_CBRT_F64: &str = placeholder!("cbrtf64");
+
+/// Placeholder call used for `core::intrinsics::fadd_fast` (generic over float type).
+///
+/// Lowered to `llvm.fadd` with explicit `fast` fast-math flags. The `f*_fast` intrinsics
+/// assume finite, non-NaN inputs; LLVM's fast-math flags express the same
+/// preconditions, so the binop replaces the call directly.
+pub const CALLEE_FADD_FAST: &str = placeholder!("fadd_fast");
+/// Placeholder call used for `core::intrinsics::fsub_fast` (generic over float type).
+pub const CALLEE_FSUB_FAST: &str = placeholder!("fsub_fast");
+/// Placeholder call used for `core::intrinsics::fmul_fast` (generic over float type).
+pub const CALLEE_FMUL_FAST: &str = placeholder!("fmul_fast");
+/// Placeholder call used for `core::intrinsics::fdiv_fast` (generic over float type).
+pub const CALLEE_FDIV_FAST: &str = placeholder!("fdiv_fast");
+/// Placeholder call used for `core::intrinsics::frem_fast` (generic over float type).
+pub const CALLEE_FREM_FAST: &str = placeholder!("frem_fast");
