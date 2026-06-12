@@ -1910,12 +1910,32 @@ pub fn translate_operand(
                 })
                 .unwrap_or(false);
 
+            // Check if this is a bare array value constant (e.g. `const TABLE: [f32; N]`
+            // referenced as `TABLE[runtime_idx]`, which materialises the whole array
+            // as an operand rather than a pointer to it).
+            let is_array_value = const_ty_ptr
+                .deref(ctx)
+                .is::<dialect_mir::types::MirArrayType>();
+
             // Parse constant value from debug string (HACK for prototype)
             let const_str = format!("{:?}", constant.const_);
 
             // Handle pointer-to-array constants (byte strings, typed arrays like [f64; 3], etc.)
             if is_ptr_to_array {
                 return translate_ptr_to_array_constant(
+                    ctx,
+                    constant,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                );
+            }
+
+            // Handle bare array value constants (e.g. `TABLE[runtime_idx]` where
+            // `TABLE: [f32; N]` materialises the whole array by value).
+            if is_array_value {
+                return translate_array_value_constant(
                     ctx,
                     constant,
                     const_ty_ptr,
@@ -4415,11 +4435,10 @@ fn translate_ptr_to_array_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
-    use rustc_public::ty::ConstantKind;
-
-    // Extract array type and element type info from the pointer type
-    let (array_ty, element_ty_ptr, element_count) = {
+    // Extract array type from the pointer type, then delegate to the shared
+    // value-producing helper. We wrap the resulting value with `MirRefOp` to
+    // recover the pointer.
+    let array_ty = {
         let ty_obj = const_ty_ptr.deref(ctx);
         let ptr_ty = ty_obj
             .downcast_ref::<dialect_mir::types::MirPtrType>()
@@ -4430,105 +4449,167 @@ fn translate_ptr_to_array_constant(
             })?;
 
         let arr_ty_obj = ptr_ty.pointee.deref(ctx);
+        if arr_ty_obj
+            .downcast_ref::<dialect_mir::types::MirArrayType>()
+            .is_none()
+        {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "translate_ptr_to_array_constant: expected array pointee"
+                )
+            );
+        }
+        ptr_ty.pointee
+    };
+
+    let (array_val, last_op) = translate_array_value_constant_inner(
+        ctx,
+        constant,
+        array_ty,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    use dialect_mir::ops::MirRefOp;
+    use dialect_mir::types::MirPtrType;
+
+    let generic_ptr_ty = MirPtrType::get_generic(ctx, array_ty, false);
+
+    let ref_op = Operation::new(
+        ctx,
+        MirRefOp::get_concrete_op_info(),
+        vec![generic_ptr_ty.into()],
+        vec![array_val],
+        vec![],
+        0,
+    );
+    ref_op.deref_mut(ctx).set_loc(loc);
+
+    let ref_op_wrapper = MirRefOp::new(ref_op);
+    ref_op_wrapper.set_mutable(ctx, false);
+
+    if let Some(prev) = last_op {
+        ref_op.insert_after(ctx, prev);
+    } else {
+        ref_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let ptr_val = ref_op.deref(ctx).get_result(0);
+    Ok((ptr_val, Some(ref_op)))
+}
+
+/// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
+/// [..]` indexed by runtime value) to a `MirConstructArrayOp` whose operands
+/// are typed scalar `MirFloatConstantOp` / `MirConstantOp`s. Mirrors
+/// `translate_ptr_to_array_constant` but skips the final `MirRefOp` wrap —
+/// the caller wants the array by value.
+fn translate_array_value_constant(
+    ctx: &mut Context,
+    constant: &mir::ConstOperand,
+    const_ty_ptr: Ptr<TypeObj>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    {
+        let ty_obj = const_ty_ptr.deref(ctx);
+        if ty_obj
+            .downcast_ref::<dialect_mir::types::MirArrayType>()
+            .is_none()
+        {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported("translate_array_value_constant: expected array type")
+            );
+        }
+    }
+    translate_array_value_constant_inner(ctx, constant, const_ty_ptr, block_ptr, prev_op, loc)
+}
+
+/// Recursively compute the byte size of a pliron type that is permitted to
+/// appear inside an array-of-primitives or array-of-array-of-... constant.
+/// Unsupported types are rejected here so the diagnostic points at the array
+/// constant rule instead of falling through to a generic byte-lowering error.
+fn array_constant_type_byte_size(
+    ctx: &Context,
+    ty: Ptr<TypeObj>,
+    loc: Location,
+) -> TranslationResult<usize> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
+    let ty_obj = ty.deref(ctx);
+    if let Some(int_ty) = ty_obj.downcast_ref::<IntegerType>() {
+        Ok((int_ty.width() as usize).div_ceil(8))
+    } else if ty_obj.is::<MirFP16Type>() {
+        Ok(2)
+    } else if ty_obj.is::<FP32Type>() {
+        Ok(4)
+    } else if ty_obj.is::<FP64Type>() {
+        Ok(8)
+    } else if let Some(arr_ty) = ty_obj.downcast_ref::<dialect_mir::types::MirArrayType>() {
+        let elem_ty = arr_ty.element_type();
+        let count = arr_ty.size() as usize;
+        // Avoid holding the borrow across the recursive call.
+        drop(ty_obj);
+        let elem_size = array_constant_type_byte_size(ctx, elem_ty, loc.clone())?;
+        elem_size.checked_mul(count).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Array constant element byte size overflowed: {} elements x {} bytes",
+                count, elem_size
+            )))
+        })
+    } else {
+        input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Array constant element type is not supported: {:?}. Supported array constants \
+                 are primitive scalar elements (integers, f16, f32, f64) or nested arrays of \
+                 those.",
+                ty_obj
+            ))
+        )
+    }
+}
+
+/// Build a `MirConstructArrayOp` (and the necessary scalar / nested-array
+/// element ops) from a slice of raw bytes for an `array_ty`. Recurses on
+/// `MirArrayType` element types so multi-dimensional arrays (`[[T; M]; N]`,
+/// etc.) are handled by repeated decomposition.
+fn build_array_op_from_bytes(
+    ctx: &mut Context,
+    array_ty: Ptr<TypeObj>,
+    bytes: &[u8],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
+
+    // Element type + count.
+    let (element_ty_ptr, element_count) = {
+        let arr_ty_obj = array_ty.deref(ctx);
         let arr_ty = arr_ty_obj
             .downcast_ref::<dialect_mir::types::MirArrayType>()
             .ok_or_else(|| {
                 input_error_noloc!(TranslationErr::unsupported(
-                    "translate_ptr_to_array_constant: expected array pointee"
+                    "build_array_op_from_bytes: expected array type"
                 ))
             })?;
-
-        (ptr_ty.pointee, arr_ty.element_type(), arr_ty.size())
+        (arr_ty.element_type(), arr_ty.size())
     };
 
-    // Determine element size in bytes from the pliron element type
-    let element_byte_size: usize = {
-        let elem_obj = element_ty_ptr.deref(ctx);
-        if let Some(int_ty) = elem_obj.downcast_ref::<IntegerType>() {
-            (int_ty.width() as usize).div_ceil(8)
-        } else if elem_obj.is::<MirFP16Type>() {
-            2
-        } else if elem_obj.is::<FP32Type>() {
-            4
-        } else if elem_obj.is::<FP64Type>() {
-            8
-        } else {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "translate_ptr_to_array_constant: unsupported element type: {:?}",
-                    elem_obj
-                ))
-            );
-        }
-    };
+    let element_byte_size = array_constant_type_byte_size(ctx, element_ty_ptr, loc.clone())?;
 
-    // Extract raw bytes from the constant's allocation.
-    // For promoted constants, the allocation contains a pointer (with provenance)
-    // to another allocation with the actual data.
-    let bytes = match constant.const_.kind() {
-        ConstantKind::Allocated(alloc) => {
-            if let Some((_, prov)) = alloc.provenance.ptrs.first() {
-                use rustc_public::mir::alloc::GlobalAlloc;
-                let alloc_id = prov.0;
-                match GlobalAlloc::from(alloc_id) {
-                    GlobalAlloc::Memory(target_alloc) => {
-                        target_alloc.raw_bytes().ok().unwrap_or_else(|| {
-                            target_alloc
-                                .bytes
-                                .iter()
-                                .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                                .collect::<Vec<u8>>()
-                        })
-                    }
-                    GlobalAlloc::Static(static_def) => {
-                        let target_alloc = static_def.eval_initializer().map_err(|e| {
-                            input_error_noloc!(TranslationErr::unsupported(format!(
-                                "Failed to evaluate static initializer for array constant: {:?}",
-                                e
-                            )))
-                        })?;
-                        target_alloc.raw_bytes().ok().unwrap_or_else(|| {
-                            target_alloc
-                                .bytes
-                                .iter()
-                                .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                                .collect::<Vec<u8>>()
-                        })
-                    }
-                    other => {
-                        return input_err!(
-                            loc,
-                            TranslationErr::unsupported(format!(
-                                "Array constant provenance points to non-memory allocation: {:?}",
-                                other
-                            ))
-                        );
-                    }
-                }
-            } else {
-                alloc.raw_bytes().ok().unwrap_or_else(|| {
-                    alloc
-                        .bytes
-                        .iter()
-                        .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                        .collect::<Vec<u8>>()
-                })
-            }
-        }
-        _ => {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "Array constant must be Allocated, got: {:?}",
-                    constant.const_.kind()
-                ))
-            );
-        }
-    };
-
-    // Validate: bytes should be element_count * element_byte_size
-    let expected_bytes = element_count as usize * element_byte_size;
+    let element_count_usize = element_count as usize;
+    let expected_bytes = element_count_usize
+        .checked_mul(element_byte_size)
+        .ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Array constant byte size overflowed: {} elements x {} bytes each",
+                element_count, element_byte_size
+            )))
+        })?;
     if bytes.len() < expected_bytes {
         return input_err!(
             loc,
@@ -4542,13 +4623,13 @@ fn translate_ptr_to_array_constant(
         );
     }
 
-    // Determine element kind once (drops the borrow before we mutate ctx in the loop)
     #[derive(Clone, Copy)]
     enum ElemKind {
         F64,
         F32,
         F16,
         Int { width: u32, signedness: Signedness },
+        Array,
     }
     let elem_kind = {
         let elem_obj = element_ty_ptr.deref(ctx);
@@ -4563,29 +4644,35 @@ fn translate_ptr_to_array_constant(
                 width: int_ty.width(),
                 signedness: int_ty.signedness(),
             }
+        } else if elem_obj.is::<dialect_mir::types::MirArrayType>() {
+            ElemKind::Array
         } else {
             return input_err!(
                 loc,
                 TranslationErr::unsupported(format!(
-                    "translate_ptr_to_array_constant: unsupported element type: {:?}",
+                    "Array constant element type is not supported by byte lowering: {:?}. \
+                     Supported array constants are primitive scalar elements (integers, f16, \
+                     f32, f64) or nested arrays of those.",
                     elem_obj
                 ))
             );
         }
     };
 
-    // Create typed element constants by grouping bytes
-    let mut element_values = Vec::with_capacity(element_count as usize);
+    let mut element_values = Vec::with_capacity(element_count_usize);
     let mut last_op = prev_op;
 
-    for i in 0..element_count as usize {
+    for i in 0..element_count_usize {
         let chunk = &bytes[i * element_byte_size..(i + 1) * element_byte_size];
 
         let (elem_val, elem_last_op) = match elem_kind {
             ElemKind::F64 => {
                 let mut buf = [0u8; 8];
                 buf.copy_from_slice(chunk);
-                let float_val = f64::from_le_bytes(buf);
+                let float_val = match rustc_public::target::MachineInfo::target_endianness() {
+                    rustc_public::target::Endian::Little => f64::from_le_bytes(buf),
+                    rustc_public::target::Endian::Big => f64::from_be_bytes(buf),
+                };
                 let float_attr = pliron::builtin::attributes::FPDoubleAttr::from(float_val);
 
                 use dialect_mir::ops::MirFloatConstantOp;
@@ -4614,7 +4701,10 @@ fn translate_ptr_to_array_constant(
             ElemKind::F32 => {
                 let mut buf = [0u8; 4];
                 buf.copy_from_slice(chunk);
-                let float_val = f32::from_le_bytes(buf);
+                let float_val = match rustc_public::target::MachineInfo::target_endianness() {
+                    rustc_public::target::Endian::Little => f32::from_le_bytes(buf),
+                    rustc_public::target::Endian::Big => f32::from_be_bytes(buf),
+                };
                 let float_attr = pliron::builtin::attributes::FPSingleAttr::from(float_val);
 
                 use dialect_mir::ops::MirFloatConstantOp;
@@ -4698,13 +4788,20 @@ fn translate_ptr_to_array_constant(
                     Some(const_op.get_operation()),
                 )
             }
+            ElemKind::Array => build_array_op_from_bytes(
+                ctx,
+                element_ty_ptr,
+                chunk,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?,
         };
 
         element_values.push(elem_val);
         last_op = elem_last_op;
     }
 
-    // Create the array construction operation with typed element values
     use dialect_mir::ops::MirConstructArrayOp;
     let construct_op = Operation::new(
         ctx,
@@ -4724,35 +4821,25 @@ fn translate_ptr_to_array_constant(
     last_op = Some(construct_op);
 
     let array_val = construct_op.deref(ctx).get_result(0);
+    Ok((array_val, last_op))
+}
 
-    // Create reference operation to get pointer to the array
-    use dialect_mir::ops::MirRefOp;
-    use dialect_mir::types::MirPtrType;
+/// Shared body for both `translate_ptr_to_array_constant` (which then wraps
+/// in `MirRefOp`) and `translate_array_value_constant` (which returns the
+/// value directly). Extracts raw bytes from the constant's allocation, then
+/// delegates to `build_array_op_from_bytes` to recursively build a
+/// `MirConstructArrayOp` for the (possibly nested) array.
+fn translate_array_value_constant_inner(
+    ctx: &mut Context,
+    constant: &mir::ConstOperand,
+    array_ty: Ptr<TypeObj>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let bytes = constant_bytes(constant, "Array", loc.clone())?;
 
-    let generic_ptr_ty = MirPtrType::get_generic(ctx, array_ty, false);
-
-    let ref_op = Operation::new(
-        ctx,
-        MirRefOp::get_concrete_op_info(),
-        vec![generic_ptr_ty.into()],
-        vec![array_val],
-        vec![],
-        0,
-    );
-    ref_op.deref_mut(ctx).set_loc(loc);
-
-    let ref_op_wrapper = MirRefOp::new(ref_op);
-    ref_op_wrapper.set_mutable(ctx, false);
-
-    if let Some(prev) = last_op {
-        ref_op.insert_after(ctx, prev);
-    } else {
-        ref_op.insert_at_front(block_ptr, ctx);
-    }
-
-    let ptr_val = ref_op.deref(ctx).get_result(0);
-
-    Ok((ptr_val, Some(ref_op)))
+    build_array_op_from_bytes(ctx, array_ty, &bytes, block_ptr, prev_op, loc)
 }
 
 /// ## How it works
@@ -6022,6 +6109,16 @@ fn constant_bytes(
 ) -> TranslationResult<Vec<u8>> {
     use rustc_public::ty::TyConstKind;
 
+    fn allocation_bytes_zeroing_uninit(alloc: &rustc_public::ty::Allocation) -> Vec<u8> {
+        alloc.raw_bytes().ok().unwrap_or_else(|| {
+            alloc
+                .bytes
+                .iter()
+                .map(|opt: &Option<u8>| opt.unwrap_or(0))
+                .collect::<Vec<u8>>()
+        })
+    }
+
     fn allocation_bytes(
         alloc: &rustc_public::ty::Allocation,
         kind_name: &str,
@@ -6033,13 +6130,7 @@ fn constant_bytes(
             let alloc_id = prov.0;
             match GlobalAlloc::from(alloc_id) {
                 GlobalAlloc::Memory(target_alloc) => {
-                    Ok(target_alloc.raw_bytes().ok().unwrap_or_else(|| {
-                        target_alloc
-                            .bytes
-                            .iter()
-                            .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                            .collect::<Vec<u8>>()
-                    }))
+                    Ok(allocation_bytes_zeroing_uninit(&target_alloc))
                 }
                 GlobalAlloc::Static(static_def) => {
                     let target_alloc = static_def.eval_initializer().map_err(|e| {
@@ -6048,13 +6139,7 @@ fn constant_bytes(
                             kind_name, e
                         )))
                     })?;
-                    Ok(target_alloc.raw_bytes().ok().unwrap_or_else(|| {
-                        target_alloc
-                            .bytes
-                            .iter()
-                            .map(|opt: &Option<u8>| opt.unwrap_or(0))
-                            .collect::<Vec<u8>>()
-                    }))
+                    Ok(allocation_bytes_zeroing_uninit(&target_alloc))
                 }
                 other => input_err!(
                     loc,
@@ -6065,13 +6150,7 @@ fn constant_bytes(
                 ),
             }
         } else {
-            Ok(alloc.raw_bytes().ok().unwrap_or_else(|| {
-                alloc
-                    .bytes
-                    .iter()
-                    .map(|opt| opt.unwrap_or(0))
-                    .collect::<Vec<u8>>()
-            }))
+            Ok(allocation_bytes_zeroing_uninit(alloc))
         }
     }
 
