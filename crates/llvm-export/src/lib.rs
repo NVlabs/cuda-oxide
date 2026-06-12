@@ -318,3 +318,48 @@ pub fn fp16_attr_from_bits(bits: u16) -> FPHalfAttr {
 pub fn fp16_attr_to_bits(attr: &FPHalfAttr) -> u16 {
     attr.0.to_bits() as u16
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ops::{AsmKind, InlineAsmOp, InlineAsmOpExt, asm_kind};
+    use super::types::VoidType;
+    use pliron::context::Context;
+
+    #[test]
+    fn asm_kind_convergent_round_trips() {
+        let mut ctx = Context::new();
+        let void_ty = VoidType::get(&ctx);
+        let op = InlineAsmOp::build(
+            &mut ctx,
+            void_ty.into(),
+            vec![],
+            "bar.sync 0;",
+            "",
+            AsmKind::Convergent,
+        );
+        assert_eq!(asm_kind(&ctx, &op), AsmKind::Convergent);
+    }
+
+    #[test]
+    fn asm_kind_pure_round_trips() {
+        let mut ctx = Context::new();
+        let void_ty = VoidType::get(&ctx);
+        let op = InlineAsmOp::build(&mut ctx, void_ty.into(), vec![], "nop;", "", AsmKind::Pure);
+        assert_eq!(asm_kind(&ctx, &op), AsmKind::Pure);
+    }
+
+    #[test]
+    fn asm_kind_side_effect_round_trips() {
+        let mut ctx = Context::new();
+        let void_ty = VoidType::get(&ctx);
+        let op = InlineAsmOp::build(
+            &mut ctx,
+            void_ty.into(),
+            vec![],
+            "st.shared [%0], %1;",
+            "r,r",
+            AsmKind::SideEffect,
+        );
+        assert_eq!(asm_kind(&ctx, &op), AsmKind::SideEffect);
+    }
+}
