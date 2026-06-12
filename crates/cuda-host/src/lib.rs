@@ -37,8 +37,11 @@
 //! - [`cuda_module`]: Generate a typed embedded-module loader and per-kernel
 //!   sync launch methods from an inline kernel module. Enable the `async`
 //!   feature for borrowed and owned async launch methods.
-//! - [`cuda_launch!`]: Low-level launch macro retained for migration.
-//! - [`cuda_launch_async!`]: Low-level async launch macro retained for
+//! - [`cuda_launch!`]: Unsafe low-level launch macro. It cannot check
+//!   argument count or types, so callers must wrap it in `unsafe { }`. Its
+//!   niche is modules loaded at runtime by name; for embedded kernels use
+//!   `#[cuda_module]`.
+//! - `cuda_launch_async!`: Low-level async launch macro retained for
 //!   migration when the `async` feature is enabled.
 //!
 //! ## Usage
@@ -93,7 +96,7 @@ pub use launch::{
     KernelSliceArg, KernelSliceArgMut, load_cuda_module_from_async_context,
     load_kernel_module_async, new_async_kernel_launch, new_owned_async_kernel_launch,
     push_async_kernel_scalar, push_async_read_only_device_slice, push_async_writable_device_slice,
-    set_async_kernel_cluster_dim,
+    set_async_kernel_cluster_dim, set_async_kernel_cooperative,
 };
 
 #[cfg(feature = "async")]

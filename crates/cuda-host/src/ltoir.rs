@@ -34,8 +34,9 @@
 //! - **nvJitLink**: same, but at `<root>/lib64/libnvJitLink.so`.
 //! - **libdevice**: `CUDA_OXIDE_LIBDEVICE` env var, then
 //!   `<root>/nvvm/libdevice/libdevice.10.bc` for the same roots.
-//! - **Arch**: `CUDA_OXIDE_TARGET` env var (set by `cargo oxide`'s
-//!   `--arch=<sm_XX>`), defaulting to `sm_120`.
+//! - **Arch**: `CUDA_OXIDE_TARGET` (set by `cargo oxide`'s `--arch=<sm_XX>`),
+//!   then the `CUDA_OXIDE_DEVICE_ARCH` hint (auto-detected GPU arch), then a
+//!   `sm_120` default.
 //!
 //! # Example
 //!
@@ -314,14 +315,19 @@ pub fn find_libdevice() -> Result<PathBuf, LtoirError> {
     })
 }
 
-/// Read the GPU arch (`sm_XX`) from `CUDA_OXIDE_TARGET`, defaulting to
-/// `sm_120` (consumer Blackwell, RTX 5090) when the env var is unset.
+/// Read the GPU arch (`sm_XX`) for the cubin build, defaulting to `sm_120`
+/// (consumer Blackwell, RTX 5090) when nothing else is set.
 ///
-/// `cargo oxide run --arch=<arch>` sets `CUDA_OXIDE_TARGET` for the spawned
-/// binary, so `cargo oxide run --arch=sm_90 my_kernel` causes this helper
-/// to return `"sm_90"`.
+/// Resolution order:
+/// - `CUDA_OXIDE_TARGET` -- an explicit pin. `cargo oxide run --arch=<arch>`
+///   sets it for the spawned binary, so `--arch=sm_90` yields `"sm_90"`.
+/// - `CUDA_OXIDE_DEVICE_ARCH` -- the auto-detected arch of the GPU in this
+///   machine, forwarded by `cargo oxide run` when no `--arch` was given.
+/// - `sm_120` fallback.
 pub fn target_arch() -> String {
-    std::env::var("CUDA_OXIDE_TARGET").unwrap_or_else(|_| "sm_120".to_string())
+    std::env::var("CUDA_OXIDE_TARGET")
+        .or_else(|_| std::env::var("CUDA_OXIDE_DEVICE_ARCH"))
+        .unwrap_or_else(|_| "sm_120".to_string())
 }
 
 /// Directory to search for kernel artifacts (`.cubin` / `.ptx` / `.ll`).

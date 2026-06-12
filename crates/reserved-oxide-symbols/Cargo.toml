@@ -1,6 +1,6 @@
 [package]
 name = "reserved-oxide-symbols"
-version = "0.1.0"
+version = "0.2.1"
 description = "INTERNAL: cuda-oxide workspace symbol-name contract. Not a public API."
 edition.workspace = true
 license.workspace = true

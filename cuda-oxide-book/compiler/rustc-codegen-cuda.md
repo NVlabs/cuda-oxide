@@ -104,7 +104,7 @@ called from device code. More on this in {ref}`Device Function Collection
 **b) Generate device code.**
 `device_codegen::generate_device_code()` bridges the collected functions to
 stable MIR and runs the full cuda-oxide pipeline (`dialect-mir` -> `mem2reg`
--> `dialect-llvm` -> `.ll` -> PTX).
+-> LLVM dialect -> `.ll` -> PTX).
 
 ### Step 4: Always Compile Host Code
 
@@ -396,7 +396,7 @@ quiet, production-oriented build.
 | :-------------------------- | :------------------------------------------------------------------------------------- |
 | `CUDA_OXIDE_VERBOSE`        | Print compilation progress (which kernels were found, pipeline stages, timing)         |
 | `CUDA_OXIDE_DUMP_MIR`       | Dump the `dialect-mir` module to stderr after import (and after `mem2reg`)             |
-| `CUDA_OXIDE_DUMP_LLVM`      | Dump the `dialect-llvm` module to stderr after lowering                                |
+| `CUDA_OXIDE_DUMP_LLVM`      | Dump the LLVM dialect module to stderr after lowering                                  |
 | `CUDA_OXIDE_PTX_DIR`        | Override the output directory for `.ptx` files (default: next to the host binary)      |
 | `CUDA_OXIDE_TARGET`         | Override the GPU target architecture (e.g., `sm_90a` for Hopper)                       |
 | `CUDA_OXIDE_SHOW_RUSTC_MIR` | Dump the raw rustc MIR before translation to pliron (useful for debugging import bugs) |

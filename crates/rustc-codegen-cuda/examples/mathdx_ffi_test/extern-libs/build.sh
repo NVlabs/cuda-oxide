@@ -157,10 +157,18 @@ compile_ltoir() {
     if [ -f "${base}.ltoir" ]; then
         echo "  Binary LTOIR: ${base}.ltoir ($(wc -c < ${base}.ltoir) bytes)"
 
-        # Optionally convert binary LTOIR to text format for debugging
+        # Optionally convert binary LTOIR to text format for debugging. This is
+        # a convenience only -- the binary LTOIR above is what nvJitLink
+        # consumes. An nvvm-dis older than the toolkit that produced the LTOIR
+        # fails with an NvvmIRVersion/LlvmVersion mismatch; that must not abort
+        # the build (wrapping in `if` also keeps `set -e` from tripping).
         if [ -x "$NVVM_DIS" ]; then
-            "$NVVM_DIS" "${base}.ltoir" > "${base}_text.ltoir" 2>&1
-            echo "  Text LTOIR:   ${base}_text.ltoir ($(wc -c < ${base}_text.ltoir) bytes)"
+            if "$NVVM_DIS" "${base}.ltoir" > "${base}_text.ltoir" 2>&1; then
+                echo "  Text LTOIR:   ${base}_text.ltoir ($(wc -c < ${base}_text.ltoir) bytes)"
+            else
+                echo "  Text LTOIR:   skipped (nvvm-dis incompatible with this LTOIR version)"
+                rm -f "${base}_text.ltoir"
+            fi
         fi
     else
         echo "  ERROR: LTOIR not generated for $src"
@@ -187,7 +195,11 @@ fi
 # NOTE: cuBLASDx does NOT work on Blackwell (sm_120) as of MathDx 25.12
 # See bugs/BUG-004-cublasdx-blackwell-sm120-unsupported.md
 if [ -f "cublasdx_wrappers.cu" ]; then
-    compile_ltoir "cublasdx_wrappers.cu"
+    # cuBLASDx is unsupported on Blackwell (sm_120) as of MathDx 25.12, and the
+    # cuFFTDx FFI test does not depend on it; tolerate a compile failure here so
+    # the build still succeeds on architectures where cuBLASDx won't compile.
+    compile_ltoir "cublasdx_wrappers.cu" \
+        || echo "  (skipped cublasdx_wrappers: compile failed; unsupported on $ARCH)"
 fi
 
 # Build test kernels (for verifying CUDA C++ extern behavior)

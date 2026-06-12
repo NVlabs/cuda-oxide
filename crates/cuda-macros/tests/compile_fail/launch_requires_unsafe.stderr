@@ -1,0 +1,14 @@
+error[E0133]: call to unsafe function `launch_kernel_on_stream` is unsafe and requires unsafe block
+  --> tests/compile_fail/launch_requires_unsafe.rs:28:5
+   |
+28 | /     cuda_launch! {
+29 | |         kernel: dummy,
+30 | |         stream: stream,
+31 | |         module: module,
+32 | |         config: cuda_core::LaunchConfig::for_num_elems(1),
+33 | |         args: [x]
+34 | |     }
+   | |_____^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+   = note: this error originates in the macro `cuda_launch` (in Nightly builds, run with -Z macro-backtrace for more info)

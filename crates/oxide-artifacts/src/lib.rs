@@ -511,13 +511,27 @@ pub fn read_artifact_bundles_from_object_bytes(
     Ok(bundles)
 }
 
+/// Wrap an artifact section blob in a relocatable host object file.
+///
+/// The object contains a single `.oxart` data section. When
+/// `anchor_symbol` is given, a global symbol with that name is defined at
+/// the start of the section. The anchor matters for *library* crates:
+/// their artifact object becomes a member of an `.rlib` archive, and a
+/// linker only extracts an archive member when the member defines a
+/// symbol that resolves an outstanding undefined reference. Without a
+/// defined symbol the member is silently skipped and the bundle never
+/// reaches the final binary. Host-side code (the `#[cuda_module]` macro)
+/// emits a matching reference to the anchor to force the extraction.
+/// `SHF_GNU_RETAIN` on the section additionally protects it from
+/// `--gc-sections` once the member has been linked in.
 #[cfg(feature = "object-write")]
 pub fn build_host_object_for_target(
     section_data: &[u8],
     target: &str,
+    anchor_symbol: Option<&str>,
 ) -> Result<Vec<u8>, ArtifactError> {
-    use object::write::Object;
-    use object::{SectionFlags, SectionKind};
+    use object::write::{Object, Symbol, SymbolSection};
+    use object::{SectionFlags, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
 
     if section_data.is_empty() {
         return Err(ArtifactError::EmptyPayload);
@@ -535,6 +549,23 @@ pub fn build_host_object_for_target(
     section.flags = SectionFlags::Elf {
         sh_flags: elf::SHF_ALLOC | elf::SHF_GNU_RETAIN,
     };
+
+    if let Some(anchor_symbol) = anchor_symbol {
+        // Global binding so the symbol can satisfy undefined references
+        // from other objects (that is what triggers archive extraction);
+        // `Linkage` scope so it stays hidden and never leaks into the
+        // dynamic symbol table of the final binary.
+        object.add_symbol(Symbol {
+            name: anchor_symbol.as_bytes().to_vec(),
+            value: 0,
+            size: 0,
+            kind: SymbolKind::Data,
+            scope: SymbolScope::Linkage,
+            weak: false,
+            section: SymbolSection::Section(section_id),
+            flags: SymbolFlags::None,
+        });
+    }
 
     object
         .write()
@@ -854,7 +885,7 @@ mod tests {
         .unwrap();
 
         for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
-            let object = build_host_object_for_target(&blob, target).unwrap();
+            let object = build_host_object_for_target(&blob, target, None).unwrap();
             let bundles = read_artifact_bundles_from_object_bytes(&object).unwrap();
             assert_eq!(bundles.len(), 1);
             assert_eq!(
@@ -864,6 +895,49 @@ mod tests {
         }
     }
 
+    /// The anchor symbol must be a *defined* global pointing at the
+    /// `.oxart` section. A linker only extracts an rlib archive member if
+    /// the member defines a symbol someone references, so an undefined or
+    /// missing anchor would reintroduce the dropped-bundle bug.
+    #[cfg(all(feature = "object-read", feature = "object-write"))]
+    #[test]
+    fn host_object_defines_requested_anchor_symbol() {
+        use object::{Object, ObjectSymbol};
+
+        let blob = sample_blob();
+        let bytes =
+            build_host_object_for_target(&blob, "x86_64-unknown-linux-gnu", Some("demo_anchor"))
+                .unwrap();
+
+        let file = object::File::parse(bytes.as_slice()).unwrap();
+        let anchor = file
+            .symbols()
+            .find(|symbol| symbol.name() == Ok("demo_anchor"))
+            .expect("anchor symbol missing from artifact object");
+        assert!(anchor.is_definition());
+        assert!(anchor.is_global());
+        assert_eq!(anchor.address(), 0);
+
+        // The data must still round-trip with the symbol present.
+        let bundles = read_artifact_bundles_from_object_bytes(&bytes).unwrap();
+        assert_eq!(bundles.len(), 1);
+        assert_eq!(bundles[0].name, "demo");
+    }
+
+    /// Omitting the anchor must keep producing a symbol-free object (the
+    /// shape used by tests and any non-rlib embedding).
+    #[cfg(all(feature = "object-read", feature = "object-write"))]
+    #[test]
+    fn host_object_without_anchor_has_no_symbols() {
+        use object::Object;
+
+        let blob = sample_blob();
+        let bytes = build_host_object_for_target(&blob, "x86_64-unknown-linux-gnu", None).unwrap();
+
+        let file = object::File::parse(bytes.as_slice()).unwrap();
+        assert_eq!(file.symbols().count(), 0);
+    }
+
     #[cfg(feature = "object-write")]
     #[test]
     fn host_object_rejects_non_cuda_host_targets() {
@@ -871,7 +945,7 @@ mod tests {
 
         for target in ["powerpc64le-unknown-linux-gnu", "x86_64-apple-darwin"] {
             assert!(matches!(
-                build_host_object_for_target(&blob, target),
+                build_host_object_for_target(&blob, target, None),
                 Err(ArtifactError::UnsupportedHostTarget(_))
             ));
         }

@@ -426,7 +426,8 @@ without a special CUDA allocator:
 ```rust
 let factor = 5i32;                           // ordinary stack variable
 let scale = |x: i32| x * factor;            // captures &factor (non-move)
-cuda_launch! { kernel: scale, args: [...] }  // GPU reads &factor via HMM
+// SAFETY: args match the kernel's signature; &factor stays alive via HMM.
+unsafe { cuda_launch! { kernel: scale, args: [...] } }  // GPU reads &factor via HMM
 ```
 
 Unlike Unified Memory, HMM requires no special allocation API -- the pointer is

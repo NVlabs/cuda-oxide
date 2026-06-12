@@ -6,18 +6,19 @@
 // Index-based loops are used intentionally for parallel array iteration patterns
 #![allow(clippy::needless_range_loop)]
 
-//! # `dialect-mir` → `dialect-llvm` Lowering
+//! # `dialect-mir` → LLVM dialect Lowering
 //!
 //! This crate implements the lowering pass that converts
-//! [`dialect-mir`][dialect_mir] operations into
-//! [`dialect-llvm`][dialect_llvm] operations, with GPU-specific operations
-//! lowered to inline PTX assembly or NVVM intrinsic calls.
+//! [`dialect-mir`][dialect_mir] operations into LLVM dialect operations
+//! (provided by `pliron-llvm`, re-exported via [`llvm_export`]), with
+//! GPU-specific operations lowered to inline PTX assembly or NVVM
+//! intrinsic calls.
 //!
 //! ## Overview
 //!
 //! `mir-lower` bridges cuda-oxide's Rust-semantic dialect (`dialect-mir`)
-//! to its LLVM-shaped dialect (`dialect-llvm`). After lowering,
-//! `dialect-llvm` is exported to textual LLVM IR and fed to `llc` for PTX.
+//! to the LLVM dialect. After lowering, the LLVM dialect is exported to
+//! textual LLVM IR (by `llvm-export`) and fed to `llc` for PTX.
 //!
 //! ## Compilation Pipeline Position
 //!
@@ -36,12 +37,12 @@
 //!        │
 //!        ▼
 //! ┌──────────────┐
-//! │  mir-lower   │  ◄── THIS CRATE (dialect-mir → dialect-llvm)
+//! │  mir-lower   │  ◄── THIS CRATE (dialect-mir → LLVM dialect)
 //! └──────┬───────┘
 //!        │
 //!        ▼
 //! ┌──────────────┐
-//! │ dialect-llvm │  (exports to LLVM IR)
+//! │ llvm-export  │  (exports to LLVM IR)
 //! └──────┬───────┘
 //!        │
 //!        ▼
@@ -62,18 +63,18 @@
 //!
 //! - **[`conversion_interface`]**: The `MirToLlvmConversion` op interface
 //!   trait. Each `dialect-mir` / `dialect-nvvm` op implements this to
-//!   declare how it lowers to `dialect-llvm`.
+//!   declare how it lowers to the LLVM dialect.
 //!
 //! - **[`context`]**: CUDA-specific state maps (`SharedGlobalsMap`,
 //!   `DynamicSmemAlignmentMap`) used during conversion.
 //!
-//! - **[`helpers`]**: Utility functions for creating `dialect-llvm`
+//! - **[`helpers`]**: Utility functions for creating LLVM dialect
 //!   constants, declaring intrinsics, and navigating the IR hierarchy.
 //!
 //! ### Conversion Modules ([`convert`])
 //!
 //! - **[`convert::types`]**: Type conversion from `dialect-mir` types to
-//!   `dialect-llvm` types.
+//!   LLVM dialect types.
 //!
 //! - **[`convert::ops`]**: Operation converters organized by semantic category:
 //!   - `arithmetic` - Binary/unary math operations
@@ -104,7 +105,7 @@
 //!
 //! lower_mir_to_llvm(&mut ctx, module_op)?;
 //!
-//! // module_op now contains dialect-llvm operations
+//! // module_op now contains LLVM dialect operations
 //! ```
 //!
 //! ## GPU Intrinsic Lowering Strategy
@@ -152,7 +153,7 @@ use type_conversion_interface::MirConvertibleType;
 // DialectConversion driver
 // ============================================================================
 
-/// `dialect-mir` → `dialect-llvm` conversion driver.
+/// `dialect-mir` → LLVM dialect conversion driver.
 ///
 /// Implements pliron's `DialectConversion` trait. The `rewrite` method uses
 /// `op_cast`-based dispatch via the `MirToLlvmConversion` op interface,
@@ -258,7 +259,7 @@ impl DialectConversion for MirToLlvmConversionDriver {
     }
 }
 
-/// Runs the `dialect-mir` → `dialect-llvm` lowering pass on the given module.
+/// Runs the `dialect-mir` → LLVM dialect lowering pass on the given module.
 ///
 /// This is the main entry point for the lowering pass. It uses pliron's
 /// `DialectConversion` framework to walk the IR, convert types, and
@@ -278,10 +279,13 @@ pub fn lower_mir_to_llvm(ctx: &mut Context, module_op: Ptr<Operation>) -> Result
         device_globals: HashMap::new(),
         dynamic_smem_alignments: HashMap::new(),
     };
-    apply_dialect_conversion(ctx, &mut conversion, module_op)
+    // pliron's DialectConversion now reports an IRStatus (Changed/Unchanged);
+    // lowering only cares about success, so discard it.
+    apply_dialect_conversion(ctx, &mut conversion, module_op)?;
+    Ok(())
 }
 
-/// Register the `dialect-mir` → `dialect-llvm` lowering pass with a pliron context.
+/// Register the `dialect-mir` → LLVM dialect lowering pass with a pliron context.
 ///
 /// This is a placeholder for future pass manager integration.
 /// Currently, the pass is invoked directly via [`lower_mir_to_llvm`].

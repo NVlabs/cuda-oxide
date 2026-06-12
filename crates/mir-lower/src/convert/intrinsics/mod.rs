@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! GPU intrinsic conversion: `dialect-nvvm` → `dialect-llvm`.
+//! GPU intrinsic conversion: `dialect-nvvm` → LLVM dialect.
 //!
 //! This module converts `dialect-nvvm` (NVIDIA Virtual Machine) operations
-//! to `dialect-llvm` ops, using either LLVM NVVM intrinsics or inline PTX
+//! to LLVM dialect ops, using either LLVM NVVM intrinsics or inline PTX
 //! assembly depending on the operation.
 //!
 //! # Lowering Strategies

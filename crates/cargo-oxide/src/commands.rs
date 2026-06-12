@@ -107,17 +107,19 @@ pub fn codegen_run(
 
     let output_format = format_label(emit_nvvm_ir);
     // Target precedence for `cargo oxide run` (highest first):
-    //   1. --arch <sm_XX>           explicit user override
-    //   2. CUDA_OXIDE_TARGET=<sm_XX>  explicit env override (set by parent process)
-    //   3. Host GPU compute capability detected from CUDA device 0
-    //   4. Backend feature-based default (`select_target` in mir-importer)
+    //   1. --arch <sm_XX>            explicit user override   -> CUDA_OXIDE_TARGET
+    //   2. CUDA_OXIDE_TARGET=<sm_XX> explicit env override (from the parent)
+    //   3. detected GPU arch of CUDA device 0 -> CUDA_OXIDE_DEVICE_ARCH (a hint)
+    //   4. backend feature-based default (`select_target` in mir-importer)
     //
-    // (3) is the auto-detect added here so the generated module can load on
-    // the local GPU. We only do it for `run`, not `build`/`pipeline`, because
-    // `run` immediately loads the cubin on device 0 — whereas the other
-    // commands may be cross-compiling for a different machine.
-    let detected_run_arch = detect_run_target_arch(arch, emit_nvvm_ir);
-    let forwarded_arch = arch.or(detected_run_arch.as_deref());
+    // Slot 3 is a HINT, not an override: the backend builds for the detected
+    // GPU only when that GPU can run the kernel. If the kernel needs a newer
+    // arch (tcgen05 needs sm_100a even on a consumer sm_120 GPU), the backend
+    // builds for the required arch and the module simply skips at load time.
+    // We only detect for `run`, not `build`/`pipeline`: `run` loads the cubin
+    // on device 0, whereas those may legitimately cross-compile for another
+    // machine.
+    let detected_device_arch = detect_run_target_arch(arch, emit_nvvm_ir);
 
     if let Some(interop) = interop.filter(|config| !config.device_crates.is_empty()) {
         codegen_run_interop(
@@ -127,8 +129,8 @@ pub fn codegen_run(
             &interop,
             verbose,
             emit_nvvm_ir,
-            forwarded_arch,
-            detected_run_arch.as_deref(),
+            arch,
+            detected_device_arch.as_deref(),
             features,
             bin,
         );
@@ -148,13 +150,12 @@ pub fn codegen_run(
             arch.expect("--emit-nvvm-ir requires --arch")
         );
         println!();
-    } else if detected_run_arch.is_some() {
-        // Surface the auto-detect outcome so it isn't silent magic; users
-        // chasing a JIT/load failure can see exactly which arch was picked.
-        println!(
-            "Target arch: {} (auto-detected from CUDA device 0)",
-            detected_run_arch.as_deref().unwrap()
-        );
+    } else if let Some(dev) = detected_device_arch.as_deref() {
+        // Surface the detected GPU so it isn't silent magic. It is a hint, not
+        // a hard target: the backend builds for it unless a kernel needs a
+        // newer arch (e.g. tcgen05 forces sm_100a even on a consumer sm_120
+        // GPU), so the final PTX target may differ.
+        println!("Detected GPU arch: {dev} (CUDA device 0)");
         println!();
     }
     println!("This is the proper cargo workflow:");
@@ -186,7 +187,8 @@ pub fn codegen_run(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
 
-    apply_output_mode(&mut cmd, emit_nvvm_ir, forwarded_arch);
+    apply_output_mode(&mut cmd, emit_nvvm_ir, arch);
+    apply_device_arch_hint(&mut cmd, arch, detected_device_arch.as_deref());
     apply_ld_library_path(&mut cmd);
 
     if let Some(bin) = bin {
@@ -229,7 +231,7 @@ fn codegen_run_interop(
     verbose: bool,
     emit_nvvm_ir: bool,
     arch: Option<&str>,
-    detected_run_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
     features: Option<&str>,
     bin: Option<&str>,
 ) {
@@ -241,15 +243,19 @@ fn codegen_run_interop(
     if let Some(kind) = &interop.kind {
         println!("Interop kind: {}", kind);
     }
-    if let Some(detected) = detected_run_arch {
-        println!(
-            "Target arch: {} (auto-detected from CUDA device 0)",
-            detected
-        );
+    if let Some(dev) = detected_device_arch {
+        println!("Detected GPU arch: {dev} (CUDA device 0)");
     }
     println!();
 
-    build_interop_device_crates(ctx, example_dir, interop, verbose, arch);
+    build_interop_device_crates(
+        ctx,
+        example_dir,
+        interop,
+        verbose,
+        arch,
+        detected_device_arch,
+    );
     run_host_cargo(example, example_dir, "run", features, bin, verbose);
 }
 
@@ -274,7 +280,9 @@ fn codegen_build_interop(
     }
     println!();
 
-    build_interop_device_crates(ctx, example_dir, interop, verbose, arch);
+    // `build` may cross-compile for another machine, so no device-arch hint:
+    // only an explicit `--arch` pins the target here.
+    build_interop_device_crates(ctx, example_dir, interop, verbose, arch, None);
     run_host_cargo(example, example_dir, "build", features, None, verbose);
 
     println!();
@@ -295,9 +303,17 @@ fn build_interop_device_crates(
     interop: &InteropConfig,
     verbose: bool,
     arch: Option<&str>,
+    detected_device_arch: Option<&str>,
 ) {
     for device_crate in &interop.device_crates {
-        build_interop_device_crate(ctx, example_dir, device_crate, verbose, arch);
+        build_interop_device_crate(
+            ctx,
+            example_dir,
+            device_crate,
+            verbose,
+            arch,
+            detected_device_arch,
+        );
     }
 }
 
@@ -307,6 +323,7 @@ fn build_interop_device_crate(
     device_crate: &DeviceCrateConfig,
     verbose: bool,
     arch: Option<&str>,
+    detected_device_arch: Option<&str>,
 ) {
     let manifest_path = example_dir.join(&device_crate.manifest_path);
     let manifest_path = manifest_path.canonicalize().unwrap_or_else(|e| {
@@ -356,6 +373,7 @@ fn build_interop_device_crate(
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_MIR");
     forward_env_var(&mut cmd, "CUDA_OXIDE_DUMP_LLVM");
     apply_output_mode(&mut cmd, false, arch);
+    apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
     apply_ld_library_path(&mut cmd);
 
     let status = cmd.status().expect("Failed to build interop device crate");
@@ -367,7 +385,7 @@ fn build_interop_device_crate(
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let ptx_path = ptx_dir.join(format!("{}.ptx", artifact_name));
+    let ptx_path = ptx_dir.join(format!("{}.ptx", artifact_stem(&artifact_name)));
     if !ptx_path.exists() {
         eprintln!(
             "Error: device crate build succeeded but did not produce {}",
@@ -519,7 +537,7 @@ pub fn codegen_build_example(
 ///
 /// Enables all diagnostic env vars (`CUDA_OXIDE_VERBOSE`, `SHOW_RUSTC_MIR`,
 /// `DUMP_MIR`, `DUMP_LLVM`) so the user can see MIR collection, the
-/// `dialect-mir` module (pre- and post-`mem2reg`), the `dialect-llvm`
+/// `dialect-mir` module (pre- and post-`mem2reg`), the LLVM dialect
 /// module, textual LLVM IR, and the final PTX or NVVM IR. After the build,
 /// generated artifacts are printed to stdout.
 pub fn codegen_show_pipeline(ctx: &Context, example: &str, emit_nvvm_ir: bool, arch: Option<&str>) {
@@ -1276,12 +1294,34 @@ fn build_rustflags_with_existing(
 }
 
 /// Set environment variables for the codegen backend.
+///
+/// `arch` is an explicit pin (`--arch`); it becomes `CUDA_OXIDE_TARGET`, the
+/// hard override the backend honors as-is. The auto-detected GPU arch is *not*
+/// routed here -- see [`apply_device_arch_hint`].
 fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) {
     if let Some(target_arch) = arch {
         cmd.env("CUDA_OXIDE_TARGET", target_arch);
     }
     if emit_nvvm_ir {
         cmd.env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
+    }
+}
+
+/// Forward the auto-detected GPU arch as a *hint* via `CUDA_OXIDE_DEVICE_ARCH`.
+///
+/// Unlike `CUDA_OXIDE_TARGET` (a hard override), this is advisory: the backend
+/// builds for the detected GPU only when that GPU can actually run the kernel.
+/// If the kernel needs a newer arch (e.g. tcgen05 / cta_group TMA multicast
+/// need sm_100a, which a consumer sm_120 GPU lacks), the backend builds for the
+/// required arch instead. Skipped when the user pinned `--arch` (that explicit
+/// choice already went to `CUDA_OXIDE_TARGET`).
+fn apply_device_arch_hint(
+    cmd: &mut Command,
+    explicit_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+) {
+    if let (None, Some(dev)) = (explicit_arch, detected_device_arch) {
+        cmd.env("CUDA_OXIDE_DEVICE_ARCH", dev);
     }
 }
 
@@ -1293,16 +1333,22 @@ fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) 
 /// `cargo oxide run` resolves the target architecture in this order, highest
 /// priority first:
 ///
-/// 1. `--arch <sm_XX>`            — explicit user override
-/// 2. `CUDA_OXIDE_TARGET=<sm_XX>` — explicit env override (set in the parent
+/// 1. `--arch <sm_XX>`            (explicit user override)
+/// 2. `CUDA_OXIDE_TARGET=<sm_XX>` (explicit env override, set in the parent
 ///    process before invoking `cargo oxide run`)
-/// 3. **This function** — host GPU compute capability of CUDA device 0
+/// 3. **This function**: the compute capability of the GPU in CUDA device 0,
+///    forwarded as the `CUDA_OXIDE_DEVICE_ARCH` *hint*. Emits the arch-specific
+///    `sm_XYa` form for cc >= 9.0 (so the backend can lower WGMMA / tcgen05 /
+///    TMA-multicast when the GPU supports them) and the plain `sm_XY` form for
+///    cc < 9.0.
 /// 4. Backend feature-based default (`select_target` in
 ///    `mir-importer::pipeline`), which picks the minimum `sm_XX` required by
-///    the IR shape (e.g. `Basic → sm_80`, `Cluster → sm_90`, `Tma → sm_100`)
+///    the IR shape (e.g. `Basic -> sm_80`, `Cluster -> sm_90`, `Tma -> sm_100`).
 ///
-/// This function returns `Some(sm_XY)` to fill slot 3, or `None` (falling
-/// through to slot 4) when the host has no usable GPU.
+/// Slot 3 is advisory: the backend builds for the detected GPU only when that
+/// GPU can run the kernel, otherwise it falls back to slot 4 (the arch the
+/// kernel requires). This function returns `Some(sm_XY[a])` to fill slot 3, or
+/// `None` (falling through to slot 4) when the machine has no usable GPU.
 ///
 /// # Why only `run`
 ///
@@ -1317,7 +1363,7 @@ fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) 
 /// The backend's `select_target` picks the minimum `sm_XX` the IR requires.
 /// `Basic → sm_80` is a fine *compilation* baseline, but PTX for `sm_80` will
 /// not load on a Turing (`sm_75`) GPU because the JIT refuses
-/// forward-incompatible PTX. Detecting the host CC in `run` keeps the
+/// forward-incompatible PTX. Detecting the device CC in `run` keeps the
 /// generated module loadable on the actual hardware that will execute it.
 ///
 /// # When this returns `None`
@@ -1326,7 +1372,7 @@ fn apply_output_mode(cmd: &mut Command, emit_nvvm_ir: bool, arch: Option<&str>) 
 /// - `CUDA_OXIDE_TARGET` is set in the environment (slot 2 wins).
 /// - `--emit-nvvm-ir` is in effect (NVVM IR mode requires explicit `--arch`,
 ///   enforced by the CLI parser).
-/// - No CUDA driver / device 0 is available on the host (CI runners without
+/// - No CUDA driver / device 0 is available on the machine (CI runners without
 ///   GPUs, headless build boxes). The caller falls through to slot 4 and
 ///   the backend's feature-based default applies.
 fn detect_run_target_arch(arch: Option<&str>, emit_nvvm_ir: bool) -> Option<String> {
@@ -1341,12 +1387,38 @@ fn detect_run_target_arch(arch: Option<&str>, emit_nvvm_ir: bool) -> Option<Stri
 }
 
 /// Format a `(major, minor)` compute-capability tuple as the `sm_XX` /
-/// `sm_XXX` string the codegen backend expects on `CUDA_OXIDE_TARGET`.
+/// `sm_XXX[a]` string the codegen backend expects on `CUDA_OXIDE_TARGET`.
 ///
 /// Concatenates without a separator, matching CUDA conventions:
-/// `(7, 5)` → `"sm_75"`, `(12, 0)` → `"sm_120"`.
+/// `(7, 5)` → `"sm_75"`, `(12, 0)` → `"sm_120a"`.
+///
+/// # Arch-specific (`a`) suffix
+///
+/// Compute capability ≥ 9.0 always has an arch-specific PTX target (`sm_90a`,
+/// `sm_100a`, `sm_103a`, `sm_120a`, …) that is a strict superset of the plain
+/// target on that chip. The `a` form is what unlocks WGMMA on Hopper and
+/// `tcgen05` / TMA multicast / `cta_group::*` on Blackwell datacenter — and
+/// every chip that reports cc ≥ 9.0 *is* the `a`-variant chip in NVIDIA's
+/// lineup (there is no consumer Hopper, no non-`a` sm_100, and so on).
+///
+/// This helper is only used by [`detect_run_target_arch`] in `cargo oxide
+/// run`, where the local GPU is known exactly and no cross-compile is in
+/// flight. Emitting the `a` form there:
+///
+/// - **No false negatives:** kernels that need `tcgen05` / WGMMA compile and
+///   load on that GPU (was: silent fallback to `sm_100` / `sm_90` and a
+///   `ptxas: 'tcgen05.alloc' not supported on .target 'sm_100'` failure).
+/// - **No false positives:** cc < 9.0 keeps the plain `sm_XY` form, since
+///   there is no `sm_80a` / `sm_86a` / `sm_89a` target in the PTX ISA.
+/// - **Strict superset:** PTX targeting `sm_XYa` accepts every kernel that
+///   would have compiled for plain `sm_XY`; the `a` form only permits
+///   *additional* arch-specific intrinsics.
 fn format_sm_arch((major, minor): (i32, i32)) -> String {
-    format!("sm_{}{}", major, minor)
+    if major >= 9 {
+        format!("sm_{}{}a", major, minor)
+    } else {
+        format!("sm_{}{}", major, minor)
+    }
 }
 
 /// Forward an env var to the child process if it's set in the parent, otherwise remove it.
@@ -1396,11 +1468,21 @@ fn touch_main_rs(example_dir: &Path) {
     }
 }
 
+/// Artifacts are named after the crate, and cargo normalizes hyphens in
+/// package names to underscores (`rustlantis-smoke` emits
+/// `rustlantis_smoke.ptx`). Always go through this when deriving an
+/// artifact filename from an example name, or hyphenated examples keep
+/// stale artifacts forever.
+fn artifact_stem(example: &str) -> String {
+    example.replace('-', "_")
+}
+
 /// Remove stale generated artifacts (`.ptx`, `.ll`, `.ltoir`, `.cubin`) from a
 /// previous run so we can verify the build produces fresh output.
 fn clean_generated_files(example_dir: &Path, example: &str) {
-    for ext in &["ptx", "ll", "ltoir", "cubin"] {
-        let file = example_dir.join(format!("{}.{}", example, ext));
+    let stem = artifact_stem(example);
+    for ext in &["ptx", "ll", "opt.ll", "ltoir", "cubin"] {
+        let file = example_dir.join(format!("{}.{}", stem, ext));
         if file.exists() {
             let _ = std::fs::remove_file(&file);
         }
@@ -1414,13 +1496,14 @@ fn format_label(emit_nvvm_ir: bool) -> &'static str {
 
 /// Print generated artifacts (LLVM IR or PTX) to stdout after a pipeline build.
 fn show_generated_artifacts(example_dir: &Path, example: &str) {
-    let ll_file = example_dir.join(format!("{}.ll", example));
-    let ptx_file = example_dir.join(format!("{}.ptx", example));
+    let stem = artifact_stem(example);
+    let ll_file = example_dir.join(format!("{}.ll", stem));
+    let ptx_file = example_dir.join(format!("{}.ptx", stem));
 
     if ll_file.exists() {
         println!();
         println!("=========================================");
-        println!("LLVM IR ({}.ll)", example);
+        println!("LLVM IR ({}.ll)", stem);
         println!("=========================================");
         if let Ok(content) = std::fs::read_to_string(&ll_file) {
             println!("{}", content);
@@ -1430,7 +1513,7 @@ fn show_generated_artifacts(example_dir: &Path, example: &str) {
     if ptx_file.exists() {
         println!();
         println!("=========================================");
-        println!("PTX ({}.ptx)", example);
+        println!("PTX ({}.ptx)", stem);
         println!("=========================================");
         if let Ok(content) = std::fs::read_to_string(&ptx_file) {
             println!("{}", content);
@@ -1691,6 +1774,12 @@ mod tests {
     }
 
     #[test]
+    fn artifact_stem_normalizes_hyphens_like_cargo() {
+        assert_eq!(artifact_stem("rustlantis-smoke"), "rustlantis_smoke");
+        assert_eq!(artifact_stem("vecadd"), "vecadd");
+    }
+
+    #[test]
     fn build_rustflags_appends_existing_rustflags_after_required_flags() {
         let rustflags = build_rustflags_with_existing(
             Path::new("/tmp/librustc_codegen_cuda.so"),
@@ -1757,13 +1846,60 @@ mod tests {
     }
 
     #[test]
+    fn apply_device_arch_hint_sets_hint_when_no_explicit_arch() {
+        let mut cmd = Command::new("cargo");
+
+        apply_device_arch_hint(&mut cmd, None, Some("sm_120a"));
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_DEVICE_ARCH").as_deref(),
+            Some("sm_120a")
+        );
+        // The hint must never masquerade as the hard override.
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_TARGET"), None);
+    }
+
+    #[test]
+    fn apply_device_arch_hint_skipped_when_arch_explicit() {
+        // An explicit --arch already went to CUDA_OXIDE_TARGET; don't also
+        // emit a competing device hint.
+        let mut cmd = Command::new("cargo");
+
+        apply_device_arch_hint(&mut cmd, Some("sm_90"), Some("sm_120a"));
+
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_DEVICE_ARCH"), None);
+    }
+
+    #[test]
+    fn apply_device_arch_hint_noop_without_detection() {
+        let mut cmd = Command::new("cargo");
+
+        apply_device_arch_hint(&mut cmd, None, None);
+
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_DEVICE_ARCH"), None);
+    }
+
+    #[test]
     fn format_sm_arch_uses_cuda_target_spelling() {
+        // cc < 9.0 — no arch-specific target exists in the PTX ISA, so we
+        // emit the plain `sm_XY` form. Confirms we do not produce false
+        // positives like `sm_75a` / `sm_80a` / `sm_89a`.
+        assert_eq!(format_sm_arch((7, 0)), "sm_70");
         assert_eq!(format_sm_arch((7, 5)), "sm_75");
-        assert_eq!(format_sm_arch((12, 0)), "sm_120");
-        // sm_90a / sm_100a etc. are not produced by this helper because
-        // compute_capability() returns plain integers; the `a` suffix is
-        // applied by the backend's feature selector when arch-specific
-        // tcgen05 / wgmma intrinsics are used.
+        assert_eq!(format_sm_arch((8, 0)), "sm_80");
+        assert_eq!(format_sm_arch((8, 6)), "sm_86");
+        assert_eq!(format_sm_arch((8, 9)), "sm_89");
+
+        // cc ≥ 9.0 — every chip that reports this CC is an arch-specific
+        // (`a`) variant. Auto-detect emits the `a` form so the codegen
+        // backend can lower WGMMA / tcgen05 / TMA-multicast / cta_group
+        // intrinsics without falling through to a plain target that ptxas
+        // would reject. Confirms we do not produce false negatives.
+        assert_eq!(format_sm_arch((9, 0)), "sm_90a"); // Hopper (H100/H200)
+        assert_eq!(format_sm_arch((10, 0)), "sm_100a"); // Blackwell DC
+        assert_eq!(format_sm_arch((10, 1)), "sm_101a");
+        assert_eq!(format_sm_arch((10, 3)), "sm_103a");
+        assert_eq!(format_sm_arch((12, 0)), "sm_120a"); // consumer Blackwell
     }
 
     #[test]

@@ -702,7 +702,7 @@ impl WarpCollective for CoalescedThreads {
 /// and [`block_scan`].
 ///
 /// Each combiner is a unit struct (`Sum`, `Min`, ...) that implements
-/// [`ReduceOp<T>`] for one or more value types `T`. The unit lives in this
+/// `ReduceOp<T>` for one or more value types `T`. The unit lives in this
 /// submodule so the names don't pollute the parent `cooperative_groups`
 /// namespace; users typically write
 /// `use cuda_device::cooperative_groups::ops::Sum;` at the call site.

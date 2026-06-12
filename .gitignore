@@ -40,3 +40,6 @@ crates/rustc-codegen-cuda/examples/gemm_sol/bench/venv/
 __pycache__/
 **/__pycache__/
 *.pyc
+
+# Locally-built bench helper (compiled by bench/build.sh)
+crates/rustc-codegen-cuda/examples/gemm_sol/bench/cublaslt_bench

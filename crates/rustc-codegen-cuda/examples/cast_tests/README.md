@@ -35,7 +35,7 @@ All casts dispatch on `MirCastKindAttr` — a pliron attribute preserved from Ru
 than guessing semantics from source/destination types.
 
 ```text
-Rust MIR                    dialect-mir                  dialect-llvm
+Rust MIR                    dialect-mir                  LLVM dialect
 ──────────                  ───────────                  ────────────
 Rvalue::Cast         ──►    MirCastOp                ──► Specific LLVM
 (CastKind,                  + MirCastKindAttr            cast instruction

@@ -41,10 +41,11 @@
 //! arguments other than the entry block's function parameters.
 //!
 //! The `mem2reg` pass in [`crate::pipeline`] promotes the scalar slots back
-//! into SSA before the `dialect-mir` → `dialect-llvm` lowering runs.
+//! into SSA before the `dialect-mir` → LLVM dialect lowering runs.
 
 pub mod block;
 pub mod body;
+pub(crate) mod layout;
 pub mod rvalue;
 pub mod statement;
 pub mod terminator;

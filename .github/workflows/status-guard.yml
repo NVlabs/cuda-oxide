@@ -1,0 +1,27 @@
+---
+name: status-guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  error-example-status-guard:
+    name: error-example status guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Verify error* examples are in STATUS.md and smoketest.sh
+        run: bash scripts/check-error-example-status.sh

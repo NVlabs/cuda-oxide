@@ -51,7 +51,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{
     DEVICE_EXTERN_PREFIX, DEVICE_PREFIX, INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL,
-    RESERVED_ROOT, constant_symbol, kernel_symbol,
+    RESERVED_ROOT, artifact_anchor_symbol, constant_symbol, kernel_symbol,
 };
 use syn::{
     Expr, ExprCall, ExprMethodCall, ExprPath, FnArg, ForeignItem, GenericArgument, GenericParam,
@@ -180,6 +180,7 @@ struct CudaModuleKernel {
     generics: syn::Generics,
     params: Vec<CudaModuleParam>,
     cluster_dim: Option<(u32, u32, u32)>,
+    cooperative: bool,
     is_generic: bool,
 }
 
@@ -237,6 +238,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
         }
     });
 
+    let artifact_anchor_statements = cuda_module_artifact_anchor_statements(&kernels)?;
     let constant_fields = constants.iter().map(generate_cuda_module_constant_field);
     let constant_initializers = constants
         .iter()
@@ -307,6 +309,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                 ctx: &::std::sync::Arc<::cuda_core::CudaContext>,
                 name: &str,
             ) -> ::core::result::Result<LoadedModule, ::cuda_host::EmbeddedModuleError> {
+                #artifact_anchor_statements
                 let module = ::cuda_host::load_embedded_module(ctx, name)?;
                 from_module(module).map_err(::cuda_host::EmbeddedModuleError::Driver)
             }
@@ -350,6 +353,7 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
             continue;
         }
         let cluster_dim = cuda_module_cluster_dim(&item_fn.attrs)?;
+        let cooperative = cuda_module_cooperative(&item_fn.attrs)?;
         let params = cuda_module_params(item_fn)?;
         let is_generic = item_fn
             .sig
@@ -366,10 +370,102 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
             generics: item_fn.sig.generics.clone(),
             params,
             cluster_dim,
+            cooperative,
             is_generic,
         });
     }
     Ok(kernels)
+}
+
+/// Generate the statements that pin this crate's embedded device artifact
+/// into the final binary.
+///
+/// The codegen backend stores each crate's compiled device code (PTX,
+/// cubin, NVVM IR, or LTOIR) in a `.oxart` data section of a small extra
+/// object file. When the crate that holds the `#[cuda_module]` is a
+/// *library*, that object becomes one member of the crate's `.rlib`
+/// archive, and linkers only extract an archive member when it defines a
+/// symbol that some already-linked object references. The backend defines
+/// a global anchor symbol inside the artifact object for exactly this
+/// purpose; here we emit the matching reference. Reading the anchor's
+/// address through `black_box` inside `load_named()` means that any
+/// program calling `load()` carries an undefined reference to the anchor,
+/// which forces the linker to pull the artifact member out of the rlib.
+/// Without this handshake the bundle was silently dropped and `load()`
+/// failed at runtime with `ModuleNotFound` (issue #72).
+///
+/// Both sides derive the symbol name from `CARGO_PKG_NAME` and
+/// `CARGO_PKG_VERSION`: this proc macro reads them while rustc compiles
+/// the crate, and the codegen backend reads them inside the same rustc
+/// process, so the names always agree under cargo.
+///
+/// The reference is only emitted when the module is guaranteed to produce
+/// an artifact for this crate. Generic kernels are monomorphized (and
+/// their PTX embedded) in the *consuming* crate, so a module with only
+/// generic kernels yields no artifact here, and an anchor reference would
+/// be an undefined-symbol link error. The same reasoning extends to
+/// `#[cfg]`-gated kernels: the anchor is guarded by the disjunction of
+/// the kernels' cfg conditions so it is only referenced when at least one
+/// concrete kernel is actually compiled.
+fn cuda_module_artifact_anchor_statements(
+    kernels: &[CudaModuleKernel],
+) -> syn::Result<TokenStream2> {
+    let (Ok(package_name), Ok(package_version)) = (
+        std::env::var("CARGO_PKG_NAME"),
+        std::env::var("CARGO_PKG_VERSION"),
+    ) else {
+        // Not built by cargo (e.g. a raw rustc invocation): the backend
+        // falls back to crate-name-based bundle naming and we cannot
+        // reproduce it exactly, so skip the anchor rather than risk an
+        // undefined symbol.
+        return Ok(TokenStream2::new());
+    };
+
+    let non_generic: Vec<&CudaModuleKernel> =
+        kernels.iter().filter(|kernel| !kernel.is_generic).collect();
+    if non_generic.is_empty() {
+        return Ok(TokenStream2::new());
+    }
+
+    let cfg_guard = if non_generic.iter().any(|kernel| kernel.cfg_attrs.is_empty()) {
+        // At least one concrete kernel is compiled unconditionally, so the
+        // artifact object always exists: no guard needed.
+        None
+    } else {
+        // Every concrete kernel is cfg-gated. Reference the anchor only
+        // when at least one of them is enabled. A kernel with several cfg
+        // attributes requires all of them, hence all(...) per kernel
+        // joined under any(...).
+        let alternatives = non_generic
+            .iter()
+            .map(|kernel| {
+                let predicates = kernel
+                    .cfg_attrs
+                    .iter()
+                    .map(|attr| attr.parse_args::<TokenStream2>())
+                    .collect::<syn::Result<Vec<_>>>()?;
+                Ok(quote! { all( #(#predicates),* ) })
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        Some(quote! { #[cfg(any( #(#alternatives),* ))] })
+    };
+
+    let anchor = artifact_anchor_symbol(&package_name, &package_version);
+    let anchor_name = LitStr::new(&anchor, proc_macro2::Span::call_site());
+    Ok(quote! {
+        // Keep-alive handshake with the codegen backend: see the macro
+        // crate's `cuda_module_artifact_anchor_statements` for details.
+        #cfg_guard
+        let _artifact_anchor: *const ::core::primitive::u8 = {
+            unsafe extern "C" {
+                #[link_name = #anchor_name]
+                static CUDA_OXIDE_BUNDLE_ANCHOR: ::core::primitive::u8;
+            }
+            ::std::hint::black_box(unsafe {
+                ::core::ptr::addr_of!(CUDA_OXIDE_BUNDLE_ANCHOR)
+            })
+        };
+    })
 }
 
 /// A `#[constant]` static collected from a `#[cuda_module]` body.
@@ -669,6 +765,21 @@ fn cuda_module_cluster_dim(attrs: &[syn::Attribute]) -> syn::Result<Option<(u32,
     Ok(None)
 }
 
+fn cuda_module_cooperative(attrs: &[syn::Attribute]) -> syn::Result<bool> {
+    for attr in attrs {
+        if attr_path_ends_with(attr, "cooperative_launch") {
+            if !matches!(attr.meta, syn::Meta::Path(_)) {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "cooperative_launch takes no arguments: use a bare #[cooperative_launch]",
+                ));
+            }
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn cuda_module_params(item_fn: &ItemFn) -> syn::Result<Vec<CudaModuleParam>> {
     item_fn
         .sig
@@ -845,6 +956,11 @@ fn generate_cuda_module_async_launch_method(kernel: &CudaModuleKernel) -> TokenS
             ::cuda_host::set_async_kernel_cluster_dim(&mut __launch, #cluster_dim);
         }
     });
+    let set_cooperative = kernel.cooperative.then(|| {
+        quote! {
+            ::cuda_host::set_async_kernel_cooperative(&mut __launch, true);
+        }
+    });
 
     quote! {
         #(#cfg_attrs)*
@@ -860,6 +976,7 @@ fn generate_cuda_module_async_launch_method(kernel: &CudaModuleKernel) -> TokenS
             #function_binding
             let mut __launch = ::cuda_host::new_async_kernel_launch(__func.clone(), config);
             #set_cluster_dim
+            #set_cooperative
             #(#arg_marshalling)*
             Ok(__launch)
         }
@@ -903,6 +1020,11 @@ fn generate_cuda_module_owned_async_launch_method(kernel: &CudaModuleKernel) -> 
             ::cuda_host::set_async_kernel_cluster_dim(&mut __launch, #cluster_dim);
         }
     });
+    let set_cooperative = kernel.cooperative.then(|| {
+        quote! {
+            ::cuda_host::set_async_kernel_cooperative(&mut __launch, true);
+        }
+    });
     let resources_ty = cuda_module_owned_resources_ty(&resources);
     let resource_names = resources.iter().map(|(_, name, _, _)| name);
     let resources_expr = if resources.is_empty() {
@@ -926,6 +1048,7 @@ fn generate_cuda_module_owned_async_launch_method(kernel: &CudaModuleKernel) -> 
             let mut __launch: ::cuda_host::AsyncKernelLaunch<'static> =
                 ::cuda_host::new_async_kernel_launch(__func.clone(), config);
             #set_cluster_dim
+            #set_cooperative
             #(#arg_marshalling)*
             Ok(::cuda_host::new_owned_async_kernel_launch(__launch, #resources_expr))
         }
@@ -1160,8 +1283,21 @@ fn cuda_module_function_binding(kernel: &CudaModuleKernel) -> TokenStream2 {
 
 fn cuda_module_launch_call(kernel: &CudaModuleKernel) -> TokenStream2 {
     let cluster_dim = kernel.cluster_dim.map(|(x, y, z)| quote! { (#x, #y, #z) });
-    if let Some(cluster_dim) = cluster_dim {
-        quote! {
+    match (cluster_dim, kernel.cooperative) {
+        (Some(cluster_dim), true) => quote! {
+            unsafe {
+                ::cuda_core::launch_kernel_ex_cooperative_on_stream(
+                    __func,
+                    config.grid_dim,
+                    config.block_dim,
+                    config.shared_mem_bytes,
+                    #cluster_dim,
+                    stream,
+                    &mut __args,
+                )
+            }
+        },
+        (Some(cluster_dim), false) => quote! {
             unsafe {
                 ::cuda_core::launch_kernel_ex_on_stream(
                     __func,
@@ -1173,9 +1309,20 @@ fn cuda_module_launch_call(kernel: &CudaModuleKernel) -> TokenStream2 {
                     &mut __args,
                 )
             }
-        }
-    } else {
-        quote! {
+        },
+        (None, true) => quote! {
+            unsafe {
+                ::cuda_core::launch_kernel_cooperative_on_stream(
+                    __func,
+                    config.grid_dim,
+                    config.block_dim,
+                    config.shared_mem_bytes,
+                    stream,
+                    &mut __args,
+                )
+            }
+        },
+        (None, false) => quote! {
             unsafe {
                 ::cuda_core::launch_kernel_on_stream(
                     __func,
@@ -1186,7 +1333,7 @@ fn cuda_module_launch_call(kernel: &CudaModuleKernel) -> TokenStream2 {
                     &mut __args,
                 )
             }
-        }
+        },
     }
 }
 
@@ -2333,6 +2480,70 @@ impl Parse for ClusterArgs {
     }
 }
 
+/// Marks a kernel for cooperative launch (`CU_LAUNCH_ATTRIBUTE_COOPERATIVE`).
+///
+/// A cooperative launch guarantees that every block in the grid is
+/// co-resident on the device, which is the precondition for grid-wide
+/// barriers: without it, `cuda_device::grid::sync()` deadlocks (or reads a
+/// null grid-workspace pointer) because blocks that have not been scheduled
+/// yet can never reach the barrier.
+///
+/// Unlike `#[cluster_launch]`, this attribute changes nothing in the
+/// generated PTX. Cooperative-ness is purely a launch-time property: the
+/// `#[cuda_module]` macro reads this marker and routes every generated
+/// launch method through `cuLaunchKernelEx` with the cooperative attribute
+/// set, instead of plain `cuLaunchKernel`.
+///
+/// # Usage
+///
+/// ```ignore
+/// use cuda_device::{cooperative_launch, grid, kernel, DisjointSlice};
+///
+/// #[kernel]
+/// #[cooperative_launch]
+/// pub fn my_grid_sync_kernel(mut out: DisjointSlice<u32>) {
+///     // ... per-block work ...
+///     grid::sync();
+///     // ... grid-wide post-barrier work ...
+/// }
+/// ```
+///
+/// # Requirements
+///
+/// - Must be used WITH `#[kernel]` (not standalone), on a kernel inside a
+///   `#[cuda_module]` module
+/// - The `#[cooperative_launch]` attribute must come AFTER `#[kernel]`
+/// - The device must support cooperative launch
+///   (`CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH`)
+/// - The grid must fit on the device in one wave, otherwise the driver
+///   rejects the launch with `CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE`
+///
+/// May be combined with `#[cluster_launch(x, y, z)]`; both launch
+/// attributes are then passed to `cuLaunchKernelEx` in the same call.
+///
+/// Outside `#[cuda_module]`, the legacy (caller-unsafe) `cuda_launch!`
+/// macro offers the same behaviour through its `cooperative: true` field.
+#[proc_macro_attribute]
+pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "cooperative_launch takes no arguments: use a bare #[cooperative_launch]",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    // Launch-time only: the marker is consumed by #[cuda_module]; the kernel
+    // body and PTX are unchanged. Parse as a function so misuse on other
+    // items is rejected with a clear error.
+    let input = parse_macro_input!(item as ItemFn);
+    quote! {
+        #input
+    }
+    .into()
+}
+
 /// Marks a function as a CUDA device function.
 ///
 /// Device functions run on the GPU and can be called from kernels or other device functions,
@@ -2907,21 +3118,52 @@ impl Parse for CudaLaunchInput {
     }
 }
 
-/// Launch a CUDA kernel synchronously on a given stream.
+/// Launch a CUDA kernel synchronously on a given stream. **Unsafe**: the
+/// expansion calls the unsafe `cuda_core` launch functions without wrapping
+/// them, so every use must appear inside an `unsafe { }` block.
 ///
 /// Uses the `CudaKernel` trait (generated by `#[kernel]`) to look up the PTX
 /// entry point name. Arguments are marshaled into a `Vec<*mut c_void>` and
 /// passed directly to `cuda_core::launch_kernel` (`cuLaunchKernel`).
 ///
+/// # Safety
+///
+/// This macro cannot check the kernel's signature. It hands the driver a raw
+/// array of argument pointers and trusts you completely. By wrapping the
+/// macro in `unsafe { }`, the caller promises:
+///
+/// - the argument **count and order** match the kernel's actual parameter
+///   list (with each `slice(..)` / `slice_mut(..)` counting as two
+///   parameters: pointer then length);
+/// - each argument's **type, size, and alignment** match the corresponding
+///   kernel parameter;
+/// - every pointer argument is **device-accessible** (a valid device
+///   allocation, or host memory reachable via HMM/unified memory) and stays
+///   alive until the kernel finishes.
+///
+/// A mismatch is undefined behavior, not a runtime error: too few or
+/// mistyped arguments make the driver read past the end of the args array,
+/// and a bad pointer makes the device dereference junk.
+///
+/// For kernels embedded in your own crate, prefer `#[cuda_module]`: it
+/// reads the kernel signatures at compile time and generates typed launch
+/// methods, so none of the above can go wrong. This macro's remaining niche
+/// is modules loaded at **runtime by name** (e.g. external PTX files),
+/// where no compile-time signature exists to check.
+///
 /// # Usage
 ///
 /// ```ignore
-/// cuda_launch! {
-///     kernel: vecadd,
-///     stream: stream,
-///     module: module,
-///     config: LaunchConfig::for_num_elems(n as u32),
-///     args: [slice(a_dev), slice(b_dev), slice_mut(c_dev)]
+/// // SAFETY: argument count, order, and types match `vecadd`'s signature;
+/// // a_dev, b_dev, c_dev are live device buffers.
+/// unsafe {
+///     cuda_launch! {
+///         kernel: vecadd,
+///         stream: stream,
+///         module: module,
+///         config: LaunchConfig::for_num_elems(n as u32),
+///         args: [slice(a_dev), slice(b_dev), slice_mut(c_dev)]
+///     }
 /// }
 /// ```
 ///
@@ -3144,20 +3386,19 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                 let mut __args: Vec<*mut std::ffi::c_void> = Vec::new();
                 #(#arg_code)*
 
-                unsafe {
-                    #launch_call
-                }
+                #launch_call
             }
         }
     } else if input.is_generic() {
         quote! {
             {
                 let __kernel_ptr = #kernel_entry #generics as *const ();
-                unsafe {
-                    let mut __force_mono: *const () = core::ptr::null();
-                    core::ptr::write_volatile(&mut __force_mono, __kernel_ptr);
-                    let _ = core::ptr::read_volatile(&__force_mono);
-                }
+                // Caller-unsafe on purpose: the volatile write/read pair that
+                // forces monomorphization is covered by the same `unsafe { }`
+                // block the caller must already supply for the launch itself.
+                let mut __force_mono: *const () = core::ptr::null();
+                core::ptr::write_volatile(&mut __force_mono, __kernel_ptr);
+                let _ = core::ptr::read_volatile(&__force_mono);
 
                 let __ptx_name = <#marker_name #generics as cuda_host::GenericCudaKernel>::ptx_name();
                 let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
@@ -3172,9 +3413,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                 let mut __args: Vec<*mut std::ffi::c_void> = Vec::new();
                 #(#arg_code)*
 
-                unsafe {
-                    #launch_call
-                }
+                #launch_call
             }
         }
     } else {
@@ -3193,9 +3432,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                 let mut __args: Vec<*mut std::ffi::c_void> = Vec::new();
                 #(#arg_code)*
 
-                unsafe {
-                    #launch_call
-                }
+                #launch_call
             }
         }
     };
@@ -3301,10 +3538,10 @@ impl Parse for CudaLaunchAsyncInput {
     }
 }
 
-/// Launch a CUDA kernel asynchronously, returning a lazy [`AsyncKernelLaunch`].
+/// Launch a CUDA kernel asynchronously, returning a lazy `AsyncKernelLaunch`.
 ///
 /// Unlike [`cuda_launch!`], this macro does **not** take a `stream:` parameter. The
-/// CUDA stream is assigned later by the active [`SchedulingPolicy`] when the returned
+/// CUDA stream is assigned later by the active `SchedulingPolicy` when the returned
 /// operation is `.sync()`'d or `.await`'d. This enables lazy composition: multiple
 /// launches can be chained with `.and_then()`, run in parallel with `zip!()`, or
 /// awaited individually.
@@ -3327,7 +3564,7 @@ impl Parse for CudaLaunchAsyncInput {
 ///
 /// # Returns
 ///
-/// An [`AsyncKernelLaunch`] implementing [`DeviceOperation`]. No GPU work is enqueued
+/// An `AsyncKernelLaunch` implementing `DeviceOperation`. No GPU work is enqueued
 /// until the caller schedules it.
 ///
 /// # Usage
@@ -3492,4 +3729,127 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Expands a `#[cuda_module]` body and returns the generated tokens as a
+    /// whitespace-free string, so tests can assert on call paths without
+    /// caring how `quote!` spaces out `::` separators.
+    fn expand_to_compact_string(module: ItemMod) -> String {
+        expand_cuda_module(module)
+            .expect("cuda_module expansion failed")
+            .to_string()
+            .replace(' ', "")
+    }
+
+    #[test]
+    fn cooperative_kernel_launches_through_cooperative_driver_call() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[cooperative_launch]
+                pub fn grid_sync_kernel(mut out: DisjointSlice<u32>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        // The sync launch method must route through the cooperative driver
+        // entry point (cuLaunchKernelEx + CU_LAUNCH_ATTRIBUTE_COOPERATIVE)
+        // instead of plain cuLaunchKernel.
+        assert!(
+            expanded.contains("launch_kernel_cooperative_on_stream"),
+            "expected cooperative launch call in generated tokens:\n{expanded}"
+        );
+        assert!(
+            !expanded.contains("launch_kernel_on_stream"),
+            "plain launch call should be replaced by the cooperative one:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn plain_kernel_keeps_plain_driver_call() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn plain_kernel(mut out: DisjointSlice<u32>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        assert!(
+            expanded.contains("launch_kernel_on_stream"),
+            "expected plain launch call in generated tokens:\n{expanded}"
+        );
+        assert!(
+            !expanded.contains("launch_kernel_cooperative_on_stream"),
+            "cooperative call must not appear without #[cooperative_launch]:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn cooperative_plus_cluster_kernel_uses_combined_driver_call() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[cluster_launch(2, 1, 1)]
+                #[cooperative_launch]
+                pub fn clustered_grid_sync_kernel(mut out: DisjointSlice<u32>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        // cuLaunchKernelEx accepts both attributes in one attrs array, so the
+        // combination is allowed and routes through the combined helper.
+        assert!(
+            expanded.contains("launch_kernel_ex_cooperative_on_stream"),
+            "expected combined cluster+cooperative launch call:\n{expanded}"
+        );
+        assert!(
+            !expanded.contains("launch_kernel_ex_on_stream"),
+            "cluster-only call should be replaced by the combined one:\n{expanded}"
+        );
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn cooperative_kernel_sets_async_builder_knob() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[cooperative_launch]
+                pub fn grid_sync_kernel(mut out: DisjointSlice<u32>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        // Both the borrowed-async and owned-async builder methods set the
+        // cooperative knob, exactly like set_async_kernel_cluster_dim is set
+        // for #[cluster_launch].
+        assert_eq!(
+            expanded.matches("set_async_kernel_cooperative").count(),
+            2,
+            "expected the cooperative knob in both async builder methods:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn cooperative_launch_with_arguments_is_rejected() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[cooperative_launch(4)]
+                pub fn grid_sync_kernel(mut out: DisjointSlice<u32>) {}
+            }
+        };
+        let error = expand_cuda_module(module).expect_err("expected expansion to fail");
+        assert!(
+            error
+                .to_string()
+                .contains("cooperative_launch takes no arguments"),
+            "unexpected error message: {error}"
+        );
+    }
 }

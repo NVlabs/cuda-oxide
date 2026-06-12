@@ -16,11 +16,7 @@ use pliron::{
     common_traits::Verify,
     context::{Context, Ptr},
     derive::op_interface_impl,
-    irbuild::{
-        inserter::{IRInserter, Inserter},
-        listener::Recorder,
-        rewriter::{IRRewriter, Rewriter},
-    },
+    irbuild::{inserter::Inserter, rewriter::Rewriter},
     location::Located,
     op::Op,
     operation::Operation,
@@ -118,7 +114,7 @@ impl PromotableAllocationInterface for MirAllocaOp {
     fn default_value(
         &self,
         ctx: &mut Context,
-        inserter: &mut IRInserter<Recorder>,
+        inserter: &mut dyn Inserter,
         alloc_info: &AllocInfo,
     ) -> PlironResult<Value> {
         assert!(
@@ -127,14 +123,14 @@ impl PromotableAllocationInterface for MirAllocaOp {
         );
         let undef = MirUndefOp::new(ctx, alloc_info.ty);
         let undef_val = undef.get_operation().deref(ctx).get_result(0);
-        inserter.insert_op(ctx, undef);
+        inserter.insert_op(ctx, &undef);
         Ok(undef_val)
     }
 
     fn promote(
         &self,
         ctx: &mut Context,
-        rewriter: &mut IRRewriter<Recorder>,
+        rewriter: &mut dyn Rewriter,
         alloc_infos: &[AllocInfo],
     ) -> PlironResult<()> {
         assert!(
@@ -285,7 +281,7 @@ impl PromotableOpInterface for MirStoreOp {
         &self,
         ctx: &mut Context,
         alloc_info_reaching_defs: &[(AllocInfo, Value)],
-        rewriter: &mut IRRewriter<Recorder>,
+        rewriter: &mut dyn Rewriter,
     ) -> PlironResult<()> {
         assert!(
             alloc_info_reaching_defs.len() == 1
@@ -383,7 +379,7 @@ impl PromotableOpInterface for MirLoadOp {
         &self,
         ctx: &mut Context,
         alloc_info_reaching_defs: &[(AllocInfo, Value)],
-        rewriter: &mut IRRewriter<Recorder>,
+        rewriter: &mut dyn Rewriter,
     ) -> PlironResult<()> {
         assert!(
             alloc_info_reaching_defs.len() == 1

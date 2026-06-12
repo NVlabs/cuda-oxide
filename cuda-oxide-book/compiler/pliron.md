@@ -45,7 +45,7 @@ levels of abstraction:
 | Level              | What it models                                                | Example operations                           |
 | :----------------- | :------------------------------------------------------------ | :------------------------------------------- |
 | **`dialect-mir`**  | Rust semantics -- tuples, enums, slices, checked arithmetic   | `mir.extract_field`, `mir.get_discriminant`  |
-| **`dialect-llvm`** | Machine-near operations -- integer math, memory, control flow | `llvm.add`, `llvm.load`, `llvm.br`           |
+| **LLVM dialect**   | Machine-near operations -- integer math, memory, control flow | `llvm.add`, `llvm.load`, `llvm.br`           |
 | **`dialect-nvvm`** | GPU intrinsics -- thread indexing, warp shuffles, TMA, WGMMA  | `nvvm.read_ptx_sreg_tid_x`, `nvvm.shfl_sync` |
 
 Without an extensible IR, we would have to either jam Rust enums into LLVM IR
@@ -312,7 +312,7 @@ impl MirToLlvmConversion for MirAddOp {
         rewriter: &mut DialectConversionRewriter,
         operands_info: &OperandsInfo,
     ) -> Result<()> {
-        // ...lower MirAddOp into one or more dialect-llvm ops...
+        // ...lower MirAddOp into one or more LLVM dialect ops...
     }
 }
 ```
@@ -349,11 +349,13 @@ function signature.
 
 ## How cuda-oxide uses pliron
 
-cuda-oxide defines three dialects, each as its own crate. The compiler
-pipeline registers them on the `Context` for you (and pliron's `builtin`
-dialect is auto-registered as of pliron 0.14), so kernel authors and
-pass authors never have to think about dialect setup -- depending on
-the crate is the only thing you do.
+cuda-oxide works with three dialects: it defines `dialect-mir` and
+`dialect-nvvm` locally (each as its own crate) and consumes the LLVM dialect
+from the upstream `pliron-llvm` crate. Registration is automatic: every
+dialect, op, type, and attribute linked into the binary registers itself when
+a `Context` is created (`Context::default` runs all link-time registrations),
+so kernel authors and pass authors never have to think about dialect setup --
+depending on the crate is the only thing you do.
 
 ### dialect-mir -- Rust semantics
 
@@ -371,16 +373,18 @@ semantic information that would be lost if we lowered directly to LLVM.
   `mir.goto`, `mir.cond_br`, `mir.return` -- with GPU address-space
   tracking (`global`, `shared`, `local`, `tmem`).
 
-### dialect-llvm -- machine-near IR
+### LLVM dialect -- machine-near IR
 
-`dialect-llvm` models LLVM IR as pliron operations, providing a 1:1 mapping
-to textual `.ll` files.
+The LLVM dialect models LLVM IR as pliron operations, providing a 1:1 mapping
+to textual `.ll` files. Its modeling lives upstream in the `pliron-llvm`
+crate; cuda-oxide re-exports it (and adds the textual exporter) through the
+`llvm-export` crate.
 
 - **Arithmetic and casts**: all 19 LLVM binary ops (`llvm.add` through
   `llvm.frem`), plus 13 cast ops (`llvm.sext`, `llvm.trunc`, `llvm.bitcast`, ...).
 - **Control flow**: `llvm.br`, `llvm.cond_br`, `llvm.switch`, `llvm.return`,
   `llvm.unreachable` -- with block arguments translated to PHI nodes on export.
-- **Textual export**: the `dialect_llvm::export` module emits valid LLVM IR text,
+- **Textual export**: the `llvm_export::export` module emits valid LLVM IR text,
   including `@llvm.used` arrays and `!nvvm.annotations` metadata for GPU kernels.
 
 ### dialect-nvvm -- GPU intrinsics

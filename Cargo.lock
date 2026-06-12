@@ -188,7 +188,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cargo-oxide"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "cuda-core",
@@ -312,7 +312,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "cuda-async"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -323,14 +323,14 @@ dependencies = [
 
 [[package]]
 name = "cuda-bindings"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "bindgen",
 ]
 
 [[package]]
 name = "cuda-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-device"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "cuda-macros",
  "trybuild",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-host"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "cuda-async",
  "cuda-core",
@@ -361,8 +361,10 @@ dependencies = [
 
 [[package]]
 name = "cuda-macros"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
+ "cuda-core",
+ "cuda-host",
  "proc-macro2",
  "quote",
  "reserved-oxide-symbols",
@@ -371,25 +373,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "dialect-llvm"
-version = "0.1.0"
-dependencies = [
- "bitflags",
- "combine",
- "dyn-clone",
- "expect-test",
- "linkme",
- "log",
- "pliron",
- "pliron-derive",
- "reserved-oxide-symbols",
- "rustc-hash",
- "thiserror",
-]
-
-[[package]]
 name = "dialect-mir"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "linkme",
@@ -401,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "dialect-nvvm"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "combine",
  "dyn-clone",
@@ -547,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "fuzzer"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "glob"
@@ -654,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "libnvvm-sys"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -681,6 +666,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "llvm-export"
+version = "0.2.1"
+dependencies = [
+ "bitflags",
+ "combine",
+ "dyn-clone",
+ "expect-test",
+ "linkme",
+ "log",
+ "pliron",
+ "pliron-derive",
+ "pliron-llvm",
+ "reserved-oxide-symbols",
+ "rustc-hash",
+ "thiserror",
+]
+
+[[package]]
 name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -700,13 +703,13 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "mir-importer"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "combine",
- "dialect-llvm",
  "dialect-mir",
  "dialect-nvvm",
  "linkme",
+ "llvm-export",
  "mir-lower",
  "once_cell",
  "pliron",
@@ -716,12 +719,12 @@ dependencies = [
 
 [[package]]
 name = "mir-lower"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
- "dialect-llvm",
  "dialect-mir",
  "dialect-nvvm",
+ "llvm-export",
  "pliron",
  "pliron-derive",
  "reserved-oxide-symbols",
@@ -740,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "nvjitlink-sys"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -772,7 +775,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oxide-artifacts"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "object",
 ]
@@ -785,8 +788,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pliron"
-version = "0.14.0"
-source = "git+https://github.com/vaivaswatha/pliron?rev=b51e73b11648508188184451adebdcf63957b7fe#b51e73b11648508188184451adebdcf63957b7fe"
+version = "0.15.0"
+source = "git+https://github.com/pliron-org/pliron?rev=fed4e6f848bd726a4f2deb51c5021760ef382aec#fed4e6f848bd726a4f2deb51c5021760ef382aec"
 dependencies = [
  "awint",
  "combine",
@@ -807,8 +810,8 @@ dependencies = [
 
 [[package]]
 name = "pliron-derive"
-version = "0.14.0"
-source = "git+https://github.com/vaivaswatha/pliron?rev=b51e73b11648508188184451adebdcf63957b7fe#b51e73b11648508188184451adebdcf63957b7fe"
+version = "0.15.0"
+source = "git+https://github.com/pliron-org/pliron?rev=fed4e6f848bd726a4f2deb51c5021760ef382aec#fed4e6f848bd726a4f2deb51c5021760ef382aec"
 dependencies = [
  "combine",
  "convert_case",
@@ -816,6 +819,18 @@ dependencies = [
  "quote",
  "rustc-hash",
  "syn",
+]
+
+[[package]]
+name = "pliron-llvm"
+version = "0.15.0"
+source = "git+https://github.com/pliron-org/pliron?rev=fed4e6f848bd726a4f2deb51c5021760ef382aec#fed4e6f848bd726a4f2deb51c5021760ef382aec"
+dependencies = [
+ "bitflags",
+ "log",
+ "pliron",
+ "rustc-hash",
+ "thiserror",
 ]
 
 [[package]]
@@ -883,7 +898,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reserved-oxide-symbols"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "rustc-hash"

@@ -27,12 +27,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let seed = 4.0_f32;
     let mut out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
-    cuda_launch! {
-        kernel: sqrt_bits,
-        stream: stream,
-        module: module,
-        config: LaunchConfig::for_num_elems(1),
-        args: [seed, slice_mut(out)]
+    // SAFETY: args mirror `sqrt_bits`'s signature (f32 scalar, then the
+    // (ptr, len) pair for its slice parameter); `out` is a live DeviceBuffer.
+    unsafe {
+        cuda_launch! {
+            kernel: sqrt_bits,
+            stream: stream,
+            module: module,
+            config: LaunchConfig::for_num_elems(1),
+            args: [seed, slice_mut(out)]
+        }
     }?;
 
     let got = out.to_host_vec(&stream)?[0];

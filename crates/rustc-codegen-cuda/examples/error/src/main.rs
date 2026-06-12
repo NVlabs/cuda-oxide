@@ -29,16 +29,30 @@ pub fn valid_f64_to_f32_kernel(a: &[f64], b: &[f64], mut c: DisjointSlice<f32>) 
     }
 }
 
-/// ERROR: Uses format_args! which isn't supported on GPU
+/// ERROR: Runs the core formatting machinery, which isn't supported on GPU
 ///
 /// The compiler should fail with an error about unsupported operations.
+///
+/// Note the formatted value must actually be USED: an unused
+/// `format_args!` binding is dead code, its `str` locals translate fine,
+/// and the kernel compiles. `core::fmt::write` drives the real
+/// formatting engine (trait objects, dynamic dispatch), which is the
+/// part that is genuinely unsupported on the device.
 #[kernel]
 pub fn unsupported_format_kernel(a: &[f32], mut c: DisjointSlice<f32>) {
+    struct Sink;
+    impl core::fmt::Write for Sink {
+        fn write_str(&mut self, _s: &str) -> core::fmt::Result {
+            Ok(())
+        }
+    }
+
     let idx = thread::index_1d();
     let idx_raw = idx.get();
 
     if let Some(c_elem) = c.get_mut(idx) {
-        let _formatted = core::format_args!("{}", a[idx_raw]);
+        let mut sink = Sink;
+        let _ = core::fmt::write(&mut sink, core::format_args!("{}", a[idx_raw]));
         *c_elem = a[idx_raw];
     }
 }

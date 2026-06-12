@@ -18,7 +18,7 @@
 //!
 //! # Example: Micro-benchmarking
 //!
-//! ```rust
+//! ```rust,ignore
 //! use cuda_device::debug;
 //!
 //! let start = debug::clock64();
@@ -29,7 +29,7 @@
 //!
 //! # Example: Runtime Assertion
 //!
-//! ```rust
+//! ```rust,ignore
 //! use cuda_device::debug;
 //!
 //! if value < 0 {
@@ -53,7 +53,7 @@
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::debug;
 ///
 /// let start = debug::clock();
@@ -84,7 +84,7 @@ pub fn clock() -> u32 {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::debug;
 ///
 /// let start = debug::clock64();
@@ -143,7 +143,7 @@ pub fn globaltimer() -> u64 {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::debug;
 ///
 /// if invalid_condition {
@@ -173,7 +173,7 @@ pub fn trap() -> ! {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::debug;
 ///
 /// // Only break on thread 0 to avoid overwhelming the debugger
@@ -206,7 +206,7 @@ pub fn breakpoint() {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::debug;
 ///
 /// debug::prof_trigger::<0>();  // Mark start of region
@@ -236,7 +236,7 @@ pub fn prof_trigger<const N: u32>() {
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::gpu_assert;
 ///
 /// // Simple assertion

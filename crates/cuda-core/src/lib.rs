@@ -327,7 +327,7 @@ pub unsafe fn launch_kernel_ex_on_stream(
 ///
 /// A *cooperative* launch guarantees that every block in the grid is
 /// co-resident on the device, which is the precondition for grid-wide
-/// barriers like [`cuda_device::grid::sync()`]. The CUDA driver also
+/// barriers like `cuda_device::grid::sync()`. The CUDA driver also
 /// populates PTX environment registers `%envreg1` / `%envreg2` with the
 /// pointer to the per-launch grid workspace; the device-side barrier
 /// implementation reads those registers to find the shared counter.
@@ -426,6 +426,125 @@ pub unsafe fn launch_kernel_cooperative_on_stream(
             grid_dim,
             block_dim,
             shared_mem_bytes,
+            stream.cu_stream(),
+            kernel_params,
+        )
+    }
+}
+
+/// Low-level wrapper around `cuLaunchKernelEx` with **both** the
+/// `CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION` and
+/// `CU_LAUNCH_ATTRIBUTE_COOPERATIVE` attributes set.
+///
+/// `cuLaunchKernelEx` takes an array of launch attributes, so a single call
+/// can request thread-block clusters ([`launch_kernel_ex`]) and a
+/// cooperative launch ([`launch_kernel_cooperative`]) at the same time.
+/// This is the path used when a `#[cuda_module]` kernel carries both
+/// `#[cluster_launch(...)]` and `#[cooperative_launch]`.
+///
+/// This helper performs **no context binding**. Prefer
+/// [`launch_kernel_ex_cooperative_on_stream`] in normal host-side code so
+/// the correct stream context is made current automatically.
+///
+/// # Safety
+///
+/// The combined preconditions of [`launch_kernel_ex`] (cluster dimensions
+/// must divide the grid, sm_90+) and [`launch_kernel_cooperative`] (the
+/// device must support cooperative launch and the whole grid must be
+/// co-resident).
+///
+/// # Errors
+///
+/// Returns the CUDA driver error produced by `cuLaunchKernelEx` if launch
+/// submission fails.
+#[inline]
+pub unsafe fn launch_kernel_ex_cooperative(
+    func: cuda_bindings::CUfunction,
+    grid_dim: (u32, u32, u32),
+    block_dim: (u32, u32, u32),
+    shared_mem_bytes: u32,
+    cluster_dim: (u32, u32, u32),
+    stream: cuda_bindings::CUstream,
+    kernel_params: &mut [*mut std::ffi::c_void],
+) -> Result<(), DriverError> {
+    // CUlaunchAttribute_st is opaque (see cuda-bindings/build.rs) for CUDA 13.2+
+    // compatibility. C layout: { id: u32 @ 0, pad: [u8;4] @ 4, value: union @ 8 }.
+    // attrs[0]: clusterDim — three u32 fields (x, y, z) at offset 0 of the union.
+    // attrs[1]: cooperative — a single `int` at offset 0 of the union; 1 = enabled.
+    let mut attrs: [cuda_bindings::CUlaunchAttribute_st; 2] = unsafe { std::mem::zeroed() };
+    unsafe {
+        let base = &mut attrs[0] as *mut _ as *mut u8;
+        (base as *mut u32)
+            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION);
+        let dim_ptr = base.add(8) as *mut u32;
+        dim_ptr.write(cluster_dim.0);
+        dim_ptr.add(1).write(cluster_dim.1);
+        dim_ptr.add(2).write(cluster_dim.2);
+
+        let base = &mut attrs[1] as *mut _ as *mut u8;
+        (base as *mut u32)
+            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_COOPERATIVE);
+        let val_ptr = base.add(8) as *mut i32;
+        val_ptr.write(1);
+    }
+
+    let config = cuda_bindings::CUlaunchConfig_st {
+        gridDimX: grid_dim.0,
+        gridDimY: grid_dim.1,
+        gridDimZ: grid_dim.2,
+        blockDimX: block_dim.0,
+        blockDimY: block_dim.1,
+        blockDimZ: block_dim.2,
+        sharedMemBytes: shared_mem_bytes,
+        hStream: stream,
+        attrs: attrs.as_mut_ptr(),
+        numAttrs: 2,
+    };
+
+    unsafe {
+        cuda_bindings::cuLaunchKernelEx(
+            &config,
+            func,
+            kernel_params.as_mut_ptr(),
+            std::ptr::null_mut(),
+        )
+    }
+    .result()
+}
+
+/// Launches a cooperative CUDA kernel with cluster dimensions on a specific
+/// stream, binding the stream's owning context first.
+///
+/// This is the cluster-plus-cooperative counterpart to
+/// [`launch_kernel_on_stream`]. It binds `stream.context()` to the calling
+/// thread, then forwards to the raw [`launch_kernel_ex_cooperative`] helper.
+///
+/// # Safety
+///
+/// Same preconditions as [`launch_kernel_ex_cooperative`].
+///
+/// # Errors
+///
+/// Returns an error if binding `stream.context()` fails or if the underlying
+/// `cuLaunchKernelEx` call rejects the launch.
+#[inline]
+pub unsafe fn launch_kernel_ex_cooperative_on_stream(
+    func: &CudaFunction,
+    grid_dim: (u32, u32, u32),
+    block_dim: (u32, u32, u32),
+    shared_mem_bytes: u32,
+    cluster_dim: (u32, u32, u32),
+    stream: &CudaStream,
+    kernel_params: &mut [*mut std::ffi::c_void],
+) -> Result<(), DriverError> {
+    stream.context().bind_to_thread()?;
+    unsafe {
+        launch_kernel_ex_cooperative(
+            func.cu_function(),
+            grid_dim,
+            block_dim,
+            shared_mem_bytes,
+            cluster_dim,
             stream.cu_stream(),
             kernel_params,
         )

@@ -97,90 +97,134 @@ Changes from Phase 4C:
 - **Cross-CTA epilogue**: Follower signals leader's ACCUM_EMPTY via `mbarrier_arrive_cluster`
 - **cluster_sync() at exit**: Prevents "Cluster target block not present" when fast CTA exits before partner
 
-## Results (B200)
+## Results
 
-**cuBLAS baseline**: `cublasLtMatmul` (FP16 input, FP32 compute, TN format, heuristic algorithm).
-Per-size baselines: 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-The previous 743 TFLOPS baseline was from `cublasGemmEx` (legacy API).
-See `bench/cublaslt_bench.c` and `bench/README.md` for details.
+`gemm_sol/src/main.rs` measures the cuBLAS baseline live by invoking
+`bench/cublaslt_bench` once at startup, so the "% of SoL" column is always
+relative to *the host GPU's* cublasLt peak — not a fixed B200 number. Build
+the bench once with `cd bench && bash build.sh`; on first run gemm_sol then
+prints the live baseline before any phase runs:
+
+```text
+ℹ️  Measuring cublasLt FP16 baseline on host GPU (one-shot, ~25s)...
+✓ cublasLt FP16 baseline (TFLOPS): 4096=445.9, 8192=530.1, 16384=426.0
+```
+
+The tables below report two SKUs side by side:
+
+- **B200 (148 SMs)** — original development target, full Blackwell datacenter SKU.
+  cublasLt FP16 SoL: 4K=1502 / 8K=1402 / 16K=1526 TFLOPS.
+- **80-SM Blackwell DC** — a smaller datacenter Blackwell variant; absolute
+  TFLOPS scale roughly by SM count (148 → 80 ≈ 0.54×) but per-SM efficiency
+  is comparable to or slightly better than B200 across most phases on this
+  chip, thanks to the `opt -O2` middle-end pass enabled by the recent ABI
+  alignment work (commit `4c01676`).
+  cublasLt FP16 SoL: 4K=446 / 8K=530 / 16K=426 TFLOPS.
+
+`cublasLtMatmul` is run with FP16 input, FP32 compute, TN format, heuristic
+algorithm, 32 MB workspace.
 
 ### Phase 1 (`gemm_sol_tiled`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 182    | 12.1%              |
-| 8192×8192×8192    | 187    | 13.3%              |
-| 16384×16384×16384 | 191    | 12.5%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 182 TFLOPS    | 12.1% | 47 TFLOPS          | 10.5% |
+| 8192×8192×8192    | 187 TFLOPS    | 13.3% | 48 TFLOPS          |  9.1% |
+| 16384×16384×16384 | 191 TFLOPS    | 12.5% | 49 TFLOPS          | 11.5% |
 
 ### Phase 1.5 (`gemm_sol_swizzled`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 270    | 18.0%              |
-| 8192×8192×8192    | 276    | 19.7%              |
-| 16384×16384×16384 | 280    | 18.3%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 270 TFLOPS    | 18.0% | 91 TFLOPS          | 20.4% |
+| 8192×8192×8192    | 276 TFLOPS    | 19.7% | 81 TFLOPS          | 15.4% |
+| 16384×16384×16384 | 280 TFLOPS    | 18.3% | 79 TFLOPS          | 18.5% |
 
 ### Phase 2 (`gemm_sol_pipelined`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 270    | 18.0%              |
-| 8192×8192×8192    | 276    | 19.7%              |
-| 16384×16384×16384 | 280    | 18.3%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 270 TFLOPS    | 18.0% | 100 TFLOPS         | 22.5% |
+| 8192×8192×8192    | 276 TFLOPS    | 19.7% |  89 TFLOPS         | 16.8% |
+| 16384×16384×16384 | 280 TFLOPS    | 18.3% |  86 TFLOPS         | 20.2% |
 
-No speedup — pipelining alone does not help without warp specialization. The
-data structures (double-buffered SMEM, per-stage barriers) are correct
-infrastructure but the single-thread MMA/TMA dispatch serializes issue.
+No speedup over Phase 1.5 — pipelining alone does not help without warp
+specialization. The data structures (double-buffered SMEM, per-stage
+barriers) are correct infrastructure but the single-thread MMA/TMA dispatch
+serializes issue.
 
 ### Phase 3 (`gemm_sol_warp_spec`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 479    | 31.9%              |
-| 8192×8192×8192    | 496    | 35.4%              |
-| 16384×16384×16384 | 465    | 30.5%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 479 TFLOPS    | 31.9% | 165 TFLOPS         | 37.1% |
+| 8192×8192×8192    | 496 TFLOPS    | 35.4% | 152 TFLOPS         | 28.6% |
+| 16384×16384×16384 | 465 TFLOPS    | 30.5% | 148 TFLOPS         | 34.8% |
 
-**~1.8x speedup** over Phase 2. Warp specialization delivers real TMA/MMA overlap, nearly doubling throughput. Peak of 496 TFLOPS at 8192³.
+**~1.8× speedup** over Phase 2 on B200. Warp specialization delivers real
+TMA/MMA overlap, nearly doubling throughput. Peak of 496 TFLOPS at 8192³ on
+B200 (152 TFLOPS on the 80-SM SKU).
 
-### Phase 4 Kernel A (`gemm_sol_persistent`)
+### Phase 4A (`gemm_sol_persistent`)
 
-| Size              | TFLOPS | % of cublasLt SoL |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 542    | 36.1%              |
-| 8192×8192×8192    | 476    | 34.0%              |
-| 16384×16384×16384 | 424    | 27.8%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 542 TFLOPS    | 36.1% | 187 TFLOPS         | 41.9% |
+| 8192×8192×8192    | 476 TFLOPS    | 34.0% | 183 TFLOPS         | 34.6% |
+| 16384×16384×16384 | 424 TFLOPS    | 27.8% | 167 TFLOPS         | 39.3% |
 
-Persistent kernel with 2-stage TMEM accumulator pipeline. Gains at 4K (+13% vs Phase 3) but regresses at larger sizes due to atomic counter contention and per-tile overhead.
+Persistent kernel with 2-stage TMEM accumulator pipeline. On B200, gains at
+4K (+13% vs Phase 3) but regresses at larger sizes due to atomic counter
+contention and per-tile overhead. The 80-SM SKU shows flatter scaling and
+notably better per-SM efficiency at 16K (39.3% vs 27.8%) — the smaller chip
+has less room to suffer from counter contention.
 
 ### Phase 4B (`gemm_sol_clc`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 469    | 31.23%             |
-| 8192×8192×8192    | 479    | 34.17%             |
-| 16384×16384×16384 | 477    | 31.26%             |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 469 TFLOPS    | 31.2% | 197 TFLOPS         | 44.3% |
+| 8192×8192×8192    | 479 TFLOPS    | 34.2% | 181 TFLOPS         | 34.2% |
+| 16384×16384×16384 | 477 TFLOPS    | 31.3% | 184 TFLOPS         | 43.2% |
 
-CLC tile scheduling replaces the atomic counter. Eliminates the large-size regression from Phase 4A — consistent ~475 TFLOPS across all sizes.
+CLC tile scheduling replaces the atomic counter. Eliminates the large-size
+regression from Phase 4A — consistent throughput across all sizes on both
+SKUs. The 80-SM chip's per-SM efficiency at 4K and 16K (44%, 43%) is
+materially higher than B200's 31% — likely because CLC's hardware tile
+scheduler scales cleaner on a smaller TPC count.
 
 ### Phase 4C (`gemm_sol_clc_multicast`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 287    | 19.1%              |
-| 8192×8192×8192    | 278    | 19.8%              |
-| 16384×16384×16384 | 271    | 17.8%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 287 TFLOPS    | 19.1% | 108 TFLOPS         | 24.3% |
+| 8192×8192×8192    | 278 TFLOPS    | 19.8% | 109 TFLOPS         | 20.5% |
+| 16384×16384×16384 | 271 TFLOPS    | 17.8% | 108 TFLOPS         | 25.5% |
 
-CLC + TMA multicast for B tiles. Passes correctness. Performance regression from MCAST_BAR per-K-iteration cluster synchronization overhead with only 2 pipeline stages. Root causes of initial deadlock: missing `~{memory}` clobbers and `arrive_expect_tx` ordering.
+CLC + TMA multicast for B tiles. Passes correctness. Performance regression
+on both SKUs from MCAST_BAR per-K-iteration cluster synchronization overhead
+with only 2 pipeline stages. Root causes of the original deadlock: missing
+`~{memory}` clobbers and `arrive_expect_tx` ordering. Phase 4D fixes the
+synchronization model and recovers the gain.
 
 ### Phase 4D (`gemm_sol_clc_multicast_4_stage_pipeline`)
 
-| Size              | TFLOPS | % of cublasLt SoL  |
-|-------------------|--------|--------------------|
-| 4096×4096×4096    | 868    | 57.8%              |
-| 8192×8192×8192    | 737    | 52.5%              |
-| 16384×16384×16384 | 534    | 35.0%              |
+| Size              | B200 (148 SM) | %SoL  | 80-SM Blackwell DC | %SoL  |
+|-------------------|--------------:|------:|-------------------:|------:|
+| 4096×4096×4096    | 868 TFLOPS    | 57.8% | 204 TFLOPS         | 45.8% |
+| 8192×8192×8192    | 737 TFLOPS    | 52.5% | 212 TFLOPS         | 40.0% |
+| 16384×16384×16384 | 534 TFLOPS    | 35.0% | 180 TFLOPS         | 42.3% |
 
-CLC + cta_group::2 pair-UMMA + 4-stage SMEM pipeline. Cluster size 2 (CTA pairs). TMA barrier aliasing via bit-24 mask (`0xFEFFFFF8`) converges both CTAs' completions on leader. 2-3x improvement over Phase 4C.
+CLC + cta_group::2 pair-UMMA + 4-stage SMEM pipeline. Cluster size 2 (CTA
+pairs). TMA barrier aliasing via bit-24 mask (`0xFEFFFFF8`) converges both
+CTAs' completions on leader. 2-3× improvement over Phase 4C on B200.
+
+This is the only phase where the 80-SM SKU lags the B200 result on a
+per-SM-efficiency basis (~46% vs ~58% at 4K). Pair-UMMA scheduling depends
+on the TPC layout — with 80 SMs (40 TPCs) the leader/follower pairing has
+fewer degrees of freedom than B200 (74 TPCs), and the scheduler likely
+leaves more slack. **The 868 TFLOPS headline number is specifically a B200
+(148 SM) result and is not directly comparable to other Blackwell DC SKUs.**
 
 ## Build and run
 
@@ -198,6 +242,9 @@ Per-size baselines on B200: 4K=1502, 8K=1402, 16K=1526 TFLOPS.
 
 ## Roadmap
 
+Headline numbers below are on **B200 (148 SMs)** unless noted; see the per-phase
+tables above for the 80-SM Blackwell datacenter SKU.
+
 - **Phase 1** (`gemm_sol_tiled`): K-loop + grid tiling, tiled TMA → ~190 TFLOPS ✅
 - **Phase 1.5** (`gemm_sol_swizzled`): SWIZZLE_128B, single TMA copy → ~280 TFLOPS ✅
 - **Phase 2** (`gemm_sol_pipelined`): Double-buffered SMEM (no speedup without warp spec) ✅
@@ -205,5 +252,5 @@ Per-size baselines on B200: 4K=1502, 8K=1402, 16K=1526 TFLOPS.
 - **Phase 4A** (`gemm_sol_persistent`): Persistent + TMEM accum pipeline → 542 TFLOPS (4K) ✅
 - **Phase 4B** (`gemm_sol_clc`): CLC tile scheduling (no multicast) → ~475 TFLOPS (consistent) ✅
 - **Phase 4C** (`gemm_sol_clc_multicast`): CLC + TMA multicast for B → ~287 TFLOPS (correct, perf regression) ✅
-- **Phase 4D** (`gemm_sol_clc_multicast_4_stage_pipeline`): CLC + cta_group::2 + 4-stage pipeline → 868 TFLOPS (4K, 57.8% SoL) ✅
+- **Phase 4D** (`gemm_sol_clc_multicast_4_stage_pipeline`): CLC + cta_group::2 + 4-stage pipeline → **868 TFLOPS on B200 (4K, 57.8% of cublasLt SoL)** ✅
 - **Next**: Performance optimization — tile rasterization, epilogue TMA store, L2 hints

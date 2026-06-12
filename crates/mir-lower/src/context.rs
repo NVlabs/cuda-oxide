@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Shared state types for `dialect-mir` → `dialect-llvm` lowering.
+//! Shared state types for `dialect-mir` → LLVM dialect lowering.
 //!
 //! The DialectConversion framework handles value mapping and block mapping
 //! automatically. This module provides the CUDA-specific state types that

@@ -5,7 +5,7 @@
 
 //! CUDA driver error types and result conversion utilities.
 //!
-//! [`DriverError`] wraps a raw `CUresult` code and implements [`Display`],
+//! [`DriverError`] wraps a raw `CUresult` code and implements `Display`,
 //! [`Debug`], and [`Error`](std::error::Error) by querying the driver for
 //! human-readable descriptions via `cuGetErrorName` / `cuGetErrorString`.
 //!
@@ -22,13 +22,13 @@ use std::{
 /// A CUDA driver error wrapping a raw [`CUresult`](cuda_bindings::CUresult) code.
 ///
 /// The inner value is public so callers can match on specific
-/// `cudaError_enum_*` constants when needed. Prefer the [`Display`] impl for
+/// `cudaError_enum_*` constants when needed. Prefer the `Display` impl for
 /// user-facing messages -- it calls into the driver to produce a description.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct DriverError(pub cuda_bindings::CUresult);
 
 impl DriverError {
-    /// Shared formatting helper for both [`Display`] and [`Debug`].
+    /// Shared formatting helper for both `Display` and [`Debug`].
     ///
     /// Attempts to resolve the error string via the driver; falls back to a
     /// placeholder if `cuGetErrorString` itself fails (e.g., driver not

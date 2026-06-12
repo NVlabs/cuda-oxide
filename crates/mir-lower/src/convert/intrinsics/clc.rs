@@ -24,8 +24,9 @@
 //! | `QueryGetFirstCtaidZ`  | `...query_cancel.get_first_ctaid::z.b32.b128` | convergent |
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::ops as llvm;
-use dialect_llvm::types as llvm_types;
+use llvm_export::ops as llvm;
+use llvm_export::ops::InlineAsmOpExt;
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};

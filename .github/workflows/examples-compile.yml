@@ -1,0 +1,105 @@
+---
+name: examples-compile
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  examples-compile:
+    name: compile all examples (device pipeline, GPU-less)
+    runs-on: ubuntu-latest
+    # ~85 example crates: backend build + shared dep tree + per-example
+    # device codegen. Typically well under an hour with the shared
+    # CARGO_TARGET_DIR; the timeout leaves headroom for cold runners.
+    timeout-minutes: 60
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Needed for cuda.h (bindgen in cuda-bindings) and the link-time
+      # libcuda.so stub. Same shape as unit-tests.yml / clippy.yml.
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        id: cuda-toolkit
+        with:
+          cuda: "13.1.1"
+          method: network
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcurand-dev"]'
+
+      # The device pipeline shells out to LLVM's llc/opt for PTX
+      # generation. LLVM 21 is the documented floor for the intrinsics we
+      # emit (TMA / tcgen05 / WGMMA need llc-21+), so CI pins exactly 21:
+      # if someone lands IR that needs a newer llc, this job is where the
+      # floor bump becomes visible instead of on contributors' machines.
+      # If a future ubuntu-latest codename has no llvm-toolchain-*-21
+      # suite, apt-get update fails loudly; recover by pinning runs-on to
+      # the previous image or bumping the LLVM major here.
+      - name: Install LLVM 21 (llc/opt for the NVPTX backend)
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          sudo install -d -m 0755 /etc/apt/keyrings
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/keyrings/apt-llvm-org.asc >/dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt-llvm-org.asc] https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends llvm-21
+          llc-21 --version | head -2
+          opt-21 --version | head -2
+
+      - name: Compile every example (smoketest --compile-only)
+        # Step-level timeout, below the job's 60: a job-level timeout
+        # CANCELS the job and `if: failure()` never fires, losing the
+        # logs. A step timeout fails the step, so the upload still runs.
+        timeout-minutes: 50
+        env:
+          CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          CUDA_OXIDE_LLC: /usr/bin/llc-21
+          # Each example is its own cargo workspace; without a shared
+          # target dir the dep tree rebuilds ~85 times and blows the
+          # runner's ~14 GB disk (same trick as clippy.yml). smoketest.sh
+          # honours an externally-set CARGO_TARGET_DIR and still builds
+          # the backend .so at its fixed discovery path.
+          CARGO_TARGET_DIR: ${{ runner.temp }}/examples-shared-target
+          SMOKETEST_LOG_DIR: ${{ runner.temp }}/smoketest-logs
+        run: |
+          set -euo pipefail
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+
+          # cargo-oxide itself links libcuda (it can query the GPU arch in
+          # `run` mode), so its DT_NEEDED carries libcuda.so.1. The dev
+          # sub-packages only ship the link-time stub named libcuda.so;
+          # shadow it under the soname so the binary loads on a GPU-less
+          # runner. Compile-only never makes a real driver call. Same
+          # trick as unit-tests.yml.
+          if [ -f "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" ]; then
+            stub_shadow="${RUNNER_TEMP}/libcuda-stub"
+            mkdir -p "${stub_shadow}"
+            ln -sf "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" "${stub_shadow}/libcuda.so.1"
+            export LD_LIBRARY_PATH="${stub_shadow}:${LD_LIBRARY_PATH}"
+          fi
+
+          scripts/smoketest.sh --compile-only --no-color
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoketest-compile-logs
+          path: ${{ runner.temp }}/smoketest-logs/
+          if-no-files-found: ignore
+          retention-days: 7

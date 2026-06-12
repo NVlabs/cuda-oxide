@@ -33,7 +33,7 @@ memory via Distributed Shared Memory (DSMEM) and synchronize via
 
 The `rustc_codegen_cuda` crate — a custom rustc backend loaded as a dylib. It
 intercepts MIR during compilation, lowers it through `dialect-mir` →
-`mem2reg` → `dialect-llvm` → LLVM IR → PTX, and emits the PTX alongside the
+`mem2reg` → LLVM dialect → LLVM IR → PTX, and emits the PTX alongside the
 normal host binary.
 
 ## `cuda-async`

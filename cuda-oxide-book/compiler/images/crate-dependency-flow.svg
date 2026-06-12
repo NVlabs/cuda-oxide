@@ -60,15 +60,15 @@
   <rect x="432" y="268" width="210" height="42" rx="8" fill="rgba(232,145,45,0.08)" stroke="#e8912d" stroke-width="2"/>
   <text x="537" y="294" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="13" font-weight="700" fill="#e8912d">dialect-mir</text>
 
-  <!-- Arrow: mir-lower -> dialect-llvm (vertical) -->
+  <!-- Arrow: mir-lower -> llvm-export (vertical) -->
   <line x1="869" y1="170" x2="869" y2="256" stroke="#c9d1d9" stroke-width="2" opacity="0.7"/>
   <polygon points="864,256 869,268 874,256" fill="#c9d1d9" opacity="0.7"/>
 
-  <!-- dialect-llvm -->
+  <!-- llvm-export -->
   <rect x="764" y="268" width="210" height="42" rx="8" fill="rgba(210,168,255,0.08)" stroke="#d2a8ff" stroke-width="2"/>
-  <text x="869" y="294" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="13" font-weight="700" fill="#d2a8ff">dialect-llvm</text>
+  <text x="869" y="294" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="13" font-weight="700" fill="#d2a8ff">llvm-export</text>
 
-  <!-- Arrow: dialect-llvm -> dialect-nvvm (horizontal) -->
+  <!-- Arrow: llvm-export -> dialect-nvvm (horizontal) -->
   <line x1="974" y1="289" x2="1024" y2="289" stroke="#c9d1d9" stroke-width="2" opacity="0.7"/>
   <polygon points="1024,284 1036,289 1024,294" fill="#c9d1d9" opacity="0.7"/>
 
@@ -84,7 +84,7 @@
   <line x1="537" y1="310" x2="537" y2="396" stroke="#c9d1d9" stroke-width="2" opacity="0.7"/>
   <polygon points="532,396 537,408 542,396" fill="#c9d1d9" opacity="0.7"/>
 
-  <!-- Arrows: dialect-llvm -> pliron -->
+  <!-- Arrows: llvm-export -> pliron -->
   <line x1="869" y1="310" x2="869" y2="396" stroke="#c9d1d9" stroke-width="2" opacity="0.7"/>
   <polygon points="864,396 869,408 874,396" fill="#c9d1d9" opacity="0.7"/>
 

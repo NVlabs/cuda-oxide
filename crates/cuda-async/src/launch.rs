@@ -42,6 +42,10 @@ pub struct AsyncKernelLaunch<'a> {
     cfg: Option<LaunchConfig>,
     /// Optional thread-block cluster dimensions for `cuLaunchKernelEx`.
     cluster_dim: Option<(u32, u32, u32)>,
+    /// When `true`, launch via `cuLaunchKernelEx` with
+    /// `CU_LAUNCH_ATTRIBUTE_COOPERATIVE` set, which guarantees the whole grid
+    /// is co-resident on the device (required for `cuda_device::grid::sync()`).
+    cooperative: bool,
     /// Ties borrowed device buffers to the lazy launch operation.
     _borrows: PhantomData<&'a mut ()>,
 }
@@ -93,6 +97,7 @@ impl<'a> AsyncKernelLaunch<'a> {
             args: KernelArgStorage::default(),
             cfg: None,
             cluster_dim: None,
+            cooperative: false,
             _borrows: PhantomData,
         }
     }
@@ -149,7 +154,21 @@ impl<'a> AsyncKernelLaunch<'a> {
         self
     }
 
-    /// Submits the kernel to `stream` via `cuLaunchKernel`.
+    /// Marks this launch as cooperative (`CU_LAUNCH_ATTRIBUTE_COOPERATIVE`).
+    ///
+    /// A cooperative launch guarantees every block in the grid is co-resident
+    /// on the device, which is the precondition for grid-wide barriers like
+    /// `cuda_device::grid::sync()`. May be combined with
+    /// [`set_cluster_dim`](Self::set_cluster_dim); both attributes are then
+    /// passed to `cuLaunchKernelEx` in the same call.
+    pub fn set_cooperative(&mut self, cooperative: bool) -> &mut Self {
+        self.cooperative = cooperative;
+        self
+    }
+
+    /// Submits the kernel to `stream` via `cuLaunchKernel`, or via
+    /// `cuLaunchKernelEx` when cluster dimensions or a cooperative launch
+    /// were requested.
     ///
     /// # Safety
     ///
@@ -169,8 +188,19 @@ impl<'a> AsyncKernelLaunch<'a> {
         let cfg = self
             .cfg
             .ok_or_else(|| DeviceError::Launch("Launch config not set.".to_string()))?;
-        let result = if let Some(cluster_dim) = self.cluster_dim {
-            unsafe {
+        let result = match (self.cluster_dim, self.cooperative) {
+            (Some(cluster_dim), true) => unsafe {
+                cuda_core::launch_kernel_ex_cooperative_on_stream(
+                    self.func.as_ref(),
+                    cfg.grid_dim,
+                    cfg.block_dim,
+                    cfg.shared_mem_bytes,
+                    cluster_dim,
+                    stream.as_ref(),
+                    self.args.as_mut_slice(),
+                )
+            },
+            (Some(cluster_dim), false) => unsafe {
                 cuda_core::launch_kernel_ex_on_stream(
                     self.func.as_ref(),
                     cfg.grid_dim,
@@ -180,9 +210,18 @@ impl<'a> AsyncKernelLaunch<'a> {
                     stream.as_ref(),
                     self.args.as_mut_slice(),
                 )
-            }
-        } else {
-            unsafe {
+            },
+            (None, true) => unsafe {
+                cuda_core::launch_kernel_cooperative_on_stream(
+                    self.func.as_ref(),
+                    cfg.grid_dim,
+                    cfg.block_dim,
+                    cfg.shared_mem_bytes,
+                    stream.as_ref(),
+                    self.args.as_mut_slice(),
+                )
+            },
+            (None, false) => unsafe {
                 cuda_core::launch_kernel_on_stream(
                     self.func.as_ref(),
                     cfg.grid_dim,
@@ -191,7 +230,7 @@ impl<'a> AsyncKernelLaunch<'a> {
                     stream.as_ref(),
                     self.args.as_mut_slice(),
                 )
-            }
+            },
         };
         result.map_err(DeviceError::Driver)?;
         Ok(())

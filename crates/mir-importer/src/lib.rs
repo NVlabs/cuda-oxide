@@ -26,7 +26,7 @@
 //! │  │     MIR      │   │  dialect-mir (alloca)                       │   │
 //! │  │      ──▶     │   │    ──▶ mem2reg                              │   │
 //! │  │  dialect-mir │   │    ──▶ dialect-mir (SSA)                    │   │
-//! │  │   (alloca)   │   │    ──▶ dialect-llvm  (via mir-lower)        │   │
+//! │  │   (alloca)   │   │    ──▶ LLVM dialect  (via mir-lower)        │   │
 //! │  │              │   │    ──▶ LLVM IR ──▶ PTX  (via llc)           │   │
 //! │  └──────────────┘   └─────────────────────────────────────────────┘   │
 //! │                                                                       │
@@ -38,7 +38,7 @@
 //! | Module         | Purpose                                                     |
 //! |----------------|-------------------------------------------------------------|
 //! | [`translator`] | MIR → `dialect-mir` (alloca + load/store)                   |
-//! | [`pipeline`]   | `mem2reg`, lower to `dialect-llvm`, export LLVM IR, run llc |
+//! | [`pipeline`]   | `mem2reg`, lower to LLVM dialect, export LLVM IR, run llc   |
 //! | [`error`]      | Error types integrated with pliron's error system           |
 //!
 //! Note: Function collection is handled by `rustc-codegen-cuda/src/collector.rs`
@@ -65,7 +65,7 @@
 //! at the top of the function's entry block. Defs lower to `mir.store`, uses
 //! lower to `mir.load`. Cross-block data flow happens through the slots, so
 //! blocks (other than the entry) take no arguments. Pliron's `mem2reg` pass
-//! promotes the slots back into SSA before the `dialect-mir` → `dialect-llvm`
+//! promotes the slots back into SSA before the `dialect-mir` → LLVM dialect
 //! lowering runs.
 
 #![feature(rustc_private)]
@@ -78,6 +78,7 @@ extern crate rustc_public_bridge;
 extern crate rustc_span;
 
 pub mod error;
+mod llvm_tools;
 pub mod pipeline;
 pub mod translator;
 

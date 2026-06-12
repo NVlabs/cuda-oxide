@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! `dialect-mir` → `dialect-llvm` operation conversion.
+//! `dialect-mir` → LLVM dialect operation conversion.
 //!
 //! Each MIR/NVVM op implements `MirToLlvmConversion` (see
 //! [`crate::conversion_interface`]) via `#[op_interface_impl]` blocks in

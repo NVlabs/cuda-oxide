@@ -465,8 +465,8 @@ pub fn emit_cluster_sync(
 /// Emit `map_shared_rank(ptr, rank)`: Map shared memory to another block's address space.
 ///
 /// Args:
-/// - args[0]: *const T - Local shared memory pointer
-/// - args[1]: u32 - Target block's rank within cluster
+/// - `args[0]`: *const T - Local shared memory pointer
+/// - `args[1]`: u32 - Target block's rank within cluster
 ///
 /// Returns: *const T - Pointer to same offset in target block's shared memory
 pub fn emit_map_shared_rank(
@@ -553,8 +553,8 @@ pub fn emit_map_shared_rank(
 /// Combines mapa.shared::cluster + ld.shared::cluster.u32 into one operation.
 ///
 /// Args:
-/// - args[0]: *const u32 - Local shared memory pointer
-/// - args[1]: u32 - Target block's rank within cluster
+/// - `args[0]`: *const u32 - Local shared memory pointer
+/// - `args[1]`: u32 - Target block's rank within cluster
 ///
 /// Returns: u32 - Value read from the target block's shared memory
 pub fn emit_dsmem_read_u32(

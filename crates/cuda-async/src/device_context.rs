@@ -6,7 +6,7 @@
 //! Thread-local GPU device state, kernel cache, and scheduling policy management.
 //!
 //! Each thread maintains a set of [`AsyncDeviceContext`]s (one per device) via
-//! the [`DEVICE_CONTEXTS`] thread-local. A context bundles:
+//! the `DEVICE_CONTEXTS` thread-local. A context bundles:
 //!
 //! * A [`CudaContext`] for driver API calls.
 //! * A [`GlobalSchedulingPolicy`] for stream selection.
@@ -30,7 +30,7 @@ use std::sync::Arc;
 /// Default CUDA device ordinal used when no explicit device is specified.
 pub const DEFAULT_DEVICE_ID: usize = 0;
 
-/// Default number of devices initialized by [`init_device_contexts_default`].
+/// Default number of devices initialized by `init_device_contexts_default`.
 pub const DEFAULT_NUM_DEVICES: usize = 1;
 
 /// Default number of streams in the [`StreamPoolRoundRobin`] policy.

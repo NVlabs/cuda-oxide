@@ -36,14 +36,17 @@ jobs:
         #   * `rustc-codegen-cuda` — its own [workspace] that links against
         #     `rustc-private` dylibs; covered by the dedicated clippy job.
         include:
-          - package: dialect-llvm
+          - package: llvm-export
           - package: dialect-mir
           - package: dialect-nvvm
           - package: mir-importer
           - package: mir-lower
           - package: oxide-artifacts
           - package: reserved-oxide-symbols
+          # launch_requires_unsafe trybuild fixture dev-depends on
+          # cuda-host/cuda-core, which transitively pull cuda-bindings
           - package: cuda-macros
+            needs_cuda: true
           # trybuild compile-fail suite for ThreadIndex / DisjointSlice safety
           - package: cuda-device
           # pure-Rust kernel-launch helpers + tcgen05 tiling tables

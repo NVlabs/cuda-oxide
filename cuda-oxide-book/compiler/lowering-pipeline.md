@@ -2,7 +2,7 @@
 
 The previous chapters built the IR from both ends: [MIR Importer](mir-importer.md)
 translated Stable MIR into `dialect-mir`, and
-[Pliron Dialects](mlir-dialects.md) described `dialect-mir`, `dialect-llvm`,
+[Pliron Dialects](mlir-dialects.md) described `dialect-mir`, the LLVM dialect,
 and `dialect-nvvm`. This chapter is about the bridge between them -- the pass
 that takes Rust-flavored IR and turns it into something LLVM can actually
 compile.
@@ -20,7 +20,7 @@ It has flat integer and float types, `getelementptr`, PHI nodes, and a general
 suspicion toward anything with more than one level of abstraction.
 
 **Lowering** is the process of replacing every `dialect-mir` operation with
-an equivalent sequence of `dialect-llvm` operations, one by one, until no
+an equivalent sequence of LLVM dialect operations, one by one, until no
 `dialect-mir` operations remain. Tuples become anonymous structs. Slices
 become pointer-length pairs. Checked addition becomes an LLVM overflow
 intrinsic followed by an extract. Every Rust concept gets flattened to
@@ -227,7 +227,7 @@ insertvalue/extractvalue chains.
 ## GPU Intrinsic Conversion
 
 `dialect-nvvm` operations -- thread indexing, warp shuffles, barriers, TMA
-bulk copies -- are not lowered to generic `dialect-llvm` operations. They are
+bulk copies -- are not lowered to generic LLVM dialect operations. They are
 lowered to either LLVM intrinsic calls or inline PTX assembly, depending on
 whether LLVM has a built-in intrinsic for the operation.
 
@@ -328,8 +328,8 @@ rustc_public (FQDN)            helper_fn::cuda_oxide_device_<hash>_vecadd
   ↓ body.rs (:: → __)
 dialect-mir                    helper_fn__cuda_oxide_device_<hash>_vecadd
   ↓ call.rs (:: → __)
-dialect-llvm                   helper_fn__cuda_oxide_device_<hash>_vecadd
-  ↓ export.rs (strip prefix)
+LLVM dialect                   helper_fn__cuda_oxide_device_<hash>_vecadd
+  ↓ llvm-export (strip prefix)
 Textual LLVM IR                @vecadd
   ↓ llc
 PTX                            vecadd
@@ -364,7 +364,7 @@ collision detection systematically.
 
 ## PTX Generation
 
-After `dialect-llvm` is exported to a textual `.ll` file, the final step is
+After the LLVM dialect is exported to a textual `.ll` file, the final step is
 invoking `llc` -- LLVM's static compiler -- to produce PTX assembly:
 
 ```bash
@@ -427,7 +427,7 @@ intrinsic emitters per LLVM version, we set 21 as the minimum.
 Here is the full sequence of events when `lower_mir_to_llvm` processes a module:
 
 ```text
-1. Register `dialect-llvm` types and operations
+1. LLVM dialect types and operations are registered automatically (link-time)
 2. For each MirFuncOp in the module:
    a. Create `llvm.func` with flattened type signature
    b. inline_region: move `dialect-mir` blocks into the LLVM function
@@ -435,9 +435,9 @@ Here is the full sequence of events when `lower_mir_to_llvm` processes a module:
    d. Run DialectConversion:
       ├── Walk every `dialect-mir`/`dialect-nvvm` op (def-before-use order)
       ├── Invoke MirToLlvmConversion::rewrite for each op
-      ├── Converter emits `dialect-llvm` op(s) via DialectConversionRewriter
+      ├── Converter emits LLVM dialect op(s) via DialectConversionRewriter
       └── Framework patches block arg types automatically
-3. Export `dialect-llvm` to textual LLVM IR (.ll) (with PHI node conversion)
+3. Export the LLVM dialect to textual LLVM IR (.ll) (with PHI node conversion)
 4. Invoke llc to produce .ptx
 ```
 

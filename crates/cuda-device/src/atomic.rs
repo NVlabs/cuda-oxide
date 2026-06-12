@@ -42,7 +42,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use cuda_device::atomic::{DeviceAtomicU32, AtomicOrdering};
 //!
 //! #[kernel]

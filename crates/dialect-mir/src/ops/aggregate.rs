@@ -582,6 +582,135 @@ impl Verify for MirConstructTupleOp {
 }
 
 // ============================================================================
+// MirConstructSliceOp
+// ============================================================================
+
+/// MIR construct slice operation.
+///
+/// Constructs a slice fat pointer (`&[T]` / `*const [T]` / `*mut [T]`) from
+/// a data pointer and a length.
+///
+/// # Why This Op Exists
+///
+/// Re-slicing in Rust (`&bytes[2..]`) goes through core's
+/// `slice::index::get_offset_len_noubcheck`, which calls the
+/// `aggregate_raw_ptr` intrinsic. Rustc lowers that intrinsic to
+/// `Rvalue::Aggregate(AggregateKind::RawPtr(..), [data_ptr, len])` in MIR.
+/// The same MIR shape is produced by `ptr::slice_from_raw_parts` and
+/// `ptr::from_raw_parts`. This op represents that fat-pointer construction
+/// in `dialect-mir`.
+///
+/// # Example
+///
+/// ```text
+/// Rust:         let tail: &[u8] = &bytes[2..];
+/// Rust MIR:     _tail = *const [u8] from (_ptr, _len)
+/// dialect-mir:  %tail = mir.construct_slice (%ptr, %len) : mir.slice<u8>
+/// ```
+///
+/// # Operands
+///
+/// ```text
+/// | Index | Name   | Type                       | Description              |
+/// |-------|--------|----------------------------|--------------------------|
+/// | 0     | `ptr`  | MirPtrType<T>              | Data pointer             |
+/// | 1     | `len`  | Integer type (usize)       | Number of elements       |
+/// ```
+///
+/// # Results
+///
+/// ```text
+/// | Name  | Type            |
+/// |-------|-----------------|
+/// | `res` | MirSliceType<T> |
+/// ```
+///
+/// # LLVM Lowering
+///
+/// `MirSliceType` lowers to the fat-pointer struct `{ ptr, i64 }`, so this
+/// op becomes `llvm.undef` + two `llvm.insertvalue` operations:
+/// ```text
+/// %u  = llvm.undef : { ptr, i64 }
+/// %t  = llvm.insertvalue %u, %ptr, [0]
+/// %s  = llvm.insertvalue %t, %len, [1]
+/// ```
+///
+/// # Verification
+///
+/// - Result type must be a slice type.
+/// - Operand 0 must be a pointer whose pointee is the slice element type.
+/// - Operand 1 must be an integer type.
+#[pliron_op(
+    name = "mir.construct_slice",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>, OneResultInterface]
+)]
+pub struct MirConstructSliceOp;
+
+impl MirConstructSliceOp {
+    /// Create a new MirConstructSliceOp wrapper.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MirConstructSliceOp { op }
+    }
+}
+
+impl Verify for MirConstructSliceOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = &*self.get_operation().deref(ctx);
+
+        // Result must be a slice type
+        let result = op.get_result(0);
+        let result_ty = result.get_type(ctx);
+        let result_ty_obj = result_ty.deref(ctx);
+
+        let slice_ty = match result_ty_obj.downcast_ref::<MirSliceType>() {
+            Some(st) => st,
+            None => {
+                return verify_err!(op.loc(), "MirConstructSliceOp result must be a slice type");
+            }
+        };
+
+        // Operand 0 must be a pointer to the slice element type
+        let ptr_operand = op.get_operand(0);
+        let ptr_ty = ptr_operand.get_type(ctx);
+        let ptr_ty_obj = ptr_ty.deref(ctx);
+        match ptr_ty_obj.downcast_ref::<MirPtrType>() {
+            Some(ptr_ty) => {
+                if ptr_ty.pointee != slice_ty.element_ty {
+                    return verify_err!(
+                        op.loc(),
+                        "MirConstructSliceOp data pointer pointee mismatch. Expected: {}, Actual: {}",
+                        slice_ty.element_ty.disp(ctx),
+                        ptr_ty.pointee.disp(ctx)
+                    );
+                }
+            }
+            None => {
+                return verify_err!(
+                    op.loc(),
+                    "MirConstructSliceOp operand 0 must be a pointer type, got: {}",
+                    ptr_ty.disp(ctx)
+                );
+            }
+        }
+
+        // Operand 1 must be an integer type (the length)
+        let len_operand = op.get_operand(1);
+        let len_ty = len_operand.get_type(ctx);
+        let len_ty_obj = len_ty.deref(ctx);
+        if len_ty_obj.downcast_ref::<IntegerType>().is_none() {
+            return verify_err!(
+                op.loc(),
+                "MirConstructSliceOp operand 1 (length) must be an integer type, got: {}",
+                len_ty.disp(ctx)
+            );
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
 // MirConstructArrayOp
 // ============================================================================
 
@@ -593,7 +722,7 @@ impl Verify for MirConstructTupleOp {
 ///
 /// Rust array literals like `[1.0, 2.0, 3.0, 4.0]` compile to
 /// `AggregateKind::Array` in rustc's MIR. This op represents that construct
-/// in `dialect-mir`, before lowering to `dialect-llvm`.
+/// in `dialect-mir`, before lowering to the LLVM dialect.
 ///
 /// # Example
 ///
@@ -1114,6 +1243,7 @@ pub fn register(ctx: &mut Context) {
     MirInsertFieldOp::register(ctx);
     MirConstructStructOp::register(ctx);
     MirConstructTupleOp::register(ctx);
+    MirConstructSliceOp::register(ctx);
     MirConstructArrayOp::register(ctx);
     MirExtractArrayElementOp::register(ctx);
     MirFieldAddrOp::register(ctx);

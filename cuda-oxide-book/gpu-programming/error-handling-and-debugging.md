@@ -206,7 +206,7 @@ This prints the full pipeline output:
 
 1. **MIR collection** -- which functions the collector found
 2. **`dialect-mir`** -- pliron IR modelling Rust MIR (before and after `mem2reg`)
-3. **`dialect-llvm`** -- pliron IR modelling LLVM IR (after `mir-lower`)
+3. **LLVM dialect** -- pliron IR modelling LLVM IR, provided by `pliron-llvm` (after `mir-lower`)
 4. **Textual LLVM IR** -- serialized `.ll` file
 5. **Final PTX** -- the generated assembly
 

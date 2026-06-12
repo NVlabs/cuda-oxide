@@ -1,6 +1,6 @@
 [package]
 name = "cuda-core"
-version = "0.1.0"
+version = "0.2.1"
 edition.workspace = true
 description = "Safe RAII wrappers around the CUDA driver API (idiomatic host-side CUDA)"
 authors.workspace = true

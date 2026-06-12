@@ -1,17 +1,26 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+ *
+ * Licensed under the NVIDIA Software License (see LICENSE-NVIDIA at the
+ * repository root). This crate, unlike the rest of the workspace, is not
+ * Apache-2.0.
  */
 
 use std::{env, error::Error, path::Path, path::PathBuf, process::exit};
 
-/// Returns the CUDA toolkit install root: `CUDA_TOOLKIT_PATH` or `CUDA_HOME` if set,
-/// otherwise `/usr/local/cuda`. Used for include paths, library search paths,
-/// and bindgen’s Clang configuration.
+/// Environment variables consulted (in order) to locate the CUDA toolkit root.
+/// `CUDA_HOME` is the conventional name used by nvcc wrappers and CI images.
+const TOOLKIT_ENV_VARS: [&str; 2] = ["CUDA_TOOLKIT_PATH", "CUDA_HOME"];
+
+/// Returns the CUDA toolkit install root: the first set variable among
+/// [`TOOLKIT_ENV_VARS`], otherwise `/usr/local/cuda`. Used for include paths,
+/// library search paths, and bindgen’s Clang configuration.
 fn cuda_toolkit_dir() -> String {
-    env::var("CUDA_TOOLKIT_PATH")
-        .or_else(|_| env::var("CUDA_HOME"))
-        .unwrap_or_else(|_| "/usr/local/cuda".to_string())
+    TOOLKIT_ENV_VARS
+        .iter()
+        .find_map(|var| env::var(var).ok())
+        .unwrap_or_else(|| "/usr/local/cuda".to_string())
 }
 
 /// Runs [`run`]; on error, prints the message and exits with status 1.
@@ -27,28 +36,13 @@ fn main() {
 /// `bindings.rs` into `OUT_DIR`.
 fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rerun-if-env-changed=CUDA_TOOLKIT_PATH");
-    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    for var in TOOLKIT_ENV_VARS {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
     println!("cargo::rustc-check-cfg=cfg(cuda_has_cuEventElapsedTime_v2)");
 
     let toolkit = cuda_toolkit_dir();
-    let cuda_h = Path::new(&toolkit).join("include/cuda.h");
-    println!("cargo:rerun-if-changed={}", cuda_h.display());
-
-    match std::fs::read_to_string(&cuda_h) {
-        Ok(contents) => {
-            if contents.contains("cuEventElapsedTime_v2") {
-                println!("cargo:rustc-cfg=cuda_has_cuEventElapsedTime_v2");
-            }
-        }
-        Err(err) => {
-            println!(
-                "cargo:warning=cuda-bindings: Could not read cuda.h at {}: {}",
-                cuda_h.display(),
-                err
-            );
-        }
-    }
+    probe_event_elapsed_time_v2(&toolkit);
 
     for path in collect_lib_paths(&toolkit) {
         println!("cargo:rustc-link-search=native={}", path.display());
@@ -71,6 +65,33 @@ fn run() -> Result<(), Box<dyn Error>> {
         .write_to_file(Path::new(&env::var("OUT_DIR")?).join("bindings.rs"))?;
 
     Ok(())
+}
+
+/// Probes the toolkit's `cuda.h` for `cuEventElapsedTime_v2` and emits the
+/// `cuda_has_cuEventElapsedTime_v2` cfg when present.
+///
+/// CUDA 12.8 renamed the event elapsed-time driver entry point to
+/// `cuEventElapsedTime_v2`; earlier toolkits only declare
+/// `cuEventElapsedTime`. The cfg lets `src/lib.rs` dispatch to whichever
+/// symbol the headers used for this build actually declare. An unreadable
+/// `cuda.h` is reported as a build warning (bindgen will fail with its own
+/// diagnostic right after) and treated as the pre-12.8 spelling.
+fn probe_event_elapsed_time_v2(toolkit: &str) {
+    let cuda_h = Path::new(toolkit).join("include/cuda.h");
+    println!("cargo:rerun-if-changed={}", cuda_h.display());
+    match std::fs::read_to_string(&cuda_h) {
+        Ok(header) => {
+            if header.contains("cuEventElapsedTime_v2") {
+                println!("cargo:rustc-cfg=cuda_has_cuEventElapsedTime_v2");
+            }
+        }
+        Err(error) => {
+            println!(
+                "cargo:warning=cuda-bindings: failed to probe {}: {error}",
+                cuda_h.display()
+            );
+        }
+    }
 }
 
 /// Candidate directories for `rustc-link-search=native` when linking against the driver library.

@@ -25,10 +25,10 @@ mir-importer       Compiler sees the call, emits a `dialect-nvvm` op
 dialect-nvvm       The op lives here as a verified IR node
     │
     ▼
-mir-lower          Converts the `dialect-nvvm` op into a `dialect-llvm` op
+mir-lower          Converts the `dialect-nvvm` op into an LLVM dialect op
     │
     ▼
-dialect-llvm       Exports textual LLVM IR  →  llc turns it into PTX
+llvm-export        Exports textual LLVM IR  →  llc turns it into PTX
 ```
 
 At the `mir-lower` stage you pick one of two strategies:
@@ -142,7 +142,7 @@ zero-argument, single-result NVVM intrinsic. It creates the operation, stores
 the result in the value map, and emits a branch to the next basic block. For
 simple intrinsics, you never need to write a custom emitter.
 
-### Stage 4 -- Lower to `dialect-llvm`
+### Stage 4 -- Lower to the LLVM dialect
 
 **File:** `crates/mir-lower/src/convert/intrinsics/basic.rs`
 
@@ -184,7 +184,7 @@ identifiers cannot contain dots. Internally we use underscores
 
 ### Stage 5 -- Export (Nothing to Change)
 
-**File:** `crates/dialect-llvm/src/export.rs`
+**File:** `crates/llvm-export/src/export/` (the export module)
 
 The `CallOp` exporter already handles the underscore-to-dot conversion:
 
@@ -305,7 +305,7 @@ operation. (These are not SSA values yet; `pliron::opts::mem2reg` will
 collapse the load/store chains once translation is complete.) For intrinsics
 with different argument patterns, you write a similar custom emitter.
 
-### Stage 4 -- Lower to `dialect-llvm`
+### Stage 4 -- Lower to the LLVM dialect
 
 **File:** `crates/mir-lower/src/convert/intrinsics/warp.rs`
 
@@ -468,7 +468,7 @@ Every file you need to touch, in order:
    Use `call_intrinsic()` for LLVM intrinsics, or `inline_asm_convergent()`
    for inline PTX.
 
-6. **`dialect-llvm/src/export.rs`** -- *only if convergent*: add to
+6. **`llvm-export/src/export/`** -- *only if convergent*: add to
    `is_convergent_intrinsic()`.
 
 ---

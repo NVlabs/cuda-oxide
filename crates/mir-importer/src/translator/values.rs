@@ -326,7 +326,7 @@ impl SlotAddrSpaceMap {
     /// classifies the RHS, and merges classified observations into the
     /// destination local's state. Only `Classified(_)` observations change
     /// state; `Unclassified` and `Pending` are no-ops by design (see
-    /// [`WriteClass::Unclassified`] / [`resolve`] for the rationale).
+    /// `WriteClass::Unclassified` / `resolve` for the rationale).
     ///
     /// Convergence: each local can transition at most
     /// `Uninit → Known(n) → Generic` (two steps). Propagation chains

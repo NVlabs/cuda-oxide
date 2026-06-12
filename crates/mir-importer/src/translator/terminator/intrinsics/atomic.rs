@@ -12,7 +12,7 @@
 //! 2. **`core::sync::atomic::*`** — standard library atomics (via `std::intrinsics::atomic_*`)
 //!
 //! Both front-ends emit the same NVVM ops and share the entire lowering pipeline
-//! (mir-lower fence splitting → `dialect-llvm` → export → llc → PTX).
+//! (mir-lower fence splitting → LLVM dialect → export → llc → PTX).
 //!
 //! # cuda_device Path — Type Resolution
 //!
@@ -40,11 +40,11 @@
 //! | `fetch_and`  | `And`              | —              |
 //! | `fetch_or`   | `Or`               | —              |
 //! | `fetch_xor`  | `Xor`              | —              |
-//! | `fetch_min`  | `Min` / `UMin` [*] | —              |
-//! | `fetch_max`  | `Max` / `UMax` [*] | —              |
+//! | `fetch_min`  | `Min` / `UMin` `[*]` | —            |
+//! | `fetch_max`  | `Max` / `UMax` `[*]` | —            |
 //! | `swap`       | `Xchg`             | `Xchg`         |
 //!
-//! [*] `fetch_min`/`fetch_max` use signed (`Min`/`Max`) for `I32`/`I64`,
+//! `[*]` `fetch_min`/`fetch_max` use signed (`Min`/`Max`) for `I32`/`I64`,
 //!     unsigned (`UMin`/`UMax`) for `U32`/`U64`.
 //!
 //! # core::sync::atomic Path

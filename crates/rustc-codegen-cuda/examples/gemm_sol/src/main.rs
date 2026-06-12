@@ -65,6 +65,148 @@ use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 // =============================================================================
+// LIVE cuBLASLt BASELINE (replaces the previous hardcoded B200 constants)
+// =============================================================================
+
+/// Live cublasLt FP16 GEMM baseline used to compute "% of SoL" in benchmark
+/// reports.
+///
+/// The baseline is measured by `bench/cublaslt_bench` (a tiny C program that
+/// calls `cublasLtMatmul` with the same shapes/dtypes gemm_sol uses). On
+/// first access we invoke that binary, parse the FP16 section of its output,
+/// and cache the result. If the binary is missing or fails, the per-phase
+/// reports omit the "% of SoL" column rather than printing a misleading
+/// number against a baseline measured on different silicon.
+mod cublas_baseline {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    static BASELINE: OnceLock<Option<HashMap<usize, f64>>> = OnceLock::new();
+
+    /// FP16-input / FP32-compute cublasLtMatmul TFLOPS for an M×M×M GEMM on
+    /// the host GPU, or `None` if the bench could not be measured.
+    pub fn fp16_tflops(m: usize) -> Option<f64> {
+        BASELINE.get_or_init(load).as_ref()?.get(&m).copied()
+    }
+
+    /// Pre-warm the baseline so the ~25s measurement runs at startup, not in
+    /// the middle of a benchmark print.
+    pub fn warmup() {
+        let _ = BASELINE.get_or_init(load);
+    }
+
+    fn bench_binary() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("bench")
+            .join("cublaslt_bench")
+    }
+
+    fn load() -> Option<HashMap<usize, f64>> {
+        let bin = bench_binary();
+        if !bin.exists() {
+            eprintln!(
+                "ℹ️  No live cublasLt baseline at {} — % of SoL column will be omitted.",
+                bin.display()
+            );
+            eprintln!(
+                "    Build it once with: cd {} && bash build.sh",
+                bin.parent().unwrap_or(Path::new(".")).display(),
+            );
+            return None;
+        }
+
+        eprintln!("ℹ️  Measuring cublasLt FP16 baseline on host GPU (one-shot, ~25s)...");
+        let out = match std::process::Command::new(&bin).output() {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("⚠️  Failed to run {}: {e}", bin.display());
+                return None;
+            }
+        };
+        if !out.status.success() {
+            eprintln!(
+                "⚠️  {} exited with status {}: {}",
+                bin.display(),
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let map = parse_fp16(&stdout);
+        if map.is_empty() {
+            eprintln!("⚠️  Could not parse FP16 rows from cublaslt_bench output:\n{stdout}");
+            None
+        } else {
+            let mut sizes: Vec<(usize, f64)> = map.iter().map(|(m, t)| (*m, *t)).collect();
+            sizes.sort_by_key(|(m, _)| *m);
+            let pretty = sizes
+                .iter()
+                .map(|(m, t)| format!("{m}={:.1}", t))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("✓ cublasLt FP16 baseline (TFLOPS): {pretty}");
+            Some(map)
+        }
+    }
+
+    /// Extract `(M, TFLOPS)` pairs from the `--- FP16 ---` section of
+    /// `cublaslt_bench` output. Lines look like:
+    ///
+    /// ```text
+    /// FP16 FP32 compute   16384x16384x16384   20.5993 ms     427.0 TFLOPS
+    /// ```
+    fn parse_fp16(s: &str) -> HashMap<usize, f64> {
+        let mut map = HashMap::new();
+        let mut in_fp16 = false;
+        for line in s.lines() {
+            let l = line.trim_start();
+            if l.starts_with("--- FP16") {
+                in_fp16 = true;
+                continue;
+            }
+            if l.starts_with("--- BF16") {
+                in_fp16 = false;
+                continue;
+            }
+            if !in_fp16 || !l.starts_with("FP16 ") {
+                continue;
+            }
+            // ["FP16", "FP32", "compute", "MxNxK", "X.XXXX", "ms", "Y.Y", "TFLOPS"]
+            let toks: Vec<&str> = l.split_whitespace().collect();
+            let size = toks.get(3).copied().unwrap_or("");
+            let m: Option<usize> = size.split('x').next().and_then(|s| s.trim().parse().ok());
+            // TFLOPS value is the second-to-last token (last is the literal "TFLOPS")
+            let tf: Option<f64> = toks.iter().rev().nth(1).and_then(|s| s.parse().ok());
+            if let (Some(m), Some(tf)) = (m, tf) {
+                map.insert(m, tf);
+            }
+        }
+        map
+    }
+}
+
+/// Print the "vs cuBLAS" line for a benchmark phase, using the live baseline
+/// from `bench/cublaslt_bench` if available, otherwise an explanatory
+/// placeholder. Replaces the previous hardcoded `match m { ... }` blocks
+/// that compared every host GPU against B200's cublasLt SoL.
+fn print_cublas_comparison(tflops: f64, m: usize) {
+    match cublas_baseline::fp16_tflops(m) {
+        Some(sol) => {
+            let pct = (tflops / sol) * 100.0;
+            println!(
+                "  vs cuBLAS:   {:.2}% of live cublasLt SoL ({:.0} TFLOPS)",
+                pct, sol
+            );
+        }
+        None => {
+            println!("  vs cuBLAS:   (no live cublasLt baseline; see bench/build.sh)");
+        }
+    }
+}
+
+// =============================================================================
 // KERNEL
 // =============================================================================
 
@@ -3735,6 +3877,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (major, minor) = ctx.compute_capability()?;
     println!("GPU: sm_{}{}", major, minor);
 
+    // Run the cublasLt baseline once up front so the ~25s measurement isn't
+    // sandwiched between benchmark prints. Skipped silently if the bench
+    // binary isn't built (the per-phase reports will omit the % SoL column).
+    cublas_baseline::warmup();
+
     if major < 10 {
         println!("\nWARNING: tcgen05 requires sm_100+ (Blackwell)");
         return verify_ptx_only();
@@ -4209,15 +4356,9 @@ fn run_benchmark(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    // Reference: cublasLtMatmul SoL on B200 (from bench/cublaslt_bench.c)
-    // FP16 input, FP32 compute, TN format, 32MB workspace.
-    // B200 (sm_100, 148 SMs): 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS SoL is now measured live via bench/cublaslt_bench (parsed by
+    // the cublas_baseline module). The comparison line is printed by
+    // print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!("  BENCHMARK: gemm_sol {}x{}x{} f16 -> bf16", m, n, k);
@@ -4234,10 +4375,7 @@ fn run_benchmark(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -4486,15 +4624,9 @@ fn run_benchmark_swizzled(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    // Reference: cublasLtMatmul SoL on B200 (from bench/cublaslt_bench.c)
-    // FP16 input, FP32 compute, TN format, 32MB workspace.
-    // B200 (sm_100, 148 SMs): 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS SoL is now measured live via bench/cublaslt_bench (parsed by
+    // the cublas_baseline module). The comparison line is printed by
+    // print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -4515,10 +4647,7 @@ fn run_benchmark_swizzled(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -4764,15 +4893,9 @@ fn run_benchmark_pipelined(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    // Reference: cublasLtMatmul SoL on B200 (from bench/cublaslt_bench.c)
-    // FP16 input, FP32 compute, TN format, 32MB workspace.
-    // B200 (sm_100, 148 SMs): 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS SoL is now measured live via bench/cublaslt_bench (parsed by
+    // the cublas_baseline module). The comparison line is printed by
+    // print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -4793,10 +4916,7 @@ fn run_benchmark_pipelined(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -5041,15 +5161,9 @@ fn run_benchmark_warp_spec(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    // Reference: cublasLtMatmul SoL on B200 (from bench/cublaslt_bench.c)
-    // FP16 input, FP32 compute, TN format, 32MB workspace.
-    // B200 (sm_100, 148 SMs): 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS SoL is now measured live via bench/cublaslt_bench (parsed by
+    // the cublas_baseline module). The comparison line is printed by
+    // print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -5070,10 +5184,7 @@ fn run_benchmark_warp_spec(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -5373,15 +5484,9 @@ fn run_benchmark_persistent(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    // Reference: cublasLtMatmul SoL on B200 (from bench/cublaslt_bench.c)
-    // FP16 input, FP32 compute, TN format, 32MB workspace.
-    // B200 (sm_100, 148 SMs): 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS SoL is now measured live via bench/cublaslt_bench (parsed by
+    // the cublas_baseline module). The comparison line is printed by
+    // print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -5400,10 +5505,7 @@ fn run_benchmark_persistent(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -5682,15 +5784,9 @@ fn run_benchmark_clc(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    // Reference: cublasLtMatmul SoL on B200 (from bench/cublaslt_bench.c)
-    // FP16 input, FP32 compute, TN format, 32MB workspace.
-    // B200 (sm_100, 148 SMs): 4K=1502, 8K=1402, 16K=1526 TFLOPS.
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS SoL is now measured live via bench/cublaslt_bench (parsed by
+    // the cublas_baseline module). The comparison line is printed by
+    // print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!("  BENCHMARK: gemm_sol_clc {}x{}x{} f16 -> bf16", m, n, k);
@@ -5706,10 +5802,7 @@ fn run_benchmark_clc(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -5988,12 +6081,7 @@ fn run_benchmark_clc_multicast(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS comparison is printed by print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -6012,10 +6100,7 @@ fn run_benchmark_clc_multicast(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())
@@ -6311,12 +6396,7 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     let flops = 2.0 * m as f64 * n as f64 * k as f64;
     let tflops = (flops / (avg_ms / 1000.0)) / 1e12;
 
-    let cublas_sol_tflops = match m {
-        8192 => 1402.0_f64,
-        16384 => 1526.0_f64,
-        _ => 1502.0_f64,
-    };
-    let pct_sol = (tflops / cublas_sol_tflops) * 100.0;
+    // cuBLAS comparison is printed by print_cublas_comparison(tflops, m) below.
 
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -6335,10 +6415,7 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     println!("  Average:     {:.3} us / kernel", avg_us);
     println!("  FLOPS/kern:  {:.3e}", flops);
     println!("  Throughput:  {:.3} TFLOPS", tflops);
-    println!(
-        "  vs cuBLAS:   {:.2}% of SoL ({:.0} TFLOPS)",
-        pct_sol, cublas_sol_tflops
-    );
+    print_cublas_comparison(tflops, m);
     println!("═══════════════════════════════════════════════════════\n");
 
     Ok(())

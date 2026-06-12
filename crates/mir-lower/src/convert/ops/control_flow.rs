@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Control flow operation conversion: `dialect-mir` → `dialect-llvm`.
+//! Control flow operation conversion: `dialect-mir` → LLVM dialect.
 //!
 //! Converts `dialect-mir` terminators and control flow operations to their
-//! `dialect-llvm` equivalents.
+//! LLVM dialect equivalents.
 //!
 //! # Operations
 //!
@@ -23,7 +23,7 @@
 //! With `DialectConversion` + `inline_region`, blocks are the ORIGINALS (moved,
 //! not copied). Successor pointers are already valid — no block map lookup needed.
 
-use dialect_llvm::ops as llvm;
+use llvm_export::ops as llvm;
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -55,10 +55,10 @@ pub(crate) fn convert_return(
 
             let is_empty_struct = ty
                 .deref(ctx)
-                .downcast_ref::<dialect_llvm::types::StructType>()
+                .downcast_ref::<llvm_export::types::StructType>()
                 .is_some_and(|st| st.num_fields() == 0);
 
-            if ty.deref(ctx).is::<dialect_llvm::types::VoidType>() || is_empty_struct {
+            if ty.deref(ctx).is::<llvm_export::types::VoidType>() || is_empty_struct {
                 None
             } else {
                 Some(*val)
@@ -220,7 +220,7 @@ pub(crate) fn convert_goto(
 
             let is_empty_struct = arg_ty
                 .deref(ctx)
-                .downcast_ref::<dialect_llvm::types::StructType>()
+                .downcast_ref::<llvm_export::types::StructType>()
                 .is_some_and(|st| st.num_fields() == 0);
 
             if is_empty_struct {
@@ -253,5 +253,476 @@ pub(crate) fn convert_goto(
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for control flow conversion
+    //! End-to-end lowering tests for `dialect-mir` terminator ops.
+    //!
+    //! The `convert_*` functions take a live `DialectConversionRewriter` owned
+    //! by the driver, so we can't call them directly — each test builds a
+    //! minimal MIR module, runs `lower_mir_to_llvm`, and inspects the result.
+
+    use crate::convert::ops::test_util::*;
+    use dialect_mir::ops as mir;
+    use dialect_mir::types::MirTupleType;
+    use llvm_export::ops as llvm;
+    use pliron::builtin::op_interfaces::{BranchOpInterface, OperandSegmentInterface};
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::context::Ptr;
+    use pliron::linked_list::ContainsLinkedList;
+    use pliron::op::Op;
+    use pliron::operation::Operation;
+    use pliron::r#type::TypeObj;
+
+    #[test]
+    fn convert_return_void_lowers_to_llvm_return_without_value() {
+        let mut ctx = make_ctx();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![]);
+        append_mir_return(&mut ctx, entry, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        assert_eq!(
+            ret.get_operation().deref(&ctx).get_num_operands(),
+            0,
+            "void return must have no value operand"
+        );
+        assert_eq!(count_ops::<mir::MirReturnOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn convert_return_with_scalar_value_lowers_to_llvm_return_with_value() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![i32_ty]);
+        let arg = entry.deref(&ctx).get_argument(0);
+        append_mir_return(&mut ctx, entry, vec![arg]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        assert_eq!(
+            ret.get_operation().deref(&ctx).get_num_operands(),
+            1,
+            "scalar return must carry one value operand"
+        );
+    }
+
+    #[test]
+    fn convert_return_empty_struct_treated_as_void() {
+        // `mir.return %x` with `%x: ()` must drop the operand to match the
+        // converted `-> void` signature. The unit value comes from `mir.undef`
+        // to sidestep the function arg ABI, which strips ZSTs.
+        //
+        // NOTE: this test relies on the MIR type converter lowering `MirTupleType`
+        // to an empty `llvm.struct`; `convert_return` checks for the latter,
+        // not the former.
+        let mut ctx = make_ctx();
+        let unit_ty: Ptr<TypeObj> = MirTupleType::get(&mut ctx, vec![]).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![unit_ty]);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, unit_ty);
+        undef.get_operation().insert_at_back(entry, &ctx);
+        let undef_val = undef.get_operation().deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, entry, vec![undef_val]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        assert_eq!(
+            ret.get_operation().deref(&ctx).get_num_operands(),
+            0,
+            "empty-struct return value must collapse to void"
+        );
+    }
+
+    #[test]
+    fn convert_unreachable_lowers_to_llvm_unreachable() {
+        let mut ctx = make_ctx();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let unreach = Operation::new(
+            &mut ctx,
+            mir::MirUnreachableOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        unreach.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<llvm::UnreachableOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<mir::MirUnreachableOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn convert_cond_branch_splits_operands_into_per_block_args() {
+        // The [cond | true_args | false_args] split: %val goes to true_block
+        // (expects i32), false_block takes none — so the lowered cond_br must
+        // expose one true-side operand and zero false-side.
+        let mut ctx = make_ctx();
+        let i1_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty], vec![]);
+        let cond = entry.deref(&ctx).get_argument(0);
+        let val = entry.deref(&ctx).get_argument(1);
+
+        let true_block = append_block(&mut ctx, entry, vec![i32_ty]);
+        let false_block = append_block(&mut ctx, entry, vec![]);
+        append_mir_return(&mut ctx, true_block, vec![]);
+        append_mir_return(&mut ctx, false_block, vec![]);
+
+        let (operands, segment_sizes) =
+            mir::MirCondBranchOp::compute_segment_sizes(vec![vec![cond], vec![val], vec![]]);
+        let cond_br = Operation::new(
+            &mut ctx,
+            mir::MirCondBranchOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![true_block, false_block],
+            0,
+        );
+        mir::MirCondBranchOp::new(cond_br).set_operand_segment_sizes(&ctx, segment_sizes);
+        cond_br.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let llvm_br = find_first::<llvm::CondBrOp>(&ctx, &body).expect("expected llvm.cond_br");
+        assert_eq!(llvm_br.successor_operands(&ctx, 0).len(), 1);
+        assert_eq!(llvm_br.successor_operands(&ctx, 1).len(), 0);
+        assert_eq!(count_ops::<mir::MirCondBranchOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn convert_assert_creates_abort_block_with_unreachable() {
+        // mir.assert lowers to a llvm.cond_br whose false side is a fresh
+        // block ending in llvm.unreachable.
+        let mut ctx = make_ctx();
+        let i1_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
+        let cond = entry.deref(&ctx).get_argument(0);
+        let success = append_block(&mut ctx, entry, vec![]);
+        append_mir_return(&mut ctx, success, vec![]);
+
+        let (operands, segment_sizes) =
+            mir::MirAssertOp::compute_segment_sizes(vec![vec![cond], vec![]]);
+        let assert_op = Operation::new(
+            &mut ctx,
+            mir::MirAssertOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![success],
+            0,
+        );
+        mir::MirAssertOp::new(assert_op).set_operand_segment_sizes(&ctx, segment_sizes);
+        assert_op.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<llvm::CondBrOp>(&ctx, &body), 1);
+        assert_eq!(
+            count_ops::<llvm::UnreachableOp>(&ctx, &body),
+            1,
+            "abort block must terminate with llvm.unreachable"
+        );
+        assert_eq!(count_ops::<mir::MirAssertOp>(&ctx, &body), 0);
+
+        let abort_block = body
+            .iter()
+            .find(|&&b| {
+                b.deref(&ctx)
+                    .iter(&ctx)
+                    .any(|op| Operation::get_op::<llvm::UnreachableOp>(op, &ctx).is_some())
+            })
+            .copied()
+            .expect("abort block must exist");
+        let llvm_br = find_first::<llvm::CondBrOp>(&ctx, &body).expect("expected llvm.cond_br");
+        let false_succ = llvm_br.get_operation().deref(&ctx).get_successor(1);
+        assert_eq!(
+            false_succ, abort_block,
+            "cond_br false side must target the abort block"
+        );
+    }
+
+    #[test]
+    fn convert_goto_lowers_to_llvm_br() {
+        // mir.goto next(%arg) -> llvm.br targeting `next`, forwarding %arg.
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
+        let arg = entry.deref(&ctx).get_argument(0);
+
+        let next = append_block(&mut ctx, entry, vec![i32_ty]);
+        append_mir_return(&mut ctx, next, vec![]);
+
+        let goto = Operation::new(
+            &mut ctx,
+            mir::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![arg],
+            vec![next],
+            0,
+        );
+        goto.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<mir::MirGotoOp>(&ctx, &body), 0);
+        // The prologue emits its own br, so find the one targeting `next`
+        // (Ptr preserved by inline_region) rather than counting all brs.
+        let br = find_all::<llvm::BrOp>(&ctx, &body)
+            .into_iter()
+            .find(|br| {
+                br.get_operation()
+                    .deref(&ctx)
+                    .successors()
+                    .any(|s| s == next)
+            })
+            .expect("expected an llvm.br into `next`");
+        assert_eq!(br.successor_operands(&ctx, 0).len(), 1);
+    }
+
+    #[test]
+    fn convert_goto_pads_missing_zst_arg_with_undef() {
+        // `next` expects (i32, ()) but the goto forwards only the i32. The
+        // omitted ZST arg must be filled with a synthesised `llvm.undef` so
+        // the lowered br still carries both operands.
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let unit_ty: Ptr<TypeObj> = MirTupleType::get(&mut ctx, vec![]).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
+        let arg = entry.deref(&ctx).get_argument(0);
+
+        let next = append_block(&mut ctx, entry, vec![i32_ty, unit_ty]);
+        append_mir_return(&mut ctx, next, vec![]);
+
+        let goto = Operation::new(
+            &mut ctx,
+            mir::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![arg],
+            vec![next],
+            0,
+        );
+        goto.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<mir::MirGotoOp>(&ctx, &body), 0);
+        assert_eq!(
+            count_ops::<llvm::UndefOp>(&ctx, &body),
+            1,
+            "missing ZST block arg must be filled with exactly one llvm.undef"
+        );
+        let br = find_all::<llvm::BrOp>(&ctx, &body)
+            .into_iter()
+            .find(|br| {
+                br.get_operation()
+                    .deref(&ctx)
+                    .successors()
+                    .any(|s| s == next)
+            })
+            .expect("expected an llvm.br into `next`");
+        assert_eq!(
+            br.successor_operands(&ctx, 0).len(),
+            2,
+            "br must forward the i32 plus the padded undef"
+        );
+    }
+
+    #[test]
+    fn convert_goto_errors_when_missing_arg_is_not_zst() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i64_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
+        let arg = entry.deref(&ctx).get_argument(0);
+
+        let next = append_block(&mut ctx, entry, vec![i32_ty, i64_ty]);
+        append_mir_return(&mut ctx, next, vec![]);
+
+        let goto = Operation::new(
+            &mut ctx,
+            mir::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![arg],
+            vec![next],
+            0,
+        );
+        goto.insert_at_back(entry, &ctx);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("goto with a non-ZST missing argument must fail to lower");
+        assert!(
+            err.err.to_string().contains("not a ZST"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    #[test]
+    fn convert_return_multiple_operands_errors() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) =
+            build_kernel(&mut ctx, vec![i32_ty, i32_ty], vec![i32_ty, i32_ty]);
+        let arg0 = entry.deref(&ctx).get_argument(0);
+        let arg1 = entry.deref(&ctx).get_argument(1);
+        append_mir_return(&mut ctx, entry, vec![arg0, arg1]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("return with multiple operands must fail");
+        assert!(
+            err.err
+                .to_string()
+                .contains("multiple operands not supported"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    #[test]
+    fn convert_cond_branch_operand_count_mismatch_errors() {
+        let mut ctx = make_ctx();
+        let i1_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty], vec![]);
+        let cond = entry.deref(&ctx).get_argument(0);
+
+        let true_block = append_block(&mut ctx, entry, vec![i32_ty]);
+        let false_block = append_block(&mut ctx, entry, vec![]);
+        append_mir_return(&mut ctx, true_block, vec![]);
+        append_mir_return(&mut ctx, false_block, vec![]);
+
+        let (operands, segment_sizes) =
+            mir::MirCondBranchOp::compute_segment_sizes(vec![vec![cond], vec![], vec![]]);
+        let cond_br = Operation::new(
+            &mut ctx,
+            mir::MirCondBranchOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![true_block, false_block],
+            0,
+        );
+        mir::MirCondBranchOp::new(cond_br).set_operand_segment_sizes(&ctx, segment_sizes);
+        cond_br.insert_at_back(entry, &ctx);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("cond_branch with operand count mismatch must fail");
+        assert!(
+            err.err.to_string().contains("operand count mismatch"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    #[test]
+    fn convert_assert_missing_successor_errors() {
+        let mut ctx = make_ctx();
+        let i1_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
+        let cond = entry.deref(&ctx).get_argument(0);
+
+        let (operands, segment_sizes) =
+            mir::MirAssertOp::compute_segment_sizes(vec![vec![cond], vec![]]);
+        let assert_op = Operation::new(
+            &mut ctx,
+            mir::MirAssertOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![],
+            0,
+        );
+        mir::MirAssertOp::new(assert_op).set_operand_segment_sizes(&ctx, segment_sizes);
+        assert_op.insert_at_back(entry, &ctx);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("assert without successor must fail");
+        assert!(
+            err.err.to_string().contains("exactly 1 successor"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    #[test]
+    fn convert_goto_too_many_operands_errors() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
+        let arg = entry.deref(&ctx).get_argument(0);
+
+        let next = append_block(&mut ctx, entry, vec![]);
+        append_mir_return(&mut ctx, next, vec![]);
+
+        let goto = Operation::new(
+            &mut ctx,
+            mir::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![arg],
+            vec![next],
+            0,
+        );
+        goto.insert_at_back(entry, &ctx);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("goto with too many operands must fail");
+        assert!(
+            err.err.to_string().contains("operand count mismatch"),
+            "unexpected error: {}",
+            err.err
+        );
+    }
+
+    #[test]
+    fn convert_cond_branch_forwards_distinct_args_to_each_side() {
+        // Both sides take an arg, exercising the split boundary: the i32 must
+        // land on the true side and the i64 on the false side, checked by
+        // value identity not just counts.
+        let mut ctx = make_ctx();
+        let i1_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i64_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty, i64_ty], vec![]);
+        let cond = entry.deref(&ctx).get_argument(0);
+        let v_true = entry.deref(&ctx).get_argument(1);
+        let v_false = entry.deref(&ctx).get_argument(2);
+
+        let true_block = append_block(&mut ctx, entry, vec![i32_ty]);
+        let false_block = append_block(&mut ctx, entry, vec![i64_ty]);
+        append_mir_return(&mut ctx, true_block, vec![]);
+        append_mir_return(&mut ctx, false_block, vec![]);
+
+        let (operands, segment_sizes) = mir::MirCondBranchOp::compute_segment_sizes(vec![
+            vec![cond],
+            vec![v_true],
+            vec![v_false],
+        ]);
+        let cond_br = Operation::new(
+            &mut ctx,
+            mir::MirCondBranchOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![true_block, false_block],
+            0,
+        );
+        mir::MirCondBranchOp::new(cond_br).set_operand_segment_sizes(&ctx, segment_sizes);
+        cond_br.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let llvm_br = find_first::<llvm::CondBrOp>(&ctx, &body).expect("expected llvm.cond_br");
+        assert_eq!(llvm_br.successor_operands(&ctx, 0), vec![v_true]);
+        assert_eq!(llvm_br.successor_operands(&ctx, 1), vec![v_false]);
+        assert_eq!(count_ops::<mir::MirCondBranchOp>(&ctx, &body), 0);
+    }
 }

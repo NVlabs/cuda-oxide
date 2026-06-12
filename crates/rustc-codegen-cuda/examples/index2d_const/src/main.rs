@@ -5,25 +5,30 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
-use cuda_host::cuda_launch;
+use cuda_host::cuda_module;
 
 const WIDTH: usize = 16;
 const HEIGHT: usize = 8;
 
-#[kernel]
-pub fn copy_2d_const_width(
-    input: &[f32],
-    mut output: DisjointSlice<f32, thread::Index2D<WIDTH>>,
-    height: u32,
-) {
-    let row = thread::index_2d_row();
+#[cuda_module]
+mod kernels {
+    use super::*;
 
-    if let Some(idx) = thread::index_2d::<WIDTH>()
-        && row < height as usize
-    {
-        let i = idx.get();
-        if let Some(out_elem) = output.get_mut(idx) {
-            *out_elem = input[i];
+    #[kernel]
+    pub fn copy_2d_const_width(
+        input: &[f32],
+        mut output: DisjointSlice<f32, thread::Index2D<WIDTH>>,
+        height: u32,
+    ) {
+        let row = thread::index_2d_row();
+
+        if let Some(idx) = thread::index_2d::<WIDTH>()
+            && row < height as usize
+        {
+            let i = idx.get();
+            if let Some(out_elem) = output.get_mut(idx) {
+                *out_elem = input[i];
+            }
         }
     }
 }
@@ -42,19 +47,21 @@ fn main() {
     let module = ctx
         .load_module_from_file("index2d_const.ptx")
         .expect("Failed to load PTX module");
+    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
-    cuda_launch! {
-        kernel: copy_2d_const_width,
-        stream: stream,
-        module: module,
-        config: LaunchConfig {
-            grid_dim: (1, HEIGHT as u32, 1),
-            block_dim: (WIDTH as u32, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        args: [slice(input_dev), slice_mut(output_dev), HEIGHT as u32]
-    }
-    .expect("Kernel launch failed");
+    module
+        .copy_2d_const_width(
+            &stream,
+            LaunchConfig {
+                grid_dim: (1, HEIGHT as u32, 1),
+                block_dim: (WIDTH as u32, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            &input_dev,
+            &mut output_dev,
+            HEIGHT as u32,
+        )
+        .expect("Kernel launch failed");
 
     let output_host = output_dev.to_host_vec(&stream).unwrap();
     for i in 0..(WIDTH * HEIGHT) {

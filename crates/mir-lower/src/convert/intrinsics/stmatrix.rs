@@ -15,7 +15,7 @@
 //! | `M8n8X2Trans` | `stmatrix.sync.aligned.m8n8.x2.trans.shared.b16`| Store 2 transposed  |
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::types as llvm_types;
+use llvm_export::types as llvm_types;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::rewriter::Rewriter;

@@ -31,8 +31,8 @@ than building everything from scratch:
   We need a place to transform Rust MIR into something LLVM-shaped. pliron is
   an extensible IR framework inspired by LLVM's MLIR, but written in pure Rust.
   No C++ dependency, no CMake, no tablegen -- just `cargo build`. We define
-  three custom dialects here: one for MIR, one for LLVM IR, and one for
-  NVIDIA GPU intrinsics.
+  two custom dialects here (one for MIR, one for NVIDIA GPU intrinsics) and
+  consume the LLVM dialect from the upstream `pliron-llvm` crate.
 
 - **Backend: LLVM NVPTX.**
   NVIDIA has poured years of work into the NVPTX backend in LLVM. It knows
@@ -69,7 +69,7 @@ Here is the full journey of a `#[kernel]` function, from source to silicon:
 
 The full compilation pipeline. Rust source enters the rustc frontend, passes
 through Stable MIR, is translated into `dialect-mir` (with `mem2reg` promoting
-allocas back into SSA), lowered to `dialect-llvm`, exported as textual LLVM IR,
+allocas back into SSA), lowered to the LLVM dialect, exported as textual LLVM IR,
 and finally compiled to PTX by the NVPTX backend.
 ```
 
@@ -99,14 +99,15 @@ Stage by stage:
    `mir.load`/`mir.store` for cross-block data flow; `pliron::opts::mem2reg`
    then promotes those slots back into SSA values.
 
-5. **`dialect-llvm` (pliron).**
-   `mir-lower` transforms `dialect-mir` operations into `dialect-llvm`
+5. **LLVM dialect (pliron-llvm).**
+   `mir-lower` transforms `dialect-mir` operations into LLVM dialect
    operations: `llvm.alloca`, `llvm.load`, `llvm.store`,
    `llvm.getelementptr`, `llvm.call`, and friends. This is where
-   Rust-level concepts get flattened to machine-oriented IR.
+   Rust-level concepts get flattened to machine-oriented IR. The LLVM
+   dialect itself is provided by the upstream `pliron-llvm` crate.
 
 6. **LLVM IR (.ll file).**
-   The `dialect-llvm` printer serializes the IR into textual LLVM IR.
+   The `llvm-export` printer serializes the IR into textual LLVM IR.
    This is a plain `.ll` file -- you can read it, feed it to `opt`, or
    diff it between compiler versions.
 
@@ -126,9 +127,9 @@ cuda-oxide is split into focused crates. Here is every one and its role:
 | `rustc-codegen-cuda` | Custom rustc codegen backend -- intercepts `codegen_crate()`, splits host/device code  |
 | `mir-importer`       | Translates Stable MIR into `dialect-mir`, orchestrates the full pipeline               |
 | `dialect-mir`        | pliron dialect modeling Rust MIR semantics (places, rvalues, terminators)              |
-| `dialect-llvm`       | pliron dialect modeling LLVM IR + textual `.ll` export                                 |
+| `llvm-export`        | Re-exports `pliron-llvm`'s LLVM dialect + cuda-oxide's textual `.ll` exporter          |
 | `dialect-nvvm`       | pliron dialect for NVIDIA GPU intrinsics (`tid`, `ntid`, barriers, TMA)                |
-| `mir-lower`          | Lowers `dialect-mir` to `dialect-llvm` -- the main transformation pass                 |
+| `mir-lower`          | Lowers `dialect-mir` to the LLVM dialect -- the main transformation pass               |
 | `cargo-oxide`        | CLI tool: `cargo oxide build`, `cargo oxide run`, `cargo oxide pipeline`               |
 | `cuda-device`        | Device-side API: intrinsics, `DisjointSlice`, barriers, shared memory, warp ops        |
 | `cuda-macros`        | Proc macros: `#[kernel]`, `#[device]`                                                  |
@@ -150,9 +151,11 @@ codegen backend, importer, and lowering passes. Dialect crates sit underneath,
 all built on pliron.
 ```
 
-`pliron` sits underneath all three dialect crates as the shared IR framework --
+`pliron` sits underneath the dialect crates as the shared IR framework --
 it provides the `Context`, `Module`, `Region`, `Block`, `Operation`, `Type`,
-and `Attribute` infrastructure. `rustc_public` provides the stable MIR types
+and `Attribute` infrastructure. The LLVM dialect comes from `pliron-llvm`
+(also built on pliron); `llvm-export` re-exports it and adds the textual `.ll`
+exporter. `rustc_public` provides the stable MIR types
 that `mir-importer` reads from rustc. The user-facing crates (`cuda-device`,
 `cuda-macros`, `cuda-host`, `cuda-core`, `cuda-async`) are independent of the
 compiler internals and depend only on each other.
@@ -178,9 +181,10 @@ add build complexity, slow down CI, and make contributor onboarding painful.
 With pliron, dialects are defined using standard Rust traits and derive macros,
 and the IR can be inspected with any Rust debugger.
 
-cuda-oxide defines three dialects on top of pliron: `dialect-mir` (models
-Rust MIR), `dialect-llvm` (models LLVM IR + textual export), and
-`dialect-nvvm` (NVIDIA GPU intrinsics).
+cuda-oxide defines two dialects on top of pliron: `dialect-mir` (models
+Rust MIR) and `dialect-nvvm` (NVIDIA GPU intrinsics). The LLVM dialect comes
+from the upstream `pliron-llvm` crate; cuda-oxide's `llvm-export` crate
+re-exports it and adds the textual `.ll` exporter.
 
 :::{seealso}
 For a deeper dive into pliron's architecture, see
@@ -245,7 +249,7 @@ created.
 Starting from each kernel, the backend walks the call graph to collect every
 device function the kernel transitively calls. This set of functions is handed
 to `mir-importer`, which runs the full pipeline (`dialect-mir` ->
-`dialect-llvm` -> `.ll` -> PTX). The result is a `.ptx` file written next to
+LLVM dialect -> `.ll` -> PTX). The result is a `.ptx` file written next to
 the host binary.
 
 **5. Always: delegate host code to the standard LLVM backend.**
@@ -332,7 +336,7 @@ The rest of this chapter zooms into each piece of the architecture:
 - **[MIR Importer](mir-importer.md)** -- translating Stable MIR into pliron.
 - **[Pliron Dialects](mlir-dialects.md)** -- the three custom dialects and their
   operation sets.
-- **[The Lowering Pipeline](lowering-pipeline.md)** -- `dialect-mir` to
-  `dialect-llvm`, pass by pass.
+- **[The Lowering Pipeline](lowering-pipeline.md)** -- `dialect-mir` to the
+  LLVM dialect, pass by pass.
 - **[Adding New Intrinsics](adding-new-intrinsics.md)** -- a contributor's
   guide to extending the compiler.

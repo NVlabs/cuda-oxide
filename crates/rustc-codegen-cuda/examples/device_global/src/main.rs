@@ -10,23 +10,28 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::kernel;
-use cuda_host::cuda_launch;
+use cuda_host::cuda_module;
 
 static mut DEVICE_COUNTER: u64 = 0;
 static mut DEVICE_MARKER: u32 = 0;
 
-/// # Safety
-///
-/// `out` must point to a writable `u64` in device-accessible memory.
-/// The static globals `DEVICE_COUNTER` and `DEVICE_MARKER` are mutated
-/// without synchronisation; the test launches a single thread to dodge
-/// the race.
-#[kernel]
-pub unsafe fn device_global(out: *mut u64) {
-    unsafe {
-        DEVICE_COUNTER += 1;
-        DEVICE_MARKER = 0x00C0_FFEE;
-        *out = DEVICE_COUNTER ^ (DEVICE_MARKER as u64);
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    /// # Safety
+    ///
+    /// `out` must point to a writable `u64` in device-accessible memory.
+    /// The static globals `DEVICE_COUNTER` and `DEVICE_MARKER` are mutated
+    /// without synchronisation; the test launches a single thread to dodge
+    /// the race.
+    #[kernel]
+    pub unsafe fn device_global(out: *mut u64) {
+        unsafe {
+            DEVICE_COUNTER += 1;
+            DEVICE_MARKER = 0x00C0_FFEE;
+            *out = DEVICE_COUNTER ^ (DEVICE_MARKER as u64);
+        }
     }
 }
 
@@ -40,14 +45,15 @@ fn main() {
     let module = ctx
         .load_module_from_file("device_global.ptx")
         .expect("Failed to load PTX module");
+    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
     for launch_idx in 1..=2 {
-        cuda_launch! {
-            kernel: device_global,
-            stream: stream,
-            module: module,
-            config: LaunchConfig::for_num_elems(1),
-            args: [out_dev.cu_deviceptr() as *mut u64]
+        unsafe {
+            module.device_global(
+                &stream,
+                LaunchConfig::for_num_elems(1),
+                out_dev.cu_deviceptr() as *mut u64,
+            )
         }
         .expect("Kernel launch failed");
 

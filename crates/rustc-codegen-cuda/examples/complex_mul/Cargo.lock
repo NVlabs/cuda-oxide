@@ -18,15 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "complex_mul"
-version = "0.1.0"
-dependencies = [
- "cuda-core",
- "cuda-device",
- "cuda-host",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.71.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -79,6 +70,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "complex_mul"
+version = "0.1.0"
+dependencies = [
+ "cuda-core",
+ "cuda-device",
+ "cuda-host",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -95,14 +95,14 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "cuda-bindings"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "bindgen",
 ]
 
 [[package]]
 name = "cuda-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -112,14 +112,14 @@ dependencies = [
 
 [[package]]
 name = "cuda-device"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "cuda-macros",
 ]
 
 [[package]]
 name = "cuda-host"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "cuda-core",
  "cuda-macros",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-macros"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "libnvvm-sys"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "nvjitlink-sys"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -282,7 +282,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-artifacts"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "object",
 ]
@@ -346,7 +346,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reserved-oxide-symbols"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "rustc-hash"

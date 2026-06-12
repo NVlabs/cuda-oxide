@@ -234,10 +234,10 @@ pub fn emit_tma_g2s(
 /// Emit cp_async_bulk_tensor_Nd_s2g: Async tensor copy shared → global via TMA.
 ///
 /// Args for 2D:
-/// - args[0]: *const u8 (source in shared memory)
-/// - args[1]: *const TmaDescriptor (tensor map)
-/// - args[2]: i32 (coord0)
-/// - args[3]: i32 (coord1)
+/// - `args[0]`: *const u8 (source in shared memory)
+/// - `args[1]`: *const TmaDescriptor (tensor map)
+/// - `args[2]`: i32 (coord0)
+/// - `args[3]`: i32 (coord1)
 ///
 /// Returns: void
 pub fn emit_tma_s2g(
@@ -756,7 +756,7 @@ pub fn emit_tma_commit_group(
 /// Emit cp_async_bulk_wait_group: Wait for async bulk operation groups.
 ///
 /// Args:
-/// - args[0]: u32 (max pending groups, 0 = wait for all)
+/// - `args[0]`: u32 (max pending groups, 0 = wait for all)
 ///
 /// Returns: void
 pub fn emit_tma_wait_group(

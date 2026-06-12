@@ -8,9 +8,10 @@
 # category-specific verdict rule is applied to the cargo output:
 #
 #   standard     -- execution must succeed (SUCCESS/PASS/Complete marker).
-#   error        -- compilation must fail with a recognized diagnostic; the
-#                   example is an intentional negative test of our codegen
-#                   errors. Signal termination (crash) is never accepted.
+#   error        -- compilation must fail with a recognized diagnostic.
+#                   Covers both intentional diagnostic fixtures and known
+#                   support gaps (see STATUS.md). Signal termination is
+#                   never accepted.
 #   tcgen05      -- 5th-gen tensor cores; sm_100 datacenter only. On sm_100
 #                   require full execution; elsewhere PTX compilation is
 #                   sufficient.
@@ -24,8 +25,9 @@
 #                   unset), in which case we require the cuda-oxide
 #                   NVVM IR (`.ll`) to have been generated.
 #
-# The categorization is just a pair of bash arrays at the top of the file.
-# Add/remove examples there when introducing a new example.
+# Categories are bash arrays at the top of this file. When adding an
+# error* example, also update STATUS.md and run
+# scripts/check-error-example-status.sh to verify both are in sync.
 #
 # See --help for runtime flags.
 
@@ -35,8 +37,8 @@ set -uo pipefail
 
 TCGEN05_EXAMPLES=(gemm_sol tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
-LTOIR_EXAMPLES=(addressof_sharedarray_repro cpp_consumes_rust_device device_ffi_test manual_launch_libdevice mathdx_ffi_test primitive_stress)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_copy_nonoverlapping_unhandled error_set_discriminant_unhandled error_drop_glue)
+LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test manual_launch_libdevice mathdx_ffi_test primitive_stress)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_copy_nonoverlapping_unhandled error_set_discriminant_unhandled error_drop_glue error_heap_alloc error_missing_device_attr)
 
 classify() {
     local ex="$1" cat
@@ -60,6 +62,11 @@ OPTIONS
   -o, --only PATTERN   Run only examples whose name matches the bash regex
                        PATTERN (e.g. -o 'tcgen05|wgmma').
   -s, --skip PATTERN   Skip examples whose name matches PATTERN.
+  -c, --compile-only   Build each example instead of running it (cargo
+                       oxide build). Non-error categories must exit 0 and
+                       leave a device artifact ({ex}.ptx or {ex}.ll);
+                       error examples must still fail to compile. Works
+                       on GPU-less machines (CI).
   -x, --fail-fast      Stop at the first failure.
   -v, --verbose        Stream cargo output live (instead of capturing to
                        a per-example log file). Verdict is printed at the
@@ -81,6 +88,7 @@ EXAMPLES
   scripts/smoketest.sh -o '^vecadd$'   # exact-match form
   scripts/smoketest.sh -s 'wgmma|tma'  # skip wgmma and tma examples
   scripts/smoketest.sh -x -v vecadd    # stop on first fail, stream output
+  scripts/smoketest.sh --compile-only  # GPU-less compile gate (used by CI)
 
 Per-example logs live under .smoketest-logs/ by default. Set
 SMOKETEST_LOG_DIR to override this path.
@@ -93,12 +101,14 @@ FAIL_FAST=0
 VERBOSE=0
 KEEP_LOGS=0
 FORCE_NO_COLOR=0
+COMPILE_ONLY=0
 declare -a POSITIONAL=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o|--only)      [[ $# -lt 2 ]] && { echo "error: $1 requires a pattern" >&2; exit 2; }; ONLY="$2"; shift 2;;
         -s|--skip)      [[ $# -lt 2 ]] && { echo "error: $1 requires a pattern" >&2; exit 2; }; SKIP="$2"; shift 2;;
+        -c|--compile-only) COMPILE_ONLY=1; shift;;
         -x|--fail-fast) FAIL_FAST=1; shift;;
         -v|--verbose)   VERBOSE=1; shift;;
         --keep-logs)    KEEP_LOGS=1; shift;;
@@ -157,24 +167,36 @@ fi
 
 git_head="$(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-gpu_info="$(nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>/dev/null | head -1 || echo 'no GPU detected')"
+# nvidia-smi can be present yet broken (driver mismatch, sandboxes,
+# containers) and it prints its failure text to STDOUT, so trust it only
+# when it exits 0 AND the compute capability parses. One probe feeds both
+# the banner and the LTOIR arch so they can never disagree.
+host_cc=""
+if gpu_query="$(nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader 2>/dev/null)"; then
+    gpu_info="$(head -1 <<<"${gpu_query}")"
+    host_cc="$(awk -F', *' '{print $2}' <<<"${gpu_info}" | tr -d '[:space:]')"
+else
+    gpu_info='no GPU detected'
+fi
 
 # Detect host compute capability for the ltoir category: the cubin produced
 # by the LTOIR linker must match the GPU's arch or it refuses to load.
-# nvidia-smi returns something like "12.0" → sm_120, "10.0" → sm_100.
-host_cc="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
-if [[ -n "${host_cc}" ]]; then
+# nvidia-smi reports something like "12.0" → sm_120, "10.0" → sm_100.
+if [[ "${host_cc}" =~ ^[0-9]+\.[0-9]+$ ]]; then
     # Strip the dot: 12.0 -> 120
     LTOIR_ARCH="sm_${host_cc//./}"
 else
-    # No GPU detected. ltoir examples will likely fail, but pick a sensible
-    # floor so the cuda-oxide side still compiles.
+    # No working GPU detected. ltoir examples will likely fail to execute,
+    # but pick a sensible floor so the cuda-oxide side still compiles.
     LTOIR_ARCH="sm_90"
 fi
 
 printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_BOLD}" "${git_head}" "${C_RESET}" "${git_branch}"
 printf "GPU: %s\n" "${gpu_info}"
 printf "LTOIR arch: %s\n" "${LTOIR_ARCH}"
+if [[ ${COMPILE_ONLY} -eq 1 ]]; then
+    printf "Mode: compile-only (cargo oxide build; nothing is executed)\n"
+fi
 if [[ -n "${ONLY}" ]]; then printf "Filter --only: %s\n" "${ONLY}"; fi
 if [[ -n "${SKIP}" ]]; then printf "Filter --skip: %s\n" "${SKIP}"; fi
 echo ""
@@ -188,6 +210,17 @@ mapfile -t ALL_EXAMPLES < <(
         echo "${manifest%/Cargo.toml}"
     done | sort
 )
+
+# An example dir without a top-level Cargo.toml would be skipped by the
+# glob above and silently shrink coverage (e.g. a restructure that nests
+# the manifest one level down). Fail loudly instead.
+for dir in crates/rustc-codegen-cuda/examples/*/; do
+    if [[ ! -f "${dir}Cargo.toml" ]]; then
+        echo "error: ${dir} has no top-level Cargo.toml; every directory under" >&2
+        echo "       crates/rustc-codegen-cuda/examples/ must be an example crate" >&2
+        exit 2
+    fi
+done
 
 selected=()
 for ex in "${ALL_EXAMPLES[@]}"; do
@@ -314,7 +347,9 @@ verdict_wgmma() {
 
 verdict_ltoir() {
     local ex="$1" log="$2" ec="$3"
-    local ll_file="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
+    # Hyphens in example names become underscores in the crate-named
+    # artifact (see verdict_compile).
+    local ll_file="crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ll"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     # `skipping:` marker -- the example opted out (e.g. mathdx_ffi_test with
     # MATHDX_ROOT unset). Accept as pass so long as the cuda-oxide side
@@ -340,13 +375,60 @@ verdict_ltoir() {
     return 1
 }
 
+# Compile-only verdict, used for every non-error category when
+# --compile-only is set. Two requirements:
+#   1. `cargo oxide build` exited 0. Device codegen failures are rustc
+#      fatals (see rustc-codegen-cuda/src/lib.rs join on device results),
+#      so a broken device pipeline cannot exit 0.
+#   2. A fresh device artifact exists: {ex}.ptx, or {ex}.ll for the
+#      NVVM-IR path. cargo-oxide deletes stale ones before building
+#      (clean_generated_files), so presence proves this build emitted it.
+#      This catches collector regressions where the build "succeeds"
+#      because no #[kernel] was found and device codegen never ran.
+# Interop examples write PTX into their configured ptx_dir instead, and
+# cargo-oxide itself verifies that file exists (exits non-zero if not),
+# so the exit code alone is trusted for them.
+verdict_compile() {
+    local ex="$1" log="$2" ec="$3"
+    local ex_dir="crates/rustc-codegen-cuda/examples/${ex}"
+    # Artifacts are named after the crate, and cargo normalizes hyphens
+    # to underscores (rustlantis-smoke emits rustlantis_smoke.ptx). This
+    # assumes dir name == package name, which holds for every example and
+    # is equally assumed by cargo-oxide's clean_generated_files; a renamed
+    # package fails here loudly rather than passing on a stale artifact.
+    local artifact="${ex//-/_}"
+    if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+    if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
+    if [[ -s "${ex_dir}/${artifact}.ptx" || -s "${ex_dir}/${artifact}.ll" ]]; then
+        echo "PASS (compiled)"
+        return 0
+    fi
+    # Match only the real interop config shapes ([[package.metadata.
+    # cuda-oxide.device-crates]] tables or a device-crates = [...] key),
+    # not the substring anywhere: a stray comment must not silently
+    # exempt an example from the artifact check.
+    if grep -qE '^[[:space:]]*(\[\[package\.metadata\.cuda-oxide\.device-crates\]\]|device-crates[[:space:]]*=)' \
+        "${ex_dir}/Cargo.toml" 2>/dev/null; then
+        echo "PASS (compiled, interop)"
+        return 0
+    fi
+    echo "FAIL (built, but no device artifact emitted)"
+    return 1
+}
+
 # ---- Runner --------------------------------------------------------------
 
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
-    local -a args=("run" "${ex}")
+    # Compile-only mode swaps `run` for `build`: the full device pipeline
+    # (MIR -> dialect-mir -> LLVM dialect -> llc -> PTX) still executes at
+    # build time, only host execution is skipped. The ltoir flags are kept:
+    # `--emit-nvvm-ir` is supported by `build` for non-interop examples.
+    local verb="run"
+    if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
+    local -a args=("${verb}" "${ex}")
     if [[ "${cat}" == "ltoir" ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
@@ -358,6 +440,35 @@ run_cargo() {
         CARGO_EC=$?
     fi
 }
+
+# ---- Shared example target dir -------------------------------------------
+#
+# Each example under crates/rustc-codegen-cuda/examples/ is its own standalone
+# cargo workspace (the codegen backend is swapped in via RUSTFLAGS, so they
+# can't live in the root [workspace]). By default every `cargo oxide run`
+# materializes its own target/ and recompiles the whole shared dependency tree
+# (cuda-device, cuda-host, proc-macros, bindgen, ...) from scratch — the
+# dominant cost of this script. Point all example builds at one shared
+# CARGO_TARGET_DIR: cargo fingerprints each unit by package + features +
+# workspace_root + toolchain, so identical deps built with the same pinned
+# nightly + backend RUSTFLAGS compile exactly once and are reused across every
+# example. (Same trick the clippy CI job uses for these workspaces.)
+#
+# The codegen backend .so is built FIRST, with CARGO_TARGET_DIR explicitly
+# cleared, so it lands at its fixed path (crates/rustc-codegen-cuda/target/
+# debug) where cargo-oxide looks for it. A CARGO_TARGET_DIR in scope during
+# that build would redirect the .so into the shared dir and break backend
+# discovery. `cargo oxide setup` is a fast no-op when the backend is current.
+printf "%sBuilding codegen backend (one-time; fast if current)...%s\n" "${C_DIM}" "${C_RESET}"
+if ! env -u CARGO_TARGET_DIR cargo oxide setup >/dev/null 2>&1; then
+    echo "error: failed to build the codegen backend; run 'cargo oxide setup' to see why" >&2
+    exit 2
+fi
+# Honor an externally-set CARGO_TARGET_DIR (e.g. CI); otherwise share one under
+# the repo's target/ so it is gitignored and cleaned by `cargo clean`.
+: "${CARGO_TARGET_DIR:=${repo_root}/target/oxide-examples}"
+export CARGO_TARGET_DIR
+printf "Examples share CARGO_TARGET_DIR=%s\n\n" "${CARGO_TARGET_DIR}"
 
 # ---- Main loop -----------------------------------------------------------
 
@@ -389,6 +500,11 @@ for ex in "${selected[@]}"; do
     if [[ ! -f "${log}" ]]; then
         verdict="FAIL (log missing: ${log})"
         status=1
+    elif [[ ${COMPILE_ONLY} -eq 1 && "${cat}" != "error" ]]; then
+        # Compile-only collapses the GPU-gated categories: with nothing
+        # executed, "PTX (or NVVM IR) compiled" is the bar for everything
+        # except error examples, which must still fail with a diagnostic.
+        verdict="$(verdict_compile "${ex}" "${log}" "${ec}")" && status=0 || status=$?
     else
         case "${cat}" in
             error)       verdict="$(verdict_error       "${log}" "${ec}")"        && status=0 || status=$? ;;

@@ -4,8 +4,8 @@ Rust MIR to `dialect-mir` translator and compilation pipeline for cuda-oxide.
 
 Translates rustc's Stable MIR into [`dialect-mir`](../dialect-mir/) (a pliron
 dialect, MLIR-like) using the alloca + load/store model, then orchestrates the
-rest of the pipeline through `mem2reg`, lowering to
-[`dialect-llvm`](../dialect-llvm/), LLVM IR export, and PTX generation via `llc`.
+rest of the pipeline through `mem2reg`, lowering to the LLVM dialect (provided
+by `pliron-llvm`), LLVM IR export, and PTX generation via `llc`.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ rest of the pipeline through `mem2reg`, lowering to
 │  │   translator    │───▶│       pipeline      │───▶│    export +     │  │
 │  │                 │    │                     │    │      llc        │  │
 │  │  MIR →          │    │ mem2reg + lower to  │    │  LLVM IR → PTX  │  │
-│  │  dialect-mir    │    │     dialect-llvm    │    │                 │  │
+│  │  dialect-mir    │    │     LLVM dialect    │    │                 │  │
 │  │     (alloca)    │    │   (via mir-lower)   │    │                 │  │
 │  └─────────────────┘    └─────────────────────┘    └─────────────────┘  │
 │                                                                         │
@@ -31,7 +31,7 @@ rest of the pipeline through `mem2reg`, lowering to
 ┌────────────┐  ┌────────────┐  ┌───────────┐  ┌─────────────────┐  ┌────────────┐
 │ 1. Trans-  │─▶│ 2. Verify  │─▶│ 3. mem2reg│─▶│ 4. Lower        │─▶│ 5. Export  │
 │   late to  │  │ dialect-mir│  │   (slots  │  │  dialect-mir →  │  │  LLVM IR   │
-│ dialect-mir│  │            │  │    → SSA) │  │   dialect-llvm  │  │ → PTX (llc)│
+│ dialect-mir│  │            │  │    → SSA) │  │   LLVM dialect  │  │ → PTX (llc)│
 └────────────┘  └────────────┘  └───────────┘  └─────────────────┘  └────────────┘
 ```
 
@@ -42,8 +42,8 @@ rest of the pipeline through `mem2reg`, lowering to
 3. **mem2reg** — Promote scalar alloca slots back to SSA via
    `pliron::opts::mem2reg`, eliminating the load/store traffic the translator
    produced.
-4. **Lower** — Convert `dialect-mir` → `dialect-llvm` (via `mir-lower`).
-5. **Generate** — Export `dialect-llvm` to textual LLVM IR, then invoke `llc`
+4. **Lower** — Convert `dialect-mir` → LLVM dialect (via `mir-lower`).
+5. **Generate** — Export the LLVM dialect to textual LLVM IR, then invoke `llc`
    for PTX (or emit NVVM IR).
 
 ## Output Modes
@@ -87,8 +87,8 @@ rest of the pipeline through `mem2reg`, lowering to
 ### `pipeline.rs` — Compilation Orchestration
 
 Drives the end-to-end flow: register dialects → translate functions →
-verify `dialect-mir` → run `mem2reg` → lower to `dialect-llvm` → add
-device extern declarations → verify `dialect-llvm` → export LLVM IR →
+verify `dialect-mir` → run `mem2reg` → lower to the LLVM dialect → add
+device extern declarations → verify the LLVM dialect → export LLVM IR →
 run `llc` for PTX.
 
 ## Alloca + load/store model
@@ -98,7 +98,7 @@ through block arguments via a liveness analysis, the translator emits one
 `mir.alloca` per non-ZST local at the top of the entry block and mediates
 every def/use through `mir.store` / `mir.load` on that slot. Pliron's
 `mem2reg` pass promotes the allocas back to SSA before the `dialect-mir` →
-`dialect-llvm` lowering runs.
+LLVM dialect lowering runs.
 
 ```text
 Rust MIR (not strict SSA):               dialect-mir (alloca + load/store):
@@ -154,7 +154,7 @@ let result = run_pipeline(&functions, &device_externs, &config)?;
 | `NoBody`         | Function has no MIR body                         |
 | `Translation`    | MIR → `dialect-mir` conversion failed            |
 | `Verification`   | IR invariant violated (includes op context)      |
-| `Lowering`       | `dialect-mir` → `dialect-llvm` pass failed       |
+| `Lowering`       | `dialect-mir` → LLVM dialect pass failed         |
 | `Export`         | LLVM IR export failed                            |
 | `PtxGeneration`  | `llc` invocation failed                          |
 
@@ -175,7 +175,7 @@ run_pipeline()
   ├─▶ run pliron::opts::mem2reg (alloca slots → SSA)
   ├─▶ lower_mir_to_llvm (mir-lower, DialectConversion)
   ├─▶ add DeviceExternDecl functions
-  ├─▶ verify dialect-llvm module
+  ├─▶ verify LLVM dialect module
   └─▶ export LLVM IR → generate PTX via llc
 ```
 
@@ -183,9 +183,9 @@ run_pipeline()
 
 - [pliron](https://github.com/vaivaswatha/pliron) — Pliron IR (MLIR-like) framework
 - [dialect-mir](../dialect-mir/) — pliron dialect modelling Rust MIR
-- [dialect-llvm](../dialect-llvm/) — pliron dialect modelling LLVM IR
+- [llvm-export](../llvm-export/) — pliron-llvm shim + textual `.ll` exporter
 - [dialect-nvvm](../dialect-nvvm/) — NVVM intrinsic ops
-- [mir-lower](../mir-lower/) — `dialect-mir` → `dialect-llvm` lowering pass
+- [mir-lower](../mir-lower/) — `dialect-mir` → LLVM dialect lowering pass
 
 ## Further Reading
 

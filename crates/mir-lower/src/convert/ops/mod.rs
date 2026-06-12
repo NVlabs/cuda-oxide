@@ -6,7 +6,7 @@
 //! `dialect-mir` operation converters.
 //!
 //! This module contains submodules that convert standard `dialect-mir` ops
-//! to their `dialect-llvm` equivalents. Each submodule handles a category of
+//! to their LLVM dialect equivalents. Each submodule handles a category of
 //! operations with similar semantics and conversion patterns.
 //!
 //! # Module Organization

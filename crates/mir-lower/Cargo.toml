@@ -1,15 +1,15 @@
 [package]
 name = "mir-lower"
-version = "0.1.0"
+version = "0.2.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "dialect-mir to dialect-llvm lowering pass"
+description = "dialect-mir to LLVM dialect lowering pass"
 
 [dependencies]
 pliron = { workspace = true }
-dialect-llvm = { workspace = true }
+llvm-export = { workspace = true }
 pliron-derive = { workspace = true }
 thiserror = { workspace = true }
 dialect-mir = { workspace = true }

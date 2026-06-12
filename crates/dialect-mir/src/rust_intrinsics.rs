@@ -45,6 +45,11 @@ pub const CALLEE_SATURATING_ADD: &str = placeholder!("saturating_add");
 /// Placeholder call used for `core::intrinsics::saturating_sub`.
 pub const CALLEE_SATURATING_SUB: &str = placeholder!("saturating_sub");
 
+/// Placeholder call used for `core::intrinsics::carrying_mul_add`.
+/// Backs the bigint helper methods `carrying_mul_add`, `carrying_mul`,
+/// and `widening_mul` on integer types.
+pub const CALLEE_CARRYING_MUL_ADD: &str = placeholder!("carrying_mul_add");
+
 /// Placeholder call used for `core::intrinsics::sqrtf32`.
 pub const CALLEE_SQRT_F32: &str = placeholder!("sqrtf32");
 /// Placeholder call used for `core::intrinsics::sqrtf64`.

@@ -164,8 +164,8 @@ pub fn emit_tcgen05_alloc(
 /// MUST be called for all allocations before kernel exits!
 ///
 /// Args:
-/// - args[0]: u32 (tmem_addr - the TMEM address from tcgen05_alloc)
-/// - args[1]: u32 (n_cols - must match the allocation)
+/// - `args[0]`: u32 (tmem_addr - the TMEM address from tcgen05_alloc)
+/// - `args[1]`: u32 (n_cols - must match the allocation)
 ///
 /// Returns: void
 pub fn emit_tcgen05_dealloc(
@@ -413,7 +413,7 @@ pub fn emit_tcgen05_fence_after_thread_sync(
 /// Use mbarrier_try_wait to wait for completion.
 ///
 /// Args:
-/// - args[0]: *mut u64 (mbar - pointer to mbarrier in shared memory)
+/// - `args[0]`: *mut u64 (mbar - pointer to mbarrier in shared memory)
 ///
 /// Returns: void
 pub fn emit_tcgen05_commit(
@@ -478,7 +478,7 @@ pub fn emit_tcgen05_commit(
 /// using the `.shared::cluster` address space variant.
 ///
 /// Args:
-/// - args[0]: *mut u64 (mbar - pointer to mbarrier in shared memory)
+/// - `args[0]`: *mut u64 (mbar - pointer to mbarrier in shared memory)
 ///
 /// Returns: void
 pub fn emit_tcgen05_commit_shared_cluster(
@@ -551,12 +551,12 @@ pub fn emit_tcgen05_commit_shared_cluster(
 /// **SINGLE-THREAD SEMANTICS**: Unlike WGMMA, only ONE thread issues this instruction!
 ///
 /// Args:
-/// - args[0]: u32 (d_tmem - TMEM address for D matrix)
-/// - args[1]: u32 (a_tmem - TMEM address for A matrix)
-/// - args[2]: u64 (a_desc - SMEM descriptor for A)
-/// - args[3]: u64 (b_desc - SMEM descriptor for B)
-/// - args[4]: u32 (idesc - instruction descriptor)
-/// - args[5]: bool (enable_d - true to accumulate, false to overwrite)
+/// - `args[0]`: u32 (d_tmem - TMEM address for D matrix)
+/// - `args[1]`: u32 (a_tmem - TMEM address for A matrix)
+/// - `args[2]`: u64 (a_desc - SMEM descriptor for A)
+/// - `args[3]`: u64 (b_desc - SMEM descriptor for B)
+/// - `args[4]`: u32 (idesc - instruction descriptor)
+/// - `args[5]`: bool (enable_d - true to accumulate, false to overwrite)
 ///
 /// Returns: void
 pub fn emit_tcgen05_mma_ws_f16(
@@ -1033,8 +1033,8 @@ pub fn emit_tcgen05_mma_ws_tf32(
 /// This is used to load matrix A into TMEM before MMA operations.
 ///
 /// Args:
-/// - args[0]: u32 (tmem_addr - destination address in tensor memory)
-/// - args[1]: u64 (smem_desc - source shared memory descriptor)
+/// - `args[0]`: u32 (tmem_addr - destination address in tensor memory)
+/// - `args[1]`: u64 (smem_desc - source shared memory descriptor)
 ///
 /// Returns: void
 pub fn emit_tcgen05_cp_smem_to_tmem(

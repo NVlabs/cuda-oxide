@@ -1,6 +1,6 @@
 # dialect-nvvm
 
-A [pliron](https://github.com/vaivaswatha/pliron) dialect for NVIDIA GPU intrinsics. These operations represent hardware-specific functionality -- thread indexing, warp shuffles, barriers, tensor memory accelerator, tensor cores -- that maps directly to LLVM NVPTX intrinsics. `mir-lower` generates these ops when lowering `cuda_device` intrinsic calls, and the exporter in `dialect-llvm` emits them as `@llvm.nvvm.*` intrinsic calls.
+A [pliron](https://github.com/vaivaswatha/pliron) dialect for NVIDIA GPU intrinsics. These operations represent hardware-specific functionality -- thread indexing, warp shuffles, barriers, tensor memory accelerator, tensor cores -- that maps directly to LLVM NVPTX intrinsics. `mir-lower` generates these ops when lowering `cuda_device` intrinsic calls, and the `llvm-export` exporter emits them as `@llvm.nvvm.*` intrinsic calls.
 
 ```text
 cuda_device::{thread, barrier, tma, ...}  (user-facing Rust API)
@@ -8,7 +8,7 @@ cuda_device::{thread, barrier, tma, ...}  (user-facing Rust API)
        ▼  (mir-lower recognizes intrinsic calls)
 dialect-nvvm ops
        │
-       ▼  (dialect-llvm export)
+       ▼  (llvm-export emits LLVM IR)
 @llvm.nvvm.* intrinsic calls  →  llc  →  PTX instructions
 ```
 
@@ -96,6 +96,6 @@ src/
 ## Further Reading
 
 - [`dialect-mir`](../dialect-mir/) -- pliron dialect modelling Rust MIR (lowering source)
-- [`dialect-llvm`](../dialect-llvm/) -- pliron dialect modelling LLVM IR (lowering target)
+- [`llvm-export`](../llvm-export/) -- pliron-llvm shim + textual `.ll` exporter (lowering target)
 - [`mir-lower`](../mir-lower/) -- generates `dialect-nvvm` ops during lowering
 - [`cuda-device`](../cuda-device/) -- user-facing intrinsics that map to `dialect-nvvm` ops

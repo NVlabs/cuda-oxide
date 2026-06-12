@@ -1,0 +1,67 @@
+---
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Gate rustdoc and doctests, which the `unit-tests` job does not cover (it runs
+# `--lib --tests`, excluding doctests, and never builds docs). Keeps broken
+# intra-doc links and uncompilable doc examples from accumulating silently.
+jobs:
+  rustdoc-and-doctests:
+    name: cargo doc + doctests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install CUDA toolkit
+        # `cargo doc --workspace` compiles cuda-bindings' build-time bindgen,
+        # which needs `cuda.h`. Same toolkit pin as the unit-tests job.
+        uses: Jimver/cuda-toolkit@v0.2.35
+        id: cuda-toolkit
+        with:
+          cuda: "13.1.1"
+          method: network
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcurand-dev"]'
+
+      - name: Build docs (warning-free) and run doctests
+        env:
+          CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          RUSTDOCFLAGS: "-D warnings"
+        run: |
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+
+          # See unit-tests.yml for the rationale: shadow the link-time libcuda
+          # stub as `libcuda.so.1` so any doctests that reference `cu*` symbols
+          # load on a GPU-less runner.
+          if [ -n "${CUDA_TOOLKIT_PATH:-}" ] && [ -f "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" ]; then
+            stub_shadow="${RUNNER_TEMP}/libcuda-stub"
+            mkdir -p "${stub_shadow}"
+            ln -sf "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" "${stub_shadow}/libcuda.so.1"
+            export LD_LIBRARY_PATH="${stub_shadow}:${LD_LIBRARY_PATH}"
+          fi
+
+          # Docs must build warning-free (RUSTDOCFLAGS=-D warnings above). The
+          # generated cuda-bindings crate keeps its CUDA doc comments but allows
+          # the rustdoc lints they trip (see crates/cuda-bindings/src/lib.rs).
+          cargo doc --no-deps --workspace
+
+          # Run doctests. cuda-bindings is excluded: its doctests come from
+          # bindgen-generated C doxygen comments, and its `doctest = false`
+          # (which `cargo test --doc` otherwise bypasses) signals that intent.
+          cargo test --doc --workspace --exclude cuda-bindings

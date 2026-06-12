@@ -11,7 +11,7 @@ root.
 ### Kernel and Device Attributes
 
 ```rust
-use cuda_device::{kernel, device, launch_bounds, cluster_launch};
+use cuda_device::{kernel, device, launch_bounds, cluster_launch, cooperative_launch};
 
 #[kernel]
 pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) { /* ... */ }
@@ -24,6 +24,10 @@ pub fn tuned_kernel(data: &mut [f32]) { /* ... */ }
 #[cluster_launch(4, 1, 1)]
 pub fn cluster_kernel(data: &mut [f32]) { /* ... */ }
 
+#[kernel]
+#[cooperative_launch]
+pub fn grid_sync_kernel(data: &mut [f32]) { /* ... */ }
+
 #[device]
 fn helper(x: f32) -> f32 { x * x }
 ```
@@ -34,6 +38,7 @@ fn helper(x: f32) -> f32 { x * x }
 | `#[device]`                                 | Mark a helper function or `extern "C"` block for device compilation |
 | `#[launch_bounds(max_threads, min_blocks)]` | Occupancy hints for register allocation                             |
 | `#[cluster_launch(x, y, z)]`                | Set compile-time cluster dimensions (Hopper+)                       |
+| `#[cooperative_launch]`                     | Launch cooperatively via `#[cuda_module]` (enables `grid::sync()`)  |
 | `#[convergent]`                             | Mark as convergent (barrier semantics)                              |
 | `#[pure]`                                   | Mark as side-effect free                                            |
 | `#[readonly]`                               | Mark as read-only                                                   |

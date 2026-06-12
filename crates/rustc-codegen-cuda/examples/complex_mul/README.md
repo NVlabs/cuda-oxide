@@ -19,11 +19,14 @@ identical error.
 
 ## Fix
 
-`crates/mir-importer/src/translator/types.rs` now also resolves the output when
-the operand is `RigidTy::Adt(..)`, translating the self type directly (recursion
-then lays out the aggregate). This example uses a self-contained `Complex32`
-rather than the `num_complex` dependency so it exercises exactly the ADT
-`Output = Self` path.
+Originally fixed by also resolving the output when the operand was
+`RigidTy::Adt(..)`. That name-matching resolver was later replaced entirely
+(issue #133, see the `ref_operand_mul` example): the importer now types call
+results from the caller's destination place, which rustc has already
+normalized to the concrete type, so no `Output` projection guessing remains
+in `crates/mir-importer/src/translator/types.rs`. This example uses a
+self-contained `Complex32` rather than the `num_complex` dependency so it
+exercises exactly the ADT `Output = Self` path.
 
 ## Running
 

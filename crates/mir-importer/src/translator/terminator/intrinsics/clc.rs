@@ -26,8 +26,8 @@ use rustc_public::mir;
 /// Emit clc_try_cancel: async request to steal a pending CTA's work.
 ///
 /// Args:
-/// - args[0]: *mut u8 (response - 16-byte aligned shared memory)
-/// - args[1]: *mut Barrier (mbar - initialized mbarrier)
+/// - `args[0]`: *mut u8 (response - 16-byte aligned shared memory)
+/// - `args[1]`: *mut Barrier (mbar - initialized mbarrier)
 ///
 /// Returns: void
 pub fn emit_clc_try_cancel(

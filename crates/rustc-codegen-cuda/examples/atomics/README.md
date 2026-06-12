@@ -264,7 +264,7 @@ dialect-nvvm  (ops/atomic.rs)                     ← NvvmAtomicRmwOp { kind: Ad
 mir-lower     (convert/intrinsics/atomic.rs)      ← Fence splitting + LlvmAtomicRmwOp
         │
         ▼
-dialect-llvm  (export.rs)                         ← Textual LLVM IR:
+llvm-export   (export/)                           ← Textual LLVM IR:
         │                                            fence syncscope("device") release
         │                                            atomicrmw add ptr %p, i32 %v ...
         │                                            fence syncscope("device") acquire

@@ -1,6 +1,6 @@
 [package]
 name = "cuda-macros"
-version = "0.1.0"
+version = "0.2.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -22,3 +22,8 @@ reserved-oxide-symbols = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1"
+# Dev-only cycle (cargo allows it): the launch_requires_unsafe compile-fail
+# test type-checks a real cuda_launch! expansion, which needs the host-side
+# launch types.
+cuda-host = { workspace = true }
+cuda-core = { workspace = true }

@@ -225,9 +225,9 @@ cuda-oxide/
 │   ├── cargo-oxide/          # Cargo subcommand
 │   ├── rustc-codegen-cuda/   # Codegen backend (not a workspace member)
 │   ├── mir-importer/         # MIR → Pliron IR translation
-│   ├── mir-lower/            # `dialect-mir` → `dialect-llvm` lowering
+│   ├── mir-lower/            # `dialect-mir` → LLVM dialect lowering
 │   ├── dialect-mir/          # pliron dialect modelling Rust MIR
-│   ├── dialect-llvm/         # pliron dialect modelling LLVM IR (+ export)
+│   ├── llvm-export/          # shim re-exporting pliron-llvm + textual .ll export
 │   ├── dialect-nvvm/         # NVVM intrinsics dialect
 │   ├── libnvvm-sys/          # dlopen bindings to libNVVM
 │   ├── nvjitlink-sys/        # dlopen bindings to nvJitLink

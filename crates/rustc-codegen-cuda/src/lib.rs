@@ -73,7 +73,7 @@
 //! │   │   │                 │           │                         │           │     │
 //! │   │   │ dialect-mir     │           │  Standard x86_64 code   │           │     │
 //! │   │   │     ▼ (mem2reg) │           │                         │           │     │
-//! │   │   │ dialect-llvm    │           │                         │           │     │
+//! │   │   │ LLVM dialect    │           │                         │           │     │
 //! │   │   │     ▼           │           │                         │           │     │
 //! │   │   │ LLVM IR (.ll)   │           │                         │           │     │
 //! │   │   │     ▼ (llc)     │           │                         │           │     │
@@ -280,7 +280,7 @@
 //! |------------------------|--------------------------------------|
 //! | `CUDA_OXIDE_VERBOSE`   | Print detailed compilation progress  |
 //! | `CUDA_OXIDE_DUMP_MIR`  | Dump the `dialect-mir` module        |
-//! | `CUDA_OXIDE_DUMP_LLVM` | Dump the `dialect-llvm` module       |
+//! | `CUDA_OXIDE_DUMP_LLVM` | Dump the LLVM dialect module         |
 //! | `CUDA_OXIDE_PTX_DIR`   | Override PTX output directory        |
 //! | `CUDA_OXIDE_TARGET`    | Override GPU target (e.g., `sm_90a`) |
 //!
@@ -372,7 +372,7 @@ pub struct CudaCodegenConfig {
     pub dump_rustc_mir: bool,
     /// Dump the `dialect-mir` module during device compilation.
     pub dump_mir_dialect: bool,
-    /// Dump the `dialect-llvm` module during device compilation.
+    /// Dump the LLVM dialect module during device compilation.
     pub dump_llvm_dialect: bool,
     /// Override PTX output directory (defaults to current directory).
     pub ptx_output_dir: Option<std::path::PathBuf>,
@@ -742,7 +742,20 @@ fn write_device_artifact_object(
     }
 
     let blob = oxide_artifacts::build_artifact_blob(&spec)?;
-    let object = oxide_artifacts::build_host_object_for_target(&blob, host_target)?;
+    // Define a link-anchor symbol at the start of the `.oxart` data. When
+    // this crate is a library, the artifact object becomes an rlib archive
+    // member, and the linker only extracts it if some other object holds an
+    // undefined reference to a symbol defined here. The `#[cuda_module]`
+    // macro emits that reference from the generated `load_named()`, derived
+    // from the same CARGO_PKG_NAME / CARGO_PKG_VERSION environment that this
+    // rustc invocation sees, so the two names always match. Without the
+    // anchor, library-crate bundles were dead-stripped and `load()` failed
+    // at runtime with ModuleNotFound (issue #72).
+    let package_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    let anchor_symbol =
+        reserved_oxide_symbols::artifact_anchor_symbol(&bundle_name, &package_version);
+    let object =
+        oxide_artifacts::build_host_object_for_target(&blob, host_target, Some(&anchor_symbol))?;
     let safe_output_name = sanitize_path_component(output_name);
     let artifact_id = ARTIFACT_OBJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
     let object_dir = output_dir

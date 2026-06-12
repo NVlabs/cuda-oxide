@@ -57,11 +57,11 @@
 
 use std::sync::Arc;
 
-use cuda_core::{CudaModule, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32, DeviceAtomicU64};
 use cuda_device::cooperative_groups::{ThreadGroup, WarpCollective, this_thread_block};
 use cuda_device::{DisjointSlice, kernel, thread};
-use cuda_host::cuda_launch;
+use cuda_host::cuda_module;
 
 // =============================================================================
 // SHARED CONSTANTS AND HELPERS (compiled both host- and device-side)
@@ -219,420 +219,190 @@ pub fn unpack_value(slot: u64) -> u32 {
 // KERNELS
 // =============================================================================
 
-/// `insert_kernel` — last-writer-wins, one thread per input key.
-///
-/// Storage:
-///   - `ctrl[g]` is the `u32` packing tags for slots `g*GROUP .. g*GROUP+GROUP`.
-///   - `slots[s]` is the packed `(key, value)` for slot `s`.
-///
-/// Thin wrapper around [`insert_into_table_core`]: bounds-check the
-/// thread, look up its `(key, value)`, and dispatch with
-/// `overwrite = true` (existing values for the same key are replaced
-/// last-writer-wins). Probe and reclaim mechanics live in the helper.
-#[kernel]
-pub fn insert_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
-    let tid = thread::index_1d().get();
-    if tid >= keys.len() {
-        return;
-    }
-    let _ = insert_into_table_core(ctrl, slots, keys[tid], values[tid], true);
-}
+#[cuda_module]
+pub mod kernels {
+    use super::*;
 
-/// `try_insert_kernel` — first-writer-wins variant.
-///
-/// Same probe / claim mechanics as [`insert_kernel`] (delegates to
-/// [`insert_into_table_core`] with `overwrite = false`), but writes
-/// per-thread output reflecting whether the slot was fresh:
-///   `out[tid] = FLAG_FRESH_OR_OK (0)`  -> we claimed a fresh slot
-///                                         (or reclaimed a `DELETED` one)
-///   `out[tid] = FLAG_PRESENT (1)`      -> key was already in the table
-#[kernel]
-pub fn try_insert_kernel(
-    ctrl: &[u32],
-    slots: &[u64],
-    keys: &[u32],
-    values: &[u32],
-    mut out: DisjointSlice<u32>,
-) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
+    /// `insert_kernel` — last-writer-wins, one thread per input key.
+    ///
+    /// Storage:
+    ///   - `ctrl[g]` is the `u32` packing tags for slots `g*GROUP .. g*GROUP+GROUP`.
+    ///   - `slots[s]` is the packed `(key, value)` for slot `s`.
+    ///
+    /// Thin wrapper around [`insert_into_table_core`]: bounds-check the
+    /// thread, look up its `(key, value)`, and dispatch with
+    /// `overwrite = true` (existing values for the same key are replaced
+    /// last-writer-wins). Probe and reclaim mechanics live in the helper.
+    #[kernel]
+    pub fn insert_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
+        let tid = thread::index_1d().get();
+        if tid >= keys.len() {
+            return;
+        }
+        let _ = insert_into_table_core(ctrl, slots, keys[tid], values[tid], true);
     }
-    let fresh = insert_into_table_core(ctrl, slots, keys[i_thread], values[i_thread], false);
-    if let Some(o) = out.get_mut(tid) {
-        *o = if fresh {
-            FLAG_FRESH_OR_OK
+
+    /// `try_insert_kernel` — first-writer-wins variant.
+    ///
+    /// Same probe / claim mechanics as [`insert_kernel`] (delegates to
+    /// [`insert_into_table_core`] with `overwrite = false`), but writes
+    /// per-thread output reflecting whether the slot was fresh:
+    ///   `out[tid] = FLAG_FRESH_OR_OK (0)`  -> we claimed a fresh slot
+    ///                                         (or reclaimed a `DELETED` one)
+    ///   `out[tid] = FLAG_PRESENT (1)`      -> key was already in the table
+    #[kernel]
+    pub fn try_insert_kernel(
+        ctrl: &[u32],
+        slots: &[u64],
+        keys: &[u32],
+        values: &[u32],
+        mut out: DisjointSlice<u32>,
+    ) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
+        }
+        let fresh = insert_into_table_core(ctrl, slots, keys[i_thread], values[i_thread], false);
+        if let Some(o) = out.get_mut(tid) {
+            *o = if fresh {
+                FLAG_FRESH_OR_OK
+            } else {
+                FLAG_PRESENT
+            };
+        }
+    }
+
+    /// `insert_kernel_dedup` — bulk insert with intra-warp duplicate
+    /// detection via `tile.match_any(my_key)`.
+    ///
+    /// One thread per input. Each warp tile partitions its 32 lanes into
+    /// duplicate-groups (by key) using `match_any`; only the highest-rank
+    /// lane in each group performs the global insert via
+    /// [`insert_into_table_core`]. Other lanes in the group drop their
+    /// duplicate insert silently. Cross-warp duplicates still race on the
+    /// global path and are arbitrated by the slot CAS plus the Phase 2
+    /// `FULL(h2)+key` re-check.
+    ///
+    /// Picking the highest-rank lane per group gives "last-writer-wins
+    /// within a warp" (the highest-rank lane has the largest input index
+    /// in that warp, so its value is the most-recent for the warp).
+    #[kernel]
+    pub fn insert_kernel_dedup(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
+        let block = this_thread_block();
+        let tile = block.tiled_partition::<32>();
+        let lane = tile.thread_rank();
+        let global_tid = thread::index_1d().get();
+
+        // Tail lanes (past keys.len()) must still participate in `match_any`
+        // — `WarpCollective::match_any` is a sync collective and requires
+        // all lanes in the tile to call it. Inactive lanes contribute the
+        // sentinel `FORBIDDEN_KEY` (= `u32::MAX`), which user keys are
+        // forbidden from using, so they form their own dup group disjoint
+        // from any active key.
+        let active = global_tid < keys.len();
+        let key = if active {
+            keys[global_tid]
         } else {
-            FLAG_PRESENT
+            FORBIDDEN_KEY
         };
-    }
-}
+        let value = if active { values[global_tid] } else { 0 };
 
-/// `insert_kernel_dedup` — bulk insert with intra-warp duplicate
-/// detection via `tile.match_any(my_key)`.
-///
-/// One thread per input. Each warp tile partitions its 32 lanes into
-/// duplicate-groups (by key) using `match_any`; only the highest-rank
-/// lane in each group performs the global insert via
-/// [`insert_into_table_core`]. Other lanes in the group drop their
-/// duplicate insert silently. Cross-warp duplicates still race on the
-/// global path and are arbitrated by the slot CAS plus the Phase 2
-/// `FULL(h2)+key` re-check.
-///
-/// Picking the highest-rank lane per group gives "last-writer-wins
-/// within a warp" (the highest-rank lane has the largest input index
-/// in that warp, so its value is the most-recent for the warp).
-#[kernel]
-pub fn insert_kernel_dedup(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
-    let block = this_thread_block();
-    let tile = block.tiled_partition::<32>();
-    let lane = tile.thread_rank();
-    let global_tid = thread::index_1d().get();
+        let dup_mask = tile.match_any(key);
 
-    // Tail lanes (past keys.len()) must still participate in `match_any`
-    // — `WarpCollective::match_any` is a sync collective and requires
-    // all lanes in the tile to call it. Inactive lanes contribute the
-    // sentinel `FORBIDDEN_KEY` (= `u32::MAX`), which user keys are
-    // forbidden from using, so they form their own dup group disjoint
-    // from any active key.
-    let active = global_tid < keys.len();
-    let key = if active {
-        keys[global_tid]
-    } else {
-        FORBIDDEN_KEY
-    };
-    let value = if active { values[global_tid] } else { 0 };
-
-    let dup_mask = tile.match_any(key);
-
-    if !active {
-        return;
-    }
-
-    // Highest set bit in the dup mask is the in-warp leader for this
-    // duplicate group. All lanes in the group agree on the same
-    // leader because they all see the same dup_mask.
-    let leader = 31u32 - dup_mask.leading_zeros();
-    if lane == leader {
-        let _ = insert_into_table_core(ctrl, slots, key, value, true);
-    }
-}
-
-/// `rehash_kernel` — single-kernel two-buffer rehash.
-///
-/// v3 ships the two-buffer mode only (`old != new`); the new buffer
-/// is `memset`-cleared by the host before launch, and the old buffer
-/// remains read-only for the duration of the kernel. That means no
-/// grid-wide barrier is required: each thread can read a live old
-/// slot and immediately insert it into the new table. Threads stride
-/// across the old table so the host can bound the launch size without
-/// depending on cooperative-launch residency limits.
-#[kernel]
-pub fn rehash_kernel(old_ctrl: &[u32], old_slots: &[u64], new_ctrl: &[u32], new_slots: &[u64]) {
-    let mut tid = thread::index_1d().get();
-    let stride = (thread::gridDim_x() * thread::blockDim_x()) as usize;
-
-    while tid < old_slots.len() {
-        let ctrl_word_idx = tid / GROUP;
-        let byte_in_word = tid % GROUP;
-        let ctrl_atomic =
-            unsafe { DeviceAtomicU32::from_ptr(old_ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-        let ctrl_word = ctrl_atomic.load(AtomicOrdering::Acquire);
-        let tag = get_tag(ctrl_word, byte_in_word);
-        if tag <= 0x7F {
-            let slot_atomic =
-                unsafe { DeviceAtomicU64::from_ptr(old_slots.as_ptr().add(tid).cast_mut()) };
-            let slot = slot_atomic.load(AtomicOrdering::Acquire);
-            let _ = insert_into_table_core(
-                new_ctrl,
-                new_slots,
-                unpack_key(slot),
-                unpack_value(slot),
-                true,
-            );
-        }
-
-        tid += stride;
-    }
-}
-
-/// `find_kernel` — single-thread find, one thread per key.
-///
-/// Walks the same triangular probe sequence as the insert kernels
-/// (same `PROBE_TILE = 32` width), so EMPTY-termination is sound —
-/// see `find_tile_impl` below for why probe-width coherence matters.
-///
-/// At each tile (32 consecutive tag bytes):
-///   - For every byte tagged `FULL(h2)` matching our key's fingerprint,
-///     load the slot and key-compare; on match return the value.
-///   - If any byte in the tile is `EMPTY_TAG`, the key cannot live past
-///     this point in its triangular chain (insert would have stopped
-///     at this same EMPTY), so return `MISS`.
-///   - Otherwise (tile holds only FULL-mismatch + DELETED), triangular
-///     advance and repeat. DELETED never terminates find.
-#[kernel]
-pub fn find_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
-    }
-
-    let key = keys[i_thread];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        let mut g = 0usize;
-        let mut has_empty = false;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                let tag = get_tag(word, j);
-                if tag == h2 {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    let observed = slot_atomic.load(AtomicOrdering::Acquire);
-                    if unpack_key(observed) == key {
-                        if let Some(o) = out.get_mut(tid) {
-                            *o = unpack_value(observed);
-                        }
-                        return;
-                    }
-                } else if tag == EMPTY_TAG {
-                    has_empty = true;
-                }
-                j += 1;
-            }
-            g += GROUP;
-        }
-
-        if has_empty {
-            if let Some(o) = out.get_mut(tid) {
-                *o = MISS;
-            }
+        if !active {
             return;
         }
 
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
-
-/// `find_kernel_tile_32` — full-warp find (32-lane tile per query).
-///
-/// One concrete instantiation of [`find_tile_impl`] at `N = 32`. Each
-/// warp partitions into a single 32-lane tile that scans one
-/// `PROBE_TILE`-byte insert tile per `tile.ballot` round, identical
-/// to v2's `find_kernel_warp_typed`.
-///
-/// Launch with `LaunchConfig::for_num_elems(keys.len() * 32)`.
-#[kernel]
-pub fn find_kernel_tile_32(ctrl: &[u32], slots: &[u64], keys: &[u32], out: DisjointSlice<u32>) {
-    let global_tid = thread::index_1d().get();
-    find_tile_impl::<32>(ctrl, slots, keys, out, global_tid);
-}
-
-/// `find_kernel_tile_16` — sub-warp find (16-lane tile per query).
-///
-/// One concrete instantiation of [`find_tile_impl`] at `N = 16`. Each
-/// warp partitions into two 16-lane tiles, each handling one query.
-/// Two queries per warp instead of one; each query scans
-/// `PROBE_TILE = 32` insert-tile bytes in **two** 16-byte ballot
-/// rounds rather than one 32-byte round, before triangular advance.
-///
-/// The motivating regime is moderate load (75 % is the bench
-/// crossover): probe chains long enough that single-thread loses on
-/// per-key serialization, but short enough that a full-warp 32-lane
-/// scan per key is over-provisioned and leaves throughput on the
-/// table. Two queries per warp recover the headroom.
-///
-/// Launch with `LaunchConfig::for_num_elems(keys.len() * 16)`.
-#[kernel]
-pub fn find_kernel_tile_16(ctrl: &[u32], slots: &[u64], keys: &[u32], out: DisjointSlice<u32>) {
-    let global_tid = thread::index_1d().get();
-    find_tile_impl::<16>(ctrl, slots, keys, out, global_tid);
-}
-
-/// Const-generic warp-cooperative find body, parameterised over the
-/// `N`-lane tile size. The two `find_kernel_tile_*` kernels above are
-/// the only callers; both inline this body via `#[inline(always)]`,
-/// so the const-generic monomorphises to two distinct PTX symbols
-/// with `N` folded as an integer literal.
-///
-/// Algorithm (one tile per query):
-///   1. Walk the `PROBE_TILE`-byte insert tile in `N`-byte sub-tiles.
-///   2. Each sub-tile pulls `N` tag bytes into the tile via a single
-///      coalesced ctrl load (lane `l` reads byte at `probe_base + sub
-///      + l`).
-///   3. `m_h2 = tile.ballot(tag == h2)` — N-bit fingerprint match
-///      mask. For each set bit (lowest first) the matching lane
-///      loads its slot and broadcasts the packed `(key, value)` via
-///      two `shfl`s; on key match, lane 0 writes `out[tile_idx]` and
-///      the tile returns.
-///   4. `m_empty = tile.ballot(tag == EMPTY_TAG)` — if non-zero, the
-///      key cannot live past an `EMPTY` in this hash chain; lane 0
-///      writes `MISS` and the tile returns.
-///   5. Else advance to the next `N`-byte sub-tile within the same
-///      `PROBE_TILE` insert tile. After `PROBE_TILE / N` sub-tiles,
-///      triangular-advance `probe_base` by `stride * PROBE_TILE` and
-///      repeat.
-///
-/// `N = 32` collapses the inner sub-tile loop to one iteration per
-/// probe step (identical to v2's `find_kernel_warp_typed`). `N = 16`
-/// runs two iterations per probe step but doubles the number of
-/// queries per warp.
-///
-/// Insert and find share `PROBE_TILE`-aligned probe sequences; only
-/// the *granularity* of the find ballot changes between `N = 32` and
-/// `N = 16`. The same v3 table is queryable by either kernel.
-#[inline(always)]
-fn find_tile_impl<const N: u32>(
-    ctrl: &[u32],
-    slots: &[u64],
-    keys: &[u32],
-    mut out: DisjointSlice<u32>,
-    global_tid: usize,
-) {
-    let block = this_thread_block();
-    let tile = block.tiled_partition::<N>();
-
-    let lane = tile.thread_rank();
-    let tile_idx = global_tid / (N as usize);
-    if tile_idx >= keys.len() {
-        return;
+        // Highest set bit in the dup mask is the in-warp leader for this
+        // duplicate group. All lanes in the group agree on the same
+        // leader because they all see the same dup_mask.
+        let leader = 31u32 - dup_mask.leading_zeros();
+        if lane == leader {
+            let _ = insert_into_table_core(ctrl, slots, key, value, true);
+        }
     }
 
-    let key = keys[tile_idx];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
+    /// `rehash_kernel` — single-kernel two-buffer rehash.
+    ///
+    /// v3 ships the two-buffer mode only (`old != new`); the new buffer
+    /// is `memset`-cleared by the host before launch, and the old buffer
+    /// remains read-only for the duration of the kernel. That means no
+    /// grid-wide barrier is required: each thread can read a live old
+    /// slot and immediately insert it into the new table. Threads stride
+    /// across the old table so the host can bound the launch size without
+    /// depending on cooperative-launch residency limits.
+    #[kernel]
+    pub fn rehash_kernel(old_ctrl: &[u32], old_slots: &[u64], new_ctrl: &[u32], new_slots: &[u64]) {
+        let mut tid = thread::index_1d().get();
+        let stride = (thread::gridDim_x() * thread::blockDim_x()) as usize;
 
-    loop {
-        let mut sub = 0usize;
-        while sub < PROBE_TILE {
-            let tag_pos = probe_base + sub + (lane as usize);
-            let ctrl_word_idx = tag_pos / GROUP;
-            let byte_in_word = tag_pos % GROUP;
-            let word = unsafe {
-                DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
-                    .load(AtomicOrdering::Acquire)
+        while tid < old_slots.len() {
+            let ctrl_word_idx = tid / GROUP;
+            let byte_in_word = tid % GROUP;
+            let ctrl_atomic = unsafe {
+                DeviceAtomicU32::from_ptr(old_ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
             };
-            let tag: u8 = ((word >> (8 * byte_in_word)) & 0xFF) as u8;
-
-            let mut m_h2 = tile.ballot(tag == h2);
-            let m_empty = tile.ballot(tag == EMPTY_TAG);
-
-            while m_h2 != 0 {
-                let cand = m_h2.trailing_zeros();
-                let local_slot: u64 = if lane == cand {
-                    let slot_idx = probe_base + sub + (cand as usize);
-                    unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                            .load(AtomicOrdering::Acquire)
-                    }
-                } else {
-                    0
-                };
-                let lo = tile.shfl(local_slot as u32, cand);
-                let hi = tile.shfl((local_slot >> 32) as u32, cand);
-                let observed: u64 = ((hi as u64) << 32) | (lo as u64);
-
-                if unpack_key(observed) == key {
-                    if lane == 0 {
-                        // SAFETY: tile_idx < keys.len() == out.len(),
-                        // and each tile has a unique tile_idx so
-                        // writes by lane 0 across tiles are disjoint.
-                        unsafe {
-                            *out.get_unchecked_mut(tile_idx) = unpack_value(observed);
-                        }
-                    }
-                    return;
-                }
-                m_h2 &= m_h2 - 1;
+            let ctrl_word = ctrl_atomic.load(AtomicOrdering::Acquire);
+            let tag = get_tag(ctrl_word, byte_in_word);
+            if tag <= 0x7F {
+                let slot_atomic =
+                    unsafe { DeviceAtomicU64::from_ptr(old_slots.as_ptr().add(tid).cast_mut()) };
+                let slot = slot_atomic.load(AtomicOrdering::Acquire);
+                let _ = insert_into_table_core(
+                    new_ctrl,
+                    new_slots,
+                    unpack_key(slot),
+                    unpack_value(slot),
+                    true,
+                );
             }
 
-            if m_empty != 0 {
-                if lane == 0 {
-                    // SAFETY: same uniqueness argument as above.
-                    unsafe {
-                        *out.get_unchecked_mut(tile_idx) = MISS;
-                    }
-                }
-                return;
-            }
+            tid += stride;
+        }
+    }
 
-            sub += N as usize;
+    /// `find_kernel` — single-thread find, one thread per key.
+    ///
+    /// Walks the same triangular probe sequence as the insert kernels
+    /// (same `PROBE_TILE = 32` width), so EMPTY-termination is sound —
+    /// see `find_tile_impl` below for why probe-width coherence matters.
+    ///
+    /// At each tile (32 consecutive tag bytes):
+    ///   - For every byte tagged `FULL(h2)` matching our key's fingerprint,
+    ///     load the slot and key-compare; on match return the value.
+    ///   - If any byte in the tile is `EMPTY_TAG`, the key cannot live past
+    ///     this point in its triangular chain (insert would have stopped
+    ///     at this same EMPTY), so return `MISS`.
+    ///   - Otherwise (tile holds only FULL-mismatch + DELETED), triangular
+    ///     advance and repeat. DELETED never terminates find.
+    #[kernel]
+    pub fn find_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
         }
 
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
+        let key = keys[i_thread];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
 
-/// `delete_kernel` — tombstone the slot for each input key.
-///
-/// One thread per key. Probes the same `PROBE_TILE`-wide triangular
-/// sequence as insert and find. When it locates the key it CAS-flips
-/// the byte in the containing ctrl word from `FULL(h2)` to
-/// `DELETED_TAG`. The `(key, value)` payload is **not** cleared:
-/// readers only ever materialize slots whose tag is `FULL(h2)`, so a
-/// stale slot under a `DELETED` tag is unreachable.
-///
-/// The CAS targets the specific ctrl word containing the matching tag
-/// byte (not "the group's word" — there are now `PROBE_TILE / GROUP`
-/// ctrl words per tile). On CAS failure (some other thread mutated
-/// this word), the inner loop re-reads and re-scans this word before
-/// moving on to the next word in the tile.
-///
-/// Output:
-///   `out[tid] = FLAG_FRESH_OR_OK (0)` -> deleted successfully
-///   `out[tid] = FLAG_PRESENT (1)`     -> key was not in the table
-#[kernel]
-pub fn delete_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
-    }
-
-    let key = keys[i_thread];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    'tile: loop {
-        let mut has_empty = false;
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-
-            // Per-word retry loop: if our CAS to flip a tag to DELETED
-            // fails because someone else mutated this same word, re-read
-            // and re-scan this word.
-            loop {
+        loop {
+            let mut g = 0usize;
+            let mut has_empty = false;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
                 let word = ctrl_atomic.load(AtomicOrdering::Acquire);
                 let mut j = 0;
-                let mut cas_collided = false;
                 while j < GROUP {
                     let tag = get_tag(word, j);
                     if tag == h2 {
@@ -642,48 +412,286 @@ pub fn delete_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: Disjoin
                         };
                         let observed = slot_atomic.load(AtomicOrdering::Acquire);
                         if unpack_key(observed) == key {
-                            let new_word = set_tag(word, j, DELETED_TAG);
-                            match ctrl_atomic.compare_exchange(
-                                word,
-                                new_word,
-                                AtomicOrdering::AcqRel,
-                                AtomicOrdering::Relaxed,
-                            ) {
-                                Ok(_) => {
-                                    if let Some(o) = out.get_mut(tid) {
-                                        *o = FLAG_FRESH_OR_OK;
-                                    }
-                                    return;
-                                }
-                                Err(_) => {
-                                    cas_collided = true;
-                                    break;
-                                }
+                            if let Some(o) = out.get_mut(tid) {
+                                *o = unpack_value(observed);
                             }
+                            return;
                         }
                     } else if tag == EMPTY_TAG {
                         has_empty = true;
                     }
                     j += 1;
                 }
-                if !cas_collided {
-                    break; // word fully scanned; move to next word in the tile
-                }
-                // else: retry this same word with a freshly-loaded view.
+                g += GROUP;
             }
-            g += GROUP;
-        }
 
-        if has_empty {
-            if let Some(o) = out.get_mut(tid) {
-                *o = FLAG_PRESENT;
+            if has_empty {
+                if let Some(o) = out.get_mut(tid) {
+                    *o = MISS;
+                }
+                return;
             }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `find_kernel_tile_32` — full-warp find (32-lane tile per query).
+    ///
+    /// One concrete instantiation of [`find_tile_impl`] at `N = 32`. Each
+    /// warp partitions into a single 32-lane tile that scans one
+    /// `PROBE_TILE`-byte insert tile per `tile.ballot` round, identical
+    /// to v2's `find_kernel_warp_typed`.
+    ///
+    /// Launch with `LaunchConfig::for_num_elems(keys.len() * 32)`.
+    #[kernel]
+    pub fn find_kernel_tile_32(ctrl: &[u32], slots: &[u64], keys: &[u32], out: DisjointSlice<u32>) {
+        let global_tid = thread::index_1d().get();
+        find_tile_impl::<32>(ctrl, slots, keys, out, global_tid);
+    }
+
+    /// `find_kernel_tile_16` — sub-warp find (16-lane tile per query).
+    ///
+    /// One concrete instantiation of [`find_tile_impl`] at `N = 16`. Each
+    /// warp partitions into two 16-lane tiles, each handling one query.
+    /// Two queries per warp instead of one; each query scans
+    /// `PROBE_TILE = 32` insert-tile bytes in **two** 16-byte ballot
+    /// rounds rather than one 32-byte round, before triangular advance.
+    ///
+    /// The motivating regime is moderate load (75 % is the bench
+    /// crossover): probe chains long enough that single-thread loses on
+    /// per-key serialization, but short enough that a full-warp 32-lane
+    /// scan per key is over-provisioned and leaves throughput on the
+    /// table. Two queries per warp recover the headroom.
+    ///
+    /// Launch with `LaunchConfig::for_num_elems(keys.len() * 16)`.
+    #[kernel]
+    pub fn find_kernel_tile_16(ctrl: &[u32], slots: &[u64], keys: &[u32], out: DisjointSlice<u32>) {
+        let global_tid = thread::index_1d().get();
+        find_tile_impl::<16>(ctrl, slots, keys, out, global_tid);
+    }
+
+    /// Const-generic warp-cooperative find body, parameterised over the
+    /// `N`-lane tile size. The two `find_kernel_tile_*` kernels above are
+    /// the only callers; both inline this body via `#[inline(always)]`,
+    /// so the const-generic monomorphises to two distinct PTX symbols
+    /// with `N` folded as an integer literal.
+    ///
+    /// Algorithm (one tile per query):
+    ///   1. Walk the `PROBE_TILE`-byte insert tile in `N`-byte sub-tiles.
+    ///   2. Each sub-tile pulls `N` tag bytes into the tile via a single
+    ///      coalesced ctrl load (lane `l` reads byte at `probe_base + sub
+    ///      + l`).
+    ///   3. `m_h2 = tile.ballot(tag == h2)` — N-bit fingerprint match
+    ///      mask. For each set bit (lowest first) the matching lane
+    ///      loads its slot and broadcasts the packed `(key, value)` via
+    ///      two `shfl`s; on key match, lane 0 writes `out[tile_idx]` and
+    ///      the tile returns.
+    ///   4. `m_empty = tile.ballot(tag == EMPTY_TAG)` — if non-zero, the
+    ///      key cannot live past an `EMPTY` in this hash chain; lane 0
+    ///      writes `MISS` and the tile returns.
+    ///   5. Else advance to the next `N`-byte sub-tile within the same
+    ///      `PROBE_TILE` insert tile. After `PROBE_TILE / N` sub-tiles,
+    ///      triangular-advance `probe_base` by `stride * PROBE_TILE` and
+    ///      repeat.
+    ///
+    /// `N = 32` collapses the inner sub-tile loop to one iteration per
+    /// probe step (identical to v2's `find_kernel_warp_typed`). `N = 16`
+    /// runs two iterations per probe step but doubles the number of
+    /// queries per warp.
+    ///
+    /// Insert and find share `PROBE_TILE`-aligned probe sequences; only
+    /// the *granularity* of the find ballot changes between `N = 32` and
+    /// `N = 16`. The same v3 table is queryable by either kernel.
+    #[inline(always)]
+    fn find_tile_impl<const N: u32>(
+        ctrl: &[u32],
+        slots: &[u64],
+        keys: &[u32],
+        mut out: DisjointSlice<u32>,
+        global_tid: usize,
+    ) {
+        let block = this_thread_block();
+        let tile = block.tiled_partition::<N>();
+
+        let lane = tile.thread_rank();
+        let tile_idx = global_tid / (N as usize);
+        if tile_idx >= keys.len() {
             return;
         }
 
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-        continue 'tile;
+        let key = keys[tile_idx];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        loop {
+            let mut sub = 0usize;
+            while sub < PROBE_TILE {
+                let tag_pos = probe_base + sub + (lane as usize);
+                let ctrl_word_idx = tag_pos / GROUP;
+                let byte_in_word = tag_pos % GROUP;
+                let word = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                        .load(AtomicOrdering::Acquire)
+                };
+                let tag: u8 = ((word >> (8 * byte_in_word)) & 0xFF) as u8;
+
+                let mut m_h2 = tile.ballot(tag == h2);
+                let m_empty = tile.ballot(tag == EMPTY_TAG);
+
+                while m_h2 != 0 {
+                    let cand = m_h2.trailing_zeros();
+                    let local_slot: u64 = if lane == cand {
+                        let slot_idx = probe_base + sub + (cand as usize);
+                        unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                                .load(AtomicOrdering::Acquire)
+                        }
+                    } else {
+                        0
+                    };
+                    let lo = tile.shfl(local_slot as u32, cand);
+                    let hi = tile.shfl((local_slot >> 32) as u32, cand);
+                    let observed: u64 = ((hi as u64) << 32) | (lo as u64);
+
+                    if unpack_key(observed) == key {
+                        if lane == 0 {
+                            // SAFETY: tile_idx < keys.len() == out.len(),
+                            // and each tile has a unique tile_idx so
+                            // writes by lane 0 across tiles are disjoint.
+                            unsafe {
+                                *out.get_unchecked_mut(tile_idx) = unpack_value(observed);
+                            }
+                        }
+                        return;
+                    }
+                    m_h2 &= m_h2 - 1;
+                }
+
+                if m_empty != 0 {
+                    if lane == 0 {
+                        // SAFETY: same uniqueness argument as above.
+                        unsafe {
+                            *out.get_unchecked_mut(tile_idx) = MISS;
+                        }
+                    }
+                    return;
+                }
+
+                sub += N as usize;
+            }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `delete_kernel` — tombstone the slot for each input key.
+    ///
+    /// One thread per key. Probes the same `PROBE_TILE`-wide triangular
+    /// sequence as insert and find. When it locates the key it CAS-flips
+    /// the byte in the containing ctrl word from `FULL(h2)` to
+    /// `DELETED_TAG`. The `(key, value)` payload is **not** cleared:
+    /// readers only ever materialize slots whose tag is `FULL(h2)`, so a
+    /// stale slot under a `DELETED` tag is unreachable.
+    ///
+    /// The CAS targets the specific ctrl word containing the matching tag
+    /// byte (not "the group's word" — there are now `PROBE_TILE / GROUP`
+    /// ctrl words per tile). On CAS failure (some other thread mutated
+    /// this word), the inner loop re-reads and re-scans this word before
+    /// moving on to the next word in the tile.
+    ///
+    /// Output:
+    ///   `out[tid] = FLAG_FRESH_OR_OK (0)` -> deleted successfully
+    ///   `out[tid] = FLAG_PRESENT (1)`     -> key was not in the table
+    #[kernel]
+    pub fn delete_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
+        }
+
+        let key = keys[i_thread];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        'tile: loop {
+            let mut has_empty = false;
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+
+                // Per-word retry loop: if our CAS to flip a tag to DELETED
+                // fails because someone else mutated this same word, re-read
+                // and re-scan this word.
+                loop {
+                    let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                    let mut j = 0;
+                    let mut cas_collided = false;
+                    while j < GROUP {
+                        let tag = get_tag(word, j);
+                        if tag == h2 {
+                            let slot_idx = probe_base + g + j;
+                            let slot_atomic = unsafe {
+                                DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                            };
+                            let observed = slot_atomic.load(AtomicOrdering::Acquire);
+                            if unpack_key(observed) == key {
+                                let new_word = set_tag(word, j, DELETED_TAG);
+                                match ctrl_atomic.compare_exchange(
+                                    word,
+                                    new_word,
+                                    AtomicOrdering::AcqRel,
+                                    AtomicOrdering::Relaxed,
+                                ) {
+                                    Ok(_) => {
+                                        if let Some(o) = out.get_mut(tid) {
+                                            *o = FLAG_FRESH_OR_OK;
+                                        }
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        cas_collided = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        } else if tag == EMPTY_TAG {
+                            has_empty = true;
+                        }
+                        j += 1;
+                    }
+                    if !cas_collided {
+                        break; // word fully scanned; move to next word in the tile
+                    }
+                    // else: retry this same word with a freshly-loaded view.
+                }
+                g += GROUP;
+            }
+
+            if has_empty {
+                if let Some(o) = out.get_mut(tid) {
+                    *o = FLAG_PRESENT;
+                }
+                return;
+            }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+            continue 'tile;
+        }
     }
 }
 
@@ -1095,7 +1103,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1111,13 +1119,7 @@ impl GpuSwissMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev)]
-        }?;
+        module.insert_kernel(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)?;
 
         Ok(())
     }
@@ -1140,7 +1142,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1156,13 +1158,7 @@ impl GpuSwissMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: insert_kernel_dedup,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev)]
-        }?;
+        module.insert_kernel_dedup(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)?;
 
         Ok(())
     }
@@ -1175,7 +1171,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1192,13 +1188,15 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: try_insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev), slice_mut(out_dev)]
-        }?;
+        module.try_insert_kernel(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &values_dev,
+            &mut out_dev,
+        )?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())
@@ -1209,7 +1207,7 @@ impl GpuSwissMap {
     pub fn find_bulk(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1220,13 +1218,14 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: find_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.find_kernel(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1240,7 +1239,7 @@ impl GpuSwissMap {
     pub fn find_bulk_tile_32(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1258,13 +1257,14 @@ impl GpuSwissMap {
         // block size 256 means 8 tiles per block, 8 keys per block.
         let total_threads = (keys.len() as u32).saturating_mul(32);
         let cfg = LaunchConfig::for_num_elems(total_threads);
-        cuda_launch! {
-            kernel: find_kernel_tile_32,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.find_kernel_tile_32(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1281,7 +1281,7 @@ impl GpuSwissMap {
     pub fn find_bulk_tile_16(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1299,13 +1299,14 @@ impl GpuSwissMap {
         // block size 256 means 16 tiles per block, 16 keys per block.
         let total_threads = (keys.len() as u32).saturating_mul(16);
         let cfg = LaunchConfig::for_num_elems(total_threads);
-        cuda_launch! {
-            kernel: find_kernel_tile_16,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.find_kernel_tile_16(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1327,7 +1328,7 @@ impl GpuSwissMap {
     pub fn resize_to(
         &mut self,
         new_capacity: usize,
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert!(
@@ -1358,16 +1359,7 @@ impl GpuSwissMap {
 
         let rehash_threads = self.capacity.min(REHASH_MAX_THREADS) as u32;
         let cfg = LaunchConfig::for_num_elems(rehash_threads);
-        cuda_launch! {
-            kernel: rehash_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [
-                slice(self.ctrl), slice(self.slots),
-                slice(new_ctrl), slice(new_slots)
-            ]
-        }?;
+        module.rehash_kernel(stream, cfg, &self.ctrl, &self.slots, &new_ctrl, &new_slots)?;
 
         self.ctrl = new_ctrl;
         self.slots = new_slots;
@@ -1394,7 +1386,7 @@ impl GpuSwissMap {
         &mut self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1417,7 +1409,7 @@ impl GpuSwissMap {
     pub fn delete_bulk(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1428,13 +1420,14 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: delete_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.delete_kernel(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())

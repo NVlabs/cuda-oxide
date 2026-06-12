@@ -299,7 +299,7 @@ pub fn emit_mbarrier_init(
 /// Emit mbarrier_arrive: arrive at barrier, returns token.
 ///
 /// Args:
-/// - args[0]: *const Barrier (pointer to barrier in shared memory)
+/// - `args[0]`: *const Barrier (pointer to barrier in shared memory)
 ///
 /// Returns: u64 (phase token)
 pub fn emit_mbarrier_arrive(
@@ -377,9 +377,9 @@ pub fn emit_mbarrier_arrive(
 /// how many bytes to expect from the TMA transaction before the TMA is initiated.
 ///
 /// Args:
-/// - args[0]: *const Barrier (pointer to barrier in shared memory)
-/// - args[1]: u32 (tx_count - unused, kept for API compatibility)
-/// - args[2]: u32 (bytes - expected transaction byte count)
+/// - `args[0]`: *const Barrier (pointer to barrier in shared memory)
+/// - `args[1]`: u32 (tx_count - unused, kept for API compatibility)
+/// - `args[2]`: u32 (bytes - expected transaction byte count)
 ///
 /// Returns: u64 (phase token)
 pub fn emit_mbarrier_arrive_expect_tx(
@@ -470,7 +470,7 @@ pub fn emit_mbarrier_arrive_expect_tx(
 /// LLVM IR address-space conflicts in loop phi nodes.
 ///
 /// Args:
-/// - args[0]: u64 (cluster-scope barrier address from mapa)
+/// - `args[0]`: u64 (cluster-scope barrier address from mapa)
 ///
 /// Returns: void
 pub fn emit_mbarrier_arrive_cluster(
@@ -537,7 +537,7 @@ pub fn emit_mbarrier_arrive_cluster(
 /// Emit nanosleep: suspend thread for approximately N nanoseconds.
 ///
 /// Args:
-/// - args[0]: u32 (nanoseconds)
+/// - `args[0]`: u32 (nanoseconds)
 ///
 /// Returns: void
 pub fn emit_nanosleep(
@@ -602,8 +602,8 @@ pub fn emit_nanosleep(
 /// Emit mbarrier_test_wait: test if barrier phase is complete (non-blocking).
 ///
 /// Args:
-/// - args[0]: *const Barrier (pointer to barrier in shared memory)
-/// - args[1]: u64 (phase token)
+/// - `args[0]`: *const Barrier (pointer to barrier in shared memory)
+/// - `args[1]`: u64 (phase token)
 ///
 /// Returns: bool
 pub fn emit_mbarrier_test_wait(
@@ -693,8 +693,8 @@ pub fn emit_mbarrier_test_wait(
 /// hints to the hardware. This is the preferred instruction for TMA synchronization.
 ///
 /// Args:
-/// - args[0]: *const Barrier (pointer to barrier in shared memory)
-/// - args[1]: u64 (phase token)
+/// - `args[0]`: *const Barrier (pointer to barrier in shared memory)
+/// - `args[1]`: u64 (phase token)
 ///
 /// Returns: bool
 pub fn emit_mbarrier_try_wait(
@@ -781,8 +781,8 @@ pub fn emit_mbarrier_try_wait(
 /// Emit mbarrier_try_wait_parity: parity-based wait for barrier phase.
 ///
 /// Args:
-/// - args[0]: *const Barrier (ptr to barrier in shared)
-/// - args[1]: u32 parity
+/// - `args[0]`: *const Barrier (ptr to barrier in shared)
+/// - `args[1]`: u32 parity
 ///
 /// Returns: bool
 pub fn emit_mbarrier_try_wait_parity(
@@ -866,7 +866,7 @@ pub fn emit_mbarrier_try_wait_parity(
 /// Emit mbarrier_inval: invalidate a barrier.
 ///
 /// Args:
-/// - args[0]: *mut Barrier (pointer to barrier in shared memory)
+/// - `args[0]`: *mut Barrier (pointer to barrier in shared memory)
 ///
 /// Returns: void
 pub fn emit_mbarrier_inval(

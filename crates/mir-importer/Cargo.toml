@@ -1,6 +1,6 @@
 [package]
 name = "mir-importer"
-version = "0.1.0"
+version = "0.2.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ description = "Rust MIR to Pliron IR translation and compilation pipeline"
 [dependencies]
 pliron = { workspace = true }
 pliron-derive = { workspace = true }
-dialect-llvm = { workspace = true }
+llvm-export = { workspace = true }
 dialect-mir = { workspace = true }
 dialect-nvvm = { workspace = true }
 mir-lower = { workspace = true }

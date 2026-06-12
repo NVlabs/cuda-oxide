@@ -19,19 +19,20 @@ use pliron::{
     result::Result,
 };
 
-use dialect_llvm::attributes::{FCmpPredicateAttr, ICmpPredicateAttr};
+use llvm_export::attributes::{FCmpPredicateAttr, ICmpPredicateAttr};
 
 use crate::conversion_interface::MirToLlvmConversion;
 
 use dialect_mir::ops::{
     MirAddOp, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirBitAndOp, MirBitOrOp,
-    MirBitXorOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp, MirCheckedSubOp,
-    MirCondBranchOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
-    MirConstructTupleOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractArrayElementOp,
-    MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp, MirGetDiscriminantOp,
-    MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp,
-    MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirReturnOp, MirShlOp, MirShrOp,
-    MirStorageDeadOp, MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp,
+    MirBitXorOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp, MirCheckedSubOp, MirCmpOp,
+    MirCondBranchOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructSliceOp,
+    MirConstructStructOp, MirConstructTupleOp, MirDivOp, MirEnumPayloadOp, MirEqOp,
+    MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp,
+    MirGetDiscriminantOp, MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp,
+    MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirReturnOp,
+    MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp,
+    MirUnreachableOp,
 };
 use dialect_nvvm::ops::{
     ActiveMaskOp, BarWarpSyncOp, Barrier0Op, BreakpointOp, ClcQueryGetFirstCtaidXOp,
@@ -348,6 +349,23 @@ impl MirToLlvmConversion for MirGeOp {
 }
 
 #[op_interface_impl]
+impl MirToLlvmConversion for MirCmpOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::arithmetic::convert_three_way_cmp(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
 impl MirToLlvmConversion for MirEqOp {
     fn convert(
         &self,
@@ -382,7 +400,7 @@ impl MirToLlvmConversion for MirNeOp {
             operands_info,
             ICmpPredicateAttr::NE,
             ICmpPredicateAttr::NE,
-            FCmpPredicateAttr::ONE,
+            FCmpPredicateAttr::UNE,
         )
     }
 }
@@ -563,6 +581,23 @@ impl MirToLlvmConversion for MirConstructTupleOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::ops::aggregate::convert_construct_tuple(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MirConstructSliceOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::aggregate::convert_construct_slice(
             ctx,
             rewriter,
             self.get_operation(),

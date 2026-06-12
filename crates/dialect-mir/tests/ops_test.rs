@@ -6,12 +6,13 @@
 use dialect_mir::{
     attributes::MirCastKindAttr,
     ops::{
-        MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCondBranchOp,
-        MirConstantOp, MirDivOp, MirEqOp, MirExtractFieldOp, MirFuncOp, MirGeOp, MirGlobalAllocOp,
-        MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
-        MirPtrOffsetOp, MirRemOp, MirReturnOp, MirStoreOp, MirSubOp,
+        MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
+        MirCondBranchOp, MirConstantOp, MirConstructSliceOp, MirDivOp, MirEqOp, MirExtractFieldOp,
+        MirFuncOp, MirGeOp, MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp,
+        MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp, MirStoreOp,
+        MirSubOp,
     },
-    types::{MirPtrType, MirTupleType},
+    types::{EnumVariant, MirEnumType, MirPtrType, MirSliceType, MirTupleType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -328,6 +329,79 @@ fn test_mir_extract_field_verify() {
 }
 
 #[test]
+fn test_mir_construct_slice_verify() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&mut ctx, 8, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let usize_ty = IntegerType::get(&mut ctx, 64, Signedness::Unsigned);
+    let u8_ptr_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let u8_slice_ty = MirSliceType::get(&mut ctx, u8_ty.into());
+    let i32_slice_ty = MirSliceType::get(&mut ctx, i32_ty.into());
+
+    let block = BasicBlock::new(&mut ctx, None, vec![u8_ptr_ty.into(), usize_ty.into()]);
+    let ptr_val = block.deref(&ctx).get_argument(0);
+    let len_val = block.deref(&ctx).get_argument(1);
+
+    // Valid: (ptr to u8, usize len) -> slice of u8
+    let op = Operation::new(
+        &mut ctx,
+        MirConstructSliceOp::get_concrete_op_info(),
+        vec![u8_slice_ty.into()],
+        vec![ptr_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructSliceOp::new(op).verify(&ctx).is_ok(),
+        "Valid slice construction"
+    );
+
+    // Invalid: data pointer pointee does not match slice element type
+    let op_bad_elem = Operation::new(
+        &mut ctx,
+        MirConstructSliceOp::get_concrete_op_info(),
+        vec![i32_slice_ty.into()],
+        vec![ptr_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructSliceOp::new(op_bad_elem).verify(&ctx).is_err(),
+        "Pointee/element mismatch"
+    );
+
+    // Invalid: operands swapped (length where the pointer should be)
+    let op_swapped = Operation::new(
+        &mut ctx,
+        MirConstructSliceOp::get_concrete_op_info(),
+        vec![u8_slice_ty.into()],
+        vec![len_val, ptr_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructSliceOp::new(op_swapped).verify(&ctx).is_err(),
+        "Swapped operands"
+    );
+
+    // Invalid: result is not a slice type
+    let op_bad_res = Operation::new(
+        &mut ctx,
+        MirConstructSliceOp::get_concrete_op_info(),
+        vec![u8_ptr_ty.into()],
+        vec![ptr_val, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructSliceOp::new(op_bad_res).verify(&ctx).is_err(),
+        "Non-slice result type"
+    );
+}
+
+#[test]
 fn test_mir_arithmetic_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
@@ -548,6 +622,74 @@ fn test_mir_comparison_verify() {
     check_cmp(MirLeOp::get_concrete_op_info(), "Le");
     check_cmp(MirGtOp::get_concrete_op_info(), "Gt");
     check_cmp(MirGeOp::get_concrete_op_info(), "Ge");
+
+    let mut context = Context::new();
+    dialect_mir::register(&mut context);
+    let i8_ty = IntegerType::get(&mut context, 8, Signedness::Signed);
+    let i32_ty = IntegerType::get(&mut context, 32, Signedness::Signed);
+    let unit = |name: &str| EnumVariant::unit(name.to_string());
+    let ordering_ty = MirEnumType::get(
+        &mut context,
+        "Ordering".to_string(),
+        i8_ty.into(),
+        vec![255, 0, 1],
+        vec![unit("Less"), unit("Equal"), unit("Greater")],
+    );
+    let blk = BasicBlock::new(&mut context, None, vec![i32_ty.into(), i32_ty.into()]);
+    let lhs = blk.deref(&context).get_argument(0);
+    let rhs = blk.deref(&context).get_argument(1);
+    let two_variant_ty = MirEnumType::get(
+        &mut context,
+        "Two".to_string(),
+        i8_ty.into(),
+        vec![0, 1],
+        vec![unit("A"), unit("B")],
+    );
+    // Payload variants disqualify the Ordering shape.
+    let payload_ty = MirEnumType::get(
+        &mut context,
+        "ThreeWithPayload".to_string(),
+        i8_ty.into(),
+        vec![0, 1, 2],
+        vec![
+            unit("A"),
+            EnumVariant::new("B".to_string(), vec![i32_ty.into()]),
+            unit("C"),
+        ],
+    );
+    let mut check_cmp_result = |result_ty, valid| {
+        let op = Operation::new(
+            &mut context,
+            MirCmpOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![lhs, rhs],
+            vec![],
+            0,
+        );
+        assert_eq!(op.verify(&context).is_ok(), valid);
+    };
+    check_cmp_result(ordering_ty.into(), true);
+    check_cmp_result(i32_ty.into(), false);
+    check_cmp_result(two_variant_ty.into(), false);
+    check_cmp_result(payload_ty.into(), false);
+
+    // Float operands are rejected: rustc never emits BinOp::Cmp on floats.
+    let f32_ty = FP32Type::get(&context);
+    let fblk = BasicBlock::new(&mut context, None, vec![f32_ty.into(), f32_ty.into()]);
+    let flhs = fblk.deref(&context).get_argument(0);
+    let frhs = fblk.deref(&context).get_argument(1);
+    let float_cmp = Operation::new(
+        &mut context,
+        MirCmpOp::get_concrete_op_info(),
+        vec![ordering_ty.into()],
+        vec![flhs, frhs],
+        vec![],
+        0,
+    );
+    assert!(
+        float_cmp.verify(&context).is_err(),
+        "float mir.cmp must be rejected"
+    );
 }
 
 #[test]

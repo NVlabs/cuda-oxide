@@ -304,6 +304,17 @@ cuda-oxide, you can build this same structure in Rust — using `SharedArray`
 for tiles, `ManagedBarrier` for synchronization, and the MMA APIs for
 compute.
 
+The [`gemm_sol`
+example](https://github.com/NVlabs/cuda-oxide/tree/main/crates/rustc-codegen-cuda/examples/gemm_sol)
+is the worked-out reference. Its 4-stage `cta_group::2` pipeline reaches
+**868 TFLOPS at 4096³ — 57.8 % of `cublasLtMatmul` SoL — on B200 (148 SMs)**.
+Absolute throughput scales with SM count on smaller Blackwell datacenter
+SKUs (e.g., on an 80-SM variant the same kernel runs at ~204 TFLOPS / ~46 %
+SoL — see the per-phase tables in the example's README for both
+configurations). The example measures the cublasLt baseline live via
+`bench/cublaslt_bench`, so its "% of SoL" column is always relative to the
+host GPU's cublasLt peak rather than a fixed B200 number.
+
 :::{seealso}
 - [Shared Memory and Synchronization](shared-memory-and-synchronization.md) —
   tile management for MMA operands

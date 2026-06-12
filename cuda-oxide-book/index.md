@@ -66,8 +66,9 @@ Build and run with `cargo oxide run vecadd` upon installing the [prerequisites](
 :::{note}
 `#[cuda_module]` embeds the generated device artifact into the host binary and
 generates a typed `kernels::load` function plus one launch method per kernel.
-The lower-level `load_kernel_module` and `cuda_launch!` APIs remain available
-when you need to load a specific sidecar artifact or build custom launch code.
+The lower-level `load_kernel_module` and unsafe `cuda_launch!` APIs remain
+available when you need to load a specific sidecar artifact or build custom
+launch code.
 :::
 
 ---

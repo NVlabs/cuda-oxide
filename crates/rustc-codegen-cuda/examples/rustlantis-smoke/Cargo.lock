@@ -86,14 +86,14 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "cuda-bindings"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "bindgen",
 ]
 
 [[package]]
 name = "cuda-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -103,14 +103,14 @@ dependencies = [
 
 [[package]]
 name = "cuda-device"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "cuda-macros",
 ]
 
 [[package]]
 name = "cuda-host"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "cuda-core",
  "cuda-macros",
@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "cuda-macros"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -150,7 +150,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "fuzzer"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "glob"
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "libnvvm-sys"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "nvjitlink-sys"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-artifacts"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "object",
 ]
@@ -341,7 +341,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reserved-oxide-symbols"
-version = "0.1.0"
+version = "0.2.1"
 
 [[package]]
 name = "rustc-hash"

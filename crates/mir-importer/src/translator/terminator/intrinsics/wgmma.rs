@@ -215,7 +215,7 @@ pub fn emit_wgmma_wait_group(
 /// Emit make_smem_desc: Create SMEM descriptor for WGMMA.
 ///
 /// Args:
-/// - args[0]: *const u8 (pointer to shared memory)
+/// - `args[0]`: *const u8 (pointer to shared memory)
 ///
 /// Returns: u64 (64-bit descriptor)
 pub fn emit_wgmma_make_smem_desc(
@@ -294,9 +294,9 @@ pub fn emit_wgmma_make_smem_desc(
 /// - D: 64×64 accumulator (32 f32 values per thread, passed by pointer)
 ///
 /// Args:
-/// - args[0]: &mut [[f32; 8]; 4] (accumulator pointer, read-modify-write)
-/// - args[1]: u64 (desc_a - SMEM descriptor for A)
-/// - args[2]: u64 (desc_b - SMEM descriptor for B)
+/// - `args[0]`: &mut [[f32; 8]; 4] (accumulator pointer, read-modify-write)
+/// - `args[1]`: u64 (desc_a - SMEM descriptor for A)
+/// - `args[2]`: u64 (desc_b - SMEM descriptor for B)
 ///
 /// Returns: void (accumulator updated in-place)
 pub fn emit_wgmma_mma_m64n64k16_f32_bf16(

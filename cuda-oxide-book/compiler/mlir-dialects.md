@@ -1,9 +1,11 @@
 # Pliron Dialects
 
 cuda-oxide does not lower Rust to PTX in a single, heroic transformation. It
-uses three custom pliron dialects, each modeling a different level of
-abstraction. This chapter walks through all three -- their types, their
-operations, and how they fit together to form the compilation pipeline.
+works across three pliron dialects, each modeling a different level of
+abstraction: two defined locally (`dialect-mir`, `dialect-nvvm`) and the LLVM
+dialect provided by the upstream `pliron-llvm` crate. This chapter walks
+through all three -- their types, their operations, and how they fit together
+to form the compilation pipeline.
 
 If you have not read the [Pliron -- Pliron IR (MLIR-like)](pliron.md) chapter yet, now
 is a good time. The concepts there (operations, types, attributes, regions,
@@ -16,17 +18,21 @@ is a good time. The concepts there (operations, types, attributes, regions,
 | Dialect          | Purpose                      | Level                                                            |
 | :--------------- | :--------------------------- | :--------------------------------------------------------------- |
 | **dialect-mir**  | Models Rust MIR semantics    | Highest -- Rust types, tuples, enums, slices, checked arithmetic |
-| **dialect-llvm** | Models LLVM IR               | Middle -- flat types, GEP, PHI-ready control flow                |
+| **LLVM dialect** | Models LLVM IR               | Middle -- flat types, GEP, PHI-ready control flow                |
 | **dialect-nvvm** | Models NVIDIA GPU intrinsics | Orthogonal -- thread indexing, warps, TMA, WGMMA, tcgen05        |
 
+The LLVM dialect is not a cuda-oxide crate: its modeling (ops, types,
+attributes, op-interfaces) lives upstream in the `pliron-llvm` crate, which
+cuda-oxide consumes as a dependency.
+
 `dialect-nvvm` is "orthogonal" rather than a layer in the stack because its
-operations appear *alongside* `dialect-llvm` operations, not below them. A
+operations appear *alongside* LLVM dialect operations, not below them. A
 warp shuffle and an integer add coexist in the same function body.
 
 Data flows through the pipeline like this:
 
 ```text
-dialect-mir ──(mem2reg)──▶ dialect-mir (SSA) ──(DialectConversion)──▶ dialect-llvm + dialect-nvvm ops ──(export.rs)──▶ textual LLVM IR ──(llc)──▶ PTX
+dialect-mir ──(mem2reg)──▶ dialect-mir (SSA) ──(DialectConversion)──▶ LLVM dialect + dialect-nvvm ops ──(export)──▶ textual LLVM IR ──(llc)──▶ PTX
 ```
 
 Each arrow is a well-defined transformation. The first two happen inside
@@ -141,11 +147,16 @@ and `cuda-device`'s API design.
 
 ---
 
-## dialect-llvm -- The LLVM Layer
+## The LLVM Dialect -- The LLVM Layer
 
-`dialect-llvm` models LLVM IR as pliron operations. It provides a near-1:1
+The LLVM dialect models LLVM IR as pliron operations. It provides a near-1:1
 mapping to textual `.ll` files -- every LLVM instruction has a corresponding
-pliron operation, and the types map directly to LLVM's type system.
+pliron operation, and the types map directly to LLVM's type system. The
+dialect itself (ops, types, attributes, op-interfaces) is defined upstream in
+the `pliron-llvm` crate; cuda-oxide consumes it and re-exports it through the
+thin `llvm-export` crate, which also carries the textual `.ll` exporter and a
+few GPU-specific extensions (named address spaces, a syncscope enum, fp16 bit
+helpers) that pliron-llvm does not ship.
 
 ### Types
 
@@ -160,8 +171,8 @@ pliron operation, and the types map directly to LLVM's type system.
 | `llvm.func`   | `(i32, ptr) -> void`                    | Function signatures                                  |
 | `llvm.void`   | `void`                                  | The unit type                                        |
 
-Note the absence of Rust-specific types. By the time code reaches
-`dialect-llvm`, tuples have become structs, enums have become
+Note the absence of Rust-specific types. By the time code reaches the
+LLVM dialect, tuples have become structs, enums have become
 discriminant-indexed structs, and slices have become pointer-length pairs.
 The lowering pass (covered in [The Lowering Pipeline](lowering-pipeline.md))
 handles all of that flattening.
@@ -191,9 +202,12 @@ names are intentionally the same as their LLVM counterparts, prefixed with
 
 ### The Export Engine
 
-The crown jewel of dialect-llvm is `export.rs` -- the module that converts a
-pliron IR module into valid textual LLVM IR. This is not just "print each
-operation"; several non-trivial transformations happen during export:
+The crown jewel of `llvm-export` is its export module
+(`crates/llvm-export/src/export/`) -- the code that converts a pliron IR
+module into valid textual LLVM IR. This is the part cuda-oxide keeps local:
+pliron-llvm only emits real `.ll` via an `llvm-sys` bridge, which cuda-oxide
+avoids. This is not just "print each operation"; several non-trivial
+transformations happen during export:
 
 **Block arguments become PHI nodes.** Pliron IR (MLIR-like) models merge points
 as block arguments -- a function-style calling convention between basic blocks.
@@ -251,7 +265,7 @@ attributes #0 = { convergent }
 
 Notice the slices have been scalarized: each Rust `&[f32]` becomes a
 `ptr addrspace(1)` and an `i64` length. That happened in the lowering pass;
-by the time `dialect-llvm` sees them, they are flat arguments.
+by the time the LLVM dialect sees them, they are flat arguments.
 
 ---
 
@@ -259,8 +273,8 @@ by the time `dialect-llvm` sees them, they are flat arguments.
 
 `dialect-nvvm` wraps NVIDIA's GPU intrinsics as typed pliron operations.
 These operations do not form a "level" in the lowering chain -- they are
-inserted during the `dialect-mir` → `dialect-llvm` lowering pass and coexist
-with `dialect-llvm` operations in the same function body. At export time,
+inserted during the `dialect-mir` → LLVM dialect lowering pass and coexist
+with LLVM dialect operations in the same function body. At export time,
 they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
@@ -300,7 +314,7 @@ Each NVVM operation maps through three levels of naming:
 | `CpAsyncBulkTensorG2sTile2dOp` | `llvm.nvvm.cp.async.bulk.tensor.2d.tile.g2s.im2col.*` | `cp.async.bulk.tensor.2d.tile.g2s ...` |
 
 The first column is the Rust struct name in `dialect-nvvm`. The second is what
-`export.rs` emits (after the underscore-to-dot transformation). The third is
+`llvm-export` emits (after the underscore-to-dot transformation). The third is
 what `llc` produces. You never have to write any of these by hand -- they are
 generated by `mir-lower` when it sees calls to `cuda-device` intrinsic
 functions like `thread::index_x()` or `warp::shfl_sync_bfly()`.
@@ -336,14 +350,14 @@ Rust source:   let sum = a + b;        // a, b: f32
 
 dialect-mir:   %sum = mir.add %a, %b : f32
                 ↓  (DialectConversion)
-dialect-llvm:  %v5 = fadd float %v3, %v4
-                ↓  (export.rs)
+LLVM dialect:  %v5 = fadd float %v3, %v4
+                ↓  (llvm-export)
 LLVM IR:       %v5 = fadd float %v3, %v4
                 ↓  (llc --mcpu=sm_80)
 PTX:           add.f32 %f3, %f1, %f2;
 ```
 
-The `dialect-mir` → `dialect-llvm` step is where the interesting work
+The `dialect-mir` → LLVM dialect step is where the interesting work
 happens: `mir.add` on `f32` becomes `fadd` (floating-point add), while
 `mir.add` on `i32` becomes `add` (integer add). Checked operations like
 `mir.checked_add` expand into an `llvm.add`, a constant `i1 false` for the
@@ -359,7 +373,7 @@ Rust source:   let tid = thread::threadIdx_x();
 dialect-mir:   %tid = mir.call @cuda_oxide_device_<hash>_thread_index_x()
                 ↓  (DialectConversion, recognizes the intrinsic)
 dialect-nvvm:  %v2 = nvvm.read_ptx_sreg_tid_x : i32
-                ↓  (export.rs)
+                ↓  (llvm-export)
 LLVM IR:       %v2 = call i32 @llvm.nvvm.read.ptx.sreg.tid.x() #0
                 ↓  (llc)
 PTX:           mov.u32 %r1, %tid.x;
@@ -373,7 +387,7 @@ the intrinsic becomes a direct hardware instruction.
 ### The Full Picture
 
 Putting it all together, a compiled kernel body contains a mix of
-`dialect-llvm` and `dialect-nvvm` operations:
+LLVM dialect and `dialect-nvvm` operations:
 
 ```text
 llvm.func @vecadd(...) {
@@ -400,7 +414,7 @@ llvm.func @vecadd(...) {
 ```
 
 The `dialect-nvvm` operations at the top compute the global thread index.
-Everything else is standard `dialect-llvm` -- loads, stores, arithmetic,
+Everything else is standard LLVM dialect -- loads, stores, arithmetic,
 branches. The export engine serializes all of it into a single `.ll` file,
 and `llc` compiles it to PTX.
 

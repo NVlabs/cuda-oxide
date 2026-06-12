@@ -2,8 +2,10 @@
 
 Procedural macros for writing CUDA kernels in Rust. Provides `#[cuda_module]`
 for typed embedded-module loading, `#[kernel]` for GPU entry points,
-`#[device]`, `#[launch_bounds]`, `#[cluster_launch]`, `gpu_printf!`, and the
-lower-level `cuda_launch!` / `cuda_launch_async!` migration macros.
+`#[device]`, `#[launch_bounds]`, `#[cluster_launch]`, `#[cooperative_launch]`,
+`gpu_printf!`, and the lower-level `cuda_launch!` / `cuda_launch_async!`
+escape hatches. `cuda_launch!` is caller-unsafe: prefer `#[cuda_module]`
+unless you are launching a module loaded at runtime by name.
 
 ## Attributes
 
@@ -91,6 +93,26 @@ pub fn cluster_kernel(out: DisjointSlice<u32>) { ... }
 // PTX: .entry cluster_kernel .reqnctapercluster 4, 1, 1 { ... }
 ```
 
+### `#[cooperative_launch]`
+
+Marks a kernel for cooperative launch, the precondition for grid-wide
+barriers (`cuda_device::grid::sync()`). Must come **after** `#[kernel]`.
+Unlike `#[cluster_launch]` this changes nothing in the PTX: `#[cuda_module]`
+reads the marker and routes every generated launch method through
+`cuLaunchKernelEx` with `CU_LAUNCH_ATTRIBUTE_COOPERATIVE` set. May be
+combined with `#[cluster_launch]`; both attributes then go into the same
+`cuLaunchKernelEx` call.
+
+```rust
+#[kernel]
+#[cooperative_launch]
+pub fn grid_sync_kernel(mut out: DisjointSlice<u32>) {
+    // ... per-block work ...
+    grid::sync();
+    // ... grid-wide post-barrier work ...
+}
+```
+
 ### `#[convergent]`, `#[pure]`, `#[readonly]`
 
 Semantic markers for the codegen backend (pass-through -- no code transformation).
@@ -131,16 +153,31 @@ let (a_dev, b_dev, c_dev) = module
     .await?;
 ```
 
-## `cuda_launch!` -- Lower-Level Synchronous Kernel Launch
+## `cuda_launch!` -- Unsafe Lower-Level Synchronous Kernel Launch
+
+For kernels embedded in your own crate, use `#[cuda_module]` above: it reads
+the kernel signatures at compile time and generates typed launch methods.
+`cuda_launch!` is the unsafe escape hatch for the remaining case, modules
+loaded at runtime by name, where no compile-time signature exists to check.
+
+The macro verifies nothing about the argument list. The caller promises that
+argument count, order, and types match the kernel's actual signature and that
+pointer arguments are device-accessible; a mismatch is undefined behavior
+(the driver reads past the end of the args array, or the device dereferences
+junk). Every use must therefore sit inside an `unsafe { }` block:
 
 ```rust
-cuda_launch! {
-    kernel: vecadd,                                  // or scale::<f32> for generics
-    stream: stream,
-    module: module,
-    config: LaunchConfig::for_num_elems(N as u32),
-    cluster_dim: (4, 1, 1),                          // optional, uses launch_kernel_ex
-    args: [slice(a_dev), slice(b_dev), slice_mut(c_dev)]
+// SAFETY: argument count, order, and types match vecadd's signature;
+// all three buffers are live device allocations.
+unsafe {
+    cuda_launch! {
+        kernel: vecadd,                                  // or scale::<f32> for generics
+        stream: stream,
+        module: module,
+        config: LaunchConfig::for_num_elems(N as u32),
+        cluster_dim: (4, 1, 1),                          // optional, uses launch_kernel_ex
+        args: [slice(a_dev), slice(b_dev), slice_mut(c_dev)]
+    }
 }
 ```
 

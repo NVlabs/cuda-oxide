@@ -187,12 +187,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             $tolerance:expr
         ) => {{
             output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-            cuda_launch! {
-                kernel: $kernel,
-                stream: stream,
-                module: module,
-                config: LaunchConfig::for_num_elems(N as u32),
-                args: [$closure, slice(input_dev), slice_mut(output_dev)]
+            // SAFETY: closure-then-slices matches every kernel this matrix
+            // launches (closure env, input slice, output slice); both buffers
+            // are live DeviceBuffers and the closure's captures are
+            // host-accessible via HMM.
+            unsafe {
+                cuda_launch! {
+                    kernel: $kernel,
+                    stream: stream,
+                    module: module,
+                    config: LaunchConfig::for_num_elems(N as u32),
+                    args: [$closure, slice(input_dev), slice_mut(output_dev)]
+                }
             }?;
             let output_host = output_dev.to_host_vec(&stream)?;
             verify_output(

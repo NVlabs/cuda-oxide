@@ -129,12 +129,16 @@ fn main() {
         shared_mem_bytes: 0,
     };
 
-    cuda_launch! {
-        kernel: rl_smoke,
-        stream: stream,
-        module: module,
-        config: cfg,
-        args: [slice_mut(stage1_out), slice_mut(stage2_out)]
+    // SAFETY: two `slice_mut(..)` pairs match `rl_smoke`'s two slice
+    // parameters; both are live DeviceBuffers allocated above.
+    unsafe {
+        cuda_launch! {
+            kernel: rl_smoke,
+            stream: stream,
+            module: module,
+            config: cfg,
+            args: [slice_mut(stage1_out), slice_mut(stage2_out)]
+        }
     }
     .expect("Kernel launch failed");
 

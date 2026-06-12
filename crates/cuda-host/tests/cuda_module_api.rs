@@ -11,7 +11,7 @@ use cuda_host::cuda_async::device_box::DeviceBox;
 #[cfg(feature = "async")]
 use cuda_host::cuda_async::device_operation::DeviceOperation;
 use cuda_host::cuda_module;
-use cuda_macros::kernel;
+use cuda_macros::{cooperative_launch, kernel};
 
 #[cfg(feature = "async")]
 type TwoF32Buffers = (DeviceBox<[f32]>, DeviceBox<[f32]>);
@@ -46,6 +46,15 @@ mod kernels {
     #[kernel]
     pub unsafe fn unsafe_raw_pointer(raw: *mut f32) {
         let _ = raw;
+    }
+
+    /// `#[cooperative_launch]` routes every generated launch method through
+    /// the cooperative driver entry points; this kernel pins that the
+    /// generated sync, async, and owned-async methods still typecheck.
+    #[kernel]
+    #[cooperative_launch]
+    pub fn cooperative_grid_sync(output: &mut [u32]) {
+        let _ = output;
     }
 }
 
@@ -94,6 +103,8 @@ fn generated_methods_accept_kernel_scalar_types(
         module.unsafe_raw_pointer(stream, config, raw_mut)?;
     }
 
+    module.cooperative_grid_sync(stream, config, output_u32)?;
+
     Ok(())
 }
 
@@ -131,6 +142,9 @@ fn generated_async_methods_accept_borrowed_buffers(
         assert_unit_operation(launch);
     }
 
+    let launch = module.cooperative_grid_sync_async(config, async_output_u32)?;
+    assert_unit_operation(launch);
+
     Ok(())
 }
 
@@ -141,6 +155,7 @@ fn generated_owned_async_methods_accept_owned_buffers(
     async_input: DeviceBox<[f32]>,
     async_output: DeviceBox<[f32]>,
     async_output_u32: DeviceBox<[u32]>,
+    async_coop_output_u32: DeviceBox<[u32]>,
 ) -> Result<(), cuda_core::DriverError> {
     let params = AffineParams {
         scale: 2.0,
@@ -164,6 +179,10 @@ fn generated_owned_async_methods_accept_owned_buffers(
             module.unsafe_raw_pointer_async_owned(config, raw_mut)?;
         assert_owned_unit(launch);
     }
+
+    let launch: cuda_host::OwnedAsyncKernelLaunch<DeviceBox<[u32]>> =
+        module.cooperative_grid_sync_async_owned(config, async_coop_output_u32)?;
+    assert_owned_u32_buffer(launch);
 
     Ok(())
 }

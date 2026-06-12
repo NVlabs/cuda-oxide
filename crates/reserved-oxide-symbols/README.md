@@ -34,7 +34,7 @@ Three concentric layers, pick the one that fits the call site:
    `kernel_base_name(name) -> Option<&str>`, etc., for the consumer side.
 
 The Layer-3 helpers hide the substring matching that used to be
-duplicated across `rustc-codegen-cuda`, `dialect-llvm`, and `mir-lower`.
+duplicated across `rustc-codegen-cuda`, `llvm-export`, and `mir-lower`.
 
 ## Why "reserved"
 

@@ -44,6 +44,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = out.to_host_vec(&stream)?;
     println!("{:?}", result);
-    assert_eq!(result, vec![0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0]);
+
+    let expected = vec![0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0];
+    assert_eq!(
+        result, expected,
+        "constant_memory_simple: kernel output mismatch"
+    );
+    println!(
+        "✓ SUCCESS: constant-memory scale applied correctly ({} elements)",
+        result.len()
+    );
     Ok(())
 }

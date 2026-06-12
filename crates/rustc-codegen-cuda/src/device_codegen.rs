@@ -62,8 +62,8 @@
 //! │   │  Pipeline stages:                                                       │   │
 //! │   │    1. Rust MIR → `dialect-mir` (alloca form)                            │   │
 //! │   │    2. `dialect-mir` → `dialect-mir` (mem2reg → SSA)                     │   │
-//! │   │    3. `dialect-mir` → `dialect-llvm` (via `mir-lower`)                  │   │
-//! │   │    4. `dialect-llvm` → textual LLVM IR (.ll)                            │   │
+//! │   │    3. `dialect-mir` → LLVM dialect (via `mir-lower`)                    │   │
+//! │   │    4. LLVM dialect → textual LLVM IR (.ll)                              │   │
 //! │   │    5. LLVM IR → PTX via `llc` (.ptx)                                    │   │
 //! │   └─────────────────────────────────────────────────────────────────────────┘   │
 //! │                              │                                                  │
@@ -204,7 +204,7 @@ pub struct DeviceCodegenConfig {
     pub dump_rustc_mir: bool,
     /// Dump the `dialect-mir` module during compilation.
     pub dump_mir_dialect: bool,
-    /// Dump the `dialect-llvm` module during compilation.
+    /// Dump the LLVM dialect module during compilation.
     pub dump_llvm_dialect: bool,
 }
 
@@ -286,7 +286,7 @@ impl From<std::io::Error> for DeviceCodegenError {
 ///                     │
 ///                     ├──▶ `dialect-mir` (mem2reg → SSA)
 ///                     │
-///                     ├──▶ `dialect-llvm`
+///                     ├──▶ LLVM dialect
 ///                     │
 ///                     ├──▶ textual LLVM IR (.ll)
 ///                     │
@@ -470,7 +470,7 @@ pub fn generate_device_code<'tcx>(
         };
 
         // Run the cuda-oxide pipeline!
-        // Rust MIR → `dialect-mir` → mem2reg → `dialect-llvm` → LLVM IR → PTX.
+        // Rust MIR → `dialect-mir` → mem2reg → LLVM dialect → LLVM IR → PTX.
         // Device externs are emitted as `declare` statements in LLVM IR
         mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config)
     });

@@ -16,7 +16,7 @@
 //! | `ThreadfenceSystem` | inline PTX `membar.sys`     |
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::types as llvm_types;
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};

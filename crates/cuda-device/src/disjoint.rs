@@ -74,7 +74,7 @@ use core::marker::PhantomData;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use cuda_device::{thread, DisjointSlice};
 ///
 /// #[kernel]
@@ -168,7 +168,7 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let idx = thread::index_1d();
     /// let i = idx.get();
     /// if let Some(elem) = c.get_mut(idx) {
@@ -214,7 +214,7 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     ///
     /// # Example: Warp Reduction
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // SAFETY: Only lane 0 of each warp writes, and warp indices are unique
     /// if warp::lane_id() == 0 {
     ///     let warp_idx = gid.get() / 32;

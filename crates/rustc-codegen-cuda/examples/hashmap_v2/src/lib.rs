@@ -61,11 +61,11 @@
 
 use std::sync::Arc;
 
-use cuda_core::{CudaModule, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32, DeviceAtomicU64};
 use cuda_device::cooperative_groups::{ThreadGroup, WarpCollective, this_thread_block};
 use cuda_device::{DisjointSlice, kernel, thread, warp};
-use cuda_host::cuda_launch;
+use cuda_host::cuda_module;
 
 // =============================================================================
 // SHARED CONSTANTS AND HELPERS (compiled both host- and device-side)
@@ -211,800 +211,526 @@ pub fn unpack_value(slot: u64) -> u32 {
 // KERNELS
 // =============================================================================
 
-/// `insert_kernel` — last-writer-wins, one thread per input key.
-///
-/// Storage:
-///   - `ctrl[g]` is the `u32` packing tags for slots `g*GROUP .. g*GROUP+GROUP`.
-///   - `slots[s]` is the packed `(key, value)` for slot `s`.
-///
-/// Probe shape: triangular in `PROBE_TILE`-byte tiles. Each step
-/// examines `PROBE_TILE` consecutive tag bytes (= `PROBE_TILE / GROUP`
-/// ctrl words) starting at `probe_base`, and advances by `stride *
-/// PROBE_TILE` (with `stride += 1` per step). All four kernels — and
-/// the warp-cooperative find — share this exact shape so they walk
-/// the same sequence and EMPTY-termination remains correct.
-///
-/// Insert protocol (Protocol B, payload-first):
-///   1. Phase 1 — walk the tile ctrl word by ctrl word looking for any
-///      `FULL(h2)` tag whose slot holds our key. On match, slot-CAS
-///      overwrite the value (last-writer-wins) and return.
-///   2. Phase 2 — re-walk the tile looking for any `EMPTY_TAG` byte.
-///      For each one, try the slot CAS `EMPTY_SLOT -> pack(k, v)`.
-///      The slot CAS is the serialization point: concurrent inserts of
-///      the same key see `Err(actual)` with a matching key and
-///      degenerate to the overwrite path; concurrent inserts of
-///      *different* keys see `Err(actual)` with a mismatched key and
-///      skip past.
-///   3. After a successful slot CAS, publish via a ctrl-word CAS retry
-///      loop: `set_tag(current_word, j, FULL(h2))` on the specific
-///      ctrl word containing byte `j`. Other bytes in that word may
-///      have changed concurrently, so the loop re-reads on failure;
-///      byte `j` itself cannot change under us because no other thread
-///      can claim a slot we already own.
-///   4. No FULL(h2) match anywhere in the tile and no EMPTY_TAG to
-///      claim → triangular advance and repeat.
-#[kernel]
-pub fn insert_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
-    let tid = thread::index_1d().get();
-    if tid >= keys.len() {
-        return;
-    }
+#[cuda_module]
+pub mod kernels {
+    use super::*;
 
-    let key = keys[tid];
-    let value = values[tid];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        // Phase 1: walk the entire 32-byte tile, ctrl word by ctrl word,
-        // checking for an already-published FULL(h2) entry holding our key.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                if get_tag(word, j) == h2 {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    let observed = slot_atomic.load(AtomicOrdering::Acquire);
-                    if unpack_key(observed) == key {
-                        insert_overwrite(slot_atomic, observed, key, value);
-                        return;
-                    }
-                }
-                j += 1;
-            }
-            g += GROUP;
+    /// `insert_kernel` — last-writer-wins, one thread per input key.
+    ///
+    /// Storage:
+    ///   - `ctrl[g]` is the `u32` packing tags for slots `g*GROUP .. g*GROUP+GROUP`.
+    ///   - `slots[s]` is the packed `(key, value)` for slot `s`.
+    ///
+    /// Probe shape: triangular in `PROBE_TILE`-byte tiles. Each step
+    /// examines `PROBE_TILE` consecutive tag bytes (= `PROBE_TILE / GROUP`
+    /// ctrl words) starting at `probe_base`, and advances by `stride *
+    /// PROBE_TILE` (with `stride += 1` per step). All four kernels — and
+    /// the warp-cooperative find — share this exact shape so they walk
+    /// the same sequence and EMPTY-termination remains correct.
+    ///
+    /// Insert protocol (Protocol B, payload-first):
+    ///   1. Phase 1 — walk the tile ctrl word by ctrl word looking for any
+    ///      `FULL(h2)` tag whose slot holds our key. On match, slot-CAS
+    ///      overwrite the value (last-writer-wins) and return.
+    ///   2. Phase 2 — re-walk the tile looking for any `EMPTY_TAG` byte.
+    ///      For each one, try the slot CAS `EMPTY_SLOT -> pack(k, v)`.
+    ///      The slot CAS is the serialization point: concurrent inserts of
+    ///      the same key see `Err(actual)` with a matching key and
+    ///      degenerate to the overwrite path; concurrent inserts of
+    ///      *different* keys see `Err(actual)` with a mismatched key and
+    ///      skip past.
+    ///   3. After a successful slot CAS, publish via a ctrl-word CAS retry
+    ///      loop: `set_tag(current_word, j, FULL(h2))` on the specific
+    ///      ctrl word containing byte `j`. Other bytes in that word may
+    ///      have changed concurrently, so the loop re-reads on failure;
+    ///      byte `j` itself cannot change under us because no other thread
+    ///      can claim a slot we already own.
+    ///   4. No FULL(h2) match anywhere in the tile and no EMPTY_TAG to
+    ///      claim → triangular advance and repeat.
+    #[kernel]
+    pub fn insert_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
+        let tid = thread::index_1d().get();
+        if tid >= keys.len() {
+            return;
         }
 
-        // Phase 2: try to claim an EMPTY tag anywhere in this tile.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            // Re-read this word: another thread may have mutated it
-            // between Phase 1 and now.
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                if get_tag(word, j) == EMPTY_TAG {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    match slot_atomic.compare_exchange(
-                        EMPTY_SLOT,
-                        pack(key, value),
-                        AtomicOrdering::AcqRel,
-                        AtomicOrdering::Relaxed,
-                    ) {
-                        Ok(_) => {
-                            publish_full_tag(ctrl_atomic, word, j, h2);
+        let key = keys[tid];
+        let value = values[tid];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        loop {
+            // Phase 1: walk the entire 32-byte tile, ctrl word by ctrl word,
+            // checking for an already-published FULL(h2) entry holding our key.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                let mut j = 0;
+                while j < GROUP {
+                    if get_tag(word, j) == h2 {
+                        let slot_idx = probe_base + g + j;
+                        let slot_atomic = unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                        };
+                        let observed = slot_atomic.load(AtomicOrdering::Acquire);
+                        if unpack_key(observed) == key {
+                            insert_overwrite(slot_atomic, observed, key, value);
                             return;
                         }
-                        Err(actual) => {
-                            if unpack_key(actual) == key {
-                                insert_overwrite(slot_atomic, actual, key, value);
-                                return;
-                            }
-                            // Different key already in this slot; skip.
-                        }
                     }
+                    j += 1;
                 }
-                j += 1;
+                g += GROUP;
             }
-            g += GROUP;
-        }
 
-        // No FULL(h2) match and no claimable EMPTY in this tile: advance.
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
-
-/// `try_insert_kernel` — first-writer-wins variant.
-///
-/// Same probe / claim shape as `insert_kernel`, but on duplicate it leaves
-/// the existing slot untouched and writes per-thread output:
-///   `out[tid] = FLAG_FRESH_OR_OK (0)`  -> we claimed a fresh slot
-///   `out[tid] = FLAG_PRESENT (1)`      -> key was already in the table
-#[kernel]
-pub fn try_insert_kernel(
-    ctrl: &[u32],
-    slots: &[u64],
-    keys: &[u32],
-    values: &[u32],
-    mut out: DisjointSlice<u32>,
-) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
-    }
-
-    let key = keys[i_thread];
-    let value = values[i_thread];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        // Phase 1: published-FULL duplicate detection across the tile.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                if get_tag(word, j) == h2 {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    let observed = slot_atomic.load(AtomicOrdering::Acquire);
-                    if unpack_key(observed) == key {
-                        if let Some(o) = out.get_mut(tid) {
-                            *o = FLAG_PRESENT;
-                        }
-                        return;
-                    }
-                }
-                j += 1;
-            }
-            g += GROUP;
-        }
-
-        // Phase 2: claim an EMPTY slot.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                if get_tag(word, j) == EMPTY_TAG {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    match slot_atomic.compare_exchange(
-                        EMPTY_SLOT,
-                        pack(key, value),
-                        AtomicOrdering::AcqRel,
-                        AtomicOrdering::Relaxed,
-                    ) {
-                        Ok(_) => {
-                            publish_full_tag(ctrl_atomic, word, j, h2);
-                            if let Some(o) = out.get_mut(tid) {
-                                *o = FLAG_FRESH_OR_OK;
-                            }
-                            return;
-                        }
-                        Err(actual) => {
-                            if unpack_key(actual) == key {
-                                // Same-key race; some other thread is the
-                                // first-writer. Report PRESENT, leave slot.
-                                if let Some(o) = out.get_mut(tid) {
-                                    *o = FLAG_PRESENT;
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-                j += 1;
-            }
-            g += GROUP;
-        }
-
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
-
-/// `insert_kernel_proto_a` — last-writer-wins, Protocol A
-/// (ctrl-first / RESERVED handshake), one thread per input key.
-///
-/// Probe shape is identical to Protocol B (`PROBE_TILE = 32`,
-/// triangular advance). The protocol differs only in how a slot is
-/// claimed:
-///   1. **Phase 1** — walk the tile looking for `FULL(h2)` whose slot
-///      already holds our key; on match, take the same overwrite path
-///      as Protocol B (`insert_overwrite`).
-///   2. **Phase 2 — handshake claim**. For each `EMPTY_TAG` byte in
-///      the tile, attempt a ctrl-word CAS `EMPTY_TAG -> RESERVED_TAG`
-///      at byte `j`. On success: the slot is exclusively ours.
-///   3. **Plain release store** of `pack(k, v)` into the slot — no
-///      slot CAS needed; observers can't peek a RESERVED slot, and no
-///      other insert can claim this byte.
-///   4. **Publish** with a ctrl-word CAS retry loop
-///      `RESERVED_TAG -> FULL(h2)` at byte `j`. Same `publish_full_tag`
-///      helper as Protocol B; byte `j` is owned by us so it cannot
-///      change under the loop.
-///
-/// On a CAS collision in step 2 (someone mutated a different byte of
-/// the same word), re-read the word and re-scan it before moving on.
-///
-/// Duplicate-key races within a single launch: two threads inserting
-/// the same key in the same launch may each win the handshake at
-/// different bytes and publish two slots holding that key. The
-/// resulting state is internally consistent (every find walks the
-/// probe in the same order and returns the first published slot it
-/// hits), but it is NOT single-occurrence. Across kernel launches
-/// the stream-sync release-acquire boundary publishes earlier inserts
-/// before Phase 1 of a later launch reads, so cross-launch dedup is
-/// correct.
-#[kernel]
-pub fn insert_kernel_proto_a(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
-    let tid = thread::index_1d().get();
-    if tid >= keys.len() {
-        return;
-    }
-
-    let key = keys[tid];
-    let value = values[tid];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        // Phase 1: scan the tile for an already-published FULL(h2)
-        // entry whose slot key matches ours. If found, take the
-        // overwrite path. RESERVED bytes naturally fall through here
-        // (top bit set, won't equal h2).
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                if get_tag(word, j) == h2 {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    let observed = slot_atomic.load(AtomicOrdering::Acquire);
-                    if unpack_key(observed) == key {
-                        insert_overwrite(slot_atomic, observed, key, value);
-                        return;
-                    }
-                }
-                j += 1;
-            }
-            g += GROUP;
-        }
-
-        // Phase 2: walk the tile word by word; for each word, try to
-        // claim the first EMPTY byte via EMPTY_TAG -> RESERVED_TAG CAS.
-        // CAS collisions on a different byte of the same word force a
-        // re-read of that word.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            'word: loop {
+            // Phase 2: try to claim an EMPTY tag anywhere in this tile.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                // Re-read this word: another thread may have mutated it
+                // between Phase 1 and now.
                 let word = ctrl_atomic.load(AtomicOrdering::Acquire);
                 let mut j = 0;
                 while j < GROUP {
                     if get_tag(word, j) == EMPTY_TAG {
-                        let claimed = set_tag(word, j, RESERVED_TAG);
-                        match ctrl_atomic.compare_exchange(
-                            word,
-                            claimed,
+                        let slot_idx = probe_base + g + j;
+                        let slot_atomic = unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                        };
+                        match slot_atomic.compare_exchange(
+                            EMPTY_SLOT,
+                            pack(key, value),
                             AtomicOrdering::AcqRel,
                             AtomicOrdering::Relaxed,
                         ) {
                             Ok(_) => {
-                                // We exclusively own slot (probe_base + g + j).
-                                // Plain release store: no observer can load
-                                // the slot until we publish FULL(h2), and no
-                                // concurrent inserter can race the byte.
-                                let slot_idx = probe_base + g + j;
-                                let slot_atomic = unsafe {
-                                    DeviceAtomicU64::from_ptr(
-                                        slots.as_ptr().add(slot_idx).cast_mut(),
-                                    )
-                                };
-                                slot_atomic.store(pack(key, value), AtomicOrdering::Release);
-                                publish_full_tag(ctrl_atomic, claimed, j, h2);
+                                publish_full_tag(ctrl_atomic, word, j, h2);
                                 return;
                             }
-                            Err(_) => {
-                                continue 'word;
+                            Err(actual) => {
+                                if unpack_key(actual) == key {
+                                    insert_overwrite(slot_atomic, actual, key, value);
+                                    return;
+                                }
+                                // Different key already in this slot; skip.
                             }
                         }
                     }
                     j += 1;
                 }
-                // Word fully scanned, no EMPTY remains. Move on.
-                break 'word;
+                g += GROUP;
             }
-            g += GROUP;
+
+            // No FULL(h2) match and no claimable EMPTY in this tile: advance.
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `try_insert_kernel` — first-writer-wins variant.
+    ///
+    /// Same probe / claim shape as `insert_kernel`, but on duplicate it leaves
+    /// the existing slot untouched and writes per-thread output:
+    ///   `out[tid] = FLAG_FRESH_OR_OK (0)`  -> we claimed a fresh slot
+    ///   `out[tid] = FLAG_PRESENT (1)`      -> key was already in the table
+    #[kernel]
+    pub fn try_insert_kernel(
+        ctrl: &[u32],
+        slots: &[u64],
+        keys: &[u32],
+        values: &[u32],
+        mut out: DisjointSlice<u32>,
+    ) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
         }
 
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
+        let key = keys[i_thread];
+        let value = values[i_thread];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
 
-/// `try_insert_kernel_proto_a` — first-writer-wins, Protocol A.
-///
-/// Same probe / claim shape as `insert_kernel_proto_a`. Differences:
-///   - On Phase 1 hit (key already published), writes
-///     `FLAG_PRESENT (1)` and returns without touching the slot.
-///   - On successful handshake claim and publish, writes
-///     `FLAG_FRESH_OR_OK (0)`.
-///
-/// Same single-launch duplicate-key caveat as `insert_kernel_proto_a`:
-/// two threads racing on the same key in the same launch may each
-/// publish a slot. The first slot encountered in probe order then
-/// shadows the second; both threads will report `FRESH` (each thinks
-/// it claimed first). Use `insert_kernel` (Protocol B) when strict
-/// single-launch first-writer dedup is required.
-#[kernel]
-pub fn try_insert_kernel_proto_a(
-    ctrl: &[u32],
-    slots: &[u64],
-    keys: &[u32],
-    values: &[u32],
-    mut out: DisjointSlice<u32>,
-) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
-    }
-
-    let key = keys[i_thread];
-    let value = values[i_thread];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        // Phase 1: published-FULL duplicate detection across the tile.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                if get_tag(word, j) == h2 {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    let observed = slot_atomic.load(AtomicOrdering::Acquire);
-                    if unpack_key(observed) == key {
-                        if let Some(o) = out.get_mut(tid) {
-                            *o = FLAG_PRESENT;
+        loop {
+            // Phase 1: published-FULL duplicate detection across the tile.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                let mut j = 0;
+                while j < GROUP {
+                    if get_tag(word, j) == h2 {
+                        let slot_idx = probe_base + g + j;
+                        let slot_atomic = unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                        };
+                        let observed = slot_atomic.load(AtomicOrdering::Acquire);
+                        if unpack_key(observed) == key {
+                            if let Some(o) = out.get_mut(tid) {
+                                *o = FLAG_PRESENT;
+                            }
+                            return;
                         }
-                        return;
                     }
+                    j += 1;
                 }
-                j += 1;
+                g += GROUP;
             }
-            g += GROUP;
-        }
 
-        // Phase 2: handshake claim with per-word retry.
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            'word: loop {
+            // Phase 2: claim an EMPTY slot.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
                 let word = ctrl_atomic.load(AtomicOrdering::Acquire);
                 let mut j = 0;
                 while j < GROUP {
                     if get_tag(word, j) == EMPTY_TAG {
-                        let claimed = set_tag(word, j, RESERVED_TAG);
-                        match ctrl_atomic.compare_exchange(
-                            word,
-                            claimed,
+                        let slot_idx = probe_base + g + j;
+                        let slot_atomic = unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                        };
+                        match slot_atomic.compare_exchange(
+                            EMPTY_SLOT,
+                            pack(key, value),
                             AtomicOrdering::AcqRel,
                             AtomicOrdering::Relaxed,
                         ) {
                             Ok(_) => {
-                                let slot_idx = probe_base + g + j;
-                                let slot_atomic = unsafe {
-                                    DeviceAtomicU64::from_ptr(
-                                        slots.as_ptr().add(slot_idx).cast_mut(),
-                                    )
-                                };
-                                slot_atomic.store(pack(key, value), AtomicOrdering::Release);
-                                publish_full_tag(ctrl_atomic, claimed, j, h2);
+                                publish_full_tag(ctrl_atomic, word, j, h2);
                                 if let Some(o) = out.get_mut(tid) {
                                     *o = FLAG_FRESH_OR_OK;
                                 }
                                 return;
                             }
-                            Err(_) => continue 'word,
+                            Err(actual) => {
+                                if unpack_key(actual) == key {
+                                    // Same-key race; some other thread is the
+                                    // first-writer. Report PRESENT, leave slot.
+                                    if let Some(o) = out.get_mut(tid) {
+                                        *o = FLAG_PRESENT;
+                                    }
+                                    return;
+                                }
+                            }
                         }
                     }
                     j += 1;
                 }
-                break 'word;
+                g += GROUP;
             }
-            g += GROUP;
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
         }
-
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
-
-/// `find_kernel` — single-thread find, one thread per key.
-///
-/// Walks the same triangular probe sequence as the insert kernels (same
-/// `PROBE_TILE = 32` width), so EMPTY-termination is sound — see
-/// `find_kernel_warp` below for why probe-width coherence matters.
-///
-/// At each tile (32 consecutive tag bytes):
-///   - For every byte tagged `FULL(h2)` matching our key's fingerprint,
-///     load the slot and key-compare; on match return the value.
-///   - If any byte in the tile is `EMPTY_TAG`, the key cannot live past
-///     this point in its triangular chain (insert would have stopped
-///     at this same EMPTY), so return `MISS`.
-///   - Otherwise (tile holds only FULL-mismatch + DELETED), triangular
-///     advance and repeat. DELETED never terminates find.
-#[kernel]
-pub fn find_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
     }
 
-    let key = keys[i_thread];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        let mut g = 0usize;
-        let mut has_empty = false;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-            let word = ctrl_atomic.load(AtomicOrdering::Acquire);
-            let mut j = 0;
-            while j < GROUP {
-                let tag = get_tag(word, j);
-                if tag == h2 {
-                    let slot_idx = probe_base + g + j;
-                    let slot_atomic = unsafe {
-                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                    };
-                    let observed = slot_atomic.load(AtomicOrdering::Acquire);
-                    if unpack_key(observed) == key {
-                        if let Some(o) = out.get_mut(tid) {
-                            *o = unpack_value(observed);
-                        }
-                        return;
-                    }
-                } else if tag == EMPTY_TAG {
-                    has_empty = true;
-                }
-                j += 1;
-            }
-            g += GROUP;
-        }
-
-        if has_empty {
-            if let Some(o) = out.get_mut(tid) {
-                *o = MISS;
-            }
+    /// `insert_kernel_proto_a` — last-writer-wins, Protocol A
+    /// (ctrl-first / RESERVED handshake), one thread per input key.
+    ///
+    /// Probe shape is identical to Protocol B (`PROBE_TILE = 32`,
+    /// triangular advance). The protocol differs only in how a slot is
+    /// claimed:
+    ///   1. **Phase 1** — walk the tile looking for `FULL(h2)` whose slot
+    ///      already holds our key; on match, take the same overwrite path
+    ///      as Protocol B (`insert_overwrite`).
+    ///   2. **Phase 2 — handshake claim**. For each `EMPTY_TAG` byte in
+    ///      the tile, attempt a ctrl-word CAS `EMPTY_TAG -> RESERVED_TAG`
+    ///      at byte `j`. On success: the slot is exclusively ours.
+    ///   3. **Plain release store** of `pack(k, v)` into the slot — no
+    ///      slot CAS needed; observers can't peek a RESERVED slot, and no
+    ///      other insert can claim this byte.
+    ///   4. **Publish** with a ctrl-word CAS retry loop
+    ///      `RESERVED_TAG -> FULL(h2)` at byte `j`. Same `publish_full_tag`
+    ///      helper as Protocol B; byte `j` is owned by us so it cannot
+    ///      change under the loop.
+    ///
+    /// On a CAS collision in step 2 (someone mutated a different byte of
+    /// the same word), re-read the word and re-scan it before moving on.
+    ///
+    /// Duplicate-key races within a single launch: two threads inserting
+    /// the same key in the same launch may each win the handshake at
+    /// different bytes and publish two slots holding that key. The
+    /// resulting state is internally consistent (every find walks the
+    /// probe in the same order and returns the first published slot it
+    /// hits), but it is NOT single-occurrence. Across kernel launches
+    /// the stream-sync release-acquire boundary publishes earlier inserts
+    /// before Phase 1 of a later launch reads, so cross-launch dedup is
+    /// correct.
+    #[kernel]
+    pub fn insert_kernel_proto_a(ctrl: &[u32], slots: &[u64], keys: &[u32], values: &[u32]) {
+        let tid = thread::index_1d().get();
+        if tid >= keys.len() {
             return;
         }
 
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
+        let key = keys[tid];
+        let value = values[tid];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
 
-/// `find_kernel_warp` — warp-cooperative find, one warp (32 lanes) per key.
-///
-/// Each probe step pulls 32 tag bytes (= `PROBE_TILE`) into the warp via a
-/// single coalesced ctrl load: lanes 0..3 share `ctrl[probe_base/4 + 0]`,
-/// lanes 4..7 share `+1`, ..., lanes 28..31 share `+7`. Each lane then
-/// extracts its byte and the warp uses ballot/shuffle to:
-///   1. `m_h2 = ballot(tag == h2)` — a 32-bit fingerprint match mask.
-///   2. For each set bit in `m_h2` (lowest first), the matching lane
-///      loads its slot, broadcasts the packed `(key, value)` via two
-///      `shuffle`s (one per `u32` half), and all lanes key-compare.
-///      On hit, lane 0 writes `out[warp_idx] = value` and the warp returns.
-///   3. `m_empty = ballot(tag == EMPTY_TAG)` — if non-zero, the key
-///      cannot live past an EMPTY in this hash chain; lane 0 writes MISS.
-///   4. Otherwise, triangular advance `probe_base` by `stride * PROBE_TILE`
-///      and repeat.
-///
-/// Launch with `blockDim.x` a multiple of 32; the host driver does
-/// `LaunchConfig::for_num_elems(keys.len() * 32)` so each warp receives
-/// exactly one key. DELETED tags are skipped (they don't terminate the
-/// probe), same as the single-thread `find_kernel`.
-#[kernel]
-pub fn find_kernel_warp(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
-    let lane = warp::lane_id();
-    let global_tid = thread::index_1d().get();
-    let warp_idx = global_tid / PROBE_TILE;
-    if warp_idx >= keys.len() {
-        return;
-    }
-
-    let key = keys[warp_idx];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        // Each lane owns exactly one tag byte at (probe_base + lane).
-        let tag_pos = probe_base + (lane as usize);
-        let ctrl_word_idx = tag_pos / GROUP;
-        let byte_in_word = tag_pos % GROUP;
-        let word = unsafe {
-            DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
-                .load(AtomicOrdering::Acquire)
-        };
-        let tag: u8 = ((word >> (8 * byte_in_word)) & 0xFF) as u8;
-
-        let mut m_h2 = warp::ballot(tag == h2);
-        let m_empty = warp::ballot(tag == EMPTY_TAG);
-
-        // Walk h2 candidates lowest-bit-first.
-        while m_h2 != 0 {
-            let cand = m_h2.trailing_zeros();
-            // Only the candidate lane materializes the slot; others feed
-            // a dummy value into shuffle. The shuffle's source is `cand`
-            // so all lanes converge on the candidate's slot value.
-            let local_slot: u64 = if lane == cand {
-                let slot_idx = probe_base + (cand as usize);
-                unsafe {
-                    DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                        .load(AtomicOrdering::Acquire)
-                }
-            } else {
-                0
-            };
-            // cuda-oxide's warp::shuffle is u32-only, so broadcast the
-            // packed slot in two halves and reassemble.
-            let lo = warp::shuffle(local_slot as u32, cand);
-            let hi = warp::shuffle((local_slot >> 32) as u32, cand);
-            let observed: u64 = ((hi as u64) << 32) | (lo as u64);
-
-            if unpack_key(observed) == key {
-                if lane == 0 {
-                    // SAFETY: warp_idx < keys.len() == out.len(), and
-                    // each warp has a unique warp_idx so writes by lane
-                    // 0 across warps are disjoint.
-                    unsafe {
-                        *out.get_unchecked_mut(warp_idx) = unpack_value(observed);
-                    }
-                }
-                return;
-            }
-            m_h2 &= m_h2 - 1;
-        }
-
-        if m_empty != 0 {
-            if lane == 0 {
-                // SAFETY: same uniqueness argument as above.
-                unsafe {
-                    *out.get_unchecked_mut(warp_idx) = MISS;
-                }
-            }
-            return;
-        }
-
-        // Triangular advance in tile units. Both operands are
-        // PROBE_TILE-aligned, so the sum stays aligned and `& mask`
-        // keeps it in [0, N).
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
-
-/// `find_kernel_warp_typed` — `find_kernel_warp` rewritten on the typed
-/// cooperative-groups API.
-///
-/// Identical algorithm to `find_kernel_warp`; the only differences are:
-///
-/// - `warp::lane_id()`               -> `tile.thread_rank()`
-/// - `warp::ballot(p)`               -> `tile.ballot(p)`
-/// - `warp::shuffle(v, src)`         -> `tile.shfl(v, src)`
-///
-/// where `tile = this_thread_block().tiled_partition::<32>()`.
-///
-/// The emitted *instruction* under each typed call is byte-identical
-/// to the raw form (one `vote.sync.ballot.b32` or one
-/// `shfl.sync.idx.b32`), but at the time of writing each typed
-/// wrapper is large enough to clear rustc's MIR `Inline` cost
-/// threshold and ends up as its own `.visible .func`. The four typed
-/// sites in the inner probe loop (`tile.ballot ×2`, `tile.shfl ×2`)
-/// therefore add four `call.uni` round-trips per probe step, which
-/// the bench binary measures at ~12–17 % runtime overhead vs the
-/// raw kernel.
-#[kernel]
-pub fn find_kernel_warp_typed(
-    ctrl: &[u32],
-    slots: &[u64],
-    keys: &[u32],
-    mut out: DisjointSlice<u32>,
-) {
-    let block = this_thread_block();
-    let tile = block.tiled_partition::<32>();
-
-    let lane = tile.thread_rank();
-    let global_tid = thread::index_1d().get();
-    let warp_idx = global_tid / PROBE_TILE;
-    if warp_idx >= keys.len() {
-        return;
-    }
-
-    let key = keys[warp_idx];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    loop {
-        let tag_pos = probe_base + (lane as usize);
-        let ctrl_word_idx = tag_pos / GROUP;
-        let byte_in_word = tag_pos % GROUP;
-        let word = unsafe {
-            DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
-                .load(AtomicOrdering::Acquire)
-        };
-        let tag: u8 = ((word >> (8 * byte_in_word)) & 0xFF) as u8;
-
-        let mut m_h2 = tile.ballot(tag == h2);
-        let m_empty = tile.ballot(tag == EMPTY_TAG);
-
-        while m_h2 != 0 {
-            let cand = m_h2.trailing_zeros();
-            let local_slot: u64 = if lane == cand {
-                let slot_idx = probe_base + (cand as usize);
-                unsafe {
-                    DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
-                        .load(AtomicOrdering::Acquire)
-                }
-            } else {
-                0
-            };
-            let lo = tile.shfl(local_slot as u32, cand);
-            let hi = tile.shfl((local_slot >> 32) as u32, cand);
-            let observed: u64 = ((hi as u64) << 32) | (lo as u64);
-
-            if unpack_key(observed) == key {
-                if lane == 0 {
-                    // SAFETY: warp_idx < keys.len() == out.len(), and
-                    // each warp has a unique warp_idx so writes by lane
-                    // 0 across warps are disjoint.
-                    unsafe {
-                        *out.get_unchecked_mut(warp_idx) = unpack_value(observed);
-                    }
-                }
-                return;
-            }
-            m_h2 &= m_h2 - 1;
-        }
-
-        if m_empty != 0 {
-            if lane == 0 {
-                // SAFETY: same uniqueness argument as above.
-                unsafe {
-                    *out.get_unchecked_mut(warp_idx) = MISS;
-                }
-            }
-            return;
-        }
-
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-    }
-}
-
-/// `delete_kernel` — tombstone the slot for each input key.
-///
-/// One thread per key. Probes the same `PROBE_TILE`-wide triangular
-/// sequence as insert and find. When it locates the key it CAS-flips
-/// the byte in the containing ctrl word from `FULL(h2)` to
-/// `DELETED_TAG`. The `(key, value)` payload is **not** cleared:
-/// readers only ever materialize slots whose tag is `FULL(h2)`, so a
-/// stale slot under a `DELETED` tag is unreachable.
-///
-/// The CAS targets the specific ctrl word containing the matching tag
-/// byte (not "the group's word" — there are now `PROBE_TILE / GROUP`
-/// ctrl words per tile). On CAS failure (some other thread mutated
-/// this word), the inner loop re-reads and re-scans this word before
-/// moving on to the next word in the tile.
-///
-/// Output:
-///   `out[tid] = FLAG_FRESH_OR_OK (0)` -> deleted successfully
-///   `out[tid] = FLAG_PRESENT (1)`     -> key was not in the table
-#[kernel]
-pub fn delete_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i_thread = tid_raw;
-    if i_thread >= keys.len() {
-        return;
-    }
-
-    let key = keys[i_thread];
-    let hash = hash_u32(key);
-    let h2 = h2_from_hash(hash);
-    let mask = slots.len() - 1;
-    let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
-    let mut stride = 0usize;
-
-    'tile: loop {
-        let mut has_empty = false;
-        let mut g = 0usize;
-        while g < PROBE_TILE {
-            let ctrl_word_idx = (probe_base + g) / GROUP;
-            let ctrl_atomic =
-                unsafe { DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut()) };
-
-            // Per-word retry loop: if our CAS to flip a tag to DELETED
-            // fails because someone else mutated this same word, re-read
-            // and re-scan this word.
-            loop {
+        loop {
+            // Phase 1: scan the tile for an already-published FULL(h2)
+            // entry whose slot key matches ours. If found, take the
+            // overwrite path. RESERVED bytes naturally fall through here
+            // (top bit set, won't equal h2).
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
                 let word = ctrl_atomic.load(AtomicOrdering::Acquire);
                 let mut j = 0;
-                let mut cas_collided = false;
+                while j < GROUP {
+                    if get_tag(word, j) == h2 {
+                        let slot_idx = probe_base + g + j;
+                        let slot_atomic = unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                        };
+                        let observed = slot_atomic.load(AtomicOrdering::Acquire);
+                        if unpack_key(observed) == key {
+                            insert_overwrite(slot_atomic, observed, key, value);
+                            return;
+                        }
+                    }
+                    j += 1;
+                }
+                g += GROUP;
+            }
+
+            // Phase 2: walk the tile word by word; for each word, try to
+            // claim the first EMPTY byte via EMPTY_TAG -> RESERVED_TAG CAS.
+            // CAS collisions on a different byte of the same word force a
+            // re-read of that word.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                'word: loop {
+                    let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                    let mut j = 0;
+                    while j < GROUP {
+                        if get_tag(word, j) == EMPTY_TAG {
+                            let claimed = set_tag(word, j, RESERVED_TAG);
+                            match ctrl_atomic.compare_exchange(
+                                word,
+                                claimed,
+                                AtomicOrdering::AcqRel,
+                                AtomicOrdering::Relaxed,
+                            ) {
+                                Ok(_) => {
+                                    // We exclusively own slot (probe_base + g + j).
+                                    // Plain release store: no observer can load
+                                    // the slot until we publish FULL(h2), and no
+                                    // concurrent inserter can race the byte.
+                                    let slot_idx = probe_base + g + j;
+                                    let slot_atomic = unsafe {
+                                        DeviceAtomicU64::from_ptr(
+                                            slots.as_ptr().add(slot_idx).cast_mut(),
+                                        )
+                                    };
+                                    slot_atomic.store(pack(key, value), AtomicOrdering::Release);
+                                    publish_full_tag(ctrl_atomic, claimed, j, h2);
+                                    return;
+                                }
+                                Err(_) => {
+                                    continue 'word;
+                                }
+                            }
+                        }
+                        j += 1;
+                    }
+                    // Word fully scanned, no EMPTY remains. Move on.
+                    break 'word;
+                }
+                g += GROUP;
+            }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `try_insert_kernel_proto_a` — first-writer-wins, Protocol A.
+    ///
+    /// Same probe / claim shape as `insert_kernel_proto_a`. Differences:
+    ///   - On Phase 1 hit (key already published), writes
+    ///     `FLAG_PRESENT (1)` and returns without touching the slot.
+    ///   - On successful handshake claim and publish, writes
+    ///     `FLAG_FRESH_OR_OK (0)`.
+    ///
+    /// Same single-launch duplicate-key caveat as `insert_kernel_proto_a`:
+    /// two threads racing on the same key in the same launch may each
+    /// publish a slot. The first slot encountered in probe order then
+    /// shadows the second; both threads will report `FRESH` (each thinks
+    /// it claimed first). Use `insert_kernel` (Protocol B) when strict
+    /// single-launch first-writer dedup is required.
+    #[kernel]
+    pub fn try_insert_kernel_proto_a(
+        ctrl: &[u32],
+        slots: &[u64],
+        keys: &[u32],
+        values: &[u32],
+        mut out: DisjointSlice<u32>,
+    ) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
+        }
+
+        let key = keys[i_thread];
+        let value = values[i_thread];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        loop {
+            // Phase 1: published-FULL duplicate detection across the tile.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                let mut j = 0;
+                while j < GROUP {
+                    if get_tag(word, j) == h2 {
+                        let slot_idx = probe_base + g + j;
+                        let slot_atomic = unsafe {
+                            DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                        };
+                        let observed = slot_atomic.load(AtomicOrdering::Acquire);
+                        if unpack_key(observed) == key {
+                            if let Some(o) = out.get_mut(tid) {
+                                *o = FLAG_PRESENT;
+                            }
+                            return;
+                        }
+                    }
+                    j += 1;
+                }
+                g += GROUP;
+            }
+
+            // Phase 2: handshake claim with per-word retry.
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                'word: loop {
+                    let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                    let mut j = 0;
+                    while j < GROUP {
+                        if get_tag(word, j) == EMPTY_TAG {
+                            let claimed = set_tag(word, j, RESERVED_TAG);
+                            match ctrl_atomic.compare_exchange(
+                                word,
+                                claimed,
+                                AtomicOrdering::AcqRel,
+                                AtomicOrdering::Relaxed,
+                            ) {
+                                Ok(_) => {
+                                    let slot_idx = probe_base + g + j;
+                                    let slot_atomic = unsafe {
+                                        DeviceAtomicU64::from_ptr(
+                                            slots.as_ptr().add(slot_idx).cast_mut(),
+                                        )
+                                    };
+                                    slot_atomic.store(pack(key, value), AtomicOrdering::Release);
+                                    publish_full_tag(ctrl_atomic, claimed, j, h2);
+                                    if let Some(o) = out.get_mut(tid) {
+                                        *o = FLAG_FRESH_OR_OK;
+                                    }
+                                    return;
+                                }
+                                Err(_) => continue 'word,
+                            }
+                        }
+                        j += 1;
+                    }
+                    break 'word;
+                }
+                g += GROUP;
+            }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `find_kernel` — single-thread find, one thread per key.
+    ///
+    /// Walks the same triangular probe sequence as the insert kernels (same
+    /// `PROBE_TILE = 32` width), so EMPTY-termination is sound — see
+    /// `find_kernel_warp` below for why probe-width coherence matters.
+    ///
+    /// At each tile (32 consecutive tag bytes):
+    ///   - For every byte tagged `FULL(h2)` matching our key's fingerprint,
+    ///     load the slot and key-compare; on match return the value.
+    ///   - If any byte in the tile is `EMPTY_TAG`, the key cannot live past
+    ///     this point in its triangular chain (insert would have stopped
+    ///     at this same EMPTY), so return `MISS`.
+    ///   - Otherwise (tile holds only FULL-mismatch + DELETED), triangular
+    ///     advance and repeat. DELETED never terminates find.
+    #[kernel]
+    pub fn find_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
+        }
+
+        let key = keys[i_thread];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        loop {
+            let mut g = 0usize;
+            let mut has_empty = false;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+                let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                let mut j = 0;
                 while j < GROUP {
                     let tag = get_tag(word, j);
                     if tag == h2 {
@@ -1014,48 +740,342 @@ pub fn delete_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: Disjoin
                         };
                         let observed = slot_atomic.load(AtomicOrdering::Acquire);
                         if unpack_key(observed) == key {
-                            let new_word = set_tag(word, j, DELETED_TAG);
-                            match ctrl_atomic.compare_exchange(
-                                word,
-                                new_word,
-                                AtomicOrdering::AcqRel,
-                                AtomicOrdering::Relaxed,
-                            ) {
-                                Ok(_) => {
-                                    if let Some(o) = out.get_mut(tid) {
-                                        *o = FLAG_FRESH_OR_OK;
-                                    }
-                                    return;
-                                }
-                                Err(_) => {
-                                    cas_collided = true;
-                                    break;
-                                }
+                            if let Some(o) = out.get_mut(tid) {
+                                *o = unpack_value(observed);
                             }
+                            return;
                         }
                     } else if tag == EMPTY_TAG {
                         has_empty = true;
                     }
                     j += 1;
                 }
-                if !cas_collided {
-                    break; // word fully scanned; move to next word in the tile
-                }
-                // else: retry this same word with a freshly-loaded view.
+                g += GROUP;
             }
-            g += GROUP;
-        }
 
-        if has_empty {
-            if let Some(o) = out.get_mut(tid) {
-                *o = FLAG_PRESENT;
+            if has_empty {
+                if let Some(o) = out.get_mut(tid) {
+                    *o = MISS;
+                }
+                return;
             }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `find_kernel_warp` — warp-cooperative find, one warp (32 lanes) per key.
+    ///
+    /// Each probe step pulls 32 tag bytes (= `PROBE_TILE`) into the warp via a
+    /// single coalesced ctrl load: lanes 0..3 share `ctrl[probe_base/4 + 0]`,
+    /// lanes 4..7 share `+1`, ..., lanes 28..31 share `+7`. Each lane then
+    /// extracts its byte and the warp uses ballot/shuffle to:
+    ///   1. `m_h2 = ballot(tag == h2)` — a 32-bit fingerprint match mask.
+    ///   2. For each set bit in `m_h2` (lowest first), the matching lane
+    ///      loads its slot, broadcasts the packed `(key, value)` via two
+    ///      `shuffle`s (one per `u32` half), and all lanes key-compare.
+    ///      On hit, lane 0 writes `out[warp_idx] = value` and the warp returns.
+    ///   3. `m_empty = ballot(tag == EMPTY_TAG)` — if non-zero, the key
+    ///      cannot live past an EMPTY in this hash chain; lane 0 writes MISS.
+    ///   4. Otherwise, triangular advance `probe_base` by `stride * PROBE_TILE`
+    ///      and repeat.
+    ///
+    /// Launch with `blockDim.x` a multiple of 32; the host driver does
+    /// `LaunchConfig::for_num_elems(keys.len() * 32)` so each warp receives
+    /// exactly one key. DELETED tags are skipped (they don't terminate the
+    /// probe), same as the single-thread `find_kernel`.
+    #[kernel]
+    pub fn find_kernel_warp(
+        ctrl: &[u32],
+        slots: &[u64],
+        keys: &[u32],
+        mut out: DisjointSlice<u32>,
+    ) {
+        let lane = warp::lane_id();
+        let global_tid = thread::index_1d().get();
+        let warp_idx = global_tid / PROBE_TILE;
+        if warp_idx >= keys.len() {
             return;
         }
 
-        stride += 1;
-        probe_base = (probe_base + stride * PROBE_TILE) & mask;
-        continue 'tile;
+        let key = keys[warp_idx];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        loop {
+            // Each lane owns exactly one tag byte at (probe_base + lane).
+            let tag_pos = probe_base + (lane as usize);
+            let ctrl_word_idx = tag_pos / GROUP;
+            let byte_in_word = tag_pos % GROUP;
+            let word = unsafe {
+                DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                    .load(AtomicOrdering::Acquire)
+            };
+            let tag: u8 = ((word >> (8 * byte_in_word)) & 0xFF) as u8;
+
+            let mut m_h2 = warp::ballot(tag == h2);
+            let m_empty = warp::ballot(tag == EMPTY_TAG);
+
+            // Walk h2 candidates lowest-bit-first.
+            while m_h2 != 0 {
+                let cand = m_h2.trailing_zeros();
+                // Only the candidate lane materializes the slot; others feed
+                // a dummy value into shuffle. The shuffle's source is `cand`
+                // so all lanes converge on the candidate's slot value.
+                let local_slot: u64 = if lane == cand {
+                    let slot_idx = probe_base + (cand as usize);
+                    unsafe {
+                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                            .load(AtomicOrdering::Acquire)
+                    }
+                } else {
+                    0
+                };
+                // cuda-oxide's warp::shuffle is u32-only, so broadcast the
+                // packed slot in two halves and reassemble.
+                let lo = warp::shuffle(local_slot as u32, cand);
+                let hi = warp::shuffle((local_slot >> 32) as u32, cand);
+                let observed: u64 = ((hi as u64) << 32) | (lo as u64);
+
+                if unpack_key(observed) == key {
+                    if lane == 0 {
+                        // SAFETY: warp_idx < keys.len() == out.len(), and
+                        // each warp has a unique warp_idx so writes by lane
+                        // 0 across warps are disjoint.
+                        unsafe {
+                            *out.get_unchecked_mut(warp_idx) = unpack_value(observed);
+                        }
+                    }
+                    return;
+                }
+                m_h2 &= m_h2 - 1;
+            }
+
+            if m_empty != 0 {
+                if lane == 0 {
+                    // SAFETY: same uniqueness argument as above.
+                    unsafe {
+                        *out.get_unchecked_mut(warp_idx) = MISS;
+                    }
+                }
+                return;
+            }
+
+            // Triangular advance in tile units. Both operands are
+            // PROBE_TILE-aligned, so the sum stays aligned and `& mask`
+            // keeps it in [0, N).
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `find_kernel_warp_typed` — `find_kernel_warp` rewritten on the typed
+    /// cooperative-groups API.
+    ///
+    /// Identical algorithm to `find_kernel_warp`; the only differences are:
+    ///
+    /// - `warp::lane_id()`               -> `tile.thread_rank()`
+    /// - `warp::ballot(p)`               -> `tile.ballot(p)`
+    /// - `warp::shuffle(v, src)`         -> `tile.shfl(v, src)`
+    ///
+    /// where `tile = this_thread_block().tiled_partition::<32>()`.
+    ///
+    /// The emitted *instruction* under each typed call is byte-identical
+    /// to the raw form (one `vote.sync.ballot.b32` or one
+    /// `shfl.sync.idx.b32`), but at the time of writing each typed
+    /// wrapper is large enough to clear rustc's MIR `Inline` cost
+    /// threshold and ends up as its own `.visible .func`. The four typed
+    /// sites in the inner probe loop (`tile.ballot ×2`, `tile.shfl ×2`)
+    /// therefore add four `call.uni` round-trips per probe step, which
+    /// the bench binary measures at ~12–17 % runtime overhead vs the
+    /// raw kernel.
+    #[kernel]
+    pub fn find_kernel_warp_typed(
+        ctrl: &[u32],
+        slots: &[u64],
+        keys: &[u32],
+        mut out: DisjointSlice<u32>,
+    ) {
+        let block = this_thread_block();
+        let tile = block.tiled_partition::<32>();
+
+        let lane = tile.thread_rank();
+        let global_tid = thread::index_1d().get();
+        let warp_idx = global_tid / PROBE_TILE;
+        if warp_idx >= keys.len() {
+            return;
+        }
+
+        let key = keys[warp_idx];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        loop {
+            let tag_pos = probe_base + (lane as usize);
+            let ctrl_word_idx = tag_pos / GROUP;
+            let byte_in_word = tag_pos % GROUP;
+            let word = unsafe {
+                DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                    .load(AtomicOrdering::Acquire)
+            };
+            let tag: u8 = ((word >> (8 * byte_in_word)) & 0xFF) as u8;
+
+            let mut m_h2 = tile.ballot(tag == h2);
+            let m_empty = tile.ballot(tag == EMPTY_TAG);
+
+            while m_h2 != 0 {
+                let cand = m_h2.trailing_zeros();
+                let local_slot: u64 = if lane == cand {
+                    let slot_idx = probe_base + (cand as usize);
+                    unsafe {
+                        DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                            .load(AtomicOrdering::Acquire)
+                    }
+                } else {
+                    0
+                };
+                let lo = tile.shfl(local_slot as u32, cand);
+                let hi = tile.shfl((local_slot >> 32) as u32, cand);
+                let observed: u64 = ((hi as u64) << 32) | (lo as u64);
+
+                if unpack_key(observed) == key {
+                    if lane == 0 {
+                        // SAFETY: warp_idx < keys.len() == out.len(), and
+                        // each warp has a unique warp_idx so writes by lane
+                        // 0 across warps are disjoint.
+                        unsafe {
+                            *out.get_unchecked_mut(warp_idx) = unpack_value(observed);
+                        }
+                    }
+                    return;
+                }
+                m_h2 &= m_h2 - 1;
+            }
+
+            if m_empty != 0 {
+                if lane == 0 {
+                    // SAFETY: same uniqueness argument as above.
+                    unsafe {
+                        *out.get_unchecked_mut(warp_idx) = MISS;
+                    }
+                }
+                return;
+            }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+        }
+    }
+
+    /// `delete_kernel` — tombstone the slot for each input key.
+    ///
+    /// One thread per key. Probes the same `PROBE_TILE`-wide triangular
+    /// sequence as insert and find. When it locates the key it CAS-flips
+    /// the byte in the containing ctrl word from `FULL(h2)` to
+    /// `DELETED_TAG`. The `(key, value)` payload is **not** cleared:
+    /// readers only ever materialize slots whose tag is `FULL(h2)`, so a
+    /// stale slot under a `DELETED` tag is unreachable.
+    ///
+    /// The CAS targets the specific ctrl word containing the matching tag
+    /// byte (not "the group's word" — there are now `PROBE_TILE / GROUP`
+    /// ctrl words per tile). On CAS failure (some other thread mutated
+    /// this word), the inner loop re-reads and re-scans this word before
+    /// moving on to the next word in the tile.
+    ///
+    /// Output:
+    ///   `out[tid] = FLAG_FRESH_OR_OK (0)` -> deleted successfully
+    ///   `out[tid] = FLAG_PRESENT (1)`     -> key was not in the table
+    #[kernel]
+    pub fn delete_kernel(ctrl: &[u32], slots: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i_thread = tid_raw;
+        if i_thread >= keys.len() {
+            return;
+        }
+
+        let key = keys[i_thread];
+        let hash = hash_u32(key);
+        let h2 = h2_from_hash(hash);
+        let mask = slots.len() - 1;
+        let mut probe_base = (hash as usize) & mask & !(PROBE_TILE - 1);
+        let mut stride = 0usize;
+
+        'tile: loop {
+            let mut has_empty = false;
+            let mut g = 0usize;
+            while g < PROBE_TILE {
+                let ctrl_word_idx = (probe_base + g) / GROUP;
+                let ctrl_atomic = unsafe {
+                    DeviceAtomicU32::from_ptr(ctrl.as_ptr().add(ctrl_word_idx).cast_mut())
+                };
+
+                // Per-word retry loop: if our CAS to flip a tag to DELETED
+                // fails because someone else mutated this same word, re-read
+                // and re-scan this word.
+                loop {
+                    let word = ctrl_atomic.load(AtomicOrdering::Acquire);
+                    let mut j = 0;
+                    let mut cas_collided = false;
+                    while j < GROUP {
+                        let tag = get_tag(word, j);
+                        if tag == h2 {
+                            let slot_idx = probe_base + g + j;
+                            let slot_atomic = unsafe {
+                                DeviceAtomicU64::from_ptr(slots.as_ptr().add(slot_idx).cast_mut())
+                            };
+                            let observed = slot_atomic.load(AtomicOrdering::Acquire);
+                            if unpack_key(observed) == key {
+                                let new_word = set_tag(word, j, DELETED_TAG);
+                                match ctrl_atomic.compare_exchange(
+                                    word,
+                                    new_word,
+                                    AtomicOrdering::AcqRel,
+                                    AtomicOrdering::Relaxed,
+                                ) {
+                                    Ok(_) => {
+                                        if let Some(o) = out.get_mut(tid) {
+                                            *o = FLAG_FRESH_OR_OK;
+                                        }
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        cas_collided = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        } else if tag == EMPTY_TAG {
+                            has_empty = true;
+                        }
+                        j += 1;
+                    }
+                    if !cas_collided {
+                        break; // word fully scanned; move to next word in the tile
+                    }
+                    // else: retry this same word with a freshly-loaded view.
+                }
+                g += GROUP;
+            }
+
+            if has_empty {
+                if let Some(o) = out.get_mut(tid) {
+                    *o = FLAG_PRESENT;
+                }
+                return;
+            }
+
+            stride += 1;
+            probe_base = (probe_base + stride * PROBE_TILE) & mask;
+            continue 'tile;
+        }
     }
 }
 
@@ -1184,7 +1204,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1200,13 +1220,7 @@ impl GpuSwissMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev)]
-        }?;
+        module.insert_kernel(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)?;
 
         Ok(())
     }
@@ -1219,7 +1233,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1236,13 +1250,15 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: try_insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev), slice_mut(out_dev)]
-        }?;
+        module.try_insert_kernel(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &values_dev,
+            &mut out_dev,
+        )?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())
@@ -1257,7 +1273,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1273,13 +1289,14 @@ impl GpuSwissMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: insert_kernel_proto_a,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev)]
-        }?;
+        module.insert_kernel_proto_a(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &values_dev,
+        )?;
 
         Ok(())
     }
@@ -1291,7 +1308,7 @@ impl GpuSwissMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -1308,13 +1325,15 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: try_insert_kernel_proto_a,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice(values_dev), slice_mut(out_dev)]
-        }?;
+        module.try_insert_kernel_proto_a(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &values_dev,
+            &mut out_dev,
+        )?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())
@@ -1325,7 +1344,7 @@ impl GpuSwissMap {
     pub fn find_bulk(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1336,13 +1355,14 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: find_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.find_kernel(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1356,7 +1376,7 @@ impl GpuSwissMap {
     pub fn find_bulk_warp(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1374,13 +1394,14 @@ impl GpuSwissMap {
         // 256 means 8 warps per block, 8 keys per block.
         let total_threads = (keys.len() as u32).saturating_mul(PROBE_TILE as u32);
         let cfg = LaunchConfig::for_num_elems(total_threads);
-        cuda_launch! {
-            kernel: find_kernel_warp,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.find_kernel_warp(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1391,7 +1412,7 @@ impl GpuSwissMap {
     pub fn delete_bulk(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -1402,13 +1423,14 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: delete_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.ctrl), slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.delete_kernel(
+            stream,
+            cfg,
+            &self.ctrl,
+            &self.slots,
+            &keys_dev,
+            &mut out_dev,
+        )?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())

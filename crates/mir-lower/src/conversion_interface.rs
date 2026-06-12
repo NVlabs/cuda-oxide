@@ -18,20 +18,20 @@ use pliron::{
     result::Result,
 };
 
-/// Op interface for `dialect-mir` → `dialect-llvm` lowering.
+/// Op interface for `dialect-mir` → LLVM dialect lowering.
 ///
 /// Every `dialect-mir` and `dialect-nvvm` op that the lowering pass can
 /// handle implements this interface. The pass dispatches via
 /// `op_cast::<dyn MirToLlvmConversion>` instead of a manual if-chain over
 /// `OpId`.
 ///
-/// Called by [`DialectConversion::rewrite`] via `op_cast`-based dispatch.
+/// Called by `DialectConversion::rewrite` via `op_cast`-based dispatch.
 /// Each concrete op provides its own implementation (see
 /// `convert/interface_impls.rs`). The implementation should use `rewriter`
-/// to replace the current op with one or more `dialect-llvm` ops.
+/// to replace the current op with one or more LLVM dialect ops.
 #[op_interface]
 pub trait MirToLlvmConversion {
-    /// Lower this operation to `dialect-llvm`.
+    /// Lower this operation to the LLVM dialect.
     fn convert(
         &self,
         ctx: &mut Context,

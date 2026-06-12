@@ -11,8 +11,8 @@
 //! can be mapped into another device's virtual address space -- the foundation
 //! for P2P symmetric heaps.
 //!
-//! All handle types are RAII: [`PhysicalAllocation`] releases via `cuMemRelease`,
-//! [`VirtualReservation`] frees via `cuMemAddressFree`, and [`Mapping`] unmaps
+//! All handle types are RAII: `PhysicalAllocation` releases via `cuMemRelease`,
+//! `VirtualReservation` frees via `cuMemAddressFree`, and `Mapping` unmaps
 //! via `cuMemUnmap`. Drop order matters -- mappings must be dropped before the
 //! physical allocation or virtual reservation they reference.
 
@@ -43,7 +43,7 @@ unsafe fn set_mem_location_device(
 /// a specific device and can be mapped into any device's VA space that has been
 /// granted access.
 ///
-/// Dropping this releases the physical memory. All [`Mapping`]s referencing this
+/// Dropping this releases the physical memory. All `Mapping`s referencing this
 /// allocation must be dropped first.
 pub struct PhysicalAllocation {
     handle: cuda_bindings::CUmemGenericAllocationHandle,
@@ -94,7 +94,7 @@ impl Drop for PhysicalAllocation {
 /// Owns a contiguous VA range `[base, base + size)`. Physical memory can be
 /// mapped into this range via [`Mapping::new`]. The range is freed on drop.
 ///
-/// All [`Mapping`]s within this range must be dropped before the reservation.
+/// All `Mapping`s within this range must be dropped before the reservation.
 pub struct VirtualReservation {
     base: CUdeviceptr,
     size: usize,
@@ -139,8 +139,8 @@ impl Drop for VirtualReservation {
 /// A mapping of physical memory into a virtual address range.
 ///
 /// Created by [`Mapping::new`], which calls `cuMemMap` to bind a
-/// [`PhysicalAllocation`] (or a portion of it) to a region within a
-/// [`VirtualReservation`]. Dropped via `cuMemUnmap`.
+/// `PhysicalAllocation` (or a portion of it) to a region within a
+/// `VirtualReservation`. Dropped via `cuMemUnmap`.
 pub struct Mapping {
     va: CUdeviceptr,
     size: usize,
@@ -149,7 +149,7 @@ pub struct Mapping {
 impl Mapping {
     /// Maps `size` bytes of `phys` at `offset` into virtual address `va`.
     ///
-    /// `va` must lie within a [`VirtualReservation`]. `offset` is the byte
+    /// `va` must lie within a `VirtualReservation`. `offset` is the byte
     /// offset into the physical allocation (typically 0 for full mappings).
     /// `size` must be a multiple of the allocation granularity.
     pub fn new(

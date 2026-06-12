@@ -17,8 +17,8 @@
 
 use crate::convert::intrinsics::common::*;
 use crate::helpers;
-use dialect_llvm::ops as llvm;
-use dialect_llvm::types as llvm_types;
+use llvm_export::ops as llvm;
+use llvm_export::types as llvm_types;
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};

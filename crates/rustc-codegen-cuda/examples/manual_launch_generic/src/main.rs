@@ -48,12 +48,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let alpha = 2.0f32;
         let beta = 3.0f32;
 
-        cuda_launch! {
-            kernel: affine::<f32>,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [alpha, slice(x_dev), beta, slice(y_dev), slice_mut(out_dev)]
+        // SAFETY: args mirror `affine::<f32>`'s signature (scalar, slice, scalar,
+        // slice, slice_mut); all buffers are live DeviceBuffers on this stream.
+        unsafe {
+            cuda_launch! {
+                kernel: affine::<f32>,
+                stream: stream,
+                module: module,
+                config: cfg,
+                args: [alpha, slice(x_dev), beta, slice(y_dev), slice_mut(out_dev)]
+            }
         }?;
 
         let out = out_dev.to_host_vec(&stream)?;
@@ -73,12 +77,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let alpha = 2i32;
         let beta = 3i32;
 
-        cuda_launch! {
-            kernel: affine::<i32>,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [alpha, slice(x_dev), beta, slice(y_dev), slice_mut(out_dev)]
+        // SAFETY: args mirror `affine::<i32>`'s signature (scalar, slice, scalar,
+        // slice, slice_mut); all buffers are live DeviceBuffers on this stream.
+        unsafe {
+            cuda_launch! {
+                kernel: affine::<i32>,
+                stream: stream,
+                module: module,
+                config: cfg,
+                args: [alpha, slice(x_dev), beta, slice(y_dev), slice_mut(out_dev)]
+            }
         }?;
 
         let out = out_dev.to_host_vec(&stream)?;

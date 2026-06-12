@@ -519,7 +519,7 @@ impl<O: Send, DO: DeviceOperation<Output = O>, F: FnOnce() -> DO> IntoFuture for
 /// Pair combinator: executes two operations sequentially on the same stream
 /// and returns both results as a tuple.
 ///
-/// Constructed via [`_zip`] or the [`zip!`] macro.
+/// Constructed via `_zip` or the [`zip!`] macro.
 pub struct Zip<T1: Send, T2: Send, A: DeviceOperation<Output = T1>, B: DeviceOperation<Output = T2>>
 {
     phantom: PhantomData<(T1, T2)>,
@@ -890,6 +890,19 @@ where
 /// Blanket impl: any operation producing `(T0, T1)` is unzippable.
 impl<T0: Send, T1: Send, DI: DeviceOperation<Output = (T0, T1)>> Unzippable2<T0, T1> for DI {}
 
+/// Splits a tuple-producing [`DeviceOperation`] into per-element operations.
+///
+/// ```ignore
+/// let (left, right) = unzip!(pair_op);
+/// ```
+#[macro_export]
+macro_rules! unzip {
+    ($arg0:expr) => {
+        $arg0.unzip()
+    };
+}
+pub use unzip;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -928,16 +941,3 @@ mod tests {
         assert_eq!(result, Err(operation_error));
     }
 }
-
-/// Splits a tuple-producing [`DeviceOperation`] into per-element operations.
-///
-/// ```ignore
-/// let (left, right) = unzip!(pair_op);
-/// ```
-#[macro_export]
-macro_rules! unzip {
-    ($arg0:expr) => {
-        $arg0.unzip()
-    };
-}
-pub use unzip;

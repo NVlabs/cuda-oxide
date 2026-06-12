@@ -163,7 +163,7 @@ impl CudaStream {
     ///
     /// `host_func` is boxed, leaked into a raw pointer, and passed as user
     /// data to `cuLaunchHostFunc`. The driver calls
-    /// [`callback_wrapper`](Self::callback_wrapper) on a driver-internal
+    /// `callback_wrapper` on a driver-internal
     /// thread, which reclaims the box and invokes the closure.
     ///
     /// Panics inside the closure are caught and discarded to prevent unwinding

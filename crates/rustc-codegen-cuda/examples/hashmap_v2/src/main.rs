@@ -25,6 +25,7 @@ fn main() {
     let module = ctx
         .load_module_from_file("hashmap_v2.ptx")
         .expect("Failed to load PTX module");
+    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
     const CAPACITY: usize = 1 << 14;
     const M: usize = CAPACITY / 2;

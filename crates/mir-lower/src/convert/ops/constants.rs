@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Constant operation conversion: `dialect-mir` → `dialect-llvm`.
+//! Constant operation conversion: `dialect-mir` → LLVM dialect.
 //!
-//! Converts constant definitions from `dialect-mir` to `dialect-llvm`.
+//! Converts constant definitions from `dialect-mir` to the LLVM dialect.
 //!
 //! # Supported Operations
 //!
-//! | `dialect-mir` Op     | `dialect-llvm` Op | Description       |
+//! | `dialect-mir` Op     | LLVM dialect Op   | Description       |
 //! |----------------------|-------------------|-------------------|
 //! | `mir.constant`       | `llvm.constant`   | Integer constants |
 //! | `mir.float_constant` | `llvm.constant`   | Float constants   |
@@ -17,14 +17,14 @@
 //! # Type Handling
 //!
 //! `dialect-mir` uses signed/unsigned integer types (`ui64`, `si64`), while
-//! `dialect-llvm` uses signless integers (`i64`). The conversion preserves
+//! the LLVM dialect uses signless integers (`i64`). The conversion preserves
 //! bit-width but changes to the signless representation.
 //!
 //! Float constants (f32, f64) pass through unchanged.
 
-use dialect_llvm::ops as llvm;
 use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{MirConstantOp, MirFloatConstantOp, MirUndefOp};
+use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -109,10 +109,9 @@ pub(crate) fn convert_float(
     };
 
     let llvm_const = match float_attr {
-        FloatAttr::F16(attr) => llvm::ConstantOp::new(
-            ctx,
-            dialect_llvm::attributes::FPHalfAttr::from_bits(attr.to_bits()).into(),
-        ),
+        FloatAttr::F16(attr) => {
+            llvm::ConstantOp::new(ctx, llvm_export::fp16_attr_from_bits(attr.to_bits()).into())
+        }
         FloatAttr::F32(attr) => llvm::ConstantOp::new(ctx, attr.into()),
         FloatAttr::F64(attr) => llvm::ConstantOp::new(ctx, attr.into()),
     };

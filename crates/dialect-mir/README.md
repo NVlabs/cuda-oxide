@@ -1,9 +1,9 @@
 # dialect-mir
 
-A [pliron](https://github.com/vaivaswatha/pliron) dialect that represents Rust's Mid-level Intermediate Representation (MIR). This is the first IR in the cuda-oxide pipeline -- `mir-importer` translates rustc's MIR into this dialect, then `mir-lower` lowers it to `dialect-llvm` for PTX generation.
+A [pliron](https://github.com/vaivaswatha/pliron) dialect that represents Rust's Mid-level Intermediate Representation (MIR). This is the first IR in the cuda-oxide pipeline -- `mir-importer` translates rustc's MIR into this dialect, then `mir-lower` lowers it to the LLVM dialect for PTX generation.
 
 ```text
-rustc MIR ──► mir-importer ──► dialect-mir ──► mir-lower ──► dialect-llvm ──► LLVM IR ──► PTX
+rustc MIR ──► mir-importer ──► dialect-mir ──► mir-lower ──► LLVM dialect ──► LLVM IR ──► PTX
 ```
 
 ## Types
@@ -17,8 +17,24 @@ The dialect defines seven types that preserve Rust-level semantics:
 | `MirSliceType`        | Fat pointers (`&[T]` = ptr + len)                  | `mir.slice<f32, addrspace: 1>`        |
 | `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access     | `mir.disjoint_slice<f32, ...>`        |
 | `MirStructType`       | Named structs with layout metadata                 | `mir.struct<"Point", [f32, f32]>`     |
-| `MirEnumType`         | Rust enums with discriminant + variant payloads    | `mir.enum<"Option_i32", [...]>`       |
+| `MirEnumType`         | Rust enums with discriminant + variant payloads    | `mir.enum<"Ordering", i8, ...>`       |
 | `MirArrayType`        | Fixed-size arrays                                  | `mir.array<f32, 256>`                 |
+
+`MirEnumType` records the enum's layout the way rustc computed it: the
+tag's type (width and signedness), the variant names, the declared
+discriminant VALUES (not variant positions), per-variant field counts,
+the field types, where each field and the tag live (byte positions),
+and total size / alignment in bytes (0 = layout not recorded). In
+textual order:
+
+```text
+mir.enum<"Ordering", si8, ["Less", "Equal", "Greater"], [255, 0, 1], [0, 0, 0], [], [], 0, 1, 1>
+```
+
+`Ordering::Less` is declared as -1, stored as the unsigned i8 bit
+pattern 255. The tag slot of a lowered enum always holds these declared
+values; using variant indices instead made `Ordering::Less` match the
+`Equal` arm (issue #146).
 
 ### Address Spaces
 
@@ -117,7 +133,7 @@ src/
 
 ## Further Reading
 
-- [dialect-llvm](../dialect-llvm/) -- pliron dialect modelling LLVM IR (lowering target)
+- [llvm-export](../llvm-export/) -- pliron-llvm shim + textual `.ll` exporter (lowering target)
 - [dialect-nvvm](../dialect-nvvm/) -- NVVM GPU intrinsics
 - [mir-importer](../mir-importer/) -- translates rustc MIR → `dialect-mir`
-- [mir-lower](../mir-lower/) -- lowers `dialect-mir` → `dialect-llvm`
+- [mir-lower](../mir-lower/) -- lowers `dialect-mir` → LLVM dialect

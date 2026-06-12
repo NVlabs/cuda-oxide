@@ -31,37 +31,42 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
-use cuda_host::{cuda_launch, ltoir};
+use cuda_host::{cuda_module, ltoir};
 
 // =============================================================================
 // KERNELS
 // =============================================================================
 
-/// Writes `f32::max(a, b)` and `f32::min(a, b)` to `out[0..2]`, and then
-/// `f32::max(nan_arg, b)` and `f32::min(nan_arg, b)` to `out[2..4]` so the
-/// host can exercise the maxNum / minNum NaN-suppression rule by passing
-/// a NaN through `nan_arg`.
-#[kernel]
-pub fn fmaxmin_f32_kernel(a: f32, b: f32, nan_arg: f32, mut out: DisjointSlice<u32>) {
-    if thread::index_1d().get() == 0 {
-        unsafe {
-            *out.get_unchecked_mut(0) = a.max(b).to_bits();
-            *out.get_unchecked_mut(1) = a.min(b).to_bits();
-            *out.get_unchecked_mut(2) = nan_arg.max(b).to_bits();
-            *out.get_unchecked_mut(3) = nan_arg.min(b).to_bits();
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    /// Writes `f32::max(a, b)` and `f32::min(a, b)` to `out[0..2]`, and then
+    /// `f32::max(nan_arg, b)` and `f32::min(nan_arg, b)` to `out[2..4]` so the
+    /// host can exercise the maxNum / minNum NaN-suppression rule by passing
+    /// a NaN through `nan_arg`.
+    #[kernel]
+    pub fn fmaxmin_f32_kernel(a: f32, b: f32, nan_arg: f32, mut out: DisjointSlice<u32>) {
+        if thread::index_1d().get() == 0 {
+            unsafe {
+                *out.get_unchecked_mut(0) = a.max(b).to_bits();
+                *out.get_unchecked_mut(1) = a.min(b).to_bits();
+                *out.get_unchecked_mut(2) = nan_arg.max(b).to_bits();
+                *out.get_unchecked_mut(3) = nan_arg.min(b).to_bits();
+            }
         }
     }
-}
 
-/// Same as `fmaxmin_f32_kernel` for `f64::max` / `f64::min`.
-#[kernel]
-pub fn fmaxmin_f64_kernel(a: f64, b: f64, nan_arg: f64, mut out: DisjointSlice<u64>) {
-    if thread::index_1d().get() == 0 {
-        unsafe {
-            *out.get_unchecked_mut(0) = a.max(b).to_bits();
-            *out.get_unchecked_mut(1) = a.min(b).to_bits();
-            *out.get_unchecked_mut(2) = nan_arg.max(b).to_bits();
-            *out.get_unchecked_mut(3) = nan_arg.min(b).to_bits();
+    /// Same as `fmaxmin_f32_kernel` for `f64::max` / `f64::min`.
+    #[kernel]
+    pub fn fmaxmin_f64_kernel(a: f64, b: f64, nan_arg: f64, mut out: DisjointSlice<u64>) {
+        if thread::index_1d().get() == 0 {
+            unsafe {
+                *out.get_unchecked_mut(0) = a.max(b).to_bits();
+                *out.get_unchecked_mut(1) = a.min(b).to_bits();
+                *out.get_unchecked_mut(2) = nan_arg.max(b).to_bits();
+                *out.get_unchecked_mut(3) = nan_arg.min(b).to_bits();
+            }
         }
     }
 }
@@ -80,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // IR rather than PTX and `ltoir::load_kernel_module` finishes the build
     // through libNVVM + nvJitLink, just like `primitive_stress`.
     let module = ltoir::load_kernel_module(&ctx, "fmaxmin_smoke")?;
+    let module = kernels::from_module(module)?;
     let cfg = LaunchConfig::for_num_elems(1);
 
     let mut passed = 0u32;
@@ -91,11 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let b = -2.5_f32;
         let nan_arg = f32::NAN;
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, 4)?;
-        cuda_launch! {
-            kernel: fmaxmin_f32_kernel,
-            stream: stream, module: module, config: cfg,
-            args: [a, b, nan_arg, slice_mut(out)]
-        }?;
+        module.fmaxmin_f32_kernel(&stream, cfg, a, b, nan_arg, &mut out)?;
         let result = out.to_host_vec(&stream)?;
         let expected: [u32; 4] = [
             a.max(b).to_bits(), // f32::max finite
@@ -118,11 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let b = -2.5e10_f64;
         let nan_arg = f64::NAN;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 4)?;
-        cuda_launch! {
-            kernel: fmaxmin_f64_kernel,
-            stream: stream, module: module, config: cfg,
-            args: [a, b, nan_arg, slice_mut(out)]
-        }?;
+        module.fmaxmin_f64_kernel(&stream, cfg, a, b, nan_arg, &mut out)?;
         let result = out.to_host_vec(&stream)?;
         let expected: [u64; 4] = [
             a.max(b).to_bits(),

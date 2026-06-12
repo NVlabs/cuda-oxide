@@ -17,49 +17,54 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
-use cuda_host::{cuda_launch, ltoir};
+use cuda_host::{cuda_module, ltoir};
 
-#[kernel]
-pub fn atan2_f32(ys: &[f32], xs: &[f32], mut out: DisjointSlice<f32>) {
-    let idx = thread::index_1d();
-    let i = idx.get();
-    if i < ys.len()
-        && let Some(slot) = out.get_mut(idx)
-    {
-        *slot = ys[i].atan2(xs[i]);
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[kernel]
+    pub fn atan2_f32(ys: &[f32], xs: &[f32], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i < ys.len()
+            && let Some(slot) = out.get_mut(idx)
+        {
+            *slot = ys[i].atan2(xs[i]);
+        }
     }
-}
 
-#[kernel]
-pub fn atan_f32(ys: &[f32], mut out: DisjointSlice<f32>) {
-    let idx = thread::index_1d();
-    let i = idx.get();
-    if i < ys.len()
-        && let Some(slot) = out.get_mut(idx)
-    {
-        *slot = ys[i].atan();
+    #[kernel]
+    pub fn atan_f32(ys: &[f32], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i < ys.len()
+            && let Some(slot) = out.get_mut(idx)
+        {
+            *slot = ys[i].atan();
+        }
     }
-}
 
-#[kernel]
-pub fn atan2_f64(ys: &[f64], xs: &[f64], mut out: DisjointSlice<f64>) {
-    let idx = thread::index_1d();
-    let i = idx.get();
-    if i < ys.len()
-        && let Some(slot) = out.get_mut(idx)
-    {
-        *slot = ys[i].atan2(xs[i]);
+    #[kernel]
+    pub fn atan2_f64(ys: &[f64], xs: &[f64], mut out: DisjointSlice<f64>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i < ys.len()
+            && let Some(slot) = out.get_mut(idx)
+        {
+            *slot = ys[i].atan2(xs[i]);
+        }
     }
-}
 
-#[kernel]
-pub fn atan_f64(ys: &[f64], mut out: DisjointSlice<f64>) {
-    let idx = thread::index_1d();
-    let i = idx.get();
-    if i < ys.len()
-        && let Some(slot) = out.get_mut(idx)
-    {
-        *slot = ys[i].atan();
+    #[kernel]
+    pub fn atan_f64(ys: &[f64], mut out: DisjointSlice<f64>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i < ys.len()
+            && let Some(slot) = out.get_mut(idx)
+        {
+            *slot = ys[i].atan();
+        }
     }
 }
 
@@ -103,6 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `__nv_*` calls in the kernel force the NVVM-IR output flavor; the
     // first launch builds a cubin via libNVVM + nvJitLink.
     let module = ltoir::load_kernel_module(&ctx, "math_atan")?;
+    let module = kernels::from_module(module)?;
 
     // All four atan2 quadrants plus small / large / mixed-sign magnitudes.
     // Values are f32-representable so the same arrays double as f64 inputs
@@ -120,8 +126,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = ys_f32.len();
     let cfg = LaunchConfig::for_num_elems(n as u32);
 
-    // Single upload per input; `slice(...)` borrows, so the same buffer is
-    // reused by both `atan` and `atan2` launches of its width.
+    // Single upload per input; the typed launch methods borrow the device
+    // buffers, so the same buffer is reused by both `atan` and `atan2`
+    // launches of its width.
     let ys32 = DeviceBuffer::from_host(&stream, &ys_f32)?;
     let xs32 = DeviceBuffer::from_host(&stream, &xs_f32)?;
     let ys64 = DeviceBuffer::from_host(&stream, &ys_f64)?;
@@ -132,26 +139,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_atan2_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
     let mut out_atan_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
 
-    cuda_launch! {
-        kernel: atan2_f32,
-        stream: stream, module: module, config: cfg,
-        args: [slice(ys32), slice(xs32), slice_mut(out_atan2_f32)]
-    }?;
-    cuda_launch! {
-        kernel: atan_f32,
-        stream: stream, module: module, config: cfg,
-        args: [slice(ys32), slice_mut(out_atan_f32)]
-    }?;
-    cuda_launch! {
-        kernel: atan2_f64,
-        stream: stream, module: module, config: cfg,
-        args: [slice(ys64), slice(xs64), slice_mut(out_atan2_f64)]
-    }?;
-    cuda_launch! {
-        kernel: atan_f64,
-        stream: stream, module: module, config: cfg,
-        args: [slice(ys64), slice_mut(out_atan_f64)]
-    }?;
+    module.atan2_f32(&stream, cfg, &ys32, &xs32, &mut out_atan2_f32)?;
+    module.atan_f32(&stream, cfg, &ys32, &mut out_atan_f32)?;
+    module.atan2_f64(&stream, cfg, &ys64, &xs64, &mut out_atan2_f64)?;
+    module.atan_f64(&stream, cfg, &ys64, &mut out_atan_f64)?;
 
     let got_atan2_f32 = out_atan2_f32.to_host_vec(&stream)?;
     let got_atan_f32 = out_atan_f32.to_host_vec(&stream)?;

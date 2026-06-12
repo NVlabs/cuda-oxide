@@ -17,10 +17,10 @@
 //! |-------------------------|------------------------------------------|
 //! | `NvvmAtomicLoadOp`      | `load atomic ... syncscope("device")`    |
 //! | `NvvmAtomicStoreOp`     | `store atomic ... syncscope("device")`   |
-//! | `NvvmAtomicRmwOp`       | `atomicrmw ... syncscope("device")` [*]  |
+//! | `NvvmAtomicRmwOp`       | `atomicrmw ... syncscope("device")` `[*]`  |
 //! | `NvvmAtomicCmpxchgOp`   | `cmpxchg ... syncscope("device")`        |
 //!
-//! [*] atomicrmw uses fence splitting workaround -- see below.
+//! `[*]` atomicrmw uses fence splitting workaround -- see below.
 //!
 //! # atomicrmw Fence Splitting Workaround
 //!
@@ -47,13 +47,13 @@
 
 use crate::convert::types::convert_type;
 
-use dialect_llvm::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
-use dialect_llvm::ops as llvm;
 use dialect_nvvm::ops::atomic::{
     AtomicOrdering as NvvmOrdering, AtomicRmwKind as NvvmRmwKind, AtomicScope as NvvmScope,
     NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicOpInterface, NvvmAtomicRmwOp,
     NvvmAtomicStoreOp,
 };
+use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
+use llvm_export::ops as llvm;
 
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -112,7 +112,7 @@ fn emit_fence(
     ordering: LlvmAtomicOrdering,
     syncscope: LlvmSyncScope,
 ) {
-    let fence = llvm::FenceOp::new(ctx, ordering, syncscope);
+    let fence = llvm::FenceOp::new(ctx, ordering, syncscope.to_pliron());
     rewriter.insert_operation(ctx, fence.get_operation());
 }
 
@@ -136,7 +136,7 @@ pub(crate) fn convert_atomic_load(
     let result_ty =
         convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error_noloc!("{}", e))?;
 
-    let llvm_load = llvm::AtomicLoadOp::new(ctx, ptr, result_ty, ordering, syncscope);
+    let llvm_load = llvm::AtomicLoadOp::new(ctx, ptr, result_ty, ordering, syncscope.to_pliron());
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
@@ -161,7 +161,7 @@ pub(crate) fn convert_atomic_store(
     let val = operands[0];
     let ptr = operands[1];
 
-    let llvm_store = llvm::AtomicStoreOp::new(ctx, val, ptr, ordering, syncscope);
+    let llvm_store = llvm::AtomicStoreOp::new(ctx, val, ptr, ordering, syncscope.to_pliron());
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
 
@@ -186,9 +186,6 @@ pub(crate) fn convert_atomic_rmw(
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let ptr = operands[0];
     let val = operands[1];
-    let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
-    let result_ty =
-        convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error_noloc!("{}", e))?;
 
     // Fence splitting workaround for LLVM NVPTX atomicrmw ordering bug.
     // We emit: [optional pre-fence] + atomicrmw monotonic + [optional post-fence]
@@ -198,15 +195,10 @@ pub(crate) fn convert_atomic_rmw(
     // Pre-fence (if needed)
     match nvvm_ordering {
         NvvmOrdering::Release | NvvmOrdering::AcqRel => {
-            emit_fence(
-                ctx,
-                rewriter,
-                LlvmAtomicOrdering::Release,
-                syncscope.clone(),
-            );
+            emit_fence(ctx, rewriter, LlvmAtomicOrdering::Release, syncscope);
         }
         NvvmOrdering::SeqCst => {
-            emit_fence(ctx, rewriter, LlvmAtomicOrdering::SeqCst, syncscope.clone());
+            emit_fence(ctx, rewriter, LlvmAtomicOrdering::SeqCst, syncscope);
         }
         NvvmOrdering::Relaxed | NvvmOrdering::Acquire => {}
     }
@@ -216,10 +208,9 @@ pub(crate) fn convert_atomic_rmw(
         ctx,
         ptr,
         val,
-        result_ty,
         rmw_kind,
         LlvmAtomicOrdering::Monotonic,
-        syncscope.clone(),
+        syncscope.to_pliron(),
     );
     rewriter.insert_operation(ctx, llvm_rmw.get_operation());
 
@@ -258,25 +249,25 @@ pub(crate) fn convert_atomic_cmpxchg(
     let ptr = operands[0];
     let cmp = operands[1];
     let new_val = operands[2];
-    let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
-    let result_ty =
-        convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error_noloc!("{}", e))?;
-
     let llvm_cmpxchg = llvm::AtomicCmpxchgOp::new(
         ctx,
         ptr,
         cmp,
         new_val,
-        result_ty,
         success_ord,
         failure_ord,
-        syncscope,
+        syncscope.to_pliron(),
     );
     rewriter.insert_operation(ctx, llvm_cmpxchg.get_operation());
 
-    // The cmpxchg LLVM instruction returns { T, i1 }, but our NVVM op
-    // models only the T result. The export layer handles the extractvalue.
-    rewriter.replace_operation(ctx, op, llvm_cmpxchg.get_operation());
+    // Upstream `cmpxchg` returns `{ T, i1 }`, but the NVVM op models only the
+    // loaded value `T`. Extract element 0 and replace the NVVM op with it; this
+    // emits the same `cmpxchg` + `extractvalue` LLVM as the pre-migration path.
+    let cmpxchg_res = llvm_cmpxchg.get_operation().deref(ctx).get_result(0);
+    let extract = llvm::ExtractValueOp::new(ctx, cmpxchg_res, vec![0])
+        .map_err(|e| pliron::input_error_noloc!("{}", e))?;
+    rewriter.insert_operation(ctx, extract.get_operation());
+    rewriter.replace_operation(ctx, op, extract.get_operation());
 
     Ok(())
 }

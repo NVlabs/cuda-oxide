@@ -9,9 +9,9 @@
 //! All cluster operations require sm_90 or later.
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::op_interfaces::CastOpInterface;
-use dialect_llvm::ops as llvm_ops;
-use dialect_llvm::types as llvm_types;
+use llvm_export::op_interfaces::CastOpInterface;
+use llvm_export::ops as llvm_ops;
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};

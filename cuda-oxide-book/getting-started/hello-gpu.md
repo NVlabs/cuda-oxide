@@ -154,8 +154,10 @@ function handles, and exposes each `#[kernel]` as a Rust method. The method
 signature mirrors the kernel signature, with device slices mapped to
 `DeviceBuffer` borrows.
 
-`load_kernel_module` and `cuda_launch!` remain available as lower-level APIs for
-manual sidecar artifact loading and custom launch code.
+`load_kernel_module` and `cuda_launch!` remain available as lower-level APIs
+for manual sidecar artifact loading and custom launch code. `cuda_launch!`
+cannot check arguments against the kernel signature, so it is unsafe and must
+be wrapped in `unsafe { }`.
 
 ### Argument scalarization
 

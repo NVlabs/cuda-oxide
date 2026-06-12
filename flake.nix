@@ -94,8 +94,23 @@
             cuda_nvcc
             cuda_gdb.bin
             cuda_cudart
+            # `cuda_cudart`'s `include/host_config.h` is a thin wrapper that
+            # delegates to `include/crt/host_config.h`. nixpkgs ships those
+            # `crt/*.h` headers in a separate `cuda_crt` package — without it,
+            # plain C/C++ host code (e.g. the cublaslt bench) hits an infinite
+            # `#include "crt/host_config.h"` -> `host_config.h` loop.
+            cuda_crt
+            # CUDA C++ Core Libraries — provides `<nv/target>` etc. that
+            # `cuda_fp16.h` and other CTK headers reach into.
+            cuda_cccl
             libnvvm
             libnvjitlink.lib
+            # cuBLAS (incl. cuBLASLt) for the gemm_sol/bench/cublaslt_bench.c
+            # baseline. Not a runtime dep of cuda-oxide itself; pulled in for
+            # the bench tooling. Multi-output package: pick the .so output and
+            # the headers explicitly (the default output is just LICENSE/src).
+            libcublas.lib
+            libcublas.include
           ];
         };
 
@@ -188,6 +203,17 @@
             cudaSymlinked
 
             cargo-oxide
+          ];
+
+          # Transitive native deps of librustc_driver / LLVM that rust-lld
+          # resolves when linking the rustc_codegen_cuda cdylib (-lffi, -lxml2,
+          # -lzstd, -lz). Putting them in buildInputs lets cc-wrapper add the
+          # right -L paths via NIX_LDFLAGS.
+          buildInputs = with pkgs; [
+            libffi
+            libxml2
+            zstd
+            zlib
           ];
 
           shellHook = ''

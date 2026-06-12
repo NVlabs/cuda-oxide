@@ -69,7 +69,9 @@ mod tests {
     #[test]
     fn static_borrow_collides_with_free_borrow() {
         // Confirms erase_and_anonymize_regions: free lifetimes (including
-        // 'static) all hash to the same value.
+        // 'static) all hash to the same value. The `'a` is intentionally a
+        // free lifetime here, used only in the body's turbofish.
+        #[allow(clippy::extra_unused_lifetimes)]
         fn free<'a>() -> u128 {
             type_id_u128::<&'a i32>()
         }

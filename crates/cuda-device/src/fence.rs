@@ -44,7 +44,7 @@ pub fn threadfence() {
 /// Makes the calling thread's prior global-memory operations visible across the
 /// entire system before any later memory operations can be observed. This is
 /// the fence needed before publishing a cross-GPU ready flag via a
-/// [`cuda_device::atomic::SystemAtomicU32`].
+/// `cuda_device::atomic::SystemAtomicU32`.
 ///
 /// This is equivalent to CUDA C++ `__threadfence_system()`.
 #[inline(never)]

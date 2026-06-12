@@ -617,7 +617,7 @@ impl MatchAllSyncI64Op {
     }
 }
 
-/// Warp ballot: returns a 32-bit mask where bit[i] indicates thread i's predicate.
+/// Warp ballot: returns a 32-bit mask where `bit[i]` indicates thread i's predicate.
 ///
 /// Corresponds to `llvm.nvvm.vote.sync.ballot`.
 ///

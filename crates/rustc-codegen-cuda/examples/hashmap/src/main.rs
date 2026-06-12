@@ -27,10 +27,10 @@
 
 use std::sync::Arc;
 
-use cuda_core::{CudaContext, CudaModule, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU64};
 use cuda_device::{DisjointSlice, kernel, thread};
-use cuda_host::cuda_launch;
+use cuda_host::cuda_module;
 
 // =============================================================================
 // SHARED CONSTANTS AND HELPERS (compiled both host- and device-side)
@@ -84,138 +84,148 @@ fn unpack_value(slot: u64) -> u32 {
 // KERNELS
 // =============================================================================
 
-/// `insert_kernel` — last-writer-wins.
-///
-/// One thread per input key. Linear-probes from `hash(key) & mask` until it
-/// either CAS-claims an EMPTY slot or finds the key already present, in
-/// which case it overwrites the value via an inner CAS loop.
-///
-/// `table.len()` must be a power of two (host-side invariant).
-#[kernel]
-pub fn insert_kernel(table: &[u64], keys: &[u32], values: &[u32]) {
-    let tid = thread::index_1d().get();
-    if tid >= keys.len() {
-        return;
-    }
+#[cuda_module]
+mod kernels {
+    use super::*;
 
-    let key = keys[tid];
-    let value = values[tid];
-    let mask = table.len() - 1;
-    let mut idx = (hash_u32(key) as usize) & mask;
+    /// `insert_kernel` — last-writer-wins.
+    ///
+    /// One thread per input key. Linear-probes from `hash(key) & mask` until it
+    /// either CAS-claims an EMPTY slot or finds the key already present, in
+    /// which case it overwrites the value via an inner CAS loop.
+    ///
+    /// `table.len()` must be a power of two (host-side invariant).
+    #[kernel]
+    pub fn insert_kernel(table: &[u64], keys: &[u32], values: &[u32]) {
+        let tid = thread::index_1d().get();
+        if tid >= keys.len() {
+            return;
+        }
 
-    loop {
-        let slot = unsafe { DeviceAtomicU64::from_ptr(table.as_ptr().add(idx).cast_mut()) };
+        let key = keys[tid];
+        let value = values[tid];
+        let mask = table.len() - 1;
+        let mut idx = (hash_u32(key) as usize) & mask;
 
-        match slot.compare_exchange(
-            EMPTY,
-            pack(key, value),
-            AtomicOrdering::AcqRel,
-            AtomicOrdering::Relaxed,
-        ) {
-            Ok(_) => return,
-            Err(observed) if unpack_key(observed) == key => {
-                let mut expected = observed;
-                let desired = pack(key, value);
-                loop {
-                    match slot.compare_exchange(
-                        expected,
-                        desired,
-                        AtomicOrdering::AcqRel,
-                        AtomicOrdering::Relaxed,
-                    ) {
-                        Ok(_) => return,
-                        // Fires only when another thread in this same
-                        // batch holds the same key and CAS'd in first.
-                        // Re-read its value and retry so last-writer-wins.
-                        Err(actual) => expected = actual,
+        loop {
+            let slot = unsafe { DeviceAtomicU64::from_ptr(table.as_ptr().add(idx).cast_mut()) };
+
+            match slot.compare_exchange(
+                EMPTY,
+                pack(key, value),
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(observed) if unpack_key(observed) == key => {
+                    let mut expected = observed;
+                    let desired = pack(key, value);
+                    loop {
+                        match slot.compare_exchange(
+                            expected,
+                            desired,
+                            AtomicOrdering::AcqRel,
+                            AtomicOrdering::Relaxed,
+                        ) {
+                            Ok(_) => return,
+                            // Fires only when another thread in this same
+                            // batch holds the same key and CAS'd in first.
+                            // Re-read its value and retry so last-writer-wins.
+                            Err(actual) => expected = actual,
+                        }
                     }
                 }
+                // Hash collision: different key already lives here. Probe forward.
+                Err(_) => idx = (idx + 1) & mask,
             }
-            // Hash collision: different key already lives here. Probe forward.
-            Err(_) => idx = (idx + 1) & mask,
         }
     }
-}
 
-/// `try_insert_kernel` — first-writer-wins.
-///
-/// Same outer probe as `insert_kernel`, but on duplicate it leaves the
-/// existing slot untouched and reports `1 = already present` via `out`.
-/// On a fresh insert it reports `0`.
-#[kernel]
-pub fn try_insert_kernel(table: &[u64], keys: &[u32], values: &[u32], mut out: DisjointSlice<u32>) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i = tid_raw;
-    if i >= keys.len() {
-        return;
+    /// `try_insert_kernel` — first-writer-wins.
+    ///
+    /// Same outer probe as `insert_kernel`, but on duplicate it leaves the
+    /// existing slot untouched and reports `1 = already present` via `out`.
+    /// On a fresh insert it reports `0`.
+    #[kernel]
+    pub fn try_insert_kernel(
+        table: &[u64],
+        keys: &[u32],
+        values: &[u32],
+        mut out: DisjointSlice<u32>,
+    ) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i = tid_raw;
+        if i >= keys.len() {
+            return;
+        }
+
+        let key = keys[i];
+        let value = values[i];
+        let mask = table.len() - 1;
+        let mut idx = (hash_u32(key) as usize) & mask;
+
+        loop {
+            let slot = unsafe { DeviceAtomicU64::from_ptr(table.as_ptr().add(idx).cast_mut()) };
+
+            match slot.compare_exchange(
+                EMPTY,
+                pack(key, value),
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Relaxed,
+            ) {
+                Ok(_) => {
+                    if let Some(o) = out.get_mut(tid) {
+                        *o = 0;
+                    }
+                    return;
+                }
+                Err(observed) if unpack_key(observed) == key => {
+                    if let Some(o) = out.get_mut(tid) {
+                        *o = 1;
+                    }
+                    return;
+                }
+                Err(_) => idx = (idx + 1) & mask,
+            }
+        }
     }
 
-    let key = keys[i];
-    let value = values[i];
-    let mask = table.len() - 1;
-    let mut idx = (hash_u32(key) as usize) & mask;
+    /// `find_kernel` — one key per thread.
+    ///
+    /// Linear-probe from `hash(key) & mask` and return the value if a key match
+    /// is found, or `MISS = u32::MAX` if an EMPTY slot is hit first.
+    #[kernel]
+    pub fn find_kernel(table: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let tid_raw = tid.get();
+        let i = tid_raw;
+        if i >= keys.len() {
+            return;
+        }
 
-    loop {
-        let slot = unsafe { DeviceAtomicU64::from_ptr(table.as_ptr().add(idx).cast_mut()) };
+        let key = keys[i];
+        let mask = table.len() - 1;
+        let mut idx = (hash_u32(key) as usize) & mask;
 
-        match slot.compare_exchange(
-            EMPTY,
-            pack(key, value),
-            AtomicOrdering::AcqRel,
-            AtomicOrdering::Relaxed,
-        ) {
-            Ok(_) => {
+        loop {
+            let slot = unsafe { DeviceAtomicU64::from_ptr(table.as_ptr().add(idx).cast_mut()) };
+            let observed = slot.load(AtomicOrdering::Acquire);
+
+            if observed == EMPTY {
                 if let Some(o) = out.get_mut(tid) {
-                    *o = 0;
+                    *o = MISS;
                 }
                 return;
             }
-            Err(observed) if unpack_key(observed) == key => {
+            if unpack_key(observed) == key {
                 if let Some(o) = out.get_mut(tid) {
-                    *o = 1;
+                    *o = unpack_value(observed);
                 }
                 return;
             }
-            Err(_) => idx = (idx + 1) & mask,
+            idx = (idx + 1) & mask;
         }
-    }
-}
-
-/// `find_kernel` — one key per thread.
-///
-/// Linear-probe from `hash(key) & mask` and return the value if a key match
-/// is found, or `MISS = u32::MAX` if an EMPTY slot is hit first.
-#[kernel]
-pub fn find_kernel(table: &[u64], keys: &[u32], mut out: DisjointSlice<u32>) {
-    let tid = thread::index_1d();
-    let tid_raw = tid.get();
-    let i = tid_raw;
-    if i >= keys.len() {
-        return;
-    }
-
-    let key = keys[i];
-    let mask = table.len() - 1;
-    let mut idx = (hash_u32(key) as usize) & mask;
-
-    loop {
-        let slot = unsafe { DeviceAtomicU64::from_ptr(table.as_ptr().add(idx).cast_mut()) };
-        let observed = slot.load(AtomicOrdering::Acquire);
-
-        if observed == EMPTY {
-            if let Some(o) = out.get_mut(tid) {
-                *o = MISS;
-            }
-            return;
-        }
-        if unpack_key(observed) == key {
-            if let Some(o) = out.get_mut(tid) {
-                *o = unpack_value(observed);
-            }
-            return;
-        }
-        idx = (idx + 1) & mask;
     }
 }
 
@@ -283,7 +293,7 @@ impl GpuHashMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -299,13 +309,7 @@ impl GpuHashMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.slots), slice(keys_dev), slice(values_dev)]
-        }?;
+        module.insert_kernel(stream, cfg, &self.slots, &keys_dev, &values_dev)?;
 
         Ok(())
     }
@@ -318,7 +322,7 @@ impl GpuHashMap {
         &self,
         keys: &[u32],
         values: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<bool>, Box<dyn std::error::Error>> {
         assert_eq!(keys.len(), values.len());
@@ -335,13 +339,14 @@ impl GpuHashMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: try_insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.slots), slice(keys_dev), slice(values_dev), slice_mut(out_dev)]
-        }?;
+        module.try_insert_kernel(
+            stream,
+            cfg,
+            &self.slots,
+            &keys_dev,
+            &values_dev,
+            &mut out_dev,
+        )?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == 0).collect())
@@ -352,7 +357,7 @@ impl GpuHashMap {
     fn find_bulk(
         &self,
         keys: &[u32],
-        module: &Arc<CudaModule>,
+        module: &kernels::LoadedModule,
         stream: &Arc<CudaStream>,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
         if keys.is_empty() {
@@ -363,13 +368,7 @@ impl GpuHashMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        cuda_launch! {
-            kernel: find_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(self.slots), slice(keys_dev), slice_mut(out_dev)]
-        }?;
+        module.find_kernel(stream, cfg, &self.slots, &keys_dev, &mut out_dev)?;
 
         let out = out_dev.to_host_vec(stream)?;
         Ok(out)
@@ -414,6 +413,7 @@ fn main() {
     let module = ctx
         .load_module_from_file("hashmap.ptx")
         .expect("Failed to load PTX module");
+    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
     const CAPACITY: usize = 1 << 14;
     const M: usize = CAPACITY / 2;

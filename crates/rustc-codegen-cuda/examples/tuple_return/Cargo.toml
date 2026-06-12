@@ -10,7 +10,7 @@ license = "Apache-2.0"
 
 # Regression for issue #79: kernel calls a device-reachable function that
 # returns a non-empty tuple by value. With inlining suppressed the
-# tuple-returning `mir.call` survives into `dialect-mir -> dialect-llvm`
+# tuple-returning `mir.call` survives into the `dialect-mir` -> LLVM dialect
 # lowering, where the buggy `is_unit` check (call.rs ~line 370) treats
 # every tuple as `()` and forces the LLVM call result to `void`. The
 # lowering then tries to `erase_operation` a MIR op that still has uses,

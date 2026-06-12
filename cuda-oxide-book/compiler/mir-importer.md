@@ -8,7 +8,7 @@ takes the Stable MIR that rustc hands us and translates it into
 translator initially emits an alloca/load/store form -- cheap to produce,
 easy to reason about, and a pliron identity on input. A subsequent
 `pliron::opts::mem2reg` pass then promotes those slots back into SSA form,
-leaving `dialect-mir` ready for lowering to `dialect-llvm`.
+leaving `dialect-mir` ready for lowering to the LLVM dialect.
 
 But translation is only half the job. `mir-importer` also orchestrates the
 *entire* compilation pipeline: translate, verify, lower, export, and generate
@@ -33,8 +33,8 @@ structs and a `PipelineConfig`, then runs six stages:
 Step 1:  Translate Rust MIR → `dialect-mir`
 Step 2:  Verify `dialect-mir` module
 Step 3:  Run `pliron::opts::mem2reg` to promote alloca slots back into SSA
-Step 4:  Lower `dialect-mir` → `dialect-llvm` (via mir-lower)
-Step 5:  Export `dialect-llvm` to textual LLVM IR (.ll)
+Step 4:  Lower `dialect-mir` → LLVM dialect (via mir-lower)
+Step 5:  Export the LLVM dialect to textual LLVM IR (.ll)
 Step 6:  Run llc to compile .ll to .ptx
 ```
 
@@ -67,9 +67,9 @@ For each function, the pipeline:
 4. Runs `pliron::opts::mem2reg` to promote the alloca slots back into SSA
    values within `dialect-mir`.
 5. Runs `lower_mir_to_llvm` (from the `mir-lower` crate) to lower every
-   `dialect-mir` operation into its `dialect-llvm` equivalent via
+   `dialect-mir` operation into its LLVM dialect equivalent via
    `DialectConversion`.
-6. Exports the `dialect-llvm` module to a textual `.ll` string, writes it to
+6. Exports the LLVM dialect module to a textual `.ll` string, writes it to
    disk, and invokes `llc` to produce the final `.ptx` file.
 
 If any step fails, the pipeline stops and returns a typed error (`NoBody`,
@@ -161,7 +161,7 @@ We resolve this tension in two phases:
    to the reaching definition and inserting block arguments (the pliron
    spelling of phi nodes) wherever a value merges along multiple control
    paths. Address-taken slots -- the ones we genuinely need to keep on the
-   stack -- are left alone for the `dialect-mir` → `dialect-llvm` lowering
+   stack -- are left alone for the `dialect-mir` → LLVM dialect lowering
    to translate into real `alloca`s.
 
 Here is the problem in miniature. Given MIR where `_1` is written in `bb0`
@@ -414,7 +414,7 @@ From here, the pipeline takes over:
 2. **Lower** -- `lower_mir_to_llvm` transforms `mir.add` into `llvm.fadd`,
    `mir.load` into `llvm.load`, `mir.slice` into an LLVM struct of pointer
    and length, and so on.
-3. **Export** -- `dialect-llvm` is printed as a textual `.ll` file with
+3. **Export** -- the LLVM dialect is printed as a textual `.ll` file with
    the appropriate `!nvvm.annotations` metadata marking `vecadd` as a
    kernel entry point.
 4. **llc** -- LLVM's NVPTX backend compiles the `.ll` to `.ptx`, and the

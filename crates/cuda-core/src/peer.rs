@@ -9,8 +9,8 @@
 //! kernels on one device can read/write memory allocated on the peer device, and
 //! `cuMemcpy` between devices avoids staging through host memory.
 //!
-//! P2P access depends on hardware topology. Use [`can_access_peer`] to query
-//! support before calling [`enable_peer_access`].
+//! P2P access depends on hardware topology. Use `can_access_peer` to query
+//! support before calling `enable_peer_access`.
 
 use crate::context::CudaContext;
 use crate::error::{DriverError, IntoResult};
@@ -23,7 +23,7 @@ use std::sync::Arc;
 /// support, and the system topology allows direct access. Returns `false` if
 /// P2P is not possible (e.g., different PCIe root complexes without a switch).
 ///
-/// This is a query only -- it does not enable access. Call [`enable_peer_access`]
+/// This is a query only -- it does not enable access. Call `enable_peer_access`
 /// to actually enable it.
 pub fn can_access_peer(from: &CudaContext, to: &CudaContext) -> Result<bool, DriverError> {
     let mut can_access = MaybeUninit::uninit();
@@ -48,7 +48,7 @@ pub fn can_access_peer(from: &CudaContext, to: &CudaContext) -> Result<bool, Dri
 /// function twice with swapped arguments.
 ///
 /// Returns `Ok(())` if access was enabled or was already enabled. Returns an error
-/// if the devices do not support P2P (check with [`can_access_peer`] first).
+/// if the devices do not support P2P (check with `can_access_peer` first).
 pub fn enable_peer_access(
     from: &Arc<CudaContext>,
     to: &Arc<CudaContext>,

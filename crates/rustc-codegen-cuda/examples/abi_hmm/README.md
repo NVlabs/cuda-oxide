@@ -236,7 +236,7 @@ mir.struct <Extreme,[a, b],[ui8, si128],[1, 0],[16, 0],32>
                                         ^^^^^^ ^^^^^^^  ^^
                                         order  offsets  size
 
-=== dialect-llvm struct ===
+=== LLVM dialect struct ===
 %Extreme = type { i128, i8, [15 x i8] }
                   ^     ^   ^^^^^^^^^
                   b@0  a@16 padding

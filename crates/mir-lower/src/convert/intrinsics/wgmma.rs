@@ -16,7 +16,7 @@
 //! | `MmaM64N64K16F32Bf16` | `wgmma.mma_async`               | Matrix multiply                |
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::types as llvm_types;
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};

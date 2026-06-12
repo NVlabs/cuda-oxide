@@ -41,8 +41,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use cuda_core::{CudaContext, CudaModule, CudaStream, DeviceBuffer, LaunchConfig};
-use cuda_host::cuda_launch;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
 use hashbrown::HashMap as HbMap;
 use hashmap_v3::*;
 use rayon::prelude::*;
@@ -267,7 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
-    let module: Arc<CudaModule> = ctx.load_module_from_file("hashmap_v3.ptx")?;
+    let module = kernels::from_module(ctx.load_module_from_file("hashmap_v3.ptx")?)?;
 
     print_environment_banner(&ctx)?;
 
@@ -325,13 +324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = LaunchConfig::for_num_elems(n_keys as u32);
         row_b_insert[col_idx] =
             bench_gpu_insert(&map, &keys_dev, &values_dev, n_keys, &stream, |m, k, v| {
-                cuda_launch! {
-                    kernel: insert_kernel,
-                    stream: stream,
-                    module: module,
-                    config: cfg,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice(*v)]
-                }?;
+                module.insert_kernel(&stream, cfg, &m.ctrl, &m.slots, k, v)?;
                 Ok(())
             })?;
 
@@ -341,25 +334,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // to collapse. Should be within a few percent of `insert_kernel`.
         row_b_insert_dedup[col_idx] =
             bench_gpu_insert(&map, &keys_dev, &values_dev, n_keys, &stream, |m, k, v| {
-                cuda_launch! {
-                    kernel: insert_kernel_dedup,
-                    stream: stream,
-                    module: module,
-                    config: cfg,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice(*v)]
-                }?;
+                module.insert_kernel_dedup(&stream, cfg, &m.ctrl, &m.slots, k, v)?;
                 Ok(())
             })?;
 
         // ---- Build a fresh map for the find benches ---------------------
         unsafe { reset_table_async(&map, &stream)? };
-        cuda_launch! {
-            kernel: insert_kernel,
-            stream: stream,
-            module: module,
-            config: cfg,
-            args: [slice(map.ctrl), slice(map.slots), slice(keys_dev), slice(values_dev)]
-        }?;
+        module.insert_kernel(&stream, cfg, &map.ctrl, &map.slots, &keys_dev, &values_dev)?;
         stream.synchronize()?;
 
         let cfg_tile_32 = LaunchConfig::for_num_elems((n_keys * 32) as u32);
@@ -368,39 +349,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ---- GPU LOOKUP (hits) — single-thread --------------------------
         row_single_lookup[col_idx] =
             bench_gpu_find(&map, &keys_dev, &mut out_dev, n_keys, &stream, |m, k, o| {
-                cuda_launch! {
-                    kernel: find_kernel,
-                    stream: stream,
-                    module: module,
-                    config: cfg,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice_mut(*o)]
-                }?;
+                module.find_kernel(&stream, cfg, &m.ctrl, &m.slots, k, o)?;
                 Ok(())
             })?;
 
         // ---- GPU LOOKUP (hits) — tile_32 (full-warp, 1 query/warp) ------
         row_tile_32_lookup[col_idx] =
             bench_gpu_find(&map, &keys_dev, &mut out_dev, n_keys, &stream, |m, k, o| {
-                cuda_launch! {
-                    kernel: find_kernel_tile_32,
-                    stream: stream,
-                    module: module,
-                    config: cfg_tile_32,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice_mut(*o)]
-                }?;
+                module.find_kernel_tile_32(&stream, cfg_tile_32, &m.ctrl, &m.slots, k, o)?;
                 Ok(())
             })?;
 
         // ---- GPU LOOKUP (hits) — tile_16 (sub-warp, 2 queries/warp) -----
         row_tile_16_lookup[col_idx] =
             bench_gpu_find(&map, &keys_dev, &mut out_dev, n_keys, &stream, |m, k, o| {
-                cuda_launch! {
-                    kernel: find_kernel_tile_16,
-                    stream: stream,
-                    module: module,
-                    config: cfg_tile_16,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice_mut(*o)]
-                }?;
+                module.find_kernel_tile_16(&stream, cfg_tile_16, &m.ctrl, &m.slots, k, o)?;
                 Ok(())
             })?;
 
@@ -412,13 +375,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_keys,
             &stream,
             |m, k, o| {
-                cuda_launch! {
-                    kernel: find_kernel,
-                    stream: stream,
-                    module: module,
-                    config: cfg,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice_mut(*o)]
-                }?;
+                module.find_kernel(&stream, cfg, &m.ctrl, &m.slots, k, o)?;
                 Ok(())
             },
         )?;
@@ -431,13 +388,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_keys,
             &stream,
             |m, k, o| {
-                cuda_launch! {
-                    kernel: find_kernel_tile_32,
-                    stream: stream,
-                    module: module,
-                    config: cfg_tile_32,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice_mut(*o)]
-                }?;
+                module.find_kernel_tile_32(&stream, cfg_tile_32, &m.ctrl, &m.slots, k, o)?;
                 Ok(())
             },
         )?;
@@ -450,13 +401,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_keys,
             &stream,
             |m, k, o| {
-                cuda_launch! {
-                    kernel: find_kernel_tile_16,
-                    stream: stream,
-                    module: module,
-                    config: cfg_tile_16,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice_mut(*o)]
-                }?;
+                module.find_kernel_tile_16(&stream, cfg_tile_16, &m.ctrl, &m.slots, k, o)?;
                 Ok(())
             },
         )?;
@@ -598,13 +543,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             DEDUP_INPUT,
             &stream,
             |m, k, v| {
-                cuda_launch! {
-                    kernel: insert_kernel,
-                    stream: stream,
-                    module: module,
-                    config: cfg,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice(*v)]
-                }?;
+                module.insert_kernel(&stream, cfg, &m.ctrl, &m.slots, k, v)?;
                 Ok(())
             },
         )?;
@@ -616,13 +555,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             DEDUP_INPUT,
             &stream,
             |m, k, v| {
-                cuda_launch! {
-                    kernel: insert_kernel_dedup,
-                    stream: stream,
-                    module: module,
-                    config: cfg,
-                    args: [slice(m.ctrl), slice(m.slots), slice(*k), slice(*v)]
-                }?;
+                module.insert_kernel_dedup(&stream, cfg, &m.ctrl, &m.slots, k, v)?;
                 Ok(())
             },
         )?;

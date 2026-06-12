@@ -32,7 +32,7 @@
 //! | `MatchAllSyncI64` | `llvm.nvvm.match.all.sync.i64p`   | 64-bit variant               |
 
 use crate::convert::intrinsics::common::*;
-use dialect_llvm::types as llvm_types;
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -270,7 +270,7 @@ pub(crate) fn convert_match_all(
     intrinsic_name: &str,
     value_ty: Ptr<pliron::r#type::TypeObj>,
 ) -> Result<()> {
-    use dialect_llvm::ops::ExtractValueOp;
+    use llvm_export::ops::ExtractValueOp;
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
