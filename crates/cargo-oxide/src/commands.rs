@@ -109,7 +109,7 @@ pub fn codegen_run(
     // Target precedence for `cargo oxide run` (highest first):
     //   1. --arch <sm_XX>            explicit user override   -> CUDA_OXIDE_TARGET
     //   2. CUDA_OXIDE_TARGET=<sm_XX> explicit env override (from the parent)
-    //   3. detected GPU arch of CUDA device 0 -> CUDA_OXIDE_DEVICE_ARCH (a hint)
+    //   3. detected GPU arch (via nvidia-smi) -> CUDA_OXIDE_DEVICE_ARCH (a hint)
     //   4. backend feature-based default (`select_target` in mir-importer)
     //
     // Slot 3 is a HINT, not an override: the backend builds for the detected
@@ -117,8 +117,8 @@ pub fn codegen_run(
     // arch (tcgen05 needs sm_100a even on a consumer sm_120 GPU), the backend
     // builds for the required arch and the module simply skips at load time.
     // We only detect for `run`, not `build`/`pipeline`: `run` loads the cubin
-    // on device 0, whereas those may legitimately cross-compile for another
-    // machine.
+    // on the local GPU, whereas those may legitimately cross-compile for
+    // another machine.
     let detected_device_arch = detect_run_target_arch(arch, emit_nvvm_ir);
 
     if let Some(interop) = interop.filter(|config| !config.device_crates.is_empty()) {
@@ -155,7 +155,7 @@ pub fn codegen_run(
         // a hard target: the backend builds for it unless a kernel needs a
         // newer arch (e.g. tcgen05 forces sm_100a even on a consumer sm_120
         // GPU), so the final PTX target may differ.
-        println!("Detected GPU arch: {dev} (CUDA device 0)");
+        println!("Detected GPU arch: {dev} (via nvidia-smi)");
         println!();
     }
     println!("This is the proper cargo workflow:");
@@ -244,7 +244,7 @@ fn codegen_run_interop(
         println!("Interop kind: {}", kind);
     }
     if let Some(dev) = detected_device_arch {
-        println!("Detected GPU arch: {dev} (CUDA device 0)");
+        println!("Detected GPU arch: {dev} (via nvidia-smi)");
     }
     println!();
 
@@ -912,7 +912,7 @@ pub fn doctor(ctx: &Context) {
     }
 
     print!("libdevice (libdevice.10.bc)... ");
-    match cuda_host::ltoir::find_libdevice() {
+    match libnvvm_sys::find_libdevice() {
         Ok(path) => println!("✓ {}", path.display()),
         Err(e) => {
             println!("✗ {}", e);
@@ -1344,11 +1344,11 @@ fn apply_device_arch_hint(
 /// 1. `--arch <sm_XX>`            (explicit user override)
 /// 2. `CUDA_OXIDE_TARGET=<sm_XX>` (explicit env override, set in the parent
 ///    process before invoking `cargo oxide run`)
-/// 3. **This function**: the compute capability of the GPU in CUDA device 0,
-///    forwarded as the `CUDA_OXIDE_DEVICE_ARCH` *hint*. Emits the arch-specific
-///    `sm_XYa` form for cc >= 9.0 (so the backend can lower WGMMA / tcgen05 /
-///    TMA-multicast when the GPU supports them) and the plain `sm_XY` form for
-///    cc < 9.0.
+/// 3. **This function**: the compute capability of the first GPU reported by
+///    `nvidia-smi`, forwarded as the `CUDA_OXIDE_DEVICE_ARCH` *hint*. Emits
+///    the arch-specific `sm_XYa` form for cc >= 9.0 (so the backend can lower
+///    WGMMA / tcgen05 / TMA-multicast when the GPU supports them) and the
+///    plain `sm_XY` form for cc < 9.0.
 /// 4. Backend feature-based default (`select_target` in
 ///    `mir-importer::pipeline`), which picks the minimum `sm_XX` required by
 ///    the IR shape (e.g. `Basic -> sm_80`, `Cluster -> sm_90`, `Tma -> sm_100`).
@@ -1360,11 +1360,11 @@ fn apply_device_arch_hint(
 ///
 /// # Why only `run`
 ///
-/// `run` immediately loads the generated module on device 0 and launches the
-/// kernel, so a target older than the local GPU's compute capability is the
-/// only safe default. `build` and `pipeline` may legitimately cross-compile
-/// to a different machine, so they keep the backend's feature-based default
-/// untouched.
+/// `run` immediately loads the generated module on the local GPU and launches
+/// the kernel, so a target older than the local GPU's compute capability is
+/// the only safe default. `build` and `pipeline` may legitimately
+/// cross-compile to a different machine, so they keep the backend's
+/// feature-based default untouched.
 ///
 /// # Why this is needed even with the backend default
 ///
@@ -1380,18 +1380,61 @@ fn apply_device_arch_hint(
 /// - `CUDA_OXIDE_TARGET` is set in the environment (slot 2 wins).
 /// - `--emit-nvvm-ir` is in effect (NVVM IR mode requires explicit `--arch`,
 ///   enforced by the CLI parser).
-/// - No CUDA driver / device 0 is available on the machine (CI runners without
-///   GPUs, headless build boxes). The caller falls through to slot 4 and
-///   the backend's feature-based default applies.
+/// - No CUDA driver / GPU is available on the machine (CI runners without
+///   GPUs, headless build boxes), or `nvidia-smi` is missing or broken. The
+///   caller falls through to slot 4 and the backend's feature-based default
+///   applies.
 fn detect_run_target_arch(arch: Option<&str>, emit_nvvm_ir: bool) -> Option<String> {
     if arch.is_some() || emit_nvvm_ir || std::env::var_os("CUDA_OXIDE_TARGET").is_some() {
         return None;
     }
 
-    cuda_core::CudaContext::new(0)
-        .and_then(|ctx| ctx.compute_capability())
+    query_device_compute_cap().map(format_sm_arch)
+}
+
+/// Query the compute capability of the first GPU via `nvidia-smi`.
+///
+/// Runs `nvidia-smi --query-gpu=compute_cap --format=csv,noheader` and parses
+/// the first output line. A subprocess probe (rather than the CUDA driver
+/// API) keeps cargo-oxide free of any link-time or dlopen dependency on
+/// `libcuda`, so the subcommand builds and runs on machines with no CUDA
+/// toolkit and no driver; `scripts/smoketest.sh` derives `sm_XX` from
+/// `nvidia-smi` the same way.
+///
+/// Caveat: `nvidia-smi` enumerates GPUs in PCI bus order, while CUDA's
+/// default device order is fastest-first, so on heterogeneous multi-GPU
+/// machines this may describe a different GPU than CUDA device 0. That is
+/// safe because `CUDA_OXIDE_DEVICE_ARCH` is advisory (the backend only
+/// honors a compatible hint) and `--arch` / `CUDA_OXIDE_TARGET` remain hard
+/// overrides.
+fn query_device_compute_cap() -> Option<(u32, u32)> {
+    let output = Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader"])
+        .output()
         .ok()
-        .map(format_sm_arch)
+        .filter(|o| o.status.success())?;
+    parse_compute_cap(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parse the first line of `nvidia-smi --query-gpu=compute_cap` output as a
+/// `(major, minor)` compute-capability pair. Returns `None` for anything
+/// that is not shaped `<digits>.<digits>`.
+fn parse_compute_cap(stdout: &str) -> Option<(u32, u32)> {
+    parse_compute_cap_field(stdout.lines().next()?)
+}
+
+/// Parse a single `compute_cap` CSV field (e.g. `"12.0"`).
+///
+/// Only the `<digits>.<digits>` shape is accepted: `nvidia-smi` prints its
+/// failure banners ("NVIDIA-SMI has failed ...") to *stdout*, sometimes with
+/// exit status 0, so this shape check is the real gate, not the exit status.
+fn parse_compute_cap_field(field: &str) -> Option<(u32, u32)> {
+    let (major, minor) = field.trim().split_once('.')?;
+    let all_digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !all_digits(major) || !all_digits(minor) {
+        return None;
+    }
+    Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
 /// Format a `(major, minor)` compute-capability tuple as the `sm_XX` /
@@ -1421,7 +1464,7 @@ fn detect_run_target_arch(arch: Option<&str>, emit_nvvm_ir: bool) -> Option<Stri
 /// - **Strict superset:** PTX targeting `sm_XYa` accepts every kernel that
 ///   would have compiled for plain `sm_XY`; the `a` form only permits
 ///   *additional* arch-specific intrinsics.
-fn format_sm_arch((major, minor): (i32, i32)) -> String {
+fn format_sm_arch((major, minor): (u32, u32)) -> String {
     if major >= 9 {
         format!("sm_{}{}a", major, minor)
     } else {
@@ -1908,6 +1951,43 @@ mod tests {
         assert_eq!(format_sm_arch((10, 1)), "sm_101a");
         assert_eq!(format_sm_arch((10, 3)), "sm_103a");
         assert_eq!(format_sm_arch((12, 0)), "sm_120a"); // consumer Blackwell
+    }
+
+    #[test]
+    fn parse_compute_cap_accepts_real_nvidia_smi_output() {
+        assert_eq!(parse_compute_cap("12.0\n"), Some((12, 0)));
+        assert_eq!(parse_compute_cap("7.5\n"), Some((7, 5)));
+        assert_eq!(parse_compute_cap("10.3"), Some((10, 3)));
+        // End-to-end with format_sm_arch: the values the backend sees.
+        assert_eq!(
+            format_sm_arch(parse_compute_cap("12.0\n").unwrap()),
+            "sm_120a"
+        );
+        assert_eq!(format_sm_arch(parse_compute_cap("7.5\n").unwrap()), "sm_75");
+    }
+
+    #[test]
+    fn parse_compute_cap_takes_first_gpu_on_multi_gpu_machines() {
+        assert_eq!(parse_compute_cap("9.0\n12.0\n"), Some((9, 0)));
+    }
+
+    #[test]
+    fn parse_compute_cap_rejects_failure_banners_and_garbage() {
+        // nvidia-smi prints failure text to STDOUT, not stderr.
+        assert_eq!(
+            parse_compute_cap(
+                "NVIDIA-SMI has failed because it couldn't communicate \
+                 with the NVIDIA driver.\n"
+            ),
+            None
+        );
+        assert_eq!(parse_compute_cap(""), None);
+        assert_eq!(parse_compute_cap("\n"), None);
+        assert_eq!(parse_compute_cap("N/A\n"), None);
+        assert_eq!(parse_compute_cap("12\n"), None);
+        assert_eq!(parse_compute_cap("12.\n"), None);
+        assert_eq!(parse_compute_cap(".5\n"), None);
+        assert_eq!(parse_compute_cap("12.0.1\n"), None);
     }
 
     #[test]

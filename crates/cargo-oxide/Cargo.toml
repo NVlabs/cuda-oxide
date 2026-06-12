@@ -11,10 +11,13 @@ description = "Cargo subcommand for cuda-oxide: build and run Rust GPU programs"
 name = "cargo-oxide"
 path = "src/main.rs"
 
+# Deliberately CUDA-free: no dependency here may pull `cuda-bindings`
+# (or any other build script that needs the CUDA toolkit), so that
+# `cargo oxide doctor` builds and runs on a machine with no toolkit and
+# no driver. libnvvm-sys / nvjitlink-sys are pure-Rust runtime-dlopen
+# crates and are fine.
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 libnvvm-sys = { workspace = true }
 nvjitlink-sys = { workspace = true }
-cuda-host = { workspace = true }
-cuda-core = { workspace = true }
 toml = "1"
