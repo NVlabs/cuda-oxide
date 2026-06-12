@@ -1,0 +1,82 @@
+---
+name: fork-ci
+
+# Lightweight CI for our PR branches. Catches formatting, clippy, rustdoc, and
+# unit-test failures in the packages we modify (no CUDA toolkit needed).
+# Runs on every push to any branch except main (upstream CI covers main).
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches-ignore: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rustfmt for the pinned nightly
+        run: rustup component add rustfmt
+
+      - name: Check root workspace formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (no-cuda packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run clippy on packages that don't need CUDA
+        run: |
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+
+          cargo clippy \
+            -p mir-lower \
+            -p llvm-export \
+            -p dialect-nvvm \
+            -p dialect-mir \
+            -p mir-importer \
+            -p oxide-artifacts \
+            -p reserved-oxide-symbols \
+            -- -D warnings
+
+  unit-tests:
+    name: test ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - llvm-export
+          - dialect-mir
+          - dialect-nvvm
+          - mir-lower
+          - mir-importer
+          - oxide-artifacts
+          - reserved-oxide-symbols
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run crate unit tests
+        run: |
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+
+          cargo test -p ${{ matrix.package }} --all-targets
