@@ -823,6 +823,185 @@ fn append_return(ctx: &mut Context, block: pliron::context::Ptr<pliron::basic_bl
     ret.insert_at_back(block, ctx);
 }
 
+#[test]
+fn test_fast_float_intrinsics_lower_to_explicit_fast_binops() -> Result<(), anyhow::Error> {
+    use dialect_mir::rust_intrinsics;
+    use llvm_export::attributes::{FastmathFlags, FastmathFlagsAttr};
+    use llvm_export::op_interfaces::FastMathFlags;
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::builtin::op_interfaces::CallOpInterface;
+    use pliron::builtin::types::{FP32Type, FP64Type};
+    use pliron::r#type::{TypeObj, Typed};
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let f64_ty = FP64Type::get(&ctx);
+    let f32_ty_obj: pliron::context::Ptr<TypeObj> = f32_ty.into();
+    let f64_ty_obj: pliron::context::Ptr<TypeObj> = f64_ty.into();
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![f32_ty_obj, f32_ty_obj, f64_ty_obj, f64_ty_obj],
+    );
+    let f32_lhs = entry.deref(&ctx).get_argument(0);
+    let f32_rhs = entry.deref(&ctx).get_argument(1);
+    let f64_lhs = entry.deref(&ctx).get_argument(2);
+    let f64_rhs = entry.deref(&ctx).get_argument(3);
+
+    for (callee, lhs, rhs, result_ty) in [
+        (
+            rust_intrinsics::CALLEE_FADD_FAST,
+            f32_lhs,
+            f32_rhs,
+            f32_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FSUB_FAST,
+            f32_lhs,
+            f32_rhs,
+            f32_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FMUL_FAST,
+            f32_lhs,
+            f32_rhs,
+            f32_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FDIV_FAST,
+            f32_lhs,
+            f32_rhs,
+            f32_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FREM_FAST,
+            f32_lhs,
+            f32_rhs,
+            f32_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FADD_FAST,
+            f64_lhs,
+            f64_rhs,
+            f64_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FSUB_FAST,
+            f64_lhs,
+            f64_rhs,
+            f64_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FMUL_FAST,
+            f64_lhs,
+            f64_rhs,
+            f64_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FDIV_FAST,
+            f64_lhs,
+            f64_rhs,
+            f64_ty_obj,
+        ),
+        (
+            rust_intrinsics::CALLEE_FREM_FAST,
+            f64_lhs,
+            f64_rhs,
+            f64_ty_obj,
+        ),
+    ] {
+        let call_ptr = Operation::new(
+            &mut ctx,
+            mir::MirCallOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![lhs, rhs],
+            vec![],
+            0,
+        );
+        let call = mir::MirCallOp::new(call_ptr);
+        call.set_attr_callee(&ctx, StringAttr::new(callee.to_string()));
+        call_ptr.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let explicit_fast_flags: FastmathFlagsAttr = FastmathFlags::FAST.into();
+    assert_ne!(
+        explicit_fast_flags,
+        FastmathFlagsAttr::default(),
+        "FastmathFlagsAttr::default() is empty; f*_fast must use explicit fast flags"
+    );
+
+    let mut fadd_counts = [0usize; 2];
+    let mut fsub_counts = [0usize; 2];
+    let mut fmul_counts = [0usize; 2];
+    let mut fdiv_counts = [0usize; 2];
+    let mut frem_counts = [0usize; 2];
+
+    macro_rules! count_fast_binop {
+        ($body_op:expr, $op_ty:ty, $counts:ident, $name:literal) => {
+            if let Some(op) = Operation::get_op::<$op_ty>($body_op, &ctx) {
+                assert_eq!(
+                    op.fast_math_flags(&ctx),
+                    explicit_fast_flags,
+                    concat!($name, " must carry explicit LLVM fast-math flags")
+                );
+                let result_ty = op.get_operation().deref(&ctx).get_result(0).get_type(&ctx);
+                if result_ty == f32_ty_obj {
+                    $counts[0] += 1;
+                } else if result_ty == f64_ty_obj {
+                    $counts[1] += 1;
+                } else {
+                    panic!(concat!($name, " lowered to an unexpected result type"));
+                }
+            }
+        };
+    }
+
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                assert!(
+                    Operation::get_op::<mir::MirCallOp>(body_op, &ctx).is_none(),
+                    "f*_fast placeholder mir.call must not survive MIR lowering"
+                );
+                if let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx)
+                    && let CallOpCallable::Direct(sym) = call.callee(&ctx)
+                {
+                    let callee = sym.to_string();
+                    assert!(
+                        !callee.starts_with(rust_intrinsics::PLACEHOLDER_PREFIX),
+                        "lowered LLVM must not call unresolved Rust intrinsic placeholder `{callee}`"
+                    );
+                }
+                count_fast_binop!(body_op, llvm::FAddOp, fadd_counts, "fadd_fast");
+                count_fast_binop!(body_op, llvm::FSubOp, fsub_counts, "fsub_fast");
+                count_fast_binop!(body_op, llvm::FMulOp, fmul_counts, "fmul_fast");
+                count_fast_binop!(body_op, llvm::FDivOp, fdiv_counts, "fdiv_fast");
+                count_fast_binop!(body_op, llvm::FRemOp, frem_counts, "frem_fast");
+            }
+        }
+    }
+
+    assert_eq!(fadd_counts, [1, 1], "fadd_fast must lower for f32 and f64");
+    assert_eq!(fsub_counts, [1, 1], "fsub_fast must lower for f32 and f64");
+    assert_eq!(fmul_counts, [1, 1], "fmul_fast must lower for f32 and f64");
+    assert_eq!(fdiv_counts, [1, 1], "fdiv_fast must lower for f32 and f64");
+    assert_eq!(frem_counts, [1, 1], "frem_fast must lower for f32 and f64");
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // cvt.f16x2 intrinsic lowering test
 // ---------------------------------------------------------------------------

@@ -117,6 +117,16 @@ pub enum RustFloatMathIntrinsic {
     CbrtF32,
     /// `f64::cbrt` / `std::sys::cmath::cbrt`.
     CbrtF64,
+    /// Generic `core::intrinsics::fadd_fast` (lowered to `llvm.fadd` + fast-math).
+    FaddFast,
+    /// Generic `core::intrinsics::fsub_fast` (lowered to `llvm.fsub` + fast-math).
+    FsubFast,
+    /// Generic `core::intrinsics::fmul_fast` (lowered to `llvm.fmul` + fast-math).
+    FmulFast,
+    /// Generic `core::intrinsics::fdiv_fast` (lowered to `llvm.fdiv` + fast-math).
+    FdivFast,
+    /// Generic `core::intrinsics::frem_fast` (lowered to `llvm.frem` + fast-math).
+    FremFast,
 }
 
 impl RustFloatMathIntrinsic {
@@ -190,7 +200,7 @@ impl RustFloatMathIntrinsic {
             "std::sys::cmath::cbrt" => Some(Self::CbrtF64),
             "core::num::imp::libm::cbrtf" => Some(Self::CbrtF32),
             "core::num::imp::libm::cbrt" => Some(Self::CbrtF64),
-            other => Self::from_libm_path(other),
+            other => Self::from_libm_path(other).or_else(|| Self::from_fast_intrinsic_path(other)),
         }
     }
 
@@ -259,6 +269,23 @@ impl RustFloatMathIntrinsic {
         }
     }
 
+    /// Recognize `core::intrinsics` / `std::intrinsics` generic fast-float ops.
+    fn from_fast_intrinsic_path(name: &str) -> Option<Self> {
+        match name {
+            // Generic finite-input arithmetic intrinsics. The FQDN carries no
+            // float-type suffix because they're polymorphic over `T:
+            // FloatPrimitive`; the float type is in the call's substs and
+            // recovered from the destination's `body.locals()[…].ty` at
+            // lowering time.
+            "core::intrinsics::fadd_fast" | "std::intrinsics::fadd_fast" => Some(Self::FaddFast),
+            "core::intrinsics::fsub_fast" | "std::intrinsics::fsub_fast" => Some(Self::FsubFast),
+            "core::intrinsics::fmul_fast" | "std::intrinsics::fmul_fast" => Some(Self::FmulFast),
+            "core::intrinsics::fdiv_fast" | "std::intrinsics::fdiv_fast" => Some(Self::FdivFast),
+            "core::intrinsics::frem_fast" | "std::intrinsics::frem_fast" => Some(Self::FremFast),
+            _ => None,
+        }
+    }
+
     /// Return the internal placeholder name used until MIR-to-LLVM lowering.
     pub fn placeholder_callee(self) -> &'static str {
         match self {
@@ -311,6 +338,11 @@ impl RustFloatMathIntrinsic {
             Self::AtanF64 => rust_intrinsics::CALLEE_ATAN_F64,
             Self::CbrtF32 => rust_intrinsics::CALLEE_CBRT_F32,
             Self::CbrtF64 => rust_intrinsics::CALLEE_CBRT_F64,
+            Self::FaddFast => rust_intrinsics::CALLEE_FADD_FAST,
+            Self::FsubFast => rust_intrinsics::CALLEE_FSUB_FAST,
+            Self::FmulFast => rust_intrinsics::CALLEE_FMUL_FAST,
+            Self::FdivFast => rust_intrinsics::CALLEE_FDIV_FAST,
+            Self::FremFast => rust_intrinsics::CALLEE_FREM_FAST,
         }
     }
 }
