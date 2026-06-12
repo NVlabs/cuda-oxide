@@ -36,6 +36,8 @@
 /// - The caller must call `cp_async_commit_group()` after all copies in a group
 /// - The caller must call `cp_async_wait_group()` or `cp_async_wait_all()`
 ///   before reading the shared memory destination
+///
+/// See also: [`cp_async_ca_16`]
 #[inline(never)]
 pub fn cp_async_cg_16(shared_dst: *mut u8, global_src: *const u8) {
     let _ = (shared_dst, global_src);
@@ -60,6 +62,8 @@ pub fn cp_async_cg_16(shared_dst: *mut u8, global_src: *const u8) {
 /// - The caller must call `cp_async_commit_group()` after all copies in a group
 /// - The caller must call `cp_async_wait_group()` or `cp_async_wait_all()`
 ///   before reading the shared memory destination
+///
+/// See also: [`cp_async_cg_16`]
 #[inline(never)]
 pub fn cp_async_ca_16(shared_dst: *mut u8, global_src: *const u8) {
     let _ = (shared_dst, global_src);

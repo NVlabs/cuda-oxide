@@ -87,8 +87,8 @@ fn emit_cp_async_16_impl<T: Op>(
 /// Uses `.cg` cache policy (L2-only, bypasses L1).
 ///
 /// Args:
-/// - args[0]: *mut u8 (shared memory destination, 16-byte aligned)
-/// - args[1]: *const u8 (global memory source, 16-byte aligned)
+/// - `args[0]`: *mut u8 (shared memory destination, 16-byte aligned)
+/// - `args[1]`: *const u8 (global memory source, 16-byte aligned)
 pub fn emit_cp_async_cg_16(
     ctx: &mut Context,
     body: &mir::Body,
@@ -109,8 +109,8 @@ pub fn emit_cp_async_cg_16(
 /// Emit cp_async_ca_16: async 16-byte copy with `.ca` cache policy (L1+L2).
 ///
 /// Args:
-/// - args[0]: *mut u8 (shared memory destination, 16-byte aligned)
-/// - args[1]: *const u8 (global memory source, 16-byte aligned)
+/// - `args[0]`: *mut u8 (shared memory destination, 16-byte aligned)
+/// - `args[1]`: *const u8 (global memory source, 16-byte aligned)
 pub fn emit_cp_async_ca_16(
     ctx: &mut Context,
     body: &mir::Body,

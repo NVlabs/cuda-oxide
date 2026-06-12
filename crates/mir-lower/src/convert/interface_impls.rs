@@ -2830,7 +2830,6 @@ impl MirToLlvmConversion for StmatrixM8n8X2TransOp {
     }
 }
 
-
 // ---- NVVM cp.async ops (Ampere SM 80+) -------------------------------------
 
 #[op_interface_impl]
