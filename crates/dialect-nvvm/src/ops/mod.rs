@@ -96,6 +96,7 @@
 //! ```
 
 pub mod atomic;
+mod bf16x2;
 mod clc;
 mod cluster;
 mod convert;
@@ -113,6 +114,7 @@ use pliron::context::Context;
 
 // Re-export all operations for public API
 pub use atomic::*;
+pub use bf16x2::*;
 pub use clc::*;
 pub use cluster::*;
 pub use convert::*;
@@ -132,6 +134,7 @@ pub use wgmma::*;
 /// verified, and printed. Must be called during dialect initialization.
 pub fn register(ctx: &mut Context) {
     atomic::register(ctx);
+    bf16x2::register(ctx);
     clc::register(ctx);
     convert::register(ctx);
     thread::register(ctx);
