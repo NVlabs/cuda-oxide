@@ -1023,6 +1023,7 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
     let result = std::process::Command::new(&toolchain.llc_path)
         .arg("-march=nvptx64")
         .arg(format!("-mcpu={}", target))
+        .arg("-mattr=+ptx60")  // shfl.sync.* and other PTX ISA 6.0+ instructions need this on pre-Volta targets
         .arg(llc_input)
         .arg("-o")
         .arg(ptx_path)
