@@ -220,6 +220,8 @@ pub fn run_pipeline(
     device_externs: &[DeviceExternDecl],
     config: &PipelineConfig,
 ) -> Result<CompilationResult, PipelineError> {
+    prepare_output_dir(&config.output_dir)?;
+
     let mut ctx = Context::new();
 
     // Step 1: Register dialects
@@ -444,6 +446,21 @@ pub fn run_pipeline(
             target,
         })
     }
+}
+
+/// Ensures the configured output directory exists before any emission step.
+///
+/// The pipeline writes every generated artifact under `PipelineConfig::output_dir`.
+/// Creating the directory at the pipeline boundary lets callers provide fresh
+/// sidecar paths without separately seeding them first.
+fn prepare_output_dir(output_dir: &Path) -> Result<(), PipelineError> {
+    std::fs::create_dir_all(output_dir).map_err(|e| {
+        PipelineError::Export(format!(
+            "failed to create output directory {}: {}",
+            output_dir.display(),
+            e
+        ))
+    })
 }
 
 /// Returns true when lowering emitted CUDA libdevice calls.
@@ -1141,6 +1158,40 @@ mod tests {
         assert!(!config.show_mir_dialect);
         assert!(!config.show_llvm_dialect);
         assert!(!config.emit_nvvm_ir);
+    }
+
+    #[test]
+    fn run_pipeline_creates_missing_output_dir_before_export() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_mir_importer_output_dir_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let output_dir = root.join("fresh").join("nested");
+        fs::remove_dir_all(&root).ok();
+        assert!(!output_dir.exists());
+
+        let config = PipelineConfig {
+            output_dir: output_dir.clone(),
+            output_name: "empty".to_string(),
+            verbose: false,
+            show_mir_dialect: false,
+            show_llvm_dialect: false,
+            emit_nvvm_ir: true,
+        };
+
+        let result = run_pipeline(&[], &[], &config).expect("pipeline run");
+
+        assert!(output_dir.is_dir());
+        assert!(result.ll_path.is_file());
+        assert_eq!(result.artifact_path, result.ll_path);
+        assert_eq!(result.artifact_kind, CompilationArtifactKind::NvvmIr);
+
+        fs::remove_dir_all(&root).expect("clean up temp output dir");
     }
 
     #[test]
