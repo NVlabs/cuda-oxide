@@ -476,4 +476,110 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
             crate::memory::memcpy_htod_async(self.ptr, src.as_ptr(), num_bytes, stream.cu_stream())
         }
     }
+
+    /// Allocates `len` elements of uninitialized device memory, enqueued on
+    /// `stream`.
+    ///
+    /// Unlike [`Self::zeroed`], no `cuMemsetD8` is enqueued. The contents of
+    /// the returned buffer are undefined until the caller writes them.
+    ///
+    /// # Safety
+    ///
+    /// Reading from the returned buffer before any kernel or memcpy has
+    /// written it is undefined behavior.
+    pub unsafe fn uninitialized_async(
+        stream: &CudaStream,
+        len: usize,
+    ) -> Result<Self, DriverError> {
+        let ctx = stream.context().clone();
+        let num_bytes = len * std::mem::size_of::<T>();
+        if num_bytes == 0 {
+            // SAFETY: a null pointer with zero bytes is never dereferenced
+            // and Drop/drop_async ignore it.
+            return Ok(unsafe { Self::from_raw_parts(0, len, ctx) });
+        }
+
+        let ptr = unsafe { crate::memory::malloc_async(stream.cu_stream(), num_bytes)? };
+        Ok(Self {
+            ptr,
+            len,
+            ctx,
+            _marker: PhantomData,
+        })
+    }
+
+    /// Copies `other` into `self` device-to-device, enqueued on `stream`.
+    ///
+    /// Panics if `other.len() != self.len()`.
+    pub fn copy_from_device_async(
+        &mut self,
+        other: &DeviceBuffer<T>,
+        stream: &CudaStream,
+    ) -> Result<(), DriverError> {
+        assert_eq!(
+            self.len, other.len,
+            "device-to-device copy length mismatch: dst {} != src {}",
+            self.len, other.len
+        );
+        if self.num_bytes() == 0 {
+            return Ok(());
+        }
+        unsafe {
+            crate::memory::memcpy_dtod_async(
+                self.ptr,
+                other.ptr,
+                self.num_bytes(),
+                stream.cu_stream(),
+            )
+        }
+    }
+
+    /// Copies `src` into `self` host-to-device, enqueued on `stream`.
+    ///
+    /// The host slice must remain valid until the copy completes on `stream`.
+    /// Panics if `src.len() != self.len()`.
+    pub fn copy_from_host_async(
+        &mut self,
+        src: &[T],
+        stream: &CudaStream,
+    ) -> Result<(), DriverError> {
+        assert_eq!(
+            self.len,
+            src.len(),
+            "host-to-device copy length mismatch: dst {} != src {}",
+            self.len,
+            src.len()
+        );
+        if self.num_bytes() == 0 {
+            return Ok(());
+        }
+        unsafe {
+            crate::memory::memcpy_htod_async(
+                self.ptr,
+                src.as_ptr(),
+                self.num_bytes(),
+                stream.cu_stream(),
+            )
+        }
+    }
+
+    /// Consumes the buffer and frees it asynchronously on `stream`.
+    ///
+    /// Use this for buffers whose lifetime must be ordered relative to in-flight
+    /// stream work.
+    pub fn drop_async(self, stream: &CudaStream) -> Result<(), DriverError> {
+        let (ptr, _len, _ctx) = self.into_raw_parts();
+        if ptr == 0 {
+            return Ok(());
+        }
+        unsafe { crate::memory::free_async(ptr, stream.cu_stream()) }
+    }
+
+    /// Zeroes every byte in the buffer asynchronously on `stream`.
+    pub fn zero_async(&mut self, stream: &CudaStream) -> Result<(), DriverError> {
+        if self.num_bytes() == 0 {
+            return Ok(());
+        }
+        unsafe { crate::memory::memset_d8_async(self.ptr, 0, self.num_bytes(), stream.cu_stream()) }
+    }
 }
