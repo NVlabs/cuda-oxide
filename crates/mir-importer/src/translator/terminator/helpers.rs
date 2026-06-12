@@ -160,9 +160,9 @@ pub fn emit_function_call(
     call_op.deref_mut(ctx).set_loc(loc.clone());
 
     let callee_attr = StringAttr::new(callee_name.into());
-    call_op.deref_mut(ctx).attributes.0.insert(
+    call_op.deref_mut(ctx).attributes.set(
         pliron::identifier::Identifier::try_from("callee").unwrap(),
-        callee_attr.into(),
+        callee_attr,
     );
 
     let call_op = if let Some(prev) = last_op {

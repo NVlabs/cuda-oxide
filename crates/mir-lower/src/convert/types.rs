@@ -133,7 +133,10 @@ fn gpu_kernel_attr() -> pliron::identifier::Identifier {
 /// for that branch and is consumed by both [`convert_function_type`] and
 /// the entry-block prologue in `lowering.rs`.
 pub fn is_kernel_func(ctx: &Context, op: Ptr<Operation>) -> bool {
-    op.deref(ctx).attributes.0.contains_key(&gpu_kernel_attr())
+    op.deref(ctx)
+        .attributes
+        .get::<pliron::builtin::attributes::StringAttr>(&gpu_kernel_attr())
+        .is_some()
 }
 
 // =============================================================================

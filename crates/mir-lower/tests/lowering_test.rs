@@ -941,7 +941,7 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     );
     Operation::get_op::<mir::MirCondBranchOp>(cond_br, &ctx)
         .expect("MirCondBranchOp")
-        .set_operand_segment_sizes(&mut ctx, segment_sizes);
+        .set_operand_segment_sizes(&ctx, segment_sizes);
     cond_br.insert_at_back(bb0, &ctx);
 
     // bb1: goto bb2(b).

@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -205,12 +211,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "foldhash",
+ "foldhash 0.1.5",
 ]
 
 [[package]]
@@ -218,6 +230,11 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hi_sparse_bitset"
@@ -282,6 +299,15 @@ dependencies = [
  "reserved-oxide-symbols",
  "rustc-hash",
  "thiserror",
+]
+
+[[package]]
+name = "lock_api"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
 ]
 
 [[package]]
@@ -354,12 +380,13 @@ dependencies = [
 [[package]]
 name = "pliron"
 version = "0.15.0"
-source = "git+https://github.com/pliron-org/pliron?rev=fed4e6f848bd726a4f2deb51c5021760ef382aec#fed4e6f848bd726a4f2deb51c5021760ef382aec"
+source = "git+https://github.com/pliron-org/pliron?rev=af1b7d07dda91dad140c1df1df665754cd1646e5#af1b7d07dda91dad140c1df1df665754cd1646e5"
 dependencies = [
  "awint",
  "combine",
  "downcast-rs",
  "dyn-clone",
+ "hashbrown 0.17.0",
  "hi_sparse_bitset",
  "inventory",
  "linkme",
@@ -369,6 +396,7 @@ dependencies = [
  "rustc-hash",
  "rustc_apfloat",
  "slotmap",
+ "spin",
  "thiserror",
  "utf8-chars",
 ]
@@ -376,7 +404,7 @@ dependencies = [
 [[package]]
 name = "pliron-derive"
 version = "0.15.0"
-source = "git+https://github.com/pliron-org/pliron?rev=fed4e6f848bd726a4f2deb51c5021760ef382aec#fed4e6f848bd726a4f2deb51c5021760ef382aec"
+source = "git+https://github.com/pliron-org/pliron?rev=af1b7d07dda91dad140c1df1df665754cd1646e5#af1b7d07dda91dad140c1df1df665754cd1646e5"
 dependencies = [
  "combine",
  "convert_case",
@@ -389,7 +417,7 @@ dependencies = [
 [[package]]
 name = "pliron-llvm"
 version = "0.15.0"
-source = "git+https://github.com/pliron-org/pliron?rev=fed4e6f848bd726a4f2deb51c5021760ef382aec#fed4e6f848bd726a4f2deb51c5021760ef382aec"
+source = "git+https://github.com/pliron-org/pliron?rev=af1b7d07dda91dad140c1df1df665754cd1646e5#af1b7d07dda91dad140c1df1df665754cd1646e5"
 dependencies = [
  "bitflags",
  "log",
@@ -506,6 +534,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "scopeguard"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
 name = "slotmap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -519,6 +553,15 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "spin"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1527984ca054dfca79333baec451042863f485fbee01b7bf6d911de915cac865"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "syn"

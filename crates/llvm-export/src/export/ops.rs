@@ -896,16 +896,11 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let val = op_ref.get_operand(0);
 
-        // Manual attribute access since helper is missing
         let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
         let nneg = op_ref
             .attributes
-            .0
-            .get(&nneg_key)
-            .and_then(|attr| {
-                attr.downcast_ref::<pliron::builtin::attributes::BoolAttr>()
-                    .map(|b| bool::from(b.clone()))
-            })
+            .get::<pliron::builtin::attributes::BoolAttr>(&nneg_key)
+            .map(|b| bool::from(b.clone()))
             .unwrap_or(false);
 
         write!(output, "  {res_name} = zext ").unwrap();

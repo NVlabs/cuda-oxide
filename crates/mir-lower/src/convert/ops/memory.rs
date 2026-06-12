@@ -284,28 +284,22 @@ pub fn convert_shared_alloc_dc(
 
         let elem_type_attr = op_ref
             .attributes
-            .0
-            .get(&"elem_type".try_into().unwrap())
+            .get::<TypeAttr>(&"elem_type".try_into().unwrap())
             .ok_or_else(|| {
                 anyhow_to_pliron(anyhow::anyhow!(
-                    "MirSharedAllocOp missing elem_type attribute"
+                    "MirSharedAllocOp missing elem_type TypeAttr attribute"
                 ))
             })?;
-        let elem_type_attr = elem_type_attr
-            .downcast_ref::<TypeAttr>()
-            .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("elem_type is not a TypeAttr")))?;
         let mir_elem_type = elem_type_attr.get_type(ctx);
 
         let size_attr = op_ref
             .attributes
-            .0
-            .get(&"size".try_into().unwrap())
+            .get::<IntegerAttr>(&"size".try_into().unwrap())
             .ok_or_else(|| {
-                anyhow_to_pliron(anyhow::anyhow!("MirSharedAllocOp missing size attribute"))
+                anyhow_to_pliron(anyhow::anyhow!(
+                    "MirSharedAllocOp missing size IntegerAttr attribute"
+                ))
             })?;
-        let size_attr = size_attr
-            .downcast_ref::<IntegerAttr>()
-            .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("size is not an IntegerAttr")))?;
         let size = size_attr.value().to_u64();
 
         let alignment = shared_alloc_op.get_alignment_value(ctx).unwrap_or(0);
@@ -417,30 +411,22 @@ pub fn convert_global_alloc_dc(
 
         let global_key_attr = op_ref
             .attributes
-            .0
-            .get(&"global_key".try_into().unwrap())
+            .get::<StringAttr>(&"global_key".try_into().unwrap())
             .ok_or_else(|| {
                 anyhow_to_pliron(anyhow::anyhow!(
-                    "MirGlobalAllocOp missing global_key attribute"
+                    "MirGlobalAllocOp missing global_key StringAttr attribute"
                 ))
             })?;
-        let global_key_attr = global_key_attr
-            .downcast_ref::<StringAttr>()
-            .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("global_key is not a StringAttr")))?;
         let global_key = String::from((*global_key_attr).clone());
 
         let global_type_attr = op_ref
             .attributes
-            .0
-            .get(&"global_type".try_into().unwrap())
+            .get::<TypeAttr>(&"global_type".try_into().unwrap())
             .ok_or_else(|| {
                 anyhow_to_pliron(anyhow::anyhow!(
-                    "MirGlobalAllocOp missing global_type attribute"
+                    "MirGlobalAllocOp missing global_type TypeAttr attribute"
                 ))
             })?;
-        let global_type_attr = global_type_attr
-            .downcast_ref::<TypeAttr>()
-            .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("global_type is not a TypeAttr")))?;
         let mir_global_type = global_type_attr.get_type(ctx);
 
         let alignment = global_op.get_alignment_value(ctx).unwrap_or(0);
@@ -1163,11 +1149,7 @@ mod tests {
             let func_op = module_block.deref(&ctx).iter(&ctx).next().unwrap();
             let kernel_attr = StringAttr::new("true".to_string());
             let key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
-            func_op
-                .deref_mut(&ctx)
-                .attributes
-                .0
-                .insert(key, kernel_attr.into());
+            func_op.deref_mut(&ctx).attributes.set(key, kernel_attr);
         }
 
         // The slot map lowers MultiPayload byte-identically to rustc's
@@ -1220,11 +1202,7 @@ mod tests {
             let func_op = module_block.deref(&ctx).iter(&ctx).next().unwrap();
             let kernel_attr = StringAttr::new("true".to_string());
             let key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
-            func_op
-                .deref_mut(&ctx)
-                .attributes
-                .0
-                .insert(key, kernel_attr.into());
+            func_op.deref_mut(&ctx).attributes.set(key, kernel_attr);
         }
 
         let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)

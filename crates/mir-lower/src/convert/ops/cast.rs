@@ -197,10 +197,10 @@ fn convert_int_to_int(
         } else {
             let zext = llvm::ZExtOp::new(ctx, val, llvm_ty);
             let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
-            zext.get_operation().deref_mut(ctx).attributes.0.insert(
-                nneg_key,
-                pliron::builtin::attributes::BoolAttr::new(false).into(),
-            );
+            zext.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(nneg_key, pliron::builtin::attributes::BoolAttr::new(false));
             Ok(zext.get_operation())
         }
     } else if dst_w < src_w {
@@ -234,10 +234,11 @@ fn convert_int_to_float(
     } else {
         let uitofp = llvm::UIToFPOp::new(ctx, val, llvm_ty);
         let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
-        uitofp.get_operation().deref_mut(ctx).attributes.0.insert(
-            nneg_key,
-            pliron::builtin::attributes::BoolAttr::new(false).into(),
-        );
+        uitofp
+            .get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(nneg_key, pliron::builtin::attributes::BoolAttr::new(false));
         Ok(uitofp.get_operation())
     }
 }
@@ -976,16 +977,14 @@ fn convert_float_to_float(
         op.get_operation()
             .deref_mut(ctx)
             .attributes
-            .0
-            .insert(flags_key, flags.into());
+            .set(flags_key, flags);
         Ok(op.get_operation())
     } else if src_width > dst_width {
         let op = llvm::FPTruncOp::new(ctx, val, llvm_ty);
         op.get_operation()
             .deref_mut(ctx)
             .attributes
-            .0
-            .insert(flags_key, flags.into());
+            .set(flags_key, flags);
         Ok(op.get_operation())
     } else {
         Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation())

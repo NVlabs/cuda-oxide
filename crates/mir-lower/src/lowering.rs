@@ -192,19 +192,14 @@ fn propagate_kernel_attrs(
     llvm_func: &llvm::FuncOp,
     kernel_key: &pliron::identifier::Identifier,
 ) {
-    llvm_func
-        .get_operation()
-        .deref_mut(ctx)
-        .attributes
-        .0
-        .insert(
-            kernel_key.clone(),
-            pliron::builtin::attributes::StringAttr::new("true".to_string()).into(),
-        );
+    llvm_func.get_operation().deref_mut(ctx).attributes.set(
+        kernel_key.clone(),
+        pliron::builtin::attributes::StringAttr::new("true".to_string()),
+    );
 
     // Extract MIR attrs first to avoid borrow overlap with deref_mut below
     let attrs_to_copy: Vec<_> = {
-        let mir_attrs = &mir_op.deref(ctx).attributes.0;
+        let mir_attrs = &mir_op.deref(ctx).attributes;
         [
             "cluster_dim_x",
             "cluster_dim_y",
@@ -215,7 +210,9 @@ fn propagate_kernel_attrs(
         .iter()
         .filter_map(|key_str| {
             let key: pliron::identifier::Identifier = (*key_str).try_into().unwrap();
-            mir_attrs.get(&key).map(|attr| (key, attr.clone()))
+            mir_attrs
+                .get::<pliron::builtin::attributes::IntegerAttr>(&key)
+                .map(|attr| (key, attr.clone()))
         })
         .collect()
     };
@@ -225,8 +222,7 @@ fn propagate_kernel_attrs(
             .get_operation()
             .deref_mut(ctx)
             .attributes
-            .0
-            .insert(key, attr);
+            .set(key, attr);
     }
 }
 

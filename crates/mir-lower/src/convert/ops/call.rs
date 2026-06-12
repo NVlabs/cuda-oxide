@@ -983,10 +983,10 @@ fn cast_integer_value_to_type(
     let cast_op = if source_width < target_width {
         let zext = llvm::ZExtOp::new(ctx, value, target_ty);
         let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
-        zext.get_operation().deref_mut(ctx).attributes.0.insert(
-            nneg_key,
-            pliron::builtin::attributes::BoolAttr::new(false).into(),
-        );
+        zext.get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(nneg_key, pliron::builtin::attributes::BoolAttr::new(false));
         zext.get_operation()
     } else {
         llvm::TruncOp::new(ctx, value, target_ty).get_operation()

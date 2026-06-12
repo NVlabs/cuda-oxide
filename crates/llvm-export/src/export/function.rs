@@ -121,8 +121,10 @@ impl<'a> ModuleExportState<'a> {
 
         // Check for kernel attribute
         let kernel_key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
-        let attrs = &func.get_operation().deref(self.ctx).attributes.0;
-        let is_kernel = attrs.contains_key(&kernel_key);
+        let attrs = &func.get_operation().deref(self.ctx).attributes;
+        let is_kernel = attrs
+            .get::<pliron::builtin::attributes::StringAttr>(&kernel_key)
+            .is_some();
 
         // Track ALL kernels if backend requires annotations for every kernel
         if is_kernel && self.track_all_kernels {
@@ -141,55 +143,39 @@ impl<'a> ModuleExportState<'a> {
         // Check for cluster dimension attributes (from #[cluster(x,y,z)])
         // These will be emitted as nvvm.annotations metadata
         if is_kernel {
-            let x_key: pliron::identifier::Identifier = "cluster_dim_x".try_into().unwrap();
-            let y_key: pliron::identifier::Identifier = "cluster_dim_y".try_into().unwrap();
-            let z_key: pliron::identifier::Identifier = "cluster_dim_z".try_into().unwrap();
+            let get_int = |key: &str| -> Option<u32> {
+                let key: pliron::identifier::Identifier = key.try_into().unwrap();
+                attrs
+                    .get::<pliron::builtin::attributes::IntegerAttr>(&key)
+                    .map(|int_attr| int_attr.value().to_u32())
+            };
 
-            if let (Some(x_attr), Some(y_attr), Some(z_attr)) =
-                (attrs.get(&x_key), attrs.get(&y_key), attrs.get(&z_key))
-            {
-                use pliron::attribute::AttrObj;
-                let get_int = |attr: &AttrObj| -> Option<u32> {
-                    attr.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()
-                        .map(|int_attr| int_attr.value().to_u32())
-                };
-
-                if let (Some(dim_x), Some(dim_y), Some(dim_z)) =
-                    (get_int(x_attr), get_int(y_attr), get_int(z_attr))
-                {
-                    self.cluster_kernels.push(KernelClusterConfig {
-                        name: fixed_func_name.clone(),
-                        dim_x,
-                        dim_y,
-                        dim_z,
-                    });
-                }
+            if let (Some(dim_x), Some(dim_y), Some(dim_z)) = (
+                get_int("cluster_dim_x"),
+                get_int("cluster_dim_y"),
+                get_int("cluster_dim_z"),
+            ) {
+                self.cluster_kernels.push(KernelClusterConfig {
+                    name: fixed_func_name.clone(),
+                    dim_x,
+                    dim_y,
+                    dim_z,
+                });
             }
 
             // Check for launch bounds attributes (from #[launch_bounds(max, min)])
             // These will be emitted as nvvm.annotations metadata for maxntid and minctasm
-            let maxntid_key: pliron::identifier::Identifier = "maxntid".try_into().unwrap();
-            let minctasm_key: pliron::identifier::Identifier = "minctasm".try_into().unwrap();
-
-            if let Some(max_attr) = attrs.get(&maxntid_key) {
-                use pliron::attribute::AttrObj;
-                let get_int = |attr: &AttrObj| -> Option<u32> {
-                    attr.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()
-                        .map(|int_attr| int_attr.value().to_u32())
-                };
-
-                if let Some(max_threads) = get_int(max_attr) {
-                    let min_blocks = attrs.get(&minctasm_key).and_then(get_int);
-                    self.launch_bounds_kernels.push(KernelLaunchBounds {
-                        name: fixed_func_name.clone(),
-                        max_threads,
-                        min_blocks: if min_blocks == Some(0) {
-                            None
-                        } else {
-                            min_blocks
-                        },
-                    });
-                }
+            if let Some(max_threads) = get_int("maxntid") {
+                let min_blocks = get_int("minctasm");
+                self.launch_bounds_kernels.push(KernelLaunchBounds {
+                    name: fixed_func_name.clone(),
+                    max_threads,
+                    min_blocks: if min_blocks == Some(0) {
+                        None
+                    } else {
+                        min_blocks
+                    },
+                });
             }
         }
 

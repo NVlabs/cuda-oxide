@@ -449,8 +449,7 @@ pub fn translate_body(
             .get_operation()
             .deref_mut(ctx)
             .attributes
-            .0
-            .insert(key, kernel_attr.into());
+            .set(key, kernel_attr);
 
         // Detect compile-time cluster configuration from #[cluster(x,y,z)] attribute
         if let Some(cluster_dims) = detect_cluster_config(body) {
@@ -478,9 +477,9 @@ pub fn translate_body(
             let z_key: Identifier = "cluster_dim_z".try_into().unwrap();
 
             let mut op_mut = mir_func_op.get_operation().deref_mut(ctx);
-            op_mut.attributes.0.insert(x_key, x_attr.into());
-            op_mut.attributes.0.insert(y_key, y_attr.into());
-            op_mut.attributes.0.insert(z_key, z_attr.into());
+            op_mut.attributes.set(x_key, x_attr);
+            op_mut.attributes.set(y_key, y_attr);
+            op_mut.attributes.set(z_key, z_attr);
 
             if std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {
                 eprintln!(
@@ -508,14 +507,14 @@ pub fn translate_body(
             let max_key: Identifier = "maxntid".try_into().unwrap();
 
             let mut op_mut = mir_func_op.get_operation().deref_mut(ctx);
-            op_mut.attributes.0.insert(max_key, max_attr.into());
+            op_mut.attributes.set(max_key, max_attr);
 
             // Only add minctasm if it's non-zero (specified)
             if launch_bounds.min_blocks > 0 {
                 let apint_min = APInt::from_u32(launch_bounds.min_blocks, width);
                 let min_attr = IntegerAttr::new(u32_ty, apint_min);
                 let min_key: Identifier = "minctasm".try_into().unwrap();
-                op_mut.attributes.0.insert(min_key, min_attr.into());
+                op_mut.attributes.set(min_key, min_attr);
             }
 
             if std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {

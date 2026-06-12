@@ -1336,10 +1336,10 @@ fn translate_closure_call(
         let bool_type = IntegerType::get(ctx, 1, Signedness::Unsigned);
         let mutable_attr =
             IntegerAttr::new(bool_type, APInt::from_i64(1, NonZeroUsize::new(1).unwrap()));
-        ref_op.deref_mut(ctx).attributes.0.insert(
-            Identifier::try_from("mutable").unwrap(),
-            mutable_attr.into(),
-        );
+        ref_op
+            .deref_mut(ctx)
+            .attributes
+            .set(Identifier::try_from("mutable").unwrap(), mutable_attr);
 
         // Insert after previous op
         if let Some(prev) = last_op {
@@ -1417,8 +1417,7 @@ fn translate_closure_call(
     call_op
         .deref_mut(ctx)
         .attributes
-        .0
-        .insert(Identifier::try_from("callee").unwrap(), callee_attr.into());
+        .set(Identifier::try_from("callee").unwrap(), callee_attr);
 
     // Insert the call
     let call_op = if let Some(prev) = last_op {

@@ -114,7 +114,7 @@ fn is_signed_int_op(
 fn add_fastmath_flags(ctx: &mut Context, op: Ptr<Operation>) {
     let flags = FastmathFlagsAttr::default();
     let key: pliron::identifier::Identifier = "llvm_fast_math_flags".try_into().unwrap();
-    op.deref_mut(ctx).attributes.0.insert(key, flags.into());
+    op.deref_mut(ctx).attributes.set(key, flags);
 }
 
 // ============================================================================
@@ -442,10 +442,10 @@ where
         let cast_op = if lhs_width > rhs_width {
             let zext = llvm::ZExtOp::new(ctx, rhs, lhs_ty);
             let nneg_key: pliron::identifier::Identifier = "llvm_nneg_flag".try_into().unwrap();
-            zext.get_operation().deref_mut(ctx).attributes.0.insert(
-                nneg_key,
-                pliron::builtin::attributes::BoolAttr::new(false).into(),
-            );
+            zext.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(nneg_key, pliron::builtin::attributes::BoolAttr::new(false));
             zext.get_operation()
         } else {
             llvm::TruncOp::new(ctx, rhs, lhs_ty).get_operation()

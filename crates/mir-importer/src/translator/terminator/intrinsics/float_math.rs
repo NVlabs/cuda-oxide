@@ -418,8 +418,7 @@ pub fn emit_sincos(
     sin_op
         .deref_mut(ctx)
         .attributes
-        .0
-        .insert(callee_id.clone(), StringAttr::new(sin_callee.into()).into());
+        .set(callee_id.clone(), StringAttr::new(sin_callee.into()));
     if let Some(prev) = last_op {
         sin_op.insert_after(ctx, prev);
     } else {
@@ -440,8 +439,7 @@ pub fn emit_sincos(
     cos_op
         .deref_mut(ctx)
         .attributes
-        .0
-        .insert(callee_id, StringAttr::new(cos_callee.into()).into());
+        .set(callee_id, StringAttr::new(cos_callee.into()));
     cos_op.insert_after(ctx, sin_op);
     let cos_val = cos_op.deref(ctx).get_result(0);
 

@@ -29,8 +29,8 @@ oxide-artifacts = { path = "../oxide-artifacts", features = ["object-write"] }
 # `{ workspace = true }`. Keep these versions synchronized with root Cargo.toml
 # [workspace.dependencies] section. Source MUST match the root (same git + rev),
 # or pliron resolves to two distinct crates and types stop unifying.
-pliron = { git = "https://github.com/pliron-org/pliron", rev = "fed4e6f848bd726a4f2deb51c5021760ef382aec" }
-pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "fed4e6f848bd726a4f2deb51c5021760ef382aec" }
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "af1b7d07dda91dad140c1df1df665754cd1646e5" }
+pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "af1b7d07dda91dad140c1df1df665754cd1646e5" }
 linkme = "0.3"            # must match workspace
 combine = "4.6"           # must match workspace
 once_cell = "1.18"        # must match workspace
