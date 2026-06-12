@@ -79,7 +79,14 @@ fn convert_ldmatrix_impl(
          }}"
     );
 
-    inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![dest_ptr, smem_ptr], &asm, "l,l");
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        vec![dest_ptr, smem_ptr],
+        &asm,
+        "l,l",
+    );
     rewriter.erase_operation(ctx, op);
     Ok(())
 }

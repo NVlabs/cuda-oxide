@@ -11,9 +11,7 @@ use super::super::helpers::emit_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{
-    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp,
-};
+use dialect_nvvm::ops::{LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp};
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
@@ -64,15 +62,18 @@ fn emit_ldmatrix_impl<T: Op>(
     if args.len() != 1 {
         return input_err!(
             loc.clone(),
-            TranslationErr::unsupported(format!(
-                "{name} expects 1 argument, got {}",
-                args.len()
-            ))
+            TranslationErr::unsupported(format!("{name} expects 1 argument, got {}", args.len()))
         );
     }
 
     let (smem_ptr, last_op) = rvalue::translate_operand(
-        ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
     )?;
 
     let dest_ptr = get_dest_slot(value_map, destination, &loc, name)?;
@@ -116,7 +117,16 @@ pub fn emit_ldmatrix_x4(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX4Op>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x4",
     )
 }
@@ -135,7 +145,16 @@ pub fn emit_ldmatrix_x2(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX2Op>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x2",
     )
 }
@@ -154,7 +173,16 @@ pub fn emit_ldmatrix_x4_trans(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX4TransOp>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x4_trans",
     )
 }
@@ -173,7 +201,16 @@ pub fn emit_ldmatrix_x2_trans(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX2TransOp>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x2_trans",
     )
 }

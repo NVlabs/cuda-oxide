@@ -44,6 +44,8 @@
 /// - `smem_ptr` must point to valid shared memory, 16-byte aligned
 /// - Must be called by all threads in a warp
 /// - Must be called from within a CUDA kernel context on sm_75+
+///
+/// See also: [`ldmatrix_x2`], [`ldmatrix_x4_trans`]
 #[inline(never)]
 pub unsafe fn ldmatrix_x4(smem_ptr: *const u32) -> [u32; 4] {
     let _ = smem_ptr;
@@ -68,6 +70,8 @@ pub unsafe fn ldmatrix_x4(smem_ptr: *const u32) -> [u32; 4] {
 /// - `smem_ptr` must point to valid shared memory, 16-byte aligned
 /// - Must be called by all threads in a warp
 /// - Must be called from within a CUDA kernel context on sm_75+
+///
+/// See also: [`ldmatrix_x4`], [`ldmatrix_x2_trans`]
 #[inline(never)]
 pub unsafe fn ldmatrix_x2(smem_ptr: *const u32) -> [u32; 2] {
     let _ = smem_ptr;
@@ -91,6 +95,8 @@ pub unsafe fn ldmatrix_x2(smem_ptr: *const u32) -> [u32; 2] {
 /// - `smem_ptr` must point to valid shared memory, 16-byte aligned
 /// - Must be called by all threads in a warp
 /// - Must be called from within a CUDA kernel context on sm_75+
+///
+/// See also: [`ldmatrix_x4`], [`ldmatrix_x2_trans`]
 #[inline(never)]
 pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
     let _ = smem_ptr;
@@ -110,6 +116,8 @@ pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
 /// - `smem_ptr` must point to valid shared memory, 16-byte aligned
 /// - Must be called by all threads in a warp
 /// - Must be called from within a CUDA kernel context on sm_75+
+///
+/// See also: [`ldmatrix_x2`], [`ldmatrix_x4_trans`]
 #[inline(never)]
 pub unsafe fn ldmatrix_x2_trans(smem_ptr: *const u32) -> [u32; 2] {
     let _ = smem_ptr;
