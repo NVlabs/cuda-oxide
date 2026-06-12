@@ -1010,7 +1010,7 @@ pub(crate) fn find_unmodeled_enum_in_abi(
 /// built with explicit padding (the pads are real fields) but an
 /// approximation otherwise; prefer [`mir_stored_size`] whenever the MIR
 /// type is at hand.
-fn get_type_size(ctx: &Context, ty: Ptr<TypeObj>) -> u64 {
+pub(crate) fn get_type_size(ctx: &Context, ty: Ptr<TypeObj>) -> u64 {
     let ty_ref = ty.deref(ctx);
 
     // Integer types

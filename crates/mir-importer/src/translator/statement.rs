@@ -37,7 +37,7 @@ use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
-use dialect_mir::ops::{MirStorageDeadOp, MirStorageLiveOp, MirStoreOp};
+use dialect_mir::ops::{MirMemcpyOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -723,21 +723,57 @@ pub fn translate_statement(
         // `Assume` is an optimisation hint with no observable effect; safe to skip.
         mir::StatementKind::Intrinsic(mir::NonDivergingIntrinsic::Assume(_)) => Ok(prev_op),
 
+        mir::StatementKind::Intrinsic(mir::NonDivergingIntrinsic::CopyNonOverlapping(copy)) => {
+            let (dst, last_op) = rvalue::translate_operand(
+                ctx,
+                body,
+                &copy.dst,
+                value_map,
+                block_ptr,
+                prev_op,
+                loc.clone(),
+            )?;
+            let (src, last_op) = rvalue::translate_operand(
+                ctx,
+                body,
+                &copy.src,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            let (count, last_op) = rvalue::translate_operand(
+                ctx,
+                body,
+                &copy.count,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+
+            let memcpy_op = Operation::new(
+                ctx,
+                MirMemcpyOp::get_concrete_op_info(),
+                vec![],
+                vec![dst, src, count],
+                vec![],
+                0,
+            );
+            memcpy_op.deref_mut(ctx).set_loc(loc);
+            if let Some(prev) = last_op {
+                memcpy_op.insert_after(ctx, prev);
+            } else {
+                memcpy_op.insert_at_front(block_ptr, ctx);
+            }
+            Ok(Some(memcpy_op))
+        }
+
         // Statements with observable runtime effect that are not yet lowered.
         // Returning a hard error here converts what was previously a silent
         // miscompile (the catch-all `Ok(prev_op)`) into a clear build failure.
-        // `Intrinsic(CopyNonOverlapping)` is the user-visible memcpy emitted by
-        // `core::ptr::copy_nonoverlapping`; `SetDiscriminant` mutates an enum's
-        // discriminant. Both must be implemented before they can be accepted.
-        mir::StatementKind::Intrinsic(mir::NonDivergingIntrinsic::CopyNonOverlapping(_)) => {
-            input_err!(
-                loc,
-                TranslationErr::unsupported(
-                    "core::ptr::copy_nonoverlapping is not yet supported on the device; \
-                     until it is lowered, the call would be silently dropped from the PTX",
-                )
-            )
-        }
+        // `SetDiscriminant` mutates an enum's discriminant and must be
+        // implemented before it can be accepted.
         mir::StatementKind::SetDiscriminant { .. } => input_err!(
             loc,
             TranslationErr::unsupported(

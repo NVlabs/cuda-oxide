@@ -14,7 +14,6 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | Example                               | Kind                | Fails at                            |
 | :------------------------------------ | :------------------ | :---------------------------------- |
 | `error`                               | diagnostics-fixture | `core::fmt` reachable from device   |
-| `error_copy_nonoverlapping_unhandled` | support-gap         | `StatementKind::CopyNonOverlapping` |
 | `error_drop_glue`                     | support-gap         | `TerminatorKind::Drop` (effectful)  |
 | `error_heap_alloc`                    | diagnostics-fixture | `__rust_alloc` reachable (#108)     |
 | `error_missing_device_attr`           | diagnostics-fixture | `thread::index_*` stub (#76)        |

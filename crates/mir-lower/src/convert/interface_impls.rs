@@ -30,9 +30,9 @@ use dialect_mir::ops::{
     MirConstructStructOp, MirConstructTupleOp, MirDivOp, MirEnumPayloadOp, MirEqOp,
     MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp,
     MirGetDiscriminantOp, MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp,
-    MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirReturnOp,
-    MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp,
-    MirUnreachableOp,
+    MirMemcpyOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp,
+    MirReturnOp, MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp, MirSubOp,
+    MirUndefOp, MirUnreachableOp,
 };
 use dialect_nvvm::ops::{
     ActiveMaskOp, BarWarpSyncOp, Barrier0Op, BreakpointOp, ClcQueryGetFirstCtaidXOp,
@@ -428,6 +428,18 @@ impl MirToLlvmConversion for MirStoreOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::ops::memory::convert_store(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MirMemcpyOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::memory::convert_memcpy(ctx, rewriter, self.get_operation(), operands_info)
     }
 }
 

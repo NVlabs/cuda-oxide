@@ -38,7 +38,7 @@ set -uo pipefail
 TCGEN05_EXAMPLES=(gemm_sol tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test manual_launch_libdevice mathdx_ffi_test primitive_stress)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_copy_nonoverlapping_unhandled error_set_discriminant_unhandled error_drop_glue error_heap_alloc error_missing_device_attr)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_unhandled error_drop_glue error_heap_alloc error_missing_device_attr)
 
 classify() {
     local ex="$1" cat
