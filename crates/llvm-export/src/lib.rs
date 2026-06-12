@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_new_pure_sets_pure_asm_attribute() {
         let mut ctx = Context::new();
-        let void_ty = VoidType::get(&mut ctx);
+        let void_ty = VoidType::get(&ctx);
         let asm = InlineAsmOp::new_pure(
             &mut ctx,
             void_ty.into(),
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn test_new_convergent_is_not_pure() {
         let mut ctx = Context::new();
-        let void_ty = VoidType::get(&mut ctx);
+        let void_ty = VoidType::get(&ctx);
         let asm = InlineAsmOp::new_convergent(
             &mut ctx,
             void_ty.into(),
