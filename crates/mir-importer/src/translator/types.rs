@@ -84,6 +84,13 @@ fn closure_upvar_tys(substs: &rustc_public::ty::GenericArgs) -> Option<Vec<rustc
     Some(upvar_tys)
 }
 
+/// Returns the `isize` type (i64 on 64-bit targets).
+pub fn get_isize_type(
+    ctx: &mut Context,
+) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+    pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Signed)
+}
+
 /// Returns the 32-bit floating point type.
 pub fn get_f32_type(
     ctx: &mut Context,
