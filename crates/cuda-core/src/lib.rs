@@ -66,6 +66,9 @@ pub mod vmm;
 pub use context::CudaContext;
 /// Raw CUDA driver bindings re-exported for direct access when needed.
 pub use cuda_bindings as sys;
+/// `#[derive(DeviceCopy)]` macro, re-exported next to the `DeviceCopy` trait so
+/// `use cuda_core::DeviceCopy;` brings both into scope (serde trait+derive pattern).
+pub use cuda_macros::DeviceCopy;
 pub use device_buffer::{DeviceBuffer, DeviceCopy};
 pub use embedded::{EmbeddedModule, EmbeddedModuleError};
 pub use error::{DriverError, IntoResult};
