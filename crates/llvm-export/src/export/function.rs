@@ -226,6 +226,12 @@ impl<'a> ModuleExportState<'a> {
             .iter(self.ctx)
             .next();
 
+        // Check for alwaysinline attribute (from #[inline(always)]).
+        // Emitted as a function attribute keyword between the parameter
+        // list and the body open brace.
+        let alwaysinline_key: pliron::identifier::Identifier = "alwaysinline".try_into().unwrap();
+        let is_alwaysinline = attrs.0.contains_key(&alwaysinline_key);
+
         if let Some(entry_block) = entry_block_opt {
             write!(output, "define ").unwrap();
             if is_kernel && self.emit_ptx_kernel_keyword {
@@ -274,7 +280,11 @@ impl<'a> ModuleExportState<'a> {
             // gets its `bar.sync.aligned` pushed into a `tid`-dependent branch
             // and deadlocks. opt's FunctionAttrs strips `convergent` from
             // functions it proves never reach a convergent op.
-            writeln!(output, ") #0 {{").unwrap();
+            if is_alwaysinline {
+                writeln!(output, ") alwaysinline #0 {{").unwrap();
+            } else {
+                writeln!(output, ") #0 {{").unwrap();
+            }
             self.convergent_used = true;
 
             // Assign labels to all blocks

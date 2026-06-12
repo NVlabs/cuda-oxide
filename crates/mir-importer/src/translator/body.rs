@@ -300,12 +300,15 @@ fn emit_entry_allocas(
 /// * `body` - MIR function body
 /// * `instance` - Monomorphized instance (with concrete generic args)
 /// * `is_kernel` - Add `gpu_kernel` attribute for kernel entry points
+/// * `is_inline_always` - Add `alwaysinline` attribute (non-kernel functions
+///   marked `#[inline(always)]` in rustc)
 /// * `override_name` - Custom export name (defaults to instance name)
 pub fn translate_body(
     ctx: &mut Context,
     body: &mir::Body,
     instance: &mono::Instance,
     is_kernel: bool,
+    is_inline_always: bool,
     override_name: Option<&str>,
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
@@ -533,6 +536,8 @@ pub fn translate_body(
         }
     }
 
+    set_alwaysinline_attr_from_flag(ctx, &mir_func_op, is_kernel, is_inline_always);
+
     // Get the function body region (region 0)
     let region_ptr = op_ptr.deref(ctx).get_region(0);
 
@@ -623,4 +628,106 @@ pub fn translate_body(
     }
 
     Ok(op_ptr)
+}
+
+/// Propagate `#[inline(always)]` as an LLVM `alwaysinline` function
+/// attribute. Kernel entry points are excluded because they're `.entry` in PTX
+/// and never callees, so marking them `alwaysinline` would be a no-op at best
+/// and rejected by LLVM at worst.
+fn set_alwaysinline_attr_from_flag(
+    ctx: &mut Context,
+    mir_func_op: &MirFuncOp,
+    is_kernel: bool,
+    is_inline_always: bool,
+) {
+    if is_inline_always && !is_kernel {
+        let attr = pliron::builtin::attributes::StringAttr::new("true".to_string());
+        let key: Identifier = "alwaysinline".try_into().unwrap();
+        mir_func_op
+            .get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .0
+            .insert(key, attr.into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pliron::{
+        basic_block::BasicBlock,
+        builtin::{
+            attributes::TypeAttr, op_interfaces::SymbolOpInterface, ops::ModuleOp,
+            types::FunctionType,
+        },
+        linked_list::ContainsLinkedList,
+        op::Op,
+        operation::Operation,
+    };
+
+    #[test]
+    fn inline_always_flag_reaches_llvm_func_attr_before_export() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+        let module_op = module.get_operation();
+        let module_region = module_op.deref(&ctx).get_region(0);
+        let module_block = {
+            let existing = {
+                let region = module_region.deref(&ctx);
+                region.iter(&ctx).next()
+            };
+            if let Some(block) = existing {
+                block
+            } else {
+                let block = BasicBlock::new(&mut ctx, None, vec![]);
+                block.insert_at_back(module_region, &ctx);
+                block
+            }
+        };
+
+        let func_type = FunctionType::get(&mut ctx, vec![], vec![]);
+        let func_type_attr = TypeAttr::new(func_type.into());
+        let mir_func = {
+            let op = Operation::new(
+                &mut ctx,
+                MirFuncOp::get_concrete_op_info(),
+                vec![],
+                vec![],
+                vec![],
+                1,
+            );
+            let func = MirFuncOp::new(&mut ctx, op, func_type_attr);
+            func.set_symbol_name(&mut ctx, "inline_helper".try_into().unwrap());
+            func
+        };
+
+        set_alwaysinline_attr_from_flag(&mut ctx, &mir_func, false, true);
+        mir_func.get_operation().insert_at_back(module_block, &ctx);
+
+        mir_lower::register(&mut ctx);
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_op).expect("lowering succeeds");
+
+        let llvm_func = {
+            let block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+            block
+                .deref(&ctx)
+                .iter(&ctx)
+                .find_map(|op| Operation::get_op::<llvm_export::ops::FuncOp>(op, &ctx))
+                .expect("lowered LLVM function")
+        };
+
+        let key: Identifier = "alwaysinline".try_into().unwrap();
+        assert!(
+            llvm_func
+                .get_operation()
+                .deref(&ctx)
+                .attributes
+                .0
+                .contains_key(&key),
+            "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
+        );
+    }
 }
