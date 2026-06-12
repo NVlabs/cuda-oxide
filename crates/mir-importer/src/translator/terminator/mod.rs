@@ -1538,14 +1538,19 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
 ///
 /// # Naming strategy
 ///
-/// `CrateDef::name()` returns the fully qualified name (FQDN) in the `rustc_public`
-/// API (e.g. `helper_fn::cuda_oxide_device_<hash>_vecadd_device`). We use this directly as
-/// both `pattern_name` and `call_name` (for non-generic calls). The collector
-/// produces matching FQDNs, and the lowering layer (`mir-lower`) converts `::` to
-/// `__` on both sides to produce valid LLVM/PTX identifiers.
+/// `CrateDef::name()` returns the fully qualified name (FQDN) in the
+/// `rustc_public` API (e.g. `helper_fn::cuda_oxide_device_<hash>_vecadd_device`).
+/// We use the raw `FnDef` name as `pattern_name` for intrinsic matching, then
+/// use the resolved `Instance::name()` as `call_name` for monomorphic calls.
+/// Raw `FnDef` substitutions are not authoritative for this decision: concrete
+/// trait impl calls can carry a trait self type in the operand while resolving
+/// to a monomorphic instance, and the resolved impl FQDN can differ from the
+/// trait item FQDN.
 ///
-/// For generic calls, `Instance::resolve` + `mangled_name` is used instead, which
-/// the collector also matches via `compute_export_name`.
+/// For resolved instances that still carry generic args, `Instance::mangled_name`
+/// is used instead, which the collector also matches via `compute_export_name`.
+/// Non-generic FQDNs with characters such as `<`, `>`, and `::` are passed raw to
+/// the same pliron `Legaliser` used for definition symbols.
 ///
 /// Foreign items (`extern "C"` block declarations) are the exception: they
 /// have no MIR body, so the collector never exports a definition under the
@@ -1567,22 +1572,20 @@ fn extract_func_info(func: &mir::Operand) -> (Option<String>, Option<String>, Op
 
                         let pattern_name = fn_def.name().as_str().to_string();
 
-                        let has_generic_args = !substs.0.is_empty();
-                        let call_name = if has_generic_args {
-                            if let Ok(instance) = Instance::resolve(*fn_def, substs) {
+                        let resolved = Instance::resolve(*fn_def, substs).ok();
+                        let call_name = if let Some(instance) = resolved {
+                            if instance.is_foreign_item() {
+                                // Foreign items (`extern "C"` blocks) have no MIR
+                                // body, so no definition is ever exported under
+                                // the FQDN. Emit the call under the link symbol
+                                // (e.g. `__nv_asinf`), which is what libdevice or
+                                // externally linked LTOIR actually provides.
+                                instance.mangled_name()
+                            } else if !instance.args().0.is_empty() {
                                 instance.mangled_name()
                             } else {
-                                pattern_name.clone()
+                                instance.name().to_string()
                             }
-                        } else if let Ok(instance) = Instance::resolve(*fn_def, substs)
-                            && instance.is_foreign_item()
-                        {
-                            // Foreign items (`extern "C"` blocks) have no MIR
-                            // body, so no definition is ever exported under
-                            // the FQDN. Emit the call under the link symbol
-                            // (e.g. `__nv_asinf`), which is what libdevice or
-                            // externally linked LTOIR actually provides.
-                            instance.mangled_name()
                         } else {
                             pattern_name.clone()
                         };
