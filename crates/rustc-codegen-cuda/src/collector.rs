@@ -108,23 +108,21 @@
 //! ## Export Names and FQDN Alignment
 //!
 //! Export names must match what the MIR translator (`extract_func_info` in
-//! `terminator/mod.rs`) produces for call targets. Both sides use fully qualified
-//! domain names (FQDNs), which the lowering layer converts `::` to `__` for
-//! valid LLVM/PTX identifiers.
+//! `terminator/mod.rs`) produces for call targets. Both sides choose the same
+//! raw name, then feed it through pliron's shared identifier legaliser.
 //!
 //! The collector uses [`DeviceCollector::fqdn()`] to produce FQDNs matching
-//! `CrateDef::name()` on the `rustc_public` side. For local items, this
-//! prepends the crate name to `def_path_str()`.
+//! `CrateDef::name()`/`Instance::name()` on the `rustc_public` side, including
+//! concrete impl arguments from rustc's resolved `Instance`.
 //!
-//! For generic/complex names like `ptr::add::<i32>`, we use the mangled
-//! symbol name (e.g., `_RNvMNtNtCs...`) because `<`, `>` are not valid
-//! PTX identifiers. The MIR translator uses the same mangling for generic calls.
+//! For resolved instances that still carry generic args, or for raw-name
+//! collisions, we use rustc's mangled symbol name (e.g., `_RNvMNtNtCs...`).
+//! Invalid FQDN characters such as `<`, `>`, and `::` are not a separate naming
+//! policy: they are handled by the same legaliser on the definition and call
+//! sides.
 //!
 //! Kernel export names are separate — they use `compute_kernel_export_name`
 //! with human-readable base names derived from the `#[kernel]` macro.
-//!
-//! This naming strategy will be replaced by pliron's `Legaliser` when
-//! the framework is upgraded (see metal-oxide for reference).
 
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
@@ -704,7 +702,7 @@ pub fn collect_device_functions<'tcx>(
                     // Use FQDN so the export name matches what the MIR translator
                     // sees via `CrateDef::name()` on the call side. The lowering
                     // layer converts `::` to `__` on both sides.
-                    let name = collector.fqdn(instance.def_id());
+                    let name = collector.fqdn(*instance);
                     let export_name = collector.compute_export_name(&name, *instance);
 
                     if verbose {
@@ -775,22 +773,26 @@ impl<'tcx> DeviceCollector<'tcx> {
         }
     }
 
-    /// Returns the fully qualified domain name (FQDN) for a DefId.
+    /// Returns the fully qualified domain name (FQDN) for an instance.
     ///
-    /// `def_path_str()` omits the crate name for local items (e.g. returns
+    /// `def_path_str()` normally omits the crate name for local items (e.g. returns
     /// `cuda_oxide_device_<hash>_vecadd` instead of
     /// `helper_fn::cuda_oxide_device_<hash>_vecadd`).
-    /// This method prepends the local crate name so the result matches what
-    /// `CrateDef::name()` returns on the `rustc_public` side, ensuring that
-    /// call sites and definitions use identical strings before lowering
-    /// converts `::` to `__`.
-    fn fqdn(&self, def_id: DefId) -> String {
-        let path = self.tcx.def_path_str(def_id);
-        if def_id.krate == LOCAL_CRATE {
-            format!("{}::{}", self.tcx.crate_name(LOCAL_CRATE), path)
-        } else {
-            path
-        }
+    /// This method asks rustc's printer to resolve crate names exactly like
+    /// `rustc_public`, ensuring that call sites and definitions use identical
+    /// strings before lowering converts `::` to `__`.
+    ///
+    /// Use `with_no_trimmed_paths!` because rustc's display-oriented path
+    /// printer can otherwise shorten concrete impl type arguments, e.g.
+    /// `Wrapper::<Vec2>::dot_plus`, while stable MIR call sites use the full
+    /// `Wrapper::<crate_name::Vec2>::dot_plus` spelling.
+    fn fqdn(&self, instance: Instance<'tcx>) -> String {
+        let def_id = instance.def_id();
+        rustc_middle::ty::print::with_resolve_crate_name!(
+            rustc_middle::ty::print::with_no_trimmed_paths!(
+                self.tcx.def_path_str_with_args(def_id, instance.args)
+            )
+        )
     }
 
     /// Adds a root function (kernel) to start collection from.
@@ -1111,7 +1113,7 @@ impl<'tcx> DeviceCollector<'tcx> {
                     {
                         let mangled = self.tcx.symbol_name(closure_instance).name.to_string();
                         if !self.seen.contains(&mangled) {
-                            let closure_name = self.fqdn(*closure_def_id);
+                            let closure_name = self.fqdn(closure_instance);
                             let export_name =
                                 self.compute_export_name(&closure_name, closure_instance);
 
@@ -1232,7 +1234,7 @@ impl<'tcx> DeviceCollector<'tcx> {
 
         // Use FQDN so the export name matches what the MIR translator
         // sees via `CrateDef::name()` on the call side.
-        let name = self.fqdn(resolved.def_id());
+        let name = self.fqdn(resolved);
         let export_name = self.compute_export_name(&name, resolved);
 
         if self.verbose {
@@ -1382,37 +1384,31 @@ impl<'tcx> DeviceCollector<'tcx> {
     /// Computes the export name for a function.
     ///
     /// `name` must be the FQDN (from [`fqdn()`]) so that non-generic export names
-    /// match what `CrateDef::name()` returns on the call side. The lowering layer
-    /// converts `::` to `__` on both sides.
+    /// match what `CrateDef::name()` returns on the call side. Both sides feed
+    /// the FQDN through pliron's `Legaliser`, which replaces every
+    /// non-`[A-Za-z0-9]` character with `_`. We return the *raw* FQDN here so
+    /// that the call-side legaliser and the export-side legaliser (in
+    /// `body.rs::translate_body`) see the same input string and resolve to the
+    /// same canonical identifier. Pre-legalising here would alias to a
+    /// different input string and trigger spurious dedupe suffixes.
     ///
-    /// For generic/monomorphized functions (or names with invalid PTX chars),
-    /// we fall back to the mangled symbol name since PTX identifiers must match
-    /// `[a-zA-Z_][a-zA-Z0-9_]*]`. The MIR translator also uses mangled names
-    /// for generic calls, so both sides match.
-    ///
-    /// When pliron's `Legaliser` is adopted, the `::` to `__` conversion will
-    /// be handled by the legaliser instead of manual replacement.
+    /// For resolved instances that still carry generic args, or for raw-name
+    /// collisions, we fall back to the mangled symbol name since the MIR
+    /// translator uses `Instance::mangled_name()` for the matching call sites.
+    /// Concrete impl paths that merely contain characters like `<`, `>`, and
+    /// `::` remain raw FQDNs and are legalized later on both sides.
     fn compute_export_name(&mut self, name: &str, instance: Instance<'tcx>) -> String {
-        let has_invalid_chars = name.contains('<')
-            || name.contains('>')
-            || name.contains('\'')
-            || name.contains(' ')
-            || name.contains('{')
-            || name.contains('}')
-            || name.contains('#');
-
         // CRITICAL: If the instance has generic args, we MUST use mangled name.
         // The MIR translator uses mangled names for generic function calls
         // (see terminator/mod.rs::extract_func_info), so we must match that here.
         // Without this, the call site uses "_RINv...mapf..." but we export as "map".
         let has_generic_args = !instance.args.is_empty();
 
-        // Try the simple name first
         let simple_name = name.to_string();
 
-        if has_invalid_chars || has_generic_args || self.used_export_names.contains(&simple_name) {
-            // Use mangled symbol name to avoid conflicts
-            // This handles generics (e.g., ptr::add::<i32>) and name collisions
+        if has_generic_args || self.used_export_names.contains(&simple_name) {
+            // Use mangled symbol name to avoid conflicts.
+            // This handles generics (e.g., ptr::add::<i32>) and name collisions.
             let mangled = self.tcx.symbol_name(instance).name.to_string();
 
             // Sanitize for PTX: replace $ with _ (legacy mangling uses $LT$, $GT$, etc.)
