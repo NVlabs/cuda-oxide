@@ -1734,6 +1734,37 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
+        "core::intrinsics::ptr_offset_from" | "std::intrinsics::ptr_offset_from" => {
+            Ok(Some(intrinsics::memory::emit_ptr_offset_from(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
+        "core::intrinsics::ptr_offset_from_unsigned"
+        | "std::intrinsics::ptr_offset_from_unsigned" => {
+            Ok(Some(intrinsics::memory::emit_ptr_offset_from_unsigned(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
         // =================================================================
         // Thread/Block Position Intrinsics
         // Support both re-exported (cuda_device::) and full paths (cuda_device::thread::)

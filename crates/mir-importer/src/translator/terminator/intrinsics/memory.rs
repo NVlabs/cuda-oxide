@@ -9,15 +9,16 @@
 
 use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
-use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
+use crate::translator::{rvalue, types};
 use dialect_mir::attributes::MirCastKindAttr;
-use dialect_mir::ops::MirCastOp;
+use dialect_mir::ops::{MirCastOp, MirConstantOp, MirDivOp, MirSubOp};
 use dialect_nvvm::ops::{
     CvtF32x2Bf16x2Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
     StmatrixM8n8X4TransOp,
 };
 use pliron::basic_block::BasicBlock;
+use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
@@ -25,7 +26,10 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
+use pliron::utils::apint::APInt;
+use pliron::value::Value;
 use rustc_public::mir;
+use std::num::NonZeroUsize;
 /// Emits `stmatrix.m8n8.x4`: Warp-cooperative matrix store (4 tiles).
 ///
 /// Stores 4 matrix tiles (32 columns) to shared memory using the warp-cooperative
@@ -379,6 +383,325 @@ pub fn emit_cvt_f32x2_bf16x2(
         loc,
         "cvt_f32x2_bf16x2 call without target block",
     )
+}
+
+#[derive(Clone, Copy)]
+enum PtrOffsetFromResult {
+    Signed,
+    Unsigned,
+}
+
+impl PtrOffsetFromResult {
+    fn result_type(
+        self,
+        ctx: &mut Context,
+    ) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+        match self {
+            Self::Signed => types::get_isize_type(ctx),
+            Self::Unsigned => types::get_usize_type(ctx),
+        }
+    }
+
+    fn intrinsic_name(self) -> &'static str {
+        match self {
+            Self::Signed => "ptr_offset_from",
+            Self::Unsigned => "ptr_offset_from_unsigned",
+        }
+    }
+
+    fn missing_target_message(self) -> &'static str {
+        match self {
+            Self::Signed => "ptr_offset_from call without target block",
+            Self::Unsigned => "ptr_offset_from_unsigned call without target block",
+        }
+    }
+}
+
+/// Emits `core::intrinsics::ptr_offset_from::<T>(this, other) -> isize`.
+///
+/// Computes `(this.addr() - other.addr()) / size_of::<T>()`.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_ptr_offset_from(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_ptr_offset_from_with_result(
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        PtrOffsetFromResult::Signed,
+    )
+}
+
+/// Emits `core::intrinsics::ptr_offset_from_unsigned::<T>(this, other) -> usize`.
+///
+/// Computes `(this.addr() - other.addr()) / size_of::<T>()`. The intrinsic
+/// contract guarantees `this >= other` and an exact multiple.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_ptr_offset_from_unsigned(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_ptr_offset_from_with_result(
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        PtrOffsetFromResult::Unsigned,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_ptr_offset_from_with_result(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    result_kind: PtrOffsetFromResult,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{} expects 2 arguments (this, other), got {}",
+                result_kind.intrinsic_name(),
+                args.len()
+            ))
+        );
+    }
+
+    let elem_size = pointee_size_bytes(body, &args[0], result_kind.intrinsic_name(), loc.clone())?;
+    let result_ty = result_kind.result_type(ctx);
+    let result_type = result_ty.to_ptr();
+
+    let (this_ptr, op_after_this) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let this_addr = emit_pointer_expose_address(
+        ctx,
+        this_ptr,
+        result_type,
+        op_after_this,
+        block_ptr,
+        loc.clone(),
+    );
+
+    let (other_ptr, op_after_other) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        Some(this_addr),
+        loc.clone(),
+    )?;
+    let other_addr = emit_pointer_expose_address(
+        ctx,
+        other_ptr,
+        result_type,
+        op_after_other,
+        block_ptr,
+        loc.clone(),
+    );
+
+    let this_addr_val = this_addr.deref(ctx).get_result(0);
+    let other_addr_val = other_addr.deref(ctx).get_result(0);
+    let sub_op = Operation::new(
+        ctx,
+        MirSubOp::get_concrete_op_info(),
+        vec![result_type],
+        vec![this_addr_val, other_addr_val],
+        vec![],
+        0,
+    );
+    sub_op.deref_mut(ctx).set_loc(loc.clone());
+    sub_op.insert_after(ctx, other_addr);
+    let byte_diff = sub_op.deref(ctx).get_result(0);
+
+    let size_const = emit_integer_constant(ctx, result_ty, elem_size, sub_op, loc.clone())?;
+    let size_val = size_const.deref(ctx).get_result(0);
+
+    let div_op = Operation::new(
+        ctx,
+        MirDivOp::get_concrete_op_info(),
+        vec![result_type],
+        vec![byte_diff, size_val],
+        vec![],
+        0,
+    );
+    div_op.deref_mut(ctx).set_loc(loc.clone());
+    div_op.insert_after(ctx, size_const);
+    let result = div_op.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        div_op,
+        value_map,
+        block_map,
+        loc,
+        result_kind.missing_target_message(),
+    )
+}
+
+fn pointee_size_bytes(
+    body: &mir::Body,
+    operand: &mir::Operand,
+    intrinsic_name: &str,
+    loc: Location,
+) -> TranslationResult<u64> {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let operand_ty = match operand {
+        mir::Operand::Copy(place) | mir::Operand::Move(place) => place.ty(body.locals()).ok(),
+        mir::Operand::Constant(constant) => Some(constant.const_.ty()),
+        mir::Operand::RuntimeChecks(_) => None,
+    };
+    let Some(operand_ty) = operand_ty else {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{intrinsic_name}: cannot determine pointer operand type"
+            ))
+        );
+    };
+
+    let pointee = match operand_ty.kind() {
+        TyKind::RigidTy(RigidTy::RawPtr(pointee, _))
+        | TyKind::RigidTy(RigidTy::Ref(_, pointee, _)) => pointee,
+        other => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "{intrinsic_name}: expected raw pointer or reference operand, got {other:?}"
+                ))
+            );
+        }
+    };
+
+    let layout = match pointee.layout() {
+        Ok(layout) => layout,
+        Err(err) => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "{intrinsic_name}: failed to query pointee layout: {err:?}"
+                ))
+            );
+        }
+    };
+    let size = layout.shape().size.bytes() as u64;
+    if size == 0 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "{intrinsic_name}: zero-sized pointee type has no element distance"
+            ))
+        );
+    }
+    Ok(size)
+}
+
+fn emit_pointer_expose_address(
+    ctx: &mut Context,
+    ptr: Value,
+    result_type: Ptr<pliron::r#type::TypeObj>,
+    insert_after: Option<Ptr<Operation>>,
+    block_ptr: Ptr<BasicBlock>,
+    loc: Location,
+) -> Ptr<Operation> {
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![result_type],
+        vec![ptr],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PointerExposeAddress);
+    if let Some(prev) = insert_after {
+        cast_op.insert_after(ctx, prev);
+    } else {
+        cast_op.insert_at_front(block_ptr, ctx);
+    }
+    cast_op
+}
+
+fn emit_integer_constant(
+    ctx: &mut Context,
+    ty: pliron::r#type::TypePtr<IntegerType>,
+    value: u64,
+    insert_after: Ptr<Operation>,
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    let value_i64 = i64::try_from(value).map_err(|_| {
+        pliron::input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "ptr_offset_from pointee size {value} does not fit in isize"
+            ))
+        )
+    })?;
+    let bits = ty.deref(ctx).width() as usize;
+    let apint = APInt::from_i64(value_i64, NonZeroUsize::new(bits).unwrap());
+    let size_attr = IntegerAttr::new(ty, apint);
+    let const_op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![ty.to_ptr()],
+        vec![],
+        vec![],
+        0,
+    );
+    const_op.deref_mut(ctx).set_loc(loc);
+    MirConstantOp::new(const_op).set_attr_value(ctx, size_attr);
+    const_op.insert_after(ctx, insert_after);
+    Ok(const_op)
 }
 
 /// Emits `SharedArray::index()`: Compute pointer to element in shared memory.

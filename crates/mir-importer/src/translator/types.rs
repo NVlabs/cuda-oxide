@@ -67,6 +67,13 @@ pub fn get_usize_type(
     pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Unsigned)
 }
 
+/// Returns the `isize` type (i64 on 64-bit targets).
+pub fn get_isize_type(
+    ctx: &mut Context,
+) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+    pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Signed)
+}
+
 /// Returns the 32-bit floating point type.
 pub fn get_f32_type(
     ctx: &mut Context,
