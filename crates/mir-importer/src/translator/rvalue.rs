@@ -3462,6 +3462,7 @@ fn translate_place_addr_from_slot(
 
     let mut current = slot;
     let mut current_prev_op = prev_op;
+    let mut current_is_slice_data = false;
 
     for (proj_idx, elem) in projection.iter().enumerate() {
         match elem {
@@ -3659,17 +3660,26 @@ fn translate_place_addr_from_slot(
                         }
 
                         match &projection[proj_idx + 1] {
-                            // Sized field or element access: hand the data
-                            // pointer to the matching arm of this loop. The
-                            // following `Index` / `ConstantIndex` offsets it
-                            // directly (its pointee is the element type, not
-                            // an array), see `emit_indexed_element_addr`.
-                            mir::ProjectionElem::Field(..)
-                            | mir::ProjectionElem::Index(_)
+                            // Sized field access: hand the data pointer to
+                            // the field arm below.
+                            mir::ProjectionElem::Field(..) => {
+                                current = data_ptr;
+                                current_is_slice_data = false;
+                                continue;
+                            }
+                            // Element access through a slice data pointer is
+                            // pointer arithmetic over the slice element type.
+                            // That remains true when the element type is
+                            // itself an array (`&[[T; N]][i]`), where a
+                            // type-only check would otherwise mistake the
+                            // data pointer for a pointer to one array object
+                            // and index inside row 0.
+                            mir::ProjectionElem::Index(_)
                             | mir::ProjectionElem::ConstantIndex {
                                 from_end: false, ..
                             } => {
                                 current = data_ptr;
+                                current_is_slice_data = true;
                                 continue;
                             }
                             // Unknown continuation: keep the conservative
@@ -3714,6 +3724,7 @@ fn translate_place_addr_from_slot(
             }
 
             mir::ProjectionElem::Field(field_idx, field_ty) => {
+                current_is_slice_data = false;
                 let field_type = types::translate_type(ctx, field_ty)?;
                 let result_ptr_ty =
                     dialect_mir::types::MirPtrType::get_generic(ctx, field_type, is_mutable);
@@ -3746,10 +3757,13 @@ fn translate_place_addr_from_slot(
                 if *from_end {
                     return Ok(None);
                 }
-                let (pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
+                let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
                 };
+                if current_is_slice_data {
+                    pointee_kind = PointeeKind::Direct;
+                }
 
                 let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
                 let index_apint = APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
@@ -3784,6 +3798,7 @@ fn translate_place_addr_from_slot(
                 );
                 current = next_current;
                 current_prev_op = Some(addr_op);
+                current_is_slice_data = false;
             }
 
             // Runtime `arr[i]` indexing. Without this arm, a place like
@@ -3791,10 +3806,13 @@ fn translate_place_addr_from_slot(
             // and return a pointer to the array's first slot, miscompiling
             // every load through the reference into a load of element 0.
             mir::ProjectionElem::Index(index_local) => {
-                let (pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
+                let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
                 };
+                if current_is_slice_data {
+                    pointee_kind = PointeeKind::Direct;
+                }
 
                 let index_place = mir::Place {
                     local: *index_local,
@@ -3824,6 +3842,7 @@ fn translate_place_addr_from_slot(
                 );
                 current = next_current;
                 current_prev_op = Some(addr_op);
+                current_is_slice_data = false;
             }
 
             // Enum-variant downcast (`(x as Variant).field`). Addressing an

@@ -26,6 +26,9 @@
  *     let e = &mut a[i]; *e = v         // pre-existing working shape
  *     cells.get_mut(i) -> &mut Cell,    // fat walk composed with the
  *     then c.lo = v                     // (Deref, Field) field write
+ *     let e = &mut rows[row][0]; *e = v // fat slice element is an array
+ *     let e = &mut rows[1][0]; *e = v   // same, with ConstantIndex row
+ *     rows[row][0] = v                  // same shape as projected assignment
  *
  * Each kernel writes a distinct, index-dependent pattern; the host reads
  * the buffer back and checks every lane, so a write that lands in a
@@ -157,6 +160,72 @@ mod kernels {
             }
         }
     }
+
+    /// Mutable write through a fat slice whose element type is itself an
+    /// array. The row index must step by one `[f32; 2]` row, then the
+    /// column index selects inside that row.
+    #[kernel]
+    pub fn write_nested_slice_row_ref(mut out: DisjointSlice<[[f32; 2]; 2]>) {
+        let idx = thread::index_1d();
+        let lane = idx.get();
+        let matrix = match out.get_mut(idx) {
+            Some(m) => m,
+            None => return,
+        };
+
+        matrix[0][0] = 10.0;
+        matrix[0][1] = 77.0;
+        matrix[1][0] = 0.0;
+        matrix[1][1] = 99.0;
+
+        let rows: &mut [[f32; 2]] = matrix;
+        let row = ((rows[0][0] as usize) & 1) + 1;
+        let elem = &mut rows[row][0];
+        *elem = 42.0 + lane as f32;
+    }
+
+    /// Same nested-array fat-slice reference shape, but with a literal row
+    /// index. This covers the forward `ConstantIndex` address-walker arm.
+    #[kernel]
+    pub fn write_nested_slice_const_row_ref(mut out: DisjointSlice<[[f32; 2]; 2]>) {
+        let idx = thread::index_1d();
+        let lane = idx.get();
+        let matrix = match out.get_mut(idx) {
+            Some(m) => m,
+            None => return,
+        };
+
+        matrix[0][0] = 10.0;
+        matrix[0][1] = 77.0;
+        matrix[1][0] = 0.0;
+        matrix[1][1] = 99.0;
+
+        let rows: &mut [[f32; 2]] = matrix;
+        let elem = &mut rows[1][0];
+        *elem = 62.0 + lane as f32;
+    }
+
+    /// Same nested-array fat-slice shape as `write_nested_slice_row_ref`,
+    /// but as a direct projected assignment. This exercises the
+    /// statement-level store path that reuses the same address walker.
+    #[kernel]
+    pub fn write_nested_slice_row_assign(mut out: DisjointSlice<[[f32; 2]; 2]>) {
+        let idx = thread::index_1d();
+        let lane = idx.get();
+        let matrix = match out.get_mut(idx) {
+            Some(m) => m,
+            None => return,
+        };
+
+        matrix[0][0] = 10.0;
+        matrix[0][1] = 77.0;
+        matrix[1][0] = 0.0;
+        matrix[1][1] = 99.0;
+
+        let rows: &mut [[f32; 2]] = matrix;
+        let row = ((rows[0][0] as usize) & 1) + 1;
+        rows[row][0] = 52.0 + lane as f32;
+    }
 }
 
 /// Launches one `[f32; SIZE]`-shaped kernel on a zeroed buffer and checks
@@ -179,6 +248,31 @@ where
         .all(|elem| (0..SIZE).all(|i| (elem[i] - expected(i)).abs() < 1e-6));
     let verdict = if ok { "PASS" } else { "FAIL" };
     println!("  {name:<30} {verdict}    (elem[0] = {:?})", host_out[0]);
+    ok
+}
+
+/// Launches one nested-array fat-slice kernel and checks that the write
+/// reaches row 1 column 0 rather than row 0 column 1.
+fn run_nested_matrix_check<F>(
+    name: &str,
+    stream: &Arc<CudaStream>,
+    expected_base: f32,
+    launch: F,
+) -> bool
+where
+    F: FnOnce(&Arc<CudaStream>, LaunchConfig, &mut DeviceBuffer<[[f32; 2]; 2]>),
+{
+    let mut dev_mats = DeviceBuffer::<[[f32; 2]; 2]>::zeroed(stream, N).unwrap();
+    launch(stream, LaunchConfig::for_num_elems(N as u32), &mut dev_mats);
+    let host_mats = dev_mats.to_host_vec(stream).unwrap();
+    let ok = host_mats.iter().enumerate().all(|(lane, mat)| {
+        (mat[0][0] - 10.0).abs() < 1e-6
+            && (mat[0][1] - 77.0).abs() < 1e-6
+            && (mat[1][0] - (expected_base + lane as f32)).abs() < 1e-6
+            && (mat[1][1] - 99.0).abs() < 1e-6
+    });
+    let verdict = if ok { "PASS" } else { "FAIL" };
+    println!("  {name:<30} {verdict}    (elem[0] = {:?})", host_mats[0]);
     ok
 }
 
@@ -249,6 +343,35 @@ fn main() {
         );
         all_pass &= ok;
     }
+
+    // Nested-array slice element variants: catch row/column stride mixups
+    // when a fat slice's element type is itself an array.
+    all_pass &=
+        run_nested_matrix_check("write_nested_slice_row_ref", &stream, 42.0, |s, cfg, o| {
+            module
+                .write_nested_slice_row_ref(s, cfg, o)
+                .expect("launch")
+        });
+    all_pass &= run_nested_matrix_check(
+        "write_nested_slice_const_row_ref",
+        &stream,
+        62.0,
+        |s, cfg, o| {
+            module
+                .write_nested_slice_const_row_ref(s, cfg, o)
+                .expect("launch")
+        },
+    );
+    all_pass &= run_nested_matrix_check(
+        "write_nested_slice_row_assign",
+        &stream,
+        52.0,
+        |s, cfg, o| {
+            module
+                .write_nested_slice_row_assign(s, cfg, o)
+                .expect("launch")
+        },
+    );
 
     if all_pass {
         println!("\nSUCCESS: all kernels passed");
