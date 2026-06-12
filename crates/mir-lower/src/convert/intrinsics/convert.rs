@@ -9,7 +9,7 @@
 //! |---------------|-------------------------------|
 //! | `CvtF16x2F32` | `cvt.rn.f16x2.f32 d, hi, lo;` |
 
-use llvm_export::ops as llvm;
+use llvm_export::ops::{self as llvm, InlineAsmOpExt};
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -43,14 +43,14 @@ pub(crate) fn convert_cvt_f16x2_f32(
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
 
-    // Non-convergent inline asm (pure data conversion, not a collective op)
-    let inline_asm = llvm::InlineAsmOp::new(
+    // Pure inline asm (data conversion, not a collective op)
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         i32_ty.into(),
         vec![lo_val, hi_val],
         "cvt.rn.f16x2.f32 $0, $2, $1;",
         "=r,f,f",
-        false, // not convergent — pure data conversion
+        llvm_export::ops::AsmKind::Pure,
     );
 
     let asm_op = inline_asm.get_operation();

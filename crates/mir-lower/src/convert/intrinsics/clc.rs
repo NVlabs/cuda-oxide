@@ -25,7 +25,7 @@
 
 use crate::convert::intrinsics::common::*;
 use llvm_export::ops as llvm;
-use llvm_export::ops::InlineAsmOpExt;
+use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -95,12 +95,13 @@ pub(crate) fn convert_try_cancel(
         )
     };
 
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![response, mbar],
         ptx,
         "l,l,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);

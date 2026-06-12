@@ -129,8 +129,8 @@ pub mod attributes {
     }
 }
 
-/// LLVM ops: re-exported from pliron-llvm, plus the builtin `ConstantOp` and a
-/// convergent inline-asm constructor.
+/// LLVM ops: re-exported from pliron-llvm, plus the builtin `ConstantOp` and
+/// the `AsmKind`-tagged inline-asm builder.
 pub mod ops {
     pub use pliron_llvm::ops::*;
 
@@ -148,30 +148,85 @@ pub mod ops {
     use pliron_llvm::attributes::AlignmentAttr;
     pub use pliron_llvm::ops::{GlobalOp, InlineAsmOp};
 
-    /// Convergent inline-asm constructor re-homed from the pre-migration local
-    /// op. Upstream `InlineAsmOp::new` takes a trailing `convergent: bool`;
-    /// this keeps the `new_convergent(...)` call shape used across mir-lower.
+    /// Inline asm semantics for LLVM optimization hints.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum AsmKind {
+        /// Convergent + side effects (warp-synchronous ops: bar.sync, mma, etc.)
+        Convergent,
+        /// Side effects only (memory writes, non-convergent barriers)
+        SideEffect,
+        /// Pure: no side effects, not convergent (data conversions like cvt)
+        Pure,
+    }
+
+    /// Op-attribute key for the inline-asm kind tag.
+    const ASM_KIND_KEY: &str = "cuda_oxide_asm_kind";
+
+    /// Builder extension for `InlineAsmOp` that tags the op with an [`AsmKind`].
     pub trait InlineAsmOpExt {
-        /// Build a convergent `InlineAsmOp` (use a void result type for asm
-        /// with no result value).
-        fn new_convergent(
+        /// Build an `InlineAsmOp` tagged with the given [`AsmKind`].
+        fn build(
             ctx: &mut Context,
             result_ty: Ptr<TypeObj>,
             inputs: Vec<Value>,
             asm_template: &str,
             constraints: &str,
+            kind: AsmKind,
         ) -> Self;
     }
 
     impl InlineAsmOpExt for InlineAsmOp {
-        fn new_convergent(
+        fn build(
             ctx: &mut Context,
             result_ty: Ptr<TypeObj>,
             inputs: Vec<Value>,
             asm_template: &str,
             constraints: &str,
+            kind: AsmKind,
         ) -> Self {
-            InlineAsmOp::new(ctx, result_ty, inputs, asm_template, constraints, true)
+            use pliron::builtin::attributes::StringAttr;
+
+            let convergent = matches!(kind, AsmKind::Convergent);
+            let op = InlineAsmOp::new(
+                ctx,
+                result_ty,
+                inputs,
+                asm_template,
+                constraints,
+                convergent,
+            );
+
+            let kind_str = match kind {
+                AsmKind::Convergent => "convergent",
+                AsmKind::SideEffect => "side_effect",
+                AsmKind::Pure => "pure",
+            };
+            let key = Identifier::try_new(ASM_KIND_KEY.to_string()).expect("valid identifier");
+            op.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(kind_str.to_string()));
+            op
+        }
+    }
+
+    /// Query the [`AsmKind`] stored on an `InlineAsmOp`.
+    ///
+    /// Returns `AsmKind::SideEffect` if the attribute is missing (safe default:
+    /// assume side effects).
+    pub fn asm_kind(ctx: &Context, op: &InlineAsmOp) -> AsmKind {
+        use pliron::builtin::attributes::StringAttr;
+
+        let key = Identifier::try_new(ASM_KIND_KEY.to_string()).expect("valid identifier");
+        let op_ref = op.get_operation().deref(ctx);
+        let kind_str: Option<String> = op_ref
+            .attributes
+            .get::<StringAttr>(&key)
+            .map(|s| String::from((*s).clone()));
+        match kind_str.as_deref() {
+            Some("convergent") => AsmKind::Convergent,
+            Some("pure") => AsmKind::Pure,
+            _ => AsmKind::SideEffect,
         }
     }
 
