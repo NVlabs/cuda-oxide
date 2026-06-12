@@ -5,8 +5,10 @@
 
 use llvm_export::{
     export::export_module_to_string,
-    ops::{AddressOfOp, BrOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ReturnOp},
-    types::{FuncType, VoidType},
+    ops::{
+        AddressOfOp, BrOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, LoadOp, ReturnOp, StoreOp,
+    },
+    types::{FuncType, PointerType, VoidType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -14,10 +16,100 @@ use pliron::{
         ops::ModuleOp,
         types::{IntegerType, Signedness},
     },
-    context::Context,
+    context::{Context, Ptr},
     linked_list::ContainsLinkedList,
     op::Op,
 };
+
+fn module_top_block(ctx: &mut Context, module: &ModuleOp) -> Ptr<BasicBlock> {
+    let module_region = module.get_operation().deref(ctx).get_region(0);
+    {
+        let region = module_region.deref(ctx);
+        if let Some(block) = region.iter(ctx).next() {
+            return block;
+        }
+    }
+
+    let block = BasicBlock::new(ctx, None, vec![]);
+    block.insert_at_back(module_region, ctx);
+    block
+}
+
+#[test]
+fn export_volatile_load_prints_keyword() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let ptr_ty = PointerType::get(&mut ctx, 0);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![ptr_ty.to_ptr()], false);
+    let func = FuncOp::new(&mut ctx, "volatile_load_test".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let ptr = entry.deref(&ctx).get_argument(0);
+
+    let load = LoadOp::new(&mut ctx, ptr, i32_ty.to_ptr());
+    llvm_export::ops::set_op_volatile(&mut ctx, load.get_operation(), true);
+    load.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
+    let line = ir
+        .lines()
+        .find(|line| line.contains("load volatile"))
+        .expect("volatile load line");
+
+    assert!(
+        line.trim_start().contains(" = load volatile i32, ptr "),
+        "volatile load keyword must appear immediately after load:\n{ir}"
+    );
+}
+
+#[test]
+fn export_volatile_store_prints_keyword() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let ptr_ty = PointerType::get(&mut ctx, 0);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(
+        &mut ctx,
+        void_ty.to_ptr(),
+        vec![ptr_ty.to_ptr(), i32_ty.to_ptr()],
+        false,
+    );
+    let func = FuncOp::new(&mut ctx, "volatile_store_test".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let ptr = entry.deref(&ctx).get_argument(0);
+    let val = entry.deref(&ctx).get_argument(1);
+
+    let store = StoreOp::new(&mut ctx, val, ptr);
+    llvm_export::ops::set_op_volatile(&mut ctx, store.get_operation(), true);
+    store.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
+    let line = ir
+        .lines()
+        .find(|line| line.contains("store volatile"))
+        .expect("volatile store line");
+
+    assert!(
+        line.trim_start().starts_with("store volatile i32 "),
+        "volatile store keyword must appear immediately after store:\n{ir}"
+    );
+}
 
 #[test]
 fn export_addressof_uses_symbol_when_definition_block_prints_later() {

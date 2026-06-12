@@ -25,6 +25,7 @@ use pliron::{
     context::Context,
     op::Op,
     operation::Operation,
+    opts::mem2reg::{AllocInfo, PromotableOpInterface, PromotableOpKind},
     utils::apint::APInt,
 };
 use std::num::NonZeroUsize;
@@ -239,6 +240,45 @@ fn test_mir_load_verify() {
         mir_load_fail_res.verify(&ctx).is_err(),
         "MirLoadOp result mismatch"
     );
+}
+
+#[test]
+fn test_mir_load_volatile_is_not_promotable() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into()]);
+    let ptr_val = block.deref(&ctx).get_argument(0);
+
+    let op = Operation::new(
+        &mut ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![ptr_val],
+        vec![],
+        0,
+    );
+    let mir_load = MirLoadOp::new(op);
+    let alloc_info = AllocInfo {
+        ptr: ptr_val,
+        ty: i32_ty.into(),
+    };
+
+    assert!(!mir_load.is_volatile(&ctx));
+    assert!(matches!(
+        mir_load.promotion_kind(&ctx, &alloc_info),
+        PromotableOpKind::Load
+    ));
+
+    mir_load.set_volatile(&mut ctx, true);
+
+    assert!(mir_load.is_volatile(&ctx));
+    assert!(matches!(
+        mir_load.promotion_kind(&ctx, &alloc_info),
+        PromotableOpKind::NonPromotableUse
+    ));
 }
 
 #[test]
@@ -872,6 +912,46 @@ fn test_mir_store_verify() {
         MirStoreOp::new(op_bad_type).verify(&ctx).is_err(),
         "MirStoreOp type mismatch"
     );
+}
+
+#[test]
+fn test_mir_store_volatile_is_not_promotable() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into(), i32_ty.into()]);
+    let ptr_val = block.deref(&ctx).get_argument(0);
+    let val = block.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![ptr_val, val],
+        vec![],
+        0,
+    );
+    let mir_store = MirStoreOp::new(op);
+    let alloc_info = AllocInfo {
+        ptr: ptr_val,
+        ty: i32_ty.into(),
+    };
+
+    assert!(!mir_store.is_volatile(&ctx));
+    match mir_store.promotion_kind(&ctx, &alloc_info) {
+        PromotableOpKind::Store(stored) => assert!(stored == val),
+        _ => panic!("non-volatile store should be promotable"),
+    }
+
+    mir_store.set_volatile(&mut ctx, true);
+
+    assert!(mir_store.is_volatile(&ctx));
+    assert!(matches!(
+        mir_store.promotion_kind(&ctx, &alloc_info),
+        PromotableOpKind::NonPromotableUse
+    ));
 }
 
 #[test]
