@@ -1,0 +1,61 @@
+// Copyright (c) 2024-2026 NVIDIA CORPORATION. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Behavior example for the packed bf16x2 FMA intrinsic.
+
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_device::bf16x2::fma_bf16x2;
+use cuda_device::tcgen05::cvt_f32x2_bf16x2;
+use cuda_device::{DisjointSlice, kernel, thread};
+use cuda_host::cuda_module;
+
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[kernel]
+    pub fn run_fma(mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if idx.get() != 0 {
+            return;
+        }
+
+        let a = cvt_f32x2_bf16x2(2.0, 4.0);
+        let b = cvt_f32x2_bf16x2(3.0, 5.0);
+        let c = cvt_f32x2_bf16x2(7.0, 11.0);
+        let value = fma_bf16x2(a, b, c);
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = value;
+        }
+    }
+}
+
+fn bf16_bits(value: f32) -> u16 {
+    (value.to_bits() >> 16) as u16
+}
+
+fn pack_bf16x2(lo: f32, hi: f32) -> u32 {
+    u32::from(bf16_bits(lo)) | (u32::from(bf16_bits(hi)) << 16)
+}
+
+fn main() {
+    let expected = pack_bf16x2(13.0, 31.0);
+
+    let ctx = CudaContext::new(0).expect("CUDA init");
+    let stream = ctx.default_stream();
+    let module = kernels::load(&ctx).expect("load embedded PTX");
+    let mut out = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+
+    module
+        .run_fma(&stream, LaunchConfig::for_num_elems(1), &mut out)
+        .expect("launch run_fma");
+
+    let got = out.to_host_vec(&stream).unwrap()[0];
+    println!("expected: 0x{expected:08x}");
+    println!("got:      0x{got:08x}");
+
+    if got != expected {
+        std::process::exit(1);
+    }
+}

@@ -4,8 +4,8 @@
  */
 
 use dialect_nvvm::ops::{
-    Barrier0Op, ReadPtxSregLaneIdOp, ReadPtxSregTidXOp, ThreadfenceBlockOp, ThreadfenceOp,
-    ThreadfenceSystemOp,
+    Barrier0Op, FmaBf16x2Op, ReadPtxSregLaneIdOp, ReadPtxSregTidXOp, ThreadfenceBlockOp,
+    ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     builtin::types::{IntegerType, Signedness},
@@ -105,4 +105,55 @@ fn test_sync_ops_construct_and_verify() {
         0,
     );
     assert!(ThreadfenceSystemOp::new(system_fence).verify(&ctx).is_ok());
+}
+
+#[test]
+fn test_bf16x2_fma_constructs_and_verifies_three_operands() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let u32_ty = IntegerType::get(&mut ctx, 32, Signedness::Unsigned);
+
+    let a = Operation::new(
+        &mut ctx,
+        ReadPtxSregTidXOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    let b = Operation::new(
+        &mut ctx,
+        ReadPtxSregTidXOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    let c = Operation::new(
+        &mut ctx,
+        ReadPtxSregTidXOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+
+    let operands = vec![
+        a.deref(&ctx).get_result(0),
+        b.deref(&ctx).get_result(0),
+        c.deref(&ctx).get_result(0),
+    ];
+
+    let fma = Operation::new(
+        &mut ctx,
+        FmaBf16x2Op::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        operands,
+        vec![],
+        0,
+    );
+
+    assert!(FmaBf16x2Op::new(fma).verify(&ctx).is_ok());
 }
