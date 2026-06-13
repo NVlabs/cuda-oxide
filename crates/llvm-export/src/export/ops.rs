@@ -863,10 +863,9 @@ impl<'a> ModuleExportState<'a> {
         }
 
         // Emit `sideeffect` unless the asm is pure (no side effects).
-        let sideeffect = if kind == ops::AsmKind::Pure {
-            ""
-        } else {
-            " sideeffect"
+        let sideeffect = match kind {
+            ops::AsmKind::Pure | ops::AsmKind::ConvergentPure => "",
+            ops::AsmKind::Convergent | ops::AsmKind::SideEffect => " sideeffect",
         };
         write!(
             output,
@@ -882,11 +881,14 @@ impl<'a> ModuleExportState<'a> {
             self.export_value(arg, value_names, output)?;
         }
 
-        if kind == ops::AsmKind::Convergent {
-            writeln!(output, ") #0").unwrap();
-            self.convergent_used = true;
-        } else {
-            writeln!(output, ")").unwrap();
+        match kind {
+            ops::AsmKind::Convergent | ops::AsmKind::ConvergentPure => {
+                writeln!(output, ") #0").unwrap();
+                self.convergent_used = true;
+            }
+            ops::AsmKind::SideEffect | ops::AsmKind::Pure => {
+                writeln!(output, ")").unwrap();
+            }
         }
         Ok(())
     }

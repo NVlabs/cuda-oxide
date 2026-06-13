@@ -149,13 +149,39 @@ pub mod ops {
     pub use pliron_llvm::ops::{GlobalOp, InlineAsmOp};
 
     /// Inline asm semantics for LLVM optimization hints.
+    ///
+    /// This is the complete classification: two orthogonal axes (convergent ×
+    /// side-effects) produce exactly four variants, all valid for GPU inline
+    /// asm. No further axes are needed because:
+    ///
+    /// - **Memory effects** (`nomem`/`readonly`/`readwrite`) are unnecessary:
+    ///   cuda-oxide's inline asm is either a pure register-to-register
+    ///   conversion or a full side-effecting op. Fine-grained memory
+    ///   classification would only help if we lowered loads/stores through
+    ///   inline asm, which we don't — those go through proper LLVM ops.
+    ///
+    /// - **`noreturn`/`may_unwind`** don't apply: PTX inline asm always
+    ///   returns and never unwinds.
+    ///
+    /// - **`preserves_flags`/`nostack`** are CPU concepts with no PTX
+    ///   equivalent.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum AsmKind {
-        /// Convergent + side effects (warp-synchronous ops: bar.sync, mma, etc.)
+        /// Convergent + side effects. Warp-synchronous operations that
+        /// synchronize threads or write memory: `bar.sync`, `mma.sync`,
+        /// `wgmma`, `tcgen05`, `cp.async`.
         Convergent,
-        /// Side effects only (memory writes, non-convergent barriers)
+        /// Convergent, no side effects. Warp-collective operations whose
+        /// result depends on which threads are active but that produce no
+        /// observable effects beyond their register output: `shfl.sync`,
+        /// `vote.sync`, `match.sync`.
+        ConvergentPure,
+        /// Side effects, not convergent. Non-collective operations that
+        /// modify memory or hardware state: `st.global` via asm, hardware
+        /// timer reads.
         SideEffect,
-        /// Pure: no side effects, not convergent (data conversions like cvt)
+        /// No side effects, not convergent. Pure register-to-register data
+        /// conversions: `cvt.rn.f16x2.f32`, `cvt.rn.bf16x2.f32`, `prmt`.
         Pure,
     }
 
@@ -186,7 +212,7 @@ pub mod ops {
         ) -> Self {
             use pliron::builtin::attributes::StringAttr;
 
-            let convergent = matches!(kind, AsmKind::Convergent);
+            let convergent = matches!(kind, AsmKind::Convergent | AsmKind::ConvergentPure);
             let op = InlineAsmOp::new(
                 ctx,
                 result_ty,
@@ -198,6 +224,7 @@ pub mod ops {
 
             let kind_str = match kind {
                 AsmKind::Convergent => "convergent",
+                AsmKind::ConvergentPure => "convergent_pure",
                 AsmKind::SideEffect => "side_effect",
                 AsmKind::Pure => "pure",
             };
@@ -225,6 +252,7 @@ pub mod ops {
             .map(|s| String::from((*s).clone()));
         match kind_str.as_deref() {
             Some("convergent") => AsmKind::Convergent,
+            Some("convergent_pure") => AsmKind::ConvergentPure,
             Some("pure") => AsmKind::Pure,
             _ => AsmKind::SideEffect,
         }
@@ -361,5 +389,20 @@ mod tests {
             AsmKind::SideEffect,
         );
         assert_eq!(asm_kind(&ctx, &op), AsmKind::SideEffect);
+    }
+
+    #[test]
+    fn asm_kind_convergent_pure_round_trips() {
+        let mut ctx = Context::new();
+        let void_ty = VoidType::get(&ctx);
+        let op = InlineAsmOp::build(
+            &mut ctx,
+            void_ty.into(),
+            vec![],
+            "shfl.sync.bfly.b32 $0, $1, $2, $3;",
+            "=r,r,r,r",
+            AsmKind::ConvergentPure,
+        );
+        assert_eq!(asm_kind(&ctx, &op), AsmKind::ConvergentPure);
     }
 }
