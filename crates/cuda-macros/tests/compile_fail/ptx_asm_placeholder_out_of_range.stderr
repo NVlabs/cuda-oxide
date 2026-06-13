@@ -1,0 +1,5 @@
+error: ptx_asm! template placeholder `%2` has no matching operand
+  --> tests/compile_fail/ptx_asm_placeholder_out_of_range.rs:11:18
+   |
+11 |         ptx_asm!("add.u32 %2, %0, %1;", out("=r") y, in("r") x);
+   |                  ^^^^^^^^^^^^^^^^^^^^^

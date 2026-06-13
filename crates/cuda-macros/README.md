@@ -3,7 +3,7 @@
 Procedural macros for writing CUDA kernels in Rust. Provides `#[cuda_module]`
 for typed embedded-module loading, `#[kernel]` for GPU entry points,
 `#[device]`, `#[launch_bounds]`, `#[cluster_launch]`, `#[cooperative_launch]`,
-`gpu_printf!`, and the lower-level `cuda_launch!` / `cuda_launch_async!`
+`gpu_printf!`, `ptx_asm!`, and the lower-level `cuda_launch!` / `cuda_launch_async!`
 escape hatches. `cuda_launch!` is caller-unsafe: prefer `#[cuda_module]`
 unless you are launching a module loaded at runtime by name.
 
@@ -250,12 +250,45 @@ Compiles to CUDA's `vprintf` with C vararg promotion rules. Format string must u
 gpu_printf!("thread %d: val = %f\n", tid as i32, val as f64);
 ```
 
+## `ptx_asm!` -- Inline PTX
+
+Uses CUDA inline PTX operands and lowers to LLVM inline assembly. Literal PTX
+registers use CUDA's doubled percent escaping, for example `%%laneid`. For the
+source syntax this follows, see CUDA's
+[Inline PTX Assembly](https://docs.nvidia.com/cuda/inline-ptx-assembly/index.html)
+reference.
+
+Default lowering is conservative: user-authored PTX is emitted as LLVM
+`asm sideeffect` and marked `convergent`. This makes the macro suitable as a
+volatile escape hatch for instructions whose scheduling or participating
+threads matter, but it can inhibit optimization for pure scalar snippets. For
+snippets that only read explicit operands and write the explicit output, add
+`options(register_only)` to omit both markers.
+
+```rust
+let y: u32;
+unsafe {
+    ptx_asm!(
+        "add.u32 %0, %1, %1;",
+        out("=r") y,
+        in("r") x,
+        options(register_only),
+    );
+}
+```
+
+The initial surface supports zero or one `out`, up to 16 `in` operands, and
+`clobber("memory")`. `options(register_only)` requires an `out` operand and
+cannot be combined with clobbers. Multiple outputs, read-write operands, and
+the `"C"` constraint are not implemented yet.
+
 ## Source Layout
 
 ```text
 src/
 ├── lib.rs       # All proc-macro definitions (kernel, device, launch, etc.)
-└── printf.rs    # gpu_printf! implementation
+├── printf.rs    # gpu_printf! implementation
+└── ptx_asm.rs   # ptx_asm! implementation
 ```
 
 ## Further Reading

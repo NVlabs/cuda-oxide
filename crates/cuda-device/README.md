@@ -34,6 +34,7 @@
 | `debug`              | `clock`/`clock64`, `trap`, `breakpoint`, `gpu_printf!`, `gpu_assert!`        | All     |
 | `fence`              | `threadfence_block` / `threadfence` / `threadfence_system` memory fences     | All     |
 | `grid`               | Grid-scoped queries and `sync` (cooperative kernel launches only)            | sm_70+  |
+| `ptx`                | Compiler marker stubs used by `ptx_asm!` lowering                            | All     |
 | `cooperative_groups` | Typed group handles (`Grid`/`ThreadBlock`/`WarpTile<N>`/`CoalescedThreads`)  | All     |
 | `barrier`            | `Barrier`, `ManagedBarrier<State, Kind>` -- async mbarrier for TMA           | sm_90+  |
 | `cluster`            | Thread block clusters, DSMEM (`map_shared_rank`), `cluster_sync`             | sm_90+  |
@@ -148,6 +149,7 @@ These are defined in `cuda-macros` and re-exported from `cuda-device` for conven
 | `#[pure]`                | Mark as pure (no side effects)                |
 | `#[readonly]`            | Mark as read-only                             |
 | `gpu_printf!`            | Device-side printf                            |
+| `ptx_asm!`               | Unsafe CUDA inline PTX                        |
 
 ## Safety Model
 

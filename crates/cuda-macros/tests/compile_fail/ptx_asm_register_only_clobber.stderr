@@ -1,0 +1,5 @@
+error: `options(register_only)` cannot be used with clobbers
+  --> tests/compile_fail/ptx_asm_register_only_clobber.rs:15:21
+   |
+15 |             clobber("memory"),
+   |                     ^^^^^^^^

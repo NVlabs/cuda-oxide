@@ -43,19 +43,25 @@ fn helper(x: f32) -> f32 { x * x }
 | `#[pure]`                                   | Mark as side-effect free                                            |
 | `#[readonly]`                               | Mark as read-only                                                   |
 
-### Output Macros
+### Debug and PTX Macros
 
 ```rust
-use cuda_device::{gpu_printf, gpu_assert};
+use cuda_device::{gpu_printf, gpu_assert, ptx_asm};
 
 gpu_printf!("thread %d: val = %f\n", idx as i32, val as f64);
 gpu_assert!(val >= 0.0);
+
+let y: u32;
+unsafe {
+    ptx_asm!("add.u32 %0, %1, %1;", out("=r") y, in("r") x, options(register_only));
+}
 ```
 
 | Macro                        | Purpose                                              |
 |:-----------------------------|:-----------------------------------------------------|
 | `gpu_printf!(fmt, args...)`  | Device-side formatted output (lowers to `vprintf`)   |
 | `gpu_assert!(condition)`     | Runtime assertion; calls `trap()` on failure         |
+| `ptx_asm!(...)`              | Unsafe CUDA inline PTX                               |
 
 ---
 
@@ -398,6 +404,7 @@ debug::prof_trigger::<7>();     // Nsight profiler trigger
 | `debug`              | `clock64`, `trap`, `breakpoint`, `gpu_printf!`                   | All      |
 | `fence`              | `threadfence_block` / `threadfence` / `threadfence_system`       | All      |
 | `grid`               | Grid-scoped `sync` (cooperative kernel launches)                 | sm_70+   |
+| `ptx`                | Compiler marker stubs used by `ptx_asm!` lowering                | All      |
 | `cooperative_groups` | Typed handles, warp/block reductions and scans                   | All      |
 | `barrier`            | `ManagedBarrier` — async mbarrier for TMA/MMA                    | sm_90+   |
 | `cluster`            | Thread block clusters, DSMEM                                     | sm_90+   |
@@ -412,7 +419,7 @@ debug::prof_trigger::<7>();     // Nsight profiler trigger
 | Crate             | Role                                                                   |
 |:------------------|:-----------------------------------------------------------------------|
 | `cuda-device`     | Device intrinsics and types (`#![no_std]`)                             |
-| `cuda-macros`     | Proc macros (`#[kernel]`, `#[device]`, `gpu_printf!`)                  |
+| `cuda-macros`     | Proc macros (`#[kernel]`, `#[device]`, `gpu_printf!`, `ptx_asm!`)      |
 | `cuda-host`       | Typed module loading plus low-level launch helpers                     |
 | `cuda-core`       | Safe RAII wrappers (`CudaContext`, `CudaStream`, `DeviceBuffer<T>`)    |
 | `cuda-async`      | `DeviceOperation`, `DeviceFuture`, `DeviceBox<T>`                      |

@@ -35,6 +35,7 @@
 //! functions to their respective category modules.
 
 // Submodules for intrinsic categories (to be populated incrementally)
+pub mod asm;
 pub mod atomic;
 pub mod bigint;
 pub mod bitops;

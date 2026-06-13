@@ -5,7 +5,7 @@
 
 use llvm_export::{
     export::export_module_to_string,
-    ops::{AddressOfOp, BrOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, ReturnOp},
+    ops::{AddressOfOp, BrOp, FuncOp, GepIndex, GetElementPtrOp, GlobalOp, InlineAsmOp, ReturnOp},
     types::{FuncType, VoidType},
 };
 use pliron::{
@@ -105,6 +105,45 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     // result was named `%v1` but never defined; this catches that and any
     // future regression that re-introduces a dangling SSA reference.
     assert_no_undefined_temporaries(&ir);
+}
+
+#[test]
+fn export_inline_asm_respects_sideeffect_marker() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func = FuncOp::new(&mut ctx, "has_inline_asm".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+
+    let default_asm = InlineAsmOp::new(&mut ctx, void_ty.into(), vec![], "bar.sync 0;", "", false);
+    default_asm.get_operation().insert_at_back(entry, &ctx);
+
+    let register_only_asm = InlineAsmOp::new(&mut ctx, void_ty.into(), vec![], "nop;", "", false);
+    llvm_export::ops::set_inline_asm_sideeffect(&mut ctx, register_only_asm.get_operation(), false);
+    register_only_asm
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
+
+    assert!(
+        ir.contains("call void asm sideeffect \"bar.sync 0;\", \"\"()"),
+        "inline asm without an explicit marker should remain conservative:\n{ir}"
+    );
+    assert!(
+        ir.contains("call void asm \"nop;\", \"\"()"),
+        "inline asm marked sideeffect=false should omit the keyword:\n{ir}"
+    );
 }
 
 /// Scans the textual LLVM IR and asserts that every `%vN` token appearing in

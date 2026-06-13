@@ -854,6 +854,117 @@ fn test_cvt_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rn.f16x2.f32")
 }
 
+#[test]
+fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+    let input = entry.deref(&ctx).get_argument(0);
+
+    let inline_ptx = nvvm::InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into()],
+        vec![input],
+        "add.u32 $0, $1, $1;",
+        "=r,r",
+        true,
+        true,
+    );
+    inline_ptx.insert_at_back(entry, &ctx);
+    let register_only_ptx = nvvm::InlinePtxOp::build(
+        &mut ctx,
+        vec![i32_ty.into()],
+        vec![input],
+        "mul.lo.u32 $0, $1, $1;",
+        "=r,r",
+        false,
+        false,
+    );
+    register_only_ptx.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut found_conservative = false;
+    let mut found_register_only = false;
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|s| String::from((*s).clone()));
+                match template.as_deref() {
+                    Some("add.u32 $0, $1, $1;") => {
+                        found_conservative = true;
+                        assert_eq!(
+                            inline_asm
+                                .get_attr_inline_asm_constraints(&ctx)
+                                .map(|s| String::from((*s).clone()))
+                                .as_deref(),
+                            Some("=r,r")
+                        );
+                        assert!(
+                            inline_asm
+                                .get_attr_inline_asm_convergent(&ctx)
+                                .is_some_and(|b| bool::from((*b).clone()))
+                        );
+                        assert!(llvm::inline_asm_sideeffect(
+                            &ctx,
+                            inline_asm.get_operation()
+                        ));
+                    }
+                    Some("mul.lo.u32 $0, $1, $1;") => {
+                        found_register_only = true;
+                        assert_eq!(
+                            inline_asm
+                                .get_attr_inline_asm_constraints(&ctx)
+                                .map(|s| String::from((*s).clone()))
+                                .as_deref(),
+                            Some("=r,r")
+                        );
+                        assert!(
+                            inline_asm
+                                .get_attr_inline_asm_convergent(&ctx)
+                                .is_some_and(|b| !bool::from((*b).clone()))
+                        );
+                        assert!(!llvm::inline_asm_sideeffect(
+                            &ctx,
+                            inline_asm.get_operation()
+                        ));
+                    }
+                    _ => continue,
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_conservative,
+        "Expected conservative inline PTX asm op"
+    );
+    assert!(
+        found_register_only,
+        "Expected register-only inline PTX asm op"
+    );
+    Ok(())
+}
+
 /// Regression cover for PR #141: comparisons whose operand is a bool phi.
 ///
 /// Bools are signless i1, which `can_convert_type` rejects (signless is

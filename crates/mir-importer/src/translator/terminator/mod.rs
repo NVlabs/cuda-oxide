@@ -1631,6 +1631,22 @@ fn try_dispatch_intrinsic(
     loc: Location,
     substs_contains: &impl Fn(&str) -> bool,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
+    if let Some(kind) = intrinsics::asm::InlinePtxCallKind::from_path(name) {
+        return Ok(Some(intrinsics::asm::emit_inline_ptx(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+            kind,
+        )?));
+    }
+
     if let Some(intrinsic) = intrinsics::bitops::RustBitIntrinsic::from_core_path(name) {
         return Ok(Some(intrinsics::bitops::emit_rust_bit_intrinsic(
             ctx,

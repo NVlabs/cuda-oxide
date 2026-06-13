@@ -442,6 +442,21 @@ fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
     )
 }
 
+/// Returns true for hidden `cuda_device::ptx_asm!` marker functions.
+///
+/// These markers have host-side `unreachable!()` bodies, but the MIR importer
+/// rewrites their call sites to `nvvm.inline_ptx`. Collecting the marker body
+/// itself would incorrectly pull panic-message machinery into device code.
+fn is_ptx_asm_marker_path(fn_path: &str) -> bool {
+    fn has_arity_suffix(path: &str, prefix: &str) -> bool {
+        path.strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
+    }
+
+    has_arity_suffix(fn_path, "cuda_device::ptx::__ptx_asm_out_")
+        || has_arity_suffix(fn_path, "cuda_device::ptx::__ptx_asm_void_")
+}
+
 /// Marker substring of the panic message used by the public
 /// `cuda_device::thread::index_*` stubs (see `cuda-device/src/thread.rs`).
 ///
@@ -1195,6 +1210,13 @@ impl<'tcx> DeviceCollector<'tcx> {
             && let Some(shim) = rust_alloc_shim_name(&raw_name)
         {
             self.report_heap_allocation(shim, caller, &callee_ctx);
+        }
+
+        if is_ptx_asm_marker_path(&raw_name) {
+            if self.verbose {
+                eprintln!("[collector] Skipping inline PTX marker: {raw_name}");
+            }
+            return;
         }
 
         // Skip functions without MIR bodies (extern intrinsics like cuda_device::threadIdx_x).

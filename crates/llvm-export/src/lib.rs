@@ -138,6 +138,7 @@ pub mod ops {
     pub use pliron::builtin::ops::ConstantOp;
 
     use pliron::{
+        builtin::attributes::BoolAttr,
         context::{Context, Ptr},
         identifier::Identifier,
         op::Op,
@@ -184,6 +185,11 @@ pub mod ops {
     /// and emitted as `align N` during export.
     const OP_ALIGNMENT_KEY: &str = "cuda_oxide_op_alignment";
 
+    /// Op-attribute key controlling whether an inline asm op is emitted with
+    /// LLVM's `sideeffect` marker. Absent means true, matching the conservative
+    /// default for user-authored inline PTX.
+    const INLINE_ASM_SIDEEFFECT_KEY: &str = "cuda_oxide_inline_asm_sideeffect";
+
     /// Stamp the ABI alignment (bytes) onto a memory op.
     pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
         let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
@@ -197,6 +203,26 @@ pub mod ops {
             .attributes
             .get::<AlignmentAttr>(&key)
             .map(|a| a.0)
+    }
+
+    /// Stamp whether an inline asm op has side effects beyond its operands.
+    pub fn set_inline_asm_sideeffect(ctx: &mut Context, op: Ptr<Operation>, sideeffect: bool) {
+        let key =
+            Identifier::try_new(INLINE_ASM_SIDEEFFECT_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx)
+            .attributes
+            .set(key, BoolAttr::new(sideeffect));
+    }
+
+    /// Read whether an inline asm op should be emitted with `sideeffect`.
+    pub fn inline_asm_sideeffect(ctx: &Context, op: Ptr<Operation>) -> bool {
+        let key =
+            Identifier::try_new(INLINE_ASM_SIDEEFFECT_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<BoolAttr>(&key)
+            .map(|a| bool::from((*a).clone()))
+            .unwrap_or(true)
     }
 
     /// Alignment helpers re-homed from the pre-migration local `GlobalOp`.
