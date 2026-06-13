@@ -4,6 +4,7 @@
  */
 
 mod printf;
+mod ptx_asm;
 
 use proc_macro::TokenStream;
 
@@ -46,6 +47,38 @@ use proc_macro::TokenStream;
 pub fn gpu_printf(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as printf::GpuPrintfInput);
     printf::gpu_printf_impl(input).into()
+}
+
+/// Inline PTX assembly for CUDA device code.
+///
+/// The macro accepts the `%0` operand placeholders used by CUDA inline PTX, plus
+/// `in` / `out` operands with PTX constraint strings:
+///
+/// ```ignore
+/// let y: u32;
+/// unsafe {
+///     ptx_asm!(
+///         "add.u32 %0, %1, %2;",
+///         out("=r") y,
+///         in("r") x,
+///         in("r") z,
+///     );
+/// }
+/// ```
+///
+/// Literal PTX registers that begin with `%` must be escaped as `%%`, matching
+/// CUDA C++ inline PTX.
+///
+/// The initial surface supports zero or one `out`, up to 16 `in` operands,
+/// `clobber("memory")`, and `options(register_only)`.
+///
+/// Default lowering is conservative: emitted LLVM inline assembly is
+/// `sideeffect` and marked `convergent`. For snippets that only read explicit
+/// operands and write the explicit output, use `options(register_only)`.
+#[proc_macro]
+pub fn ptx_asm(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as ptx_asm::PtxAsmInput);
+    ptx_asm::ptx_asm_impl(input).into()
 }
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};

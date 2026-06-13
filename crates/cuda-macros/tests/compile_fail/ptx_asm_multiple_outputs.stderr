@@ -1,0 +1,5 @@
+error: ptx_asm! currently supports at most one `out` operand
+  --> tests/compile_fail/ptx_asm_multiple_outputs.rs:11:58
+   |
+11 |         ptx_asm!("add.u32 %0, %1, %1;", out("=r") a, out("=r") b);
+   |                                                          ^^^^

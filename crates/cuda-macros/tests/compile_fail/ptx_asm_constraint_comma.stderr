@@ -1,0 +1,5 @@
+error: ptx_asm! operand constraints cannot contain `,`; use separate operands and clobber(...)
+  --> tests/compile_fail/ptx_asm_constraint_comma.rs:13:17
+   |
+13 |             out("=r,~{memory}") y,
+   |                 ^^^^^^^^^^^^^^

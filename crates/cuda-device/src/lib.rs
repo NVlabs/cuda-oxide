@@ -8,7 +8,7 @@
 
 pub use cuda_macros::{
     cluster_launch, constant, convergent, cooperative_launch, cuda_module, device, gpu_printf,
-    kernel, launch_bounds, pure, readonly,
+    kernel, launch_bounds, ptx_asm, pure, readonly,
 };
 
 // Re-export for convenience
@@ -24,6 +24,7 @@ pub mod debug;
 pub mod disjoint;
 pub mod fence;
 pub mod grid;
+pub mod ptx;
 pub mod shared;
 pub mod tcgen05;
 pub mod thread;

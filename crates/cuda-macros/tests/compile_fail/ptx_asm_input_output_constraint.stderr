@@ -1,0 +1,5 @@
+error: `in` constraints must use input syntax such as `"r"`
+  --> tests/compile_fail/ptx_asm_input_output_constraint.rs:14:16
+   |
+14 |             in("=r") x,
+   |                ^^^^

@@ -1,0 +1,5 @@
+error: literal PTX register `%laneid` must be escaped as `%%laneid` in ptx_asm!
+  --> tests/compile_fail/ptx_asm_unescaped_register.rs:10:18
+   |
+10 |         ptx_asm!("mov.u32 %0, %laneid;", out("=r") lane);
+   |                  ^^^^^^^^^^^^^^^^^^^^^^

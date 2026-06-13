@@ -1,0 +1,5 @@
+error: `options(register_only)` requires an `out` operand
+  --> tests/compile_fail/ptx_asm_register_only_requires_output.rs:11:13
+   |
+11 |             "mov.u32 %0, %1;",
+   |             ^^^^^^^^^^^^^^^^^

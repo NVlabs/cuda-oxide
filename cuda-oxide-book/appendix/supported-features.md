@@ -86,6 +86,12 @@ roadmap, **N/A** = not applicable or no identified need.
 | Pipeline Inspection | **Full** | `cargo oxide pipeline <example>` shows IR at each compilation stage. |
 | cuda-gdb Debug Support | **Full** | Build with debug info and launch `cuda-gdb`. `breakpoint()` intrinsic for programmatic breakpoints. |
 
+## Compiler: Inline PTX
+
+| Feature | Status | Description |
+|:--------|:-------|:------------|
+| `ptx_asm!` Macro | **Partial** | CUDA inline PTX with `%0` operands, `in`, zero or one `out`, up to 16 inputs, `clobber("memory")`, and `options(register_only)` for pure register snippets. Default lowering emits LLVM `asm sideeffect` and `convergent`; `register_only` omits both markers. Multiple outputs, read-write operands, and the `"C"` constraint are not implemented yet. |
+
 ---
 
 ## Runtime Library: Safety
@@ -174,7 +180,7 @@ roadmap, **N/A** = not applicable or no identified need.
 
 | Feature | Status | Notes |
 |:--------|:-------|:------|
-| Inline Assembly (`asm!` macro) | **Planned** | Workaround: use built-in intrinsics or add new intrinsics to `cuda-device`. |
+| Rust `asm!` macro | **Planned** | Use `ptx_asm!` for CUDA inline PTX. Direct lowering of Rust MIR `InlineAsm` is not implemented. |
 | FP8 / MX Data Types | **Planned** | Roadmap item for Blackwell. No architectural limitation. |
 | Dynamic Dispatch (`dyn Trait`) | **N/A** | Use generics with static dispatch. Haven't found a real need for this. |
 | Heap Allocation (`Box`, `Vec`) | **N/A** | CUDA has a device-side heap (`malloc`/`free` in kernels), and the compiler allows the `alloc` crate through -- but no device-side `#[global_allocator]` is wired up today. Even if it were, device `malloc` is extremely slow (serialized, fragmented, uncoalesced). Use slices and `SharedArray`. |

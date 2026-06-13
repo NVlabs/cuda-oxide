@@ -1,0 +1,5 @@
+error: unsupported ptx_asm! option `reads_memory`; expected `register_only`
+  --> tests/compile_fail/ptx_asm_unknown_option.rs:15:21
+   |
+15 |             options(reads_memory),
+   |                     ^^^^^^^^^^^^

@@ -6015,7 +6015,7 @@ fn translate_adt_aggregate_field_values(
 
 /// Fetch the raw bytes backing a constant, following provenance for promoted
 /// aggregate constants when necessary.
-fn constant_bytes(
+pub(crate) fn constant_bytes(
     constant: &mir::ConstOperand,
     kind_name: &str,
     loc: Location,
