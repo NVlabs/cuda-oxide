@@ -140,6 +140,14 @@ pub const CALLEE_MINNUM_NSZ_F32: &str = placeholder!("minimum_number_nsz_f32");
 /// Placeholder call used for `core::intrinsics::minimum_number_nsz_f64`
 /// (the intrinsic backing `f64::min`).
 pub const CALLEE_MINNUM_NSZ_F64: &str = placeholder!("minimum_number_nsz_f64");
+/// Placeholder call used for `f32::asin` / `std::sys::cmath::asinf`.
+pub const CALLEE_ASIN_F32: &str = placeholder!("asinf32");
+/// Placeholder call used for `f64::asin` / `std::sys::cmath::asin`.
+pub const CALLEE_ASIN_F64: &str = placeholder!("asinf64");
+/// Placeholder call used for `f32::acos` / `std::sys::cmath::acosf`.
+pub const CALLEE_ACOS_F32: &str = placeholder!("acosf32");
+/// Placeholder call used for `f64::acos` / `std::sys::cmath::acos`.
+pub const CALLEE_ACOS_F64: &str = placeholder!("acosf64");
 /// Placeholder call used for `f32::atan2` / `std::sys::cmath::atan2f`.
 pub const CALLEE_ATAN2_F32: &str = placeholder!("atan2f32");
 /// Placeholder call used for `f64::atan2` / `std::sys::cmath::atan2`.

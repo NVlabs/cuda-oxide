@@ -433,7 +433,11 @@ pub fn is_fully_monomorphized<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>)
 fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
     matches!(
         fn_path,
-        "std::sys::cmath::atan2f"
+        "std::sys::cmath::asinf"
+            | "std::sys::cmath::asin"
+            | "std::sys::cmath::acosf"
+            | "std::sys::cmath::acos"
+            | "std::sys::cmath::atan2f"
             | "std::sys::cmath::atan2"
             | "std::sys::cmath::atanf"
             | "std::sys::cmath::atan"

@@ -215,6 +215,10 @@ enum RustFloatMathIntrinsic {
     MaxNumNszF64,
     MinNumNszF32,
     MinNumNszF64,
+    AsinF32,
+    AsinF64,
+    AcosF32,
+    AcosF64,
     Atan2F32,
     Atan2F64,
     AtanF32,
@@ -270,6 +274,10 @@ impl RustFloatMathIntrinsic {
             rust_intrinsics::CALLEE_MAXNUM_NSZ_F64 => Some(Self::MaxNumNszF64),
             rust_intrinsics::CALLEE_MINNUM_NSZ_F32 => Some(Self::MinNumNszF32),
             rust_intrinsics::CALLEE_MINNUM_NSZ_F64 => Some(Self::MinNumNszF64),
+            rust_intrinsics::CALLEE_ASIN_F32 => Some(Self::AsinF32),
+            rust_intrinsics::CALLEE_ASIN_F64 => Some(Self::AsinF64),
+            rust_intrinsics::CALLEE_ACOS_F32 => Some(Self::AcosF32),
+            rust_intrinsics::CALLEE_ACOS_F64 => Some(Self::AcosF64),
             rust_intrinsics::CALLEE_ATAN2_F32 => Some(Self::Atan2F32),
             rust_intrinsics::CALLEE_ATAN2_F64 => Some(Self::Atan2F64),
             rust_intrinsics::CALLEE_ATAN_F32 => Some(Self::AtanF32),
@@ -336,6 +344,10 @@ impl RustFloatMathIntrinsic {
             Self::MaxNumNszF64 => Ok("__nv_fmax"),
             Self::MinNumNszF32 => Ok("__nv_fminf"),
             Self::MinNumNszF64 => Ok("__nv_fmin"),
+            Self::AsinF32 => Ok("__nv_asinf"),
+            Self::AsinF64 => Ok("__nv_asin"),
+            Self::AcosF32 => Ok("__nv_acosf"),
+            Self::AcosF64 => Ok("__nv_acos"),
             Self::Atan2F32 => Ok("__nv_atan2f"),
             Self::Atan2F64 => Ok("__nv_atan2"),
             Self::AtanF32 => Ok("__nv_atanf"),
@@ -1379,6 +1391,22 @@ mod tests {
                 RustFloatMathIntrinsic::MinNumNszF64,
             ),
             (
+                rust_intrinsics::CALLEE_ASIN_F32,
+                RustFloatMathIntrinsic::AsinF32,
+            ),
+            (
+                rust_intrinsics::CALLEE_ASIN_F64,
+                RustFloatMathIntrinsic::AsinF64,
+            ),
+            (
+                rust_intrinsics::CALLEE_ACOS_F32,
+                RustFloatMathIntrinsic::AcosF32,
+            ),
+            (
+                rust_intrinsics::CALLEE_ACOS_F64,
+                RustFloatMathIntrinsic::AcosF64,
+            ),
+            (
                 rust_intrinsics::CALLEE_ATAN2_F32,
                 RustFloatMathIntrinsic::Atan2F32,
             ),
@@ -1426,6 +1454,10 @@ mod tests {
         assert_eq!(RustFloatMathIntrinsic::PowiF32.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::PowfF64.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::CopysignF32.arg_count(), 2);
+        assert_eq!(RustFloatMathIntrinsic::AsinF32.arg_count(), 1);
+        assert_eq!(RustFloatMathIntrinsic::AsinF64.arg_count(), 1);
+        assert_eq!(RustFloatMathIntrinsic::AcosF32.arg_count(), 1);
+        assert_eq!(RustFloatMathIntrinsic::AcosF64.arg_count(), 1);
         assert_eq!(RustFloatMathIntrinsic::Atan2F32.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::Atan2F64.arg_count(), 2);
         assert_eq!(RustFloatMathIntrinsic::AtanF32.arg_count(), 1);

@@ -105,6 +105,14 @@ pub enum RustFloatMathIntrinsic {
     MinNumNszF32,
     /// `core::intrinsics::minimum_number_nsz_f64` (backs `f64::min`).
     MinNumNszF64,
+    /// `f32::asin` / `std::sys::cmath::asinf`.
+    AsinF32,
+    /// `f64::asin` / `std::sys::cmath::asin`.
+    AsinF64,
+    /// `f32::acos` / `std::sys::cmath::acosf`.
+    AcosF32,
+    /// `f64::acos` / `std::sys::cmath::acos`.
+    AcosF64,
     /// `f32::atan2` / `std::sys::cmath::atan2f`.
     Atan2F32,
     /// `f64::atan2` / `std::sys::cmath::atan2`.
@@ -182,6 +190,10 @@ impl RustFloatMathIntrinsic {
             | "std::intrinsics::minimum_number_nsz_f32" => Some(Self::MinNumNszF32),
             "core::intrinsics::minimum_number_nsz_f64"
             | "std::intrinsics::minimum_number_nsz_f64" => Some(Self::MinNumNszF64),
+            "std::sys::cmath::asinf" => Some(Self::AsinF32),
+            "std::sys::cmath::asin" => Some(Self::AsinF64),
+            "std::sys::cmath::acosf" => Some(Self::AcosF32),
+            "std::sys::cmath::acos" => Some(Self::AcosF64),
             "std::sys::cmath::atan2f" => Some(Self::Atan2F32),
             "std::sys::cmath::atan2" => Some(Self::Atan2F64),
             "std::sys::cmath::atanf" => Some(Self::AtanF32),
@@ -249,6 +261,10 @@ impl RustFloatMathIntrinsic {
             "fmax" => Some(Self::MaxNumNszF64),
             "fminf" => Some(Self::MinNumNszF32),
             "fmin" => Some(Self::MinNumNszF64),
+            "asinf" => Some(Self::AsinF32),
+            "asin" => Some(Self::AsinF64),
+            "acosf" => Some(Self::AcosF32),
+            "acos" => Some(Self::AcosF64),
             "atan2f" => Some(Self::Atan2F32),
             "atan2" => Some(Self::Atan2F64),
             "atanf" => Some(Self::AtanF32),
@@ -305,6 +321,10 @@ impl RustFloatMathIntrinsic {
             Self::MaxNumNszF64 => rust_intrinsics::CALLEE_MAXNUM_NSZ_F64,
             Self::MinNumNszF32 => rust_intrinsics::CALLEE_MINNUM_NSZ_F32,
             Self::MinNumNszF64 => rust_intrinsics::CALLEE_MINNUM_NSZ_F64,
+            Self::AsinF32 => rust_intrinsics::CALLEE_ASIN_F32,
+            Self::AsinF64 => rust_intrinsics::CALLEE_ASIN_F64,
+            Self::AcosF32 => rust_intrinsics::CALLEE_ACOS_F32,
+            Self::AcosF64 => rust_intrinsics::CALLEE_ACOS_F64,
             Self::Atan2F32 => rust_intrinsics::CALLEE_ATAN2_F32,
             Self::Atan2F64 => rust_intrinsics::CALLEE_ATAN2_F64,
             Self::AtanF32 => rust_intrinsics::CALLEE_ATAN_F32,
@@ -591,6 +611,31 @@ mod tests {
                 RustFloatMathIntrinsic::from_core_path(path),
                 Some(expected),
                 "`{path}` did not map to the expected cbrt intrinsic"
+            );
+        }
+    }
+
+    /// `asin`/`acos` reach libdevice from both the std `f{32,64}` inherent
+    /// methods (`std::sys::cmath::*`) and the `libm` crate spellings glam's
+    /// `nostd-libm` lowering emits on nvptx. Unlike `cbrt` these are std-only
+    /// (no `core::num::imp::libm` form), so only the cmath and libm-crate
+    /// spellings exist; both must map to the same `__nv_a{sin,cos}{,f}` path.
+    #[test]
+    fn from_core_path_recognizes_asin_acos_via_cmath_and_libm() {
+        for (path, expected) in [
+            ("std::sys::cmath::asinf", RustFloatMathIntrinsic::AsinF32),
+            ("std::sys::cmath::asin", RustFloatMathIntrinsic::AsinF64),
+            ("std::sys::cmath::acosf", RustFloatMathIntrinsic::AcosF32),
+            ("std::sys::cmath::acos", RustFloatMathIntrinsic::AcosF64),
+            ("libm::asinf", RustFloatMathIntrinsic::AsinF32),
+            ("libm::math::asin::asin", RustFloatMathIntrinsic::AsinF64),
+            ("libm::acosf", RustFloatMathIntrinsic::AcosF32),
+            ("libm::math::acos::acos", RustFloatMathIntrinsic::AcosF64),
+        ] {
+            assert_eq!(
+                RustFloatMathIntrinsic::from_core_path(path),
+                Some(expected),
+                "`{path}` did not map to the expected asin/acos intrinsic"
             );
         }
     }
