@@ -94,6 +94,9 @@ pub(crate) fn convert_store(
     };
 
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
+    if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
+        llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
+    }
     copy_alignment(ctx, op, llvm_store.get_operation());
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -126,6 +129,9 @@ pub(crate) fn convert_load(
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
+    if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
+        llvm_export::ops::set_op_volatile(ctx, llvm_load.get_operation(), true);
+    }
     copy_alignment(ctx, op, llvm_load.get_operation());
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
@@ -798,6 +804,38 @@ mod tests {
     }
 
     #[test]
+    fn convert_store_preserves_volatile() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into(), i32_ty], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+        let val = block.deref(&ctx).get_argument(1);
+
+        let store_op = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![ptr_val, val],
+            vec![],
+            0,
+        );
+        mir::MirStoreOp::new(store_op).set_volatile(&mut ctx, true);
+        store_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).unwrap();
+        assert!(
+            llvm_export::ops::op_volatile(&ctx, store.get_operation()),
+            "volatile mir.store must lower to a volatile llvm.store"
+        );
+    }
+
+    #[test]
     fn convert_load_lowers_to_llvm_load() {
         let mut ctx = make_ctx();
         let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
@@ -822,6 +860,37 @@ mod tests {
         let body = kernel_blocks(&ctx, module_ptr);
         assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
         assert_eq!(count_ops::<mir::MirLoadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn convert_load_preserves_volatile() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into()], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![i32_ty],
+            vec![ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirLoadOp::new(load_op).set_volatile(&mut ctx, true);
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).unwrap();
+        assert!(
+            llvm_export::ops::op_volatile(&ctx, load.get_operation()),
+            "volatile mir.load must lower to a volatile llvm.load"
+        );
     }
 
     #[test]

@@ -36,6 +36,17 @@ use crate::types::MirPtrType;
 
 type PlironResult<T> = pliron::result::Result<T>;
 
+fn bool_integer_attr(ctx: &mut Context, value: bool) -> IntegerAttr {
+    let i1_ty = IntegerType::get(ctx, 1, pliron::builtin::types::Signedness::Signless);
+    IntegerAttr::new(
+        i1_ty,
+        pliron::utils::apint::APInt::from_u64(
+            u64::from(value),
+            std::num::NonZeroUsize::new(1).unwrap(),
+        ),
+    )
+}
+
 // ============================================================================
 // MirAllocaOp
 // ============================================================================
@@ -221,7 +232,10 @@ impl Verify for MirAssignOp {
 #[pliron_op(
     name = "mir.store",
     format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>]
+    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
+    attributes = (
+        mir_store_volatile: IntegerAttr
+    )
 )]
 pub struct MirStoreOp;
 
@@ -239,6 +253,18 @@ impl MirStoreOp {
     /// Value being stored (operand 1).
     pub fn value_opd(&self, ctx: &Context) -> Value {
         self.get_operation().deref(ctx).get_operand(1)
+    }
+
+    /// Whether this store carries volatile semantics.
+    pub fn is_volatile(&self, ctx: &Context) -> bool {
+        self.get_attr_mir_store_volatile(ctx)
+            .is_some_and(|attr| attr.value().to_u64() != 0)
+    }
+
+    /// Mark this store as volatile.
+    pub fn set_volatile(&self, ctx: &mut Context, volatile: bool) {
+        let attr = bool_integer_attr(ctx, volatile);
+        self.set_attr_mir_store_volatile(ctx, attr);
     }
 }
 
@@ -271,7 +297,11 @@ impl Verify for MirStoreOp {
 impl PromotableOpInterface for MirStoreOp {
     fn promotion_kind(&self, ctx: &Context, alloc_info: &AllocInfo) -> PromotableOpKind {
         if self.address_opd(ctx) == alloc_info.ptr {
-            PromotableOpKind::Store(self.value_opd(ctx))
+            if self.is_volatile(ctx) {
+                PromotableOpKind::NonPromotableUse
+            } else {
+                PromotableOpKind::Store(self.value_opd(ctx))
+            }
         } else {
             PromotableOpKind::NonPromotableUse
         }
@@ -324,7 +354,10 @@ impl PromotableOpInterface for MirStoreOp {
 #[pliron_op(
     name = "mir.load",
     format,
-    interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface]
+    interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface],
+    attributes = (
+        mir_load_volatile: IntegerAttr
+    )
 )]
 pub struct MirLoadOp;
 
@@ -337,6 +370,18 @@ impl MirLoadOp {
     /// Source pointer operand (operand 0).
     pub fn address_opd(&self, ctx: &Context) -> Value {
         self.get_operation().deref(ctx).get_operand(0)
+    }
+
+    /// Whether this load carries volatile semantics.
+    pub fn is_volatile(&self, ctx: &Context) -> bool {
+        self.get_attr_mir_load_volatile(ctx)
+            .is_some_and(|attr| attr.value().to_u64() != 0)
+    }
+
+    /// Mark this load as volatile.
+    pub fn set_volatile(&self, ctx: &mut Context, volatile: bool) {
+        let attr = bool_integer_attr(ctx, volatile);
+        self.set_attr_mir_load_volatile(ctx, attr);
     }
 }
 
@@ -369,7 +414,11 @@ impl Verify for MirLoadOp {
 impl PromotableOpInterface for MirLoadOp {
     fn promotion_kind(&self, ctx: &Context, alloc_info: &AllocInfo) -> PromotableOpKind {
         if self.address_opd(ctx) == alloc_info.ptr {
-            PromotableOpKind::Load
+            if self.is_volatile(ctx) {
+                PromotableOpKind::NonPromotableUse
+            } else {
+                PromotableOpKind::Load
+            }
         } else {
             PromotableOpKind::NonPromotableUse
         }

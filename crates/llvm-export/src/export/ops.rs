@@ -441,8 +441,13 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let ty = res.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let volatile_kw = if crate::ops::op_volatile(self.ctx, op.get_operation()) {
+            "volatile "
+        } else {
+            ""
+        };
 
-        write!(output, "  {res_name} = load ").unwrap();
+        write!(output, "  {res_name} = load {volatile_kw}").unwrap();
         self.export_type(ty, output)?;
         write!(output, ", {}", ptr_qualifier(addrspace)).unwrap();
         self.export_value(ptr, value_names, output)?;
@@ -463,8 +468,13 @@ impl<'a> ModuleExportState<'a> {
         let ptr = op_ref.get_operand(1);
         let val_ty = val.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
+        let volatile_kw = if crate::ops::op_volatile(self.ctx, op.get_operation()) {
+            "volatile "
+        } else {
+            ""
+        };
 
-        write!(output, "  store ").unwrap();
+        write!(output, "  store {volatile_kw}").unwrap();
         self.export_type(val_ty, output)?;
         write!(output, " ").unwrap();
         self.export_value(val, value_names, output)?;

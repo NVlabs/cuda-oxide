@@ -381,6 +381,181 @@ pub fn emit_cvt_f32x2_bf16x2(
     )
 }
 
+/// Emits `core::intrinsics::volatile_load::<T>(ptr)`, which backs
+/// `core::ptr::read_volatile`.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_volatile_load(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::MirLoadOp;
+    use dialect_mir::types::MirPtrType;
+
+    if args.len() != 1 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "volatile_load expects 1 argument (ptr), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (ptr_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let elem_ty = {
+        let ptr_ty = ptr_val.get_type(ctx);
+        let ptr_ty_obj = ptr_ty.deref(ctx);
+        match ptr_ty_obj.downcast_ref::<MirPtrType>() {
+            Some(mir_ptr) => mir_ptr.pointee,
+            None => {
+                return input_err!(
+                    loc.clone(),
+                    TranslationErr::unsupported(format!(
+                        "volatile_load: expected pointer operand, got {:?}",
+                        ptr_ty_obj
+                    ))
+                );
+            }
+        }
+    };
+
+    let load_op = Operation::new(
+        ctx,
+        MirLoadOp::get_concrete_op_info(),
+        vec![elem_ty],
+        vec![ptr_val],
+        vec![],
+        0,
+    );
+    load_op.deref_mut(ctx).set_loc(loc.clone());
+    MirLoadOp::new(load_op).set_volatile(ctx, true);
+
+    if let Some(prev) = last_op {
+        load_op.insert_after(ctx, prev);
+    } else {
+        load_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result = load_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        load_op,
+        value_map,
+        block_map,
+        loc,
+        "volatile_load call without target block",
+    )
+}
+
+/// Emits `core::intrinsics::volatile_store::<T>(ptr, value)`, which backs
+/// `core::ptr::write_volatile`.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_volatile_store(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::MirStoreOp;
+    use dialect_mir::types::MirPtrType;
+
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "volatile_store expects 2 arguments (ptr, value), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (ptr_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    {
+        let ptr_ty = ptr_val.get_type(ctx);
+        let ptr_ty_obj = ptr_ty.deref(ctx);
+        if ptr_ty_obj.downcast_ref::<MirPtrType>().is_none() {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "volatile_store: expected pointer operand, got {:?}",
+                    ptr_ty_obj
+                ))
+            );
+        }
+    }
+
+    let (value, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
+    let store_op = Operation::new(
+        ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![ptr_val, value],
+        vec![],
+        0,
+    );
+    store_op.deref_mut(ctx).set_loc(loc.clone());
+    MirStoreOp::new(store_op).set_volatile(ctx, true);
+
+    if let Some(prev) = last_op {
+        store_op.insert_after(ctx, prev);
+    } else {
+        store_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        Ok(emit_goto(ctx, *target_idx, store_op, block_map, loc))
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported("volatile_store call without target block".to_string())
+        )
+    }
+}
+
 /// Emits `SharedArray::index()`: Compute pointer to element in shared memory.
 ///
 /// Computes `base_ptr + index` to get a pointer to the indexed element.
