@@ -478,6 +478,88 @@ pub fn emit_warp_match(
     )
 }
 
+/// Emit a warp reduction operation (`redux.sync.add`).
+///
+/// Same MIR shape as [`emit_warp_match`]: 2 operands `[mask, value]` and 1
+/// result (the u32 sum). Kept as its own helper (rather than reusing
+/// `emit_warp_match`) for clarity and to ease adding min/max/and/or/xor later.
+///
+/// # Parameters
+/// - `redux_opid`: The NVVM opid for the specific reduction variant
+/// - `args`: `[mask, value]`
+pub fn emit_warp_redux(
+    ctx: &mut Context,
+    body: &mir::Body,
+    redux_opid: (
+        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    ),
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "warp redux expects 2 arguments [mask, value], got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned).to_ptr();
+
+    let (mask, mut last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let (value, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let redux_op = Operation::new(ctx, redux_opid, vec![result_ty], vec![mask, value], vec![], 0);
+    redux_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        redux_op.insert_after(ctx, prev);
+    } else {
+        redux_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = redux_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        redux_op,
+        value_map,
+        block_map,
+        loc,
+        "warp redux call without target block",
+    )
+}
+
 /// Emit a warp vote operation (all, any, ballot).
 ///
 /// # Parameters

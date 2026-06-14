@@ -491,3 +491,29 @@ pub fn match_all_i64_sync(mask: u32, value: u64) -> u32 {
     let _ = (mask, value);
     unreachable!("match_all_i64_sync called outside CUDA kernel context")
 }
+
+/// Warp-wide sum reduction (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.add` → PTX `redux.sync.add.s32`
+/// (add is bit-identical for `s32`/`u32`, so this also covers `u32`).
+/// Every lane named in `mask` contributes its `value`; the full sum is
+/// broadcast back to all participating lanes. Convergent.
+///
+/// Works for both `u32` and `i32` addition (two's-complement wrap is
+/// identical): to reduce an `i32`, call `redux_sync_add(mask, x as u32)`
+/// and read the result back as `result as i32`.
+///
+/// # Convergence
+///
+/// Like all `*_sync` collectives, the lanes named in `mask` must be
+/// **converged** at the call. Straight-line warp-uniform code is fine,
+/// but after a divergent branch you must first reconverge the subset —
+/// e.g. `warp::sync_mask(mask)` — otherwise the result is undefined.
+/// (This is a runtime requirement on the caller; it is distinct from the
+/// `convergent` attribute on the lowered intrinsic, which only stops LLVM
+/// from moving the instruction across control flow.)
+#[inline(never)]
+pub fn redux_sync_add(mask: u32, value: u32) -> u32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_add called outside CUDA kernel context")
+}

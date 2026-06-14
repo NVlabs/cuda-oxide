@@ -206,6 +206,42 @@ pub(crate) fn convert_match_any(
     Ok(())
 }
 
+/// Convert a `redux.sync.add` op to its LLVM intrinsic call.
+///
+/// Op operand layout is `[mask, value]` (matching the other `*_sync`
+/// collectives), but the LLVM intrinsic signature is `(src, membermask)`, so
+/// we forward the operands flipped as `[value, mask]`. Result is i32.
+pub(crate) fn convert_redux(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+    intrinsic_name: &str,
+) -> Result<()> {
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 2 {
+        return pliron::input_err_noloc!("redux requires 2 operands [mask, value]");
+    }
+    let (mask, value) = (operands[0], operands[1]);
+
+    let func_ty =
+        llvm_types::FuncType::get(ctx, i32_ty.into(), vec![i32_ty.into(), i32_ty.into()], false);
+
+    // LLVM intrinsic wants (src, membermask): flip to [value, mask].
+    let call_op = call_intrinsic(
+        ctx,
+        rewriter,
+        op,
+        intrinsic_name,
+        func_ty,
+        vec![value, mask],
+    )?;
+    rewriter.replace_operation(ctx, op, call_op);
+    Ok(())
+}
+
 /// Convert an `activemask` op to its LLVM intrinsic call.
 ///
 /// Lowers to `call i32 @llvm.nvvm.activemask()`. The op has no operands.

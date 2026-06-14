@@ -2630,6 +2630,19 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
+        "cuda_device::warp::redux_sync_add" => Ok(Some(intrinsics::warp::emit_warp_redux(
+            ctx,
+            body,
+            dialect_nvvm::ops::ReduxSyncAddOp::get_concrete_op_info(),
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
 
         // =================================================================
         // WGMMA (from intrinsics::wgmma)

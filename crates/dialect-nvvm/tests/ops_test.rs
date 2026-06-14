@@ -4,14 +4,15 @@
  */
 
 use dialect_nvvm::ops::{
-    Barrier0Op, ReadPtxSregLaneIdOp, ReadPtxSregTidXOp, ThreadfenceBlockOp, ThreadfenceOp,
-    ThreadfenceSystemOp,
+    Barrier0Op, ReadPtxSregLaneIdOp, ReadPtxSregTidXOp, ReduxSyncAddOp, ThreadfenceBlockOp,
+    ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
+    basic_block::BasicBlock,
     builtin::types::{IntegerType, Signedness},
     common_traits::Verify,
     context::Context,
-    op::Op,
+    op::{Op, verify_op},
     operation::Operation,
 };
 
@@ -105,4 +106,50 @@ fn test_sync_ops_construct_and_verify() {
         0,
     );
     assert!(ThreadfenceSystemOp::new(system_fence).verify(&ctx).is_ok());
+}
+
+#[test]
+fn test_redux_sync_add_construct_and_verify() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+
+    // A block supplies the two operands [mask, value].
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i32_ty.into()]);
+    let mask = block.deref(&ctx).get_argument(0);
+    let value = block.deref(&ctx).get_argument(1);
+
+    // Valid: 2 operands, 1 result (matches NOpdsInterface<2>/NResultsInterface<1>).
+    let op = Operation::new(
+        &mut ctx,
+        ReduxSyncAddOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![mask, value],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ReduxSyncAddOp::new(op), &ctx).is_ok());
+
+    // Invalid: wrong operand count (1 instead of 2) must fail verification.
+    let bad_opnds = Operation::new(
+        &mut ctx,
+        ReduxSyncAddOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![mask],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ReduxSyncAddOp::new(bad_opnds), &ctx).is_err());
+
+    // Invalid: wrong result count (0 instead of 1) must fail verification.
+    let bad_results = Operation::new(
+        &mut ctx,
+        ReduxSyncAddOp::get_concrete_op_info(),
+        vec![],
+        vec![mask, value],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ReduxSyncAddOp::new(bad_results), &ctx).is_err());
 }
