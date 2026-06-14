@@ -83,7 +83,31 @@ impl<'a> ModuleExportState<'a> {
             || name.starts_with("llvm.nvvm.shfl")
             // Warp votes
             || name.starts_with("llvm.nvvm.vote")
+            // Warp reductions (redux.sync.*)
+            || name.starts_with("llvm.nvvm.redux")
             // Async bulk operations (TMA)
             || name.starts_with("llvm.nvvm.cp.async.bulk")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModuleExportState;
+
+    #[test]
+    fn redux_sync_intrinsics_are_convergent() {
+        // The exact name produced when lowering `redux_sync_add`
+        // (`llvm_nvvm_redux_sync_add` -> dotted form on export).
+        assert!(ModuleExportState::is_convergent_intrinsic(
+            "llvm.nvvm.redux.sync.add"
+        ));
+        // The whole redux.sync family is a warp collective (future min/max/etc.).
+        assert!(ModuleExportState::is_convergent_intrinsic(
+            "llvm.nvvm.redux.sync.umin"
+        ));
+        // A plain ALU/sreg intrinsic must NOT be flagged convergent.
+        assert!(!ModuleExportState::is_convergent_intrinsic(
+            "llvm.nvvm.read.ptx.sreg.tid.x"
+        ));
     }
 }

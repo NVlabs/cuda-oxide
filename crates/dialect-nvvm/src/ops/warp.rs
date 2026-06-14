@@ -644,6 +644,39 @@ impl VoteSyncBallotOp {
     }
 }
 
+// =============================================================================
+// Warp Reduction Operations (sm_80+)
+// =============================================================================
+
+/// Warp sum-reduction: single-instruction sum across the participating lanes.
+///
+/// Corresponds to `llvm.nvvm.redux.sync.add` / PTX `redux.sync.add.s32`.
+/// Requires sm_80+. Covers both `u32` and `i32` addition (two's-complement
+/// wrap is identical, so `.s32` and `.u32` produce the same bits). Convergent.
+///
+/// # Operands
+///
+/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
+/// - `value` (i32): this lane's contribution to the sum
+///
+/// # Results
+///
+/// - `result` (i32): the sum over all lanes in `mask`, broadcast to every lane
+#[pliron_op(
+    name = "nvvm.redux_sync_add",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncAddOp;
+
+impl ReduxSyncAddOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncAddOp { op }
+    }
+}
+
 /// Register warp operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // Lane identification
@@ -667,6 +700,8 @@ pub(super) fn register(ctx: &mut Context) {
     MatchAnySyncI64Op::register(ctx);
     MatchAllSyncI32Op::register(ctx);
     MatchAllSyncI64Op::register(ctx);
+    // Reduction (sm_80+)
+    ReduxSyncAddOp::register(ctx);
     // Active mask
     ActiveMaskOp::register(ctx);
     // Warp-scoped barrier
