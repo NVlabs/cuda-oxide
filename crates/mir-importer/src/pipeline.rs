@@ -392,6 +392,12 @@ pub fn run_pipeline(
         eprintln!("LLVM IR written to {}", ll_path.display());
     }
 
+    // Step 7.5: Optional external post-IR hook(s). If the last one produced a final
+    // artifact, use it; otherwise continue to Step 8 on the (possibly-rewritten) `.ll`.
+    if let Some(result) = run_post_ir_hook(&ll_path, config)? {
+        return Ok(result);
+    }
+
     // Step 8: Generate PTX or stop at NVVM IR for libNVVM-owned paths.
     if emit_nvvm_ir {
         // Skip llc. Return a would-be ptx_path so callers see a stable shape;
@@ -444,6 +450,137 @@ pub fn run_pipeline(
             target,
         })
     }
+}
+
+/// Runs the external post-IR hooks listed in `CUDA_OXIDE_POST_IR`, if any.
+///
+/// The IR-stage analogue of the `CUDA_OXIDE_LLC` override. `CUDA_OXIDE_POST_IR` is a
+/// `:`-separated list of executables, run in order on the exported `.ll` between IR
+/// export (Step 7) and PTX generation (Step 8): each may rewrite the IR (the next
+/// hook sees the edits) or, the last one only, take over the rest of code generation.
+/// Uses include custom LLVM passes/plugins, instrumentation, external-bitcode
+/// linking, or an alternative IR→cubin backend. Each hook is invoked as
+///
+/// ```bash
+/// <hook> <ll_path> <output_dir> <output_name> <target>
+/// ```
+///
+/// (`<target>` is `CUDA_OXIDE_TARGET`, possibly empty) and may modify `<ll_path>` in
+/// place and/or write artifacts under `<output_dir>`.
+///
+/// A hook's first non-empty stdout line `<kind> <path> [<target>]` (kind one of
+/// `ptx`/`cubin`/`nvvm-ir`/`ltoir`) makes the pipeline return that artifact and skip
+/// Step 8; empty stdout continues. Only the last hook may take over — an earlier hook
+/// that emits an artifact is an error. A non-zero exit aborts the build with the
+/// hook's stderr. Returns `Some` if the last hook took over, else `None`.
+fn run_post_ir_hook(
+    ll_path: &Path,
+    config: &PipelineConfig,
+) -> Result<Option<CompilationResult>, PipelineError> {
+    let Ok(hooks_var) = std::env::var("CUDA_OXIDE_POST_IR") else {
+        return Ok(None);
+    };
+    let hooks: Vec<&str> = hooks_var
+        .split(':')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .collect();
+    if hooks.is_empty() {
+        return Ok(None);
+    }
+
+    let target_env = std::env::var("CUDA_OXIDE_TARGET").unwrap_or_default();
+    let last = hooks.len() - 1;
+    for (i, hook) in hooks.iter().enumerate() {
+        match run_one_post_ir_hook(hook, ll_path, config, &target_env)? {
+            Some(result) if i == last => return Ok(Some(result)),
+            Some(_) => {
+                return Err(PipelineError::PostIr(format!(
+                    "hook '{hook}' (#{} of {}) produced a final artifact, but only the last \
+                     hook in CUDA_OXIDE_POST_IR may take over code generation",
+                    i + 1,
+                    hooks.len()
+                )));
+            }
+            None => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Runs a single post-IR hook program. Returns `Some(result)` when it takes over
+/// code generation (emits an artifact line), or `None` when it transforms the IR in
+/// place and continues. See [`run_post_ir_hook`] for the protocol.
+fn run_one_post_ir_hook(
+    hook: &str,
+    ll_path: &Path,
+    config: &PipelineConfig,
+    target_env: &str,
+) -> Result<Option<CompilationResult>, PipelineError> {
+    if config.verbose {
+        eprintln!("\n=== Running post-IR hook: {hook} ===");
+    }
+
+    let output = std::process::Command::new(hook)
+        .arg(ll_path)
+        .arg(&config.output_dir)
+        .arg(&config.output_name)
+        .arg(target_env)
+        .output()
+        .map_err(|e| PipelineError::PostIr(format!("failed to spawn '{hook}': {e}")))?;
+
+    if !output.status.success() {
+        return Err(PipelineError::PostIr(format!(
+            "'{hook}' exited with {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    // First non-empty stdout line is the result; none means transform-and-continue.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(line) = stdout.lines().map(str::trim).find(|l| !l.is_empty()) else {
+        if config.verbose {
+            eprintln!("post-IR hook transformed the IR in place; continuing");
+        }
+        return Ok(None);
+    };
+
+    let mut fields = line.split_whitespace();
+    let kind_str = fields.next().unwrap_or_default();
+    let path = fields.next().ok_or_else(|| {
+        PipelineError::PostIr(format!("malformed result line from '{hook}': '{line}'"))
+    })?;
+    let artifact_kind = match kind_str {
+        "ptx" => CompilationArtifactKind::Ptx,
+        "cubin" => CompilationArtifactKind::Cubin,
+        "nvvm-ir" | "nvvmir" => CompilationArtifactKind::NvvmIr,
+        "ltoir" => CompilationArtifactKind::Ltoir,
+        other => {
+            return Err(PipelineError::PostIr(format!(
+                "'{hook}' reported unknown artifact kind '{other}' (expected ptx|cubin|nvvm-ir|ltoir)"
+            )));
+        }
+    };
+    let target = fields.next().map(str::to_string).unwrap_or_else(|| {
+        if target_env.is_empty() {
+            "nvvm-ir".to_string()
+        } else {
+            target_env.to_string()
+        }
+    });
+
+    if config.verbose {
+        eprintln!("✓ post-IR hook produced {kind_str} at {path} (target: {target})");
+    }
+
+    Ok(Some(CompilationResult {
+        ll_path: ll_path.to_path_buf(),
+        ptx_path: config.output_dir.join(format!("{}.ptx", config.output_name)),
+        artifact_path: PathBuf::from(path),
+        artifact_kind,
+        target,
+    }))
 }
 
 /// Returns true when lowering emitted CUDA libdevice calls.
@@ -1088,6 +1225,8 @@ pub enum PipelineError {
     Export(String),
     /// PTX generation via `llc` failed.
     PtxGeneration(String),
+    /// The external post-IR hook (`CUDA_OXIDE_POST_IR`) failed.
+    PostIr(String),
 }
 
 impl std::fmt::Display for PipelineError {
@@ -1110,6 +1249,7 @@ impl std::fmt::Display for PipelineError {
             Self::Lowering(msg) => write!(f, "Lowering failed: {}", msg),
             Self::Export(msg) => write!(f, "Export failed: {}", msg),
             Self::PtxGeneration(msg) => write!(f, "PTX generation failed: {}", msg),
+            Self::PostIr(msg) => write!(f, "post-IR hook failed: {}", msg),
         }
     }
 }
