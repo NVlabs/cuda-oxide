@@ -162,7 +162,7 @@ pub fn build_backend_from_source(codegen_crate: &Path) {
     cmd.args(["build"]).current_dir(codegen_crate);
 
     if let Some(ref path) = lib_path {
-        cmd.env("LIBRARY_PATH", path);
+        cmd.env("LIBRARY_PATH", build_library_path(path));
         cmd.env("LD_LIBRARY_PATH", build_ld_library_path(path));
     }
 
@@ -262,6 +262,15 @@ pub fn get_rustc_sysroot() -> Option<String> {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         None
+    }
+}
+
+/// Build LIBRARY_PATH preserving existing paths.
+pub fn build_library_path(sysroot_lib: &str) -> String {
+    if let Ok(existing) = std::env::var("LIBRARY_PATH") {
+        format!("{}:{}", existing, sysroot_lib)
+    } else {
+        sysroot_lib.to_string()
     }
 }
 
