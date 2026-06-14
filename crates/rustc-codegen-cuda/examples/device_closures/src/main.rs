@@ -136,6 +136,21 @@ mod kernels {
         f(x)
     }
 
+    struct ClosureWrapper<F> {
+        f: F,
+        offset: u32,
+    }
+
+    impl<F> ClosureWrapper<F>
+    where
+        F: Fn(u32) -> u32,
+    {
+        #[inline(never)]
+        fn call(&self, args: (u32,)) -> u32 {
+            (self.f)(args.0) + self.offset
+        }
+    }
+
     // Note: apply_twice with Fn trait is commented out due to control flow issues.
     // The `Fn` trait requires the closure to be called multiple times, which
     // can create complex control flow that the backend doesn't fully support yet.
@@ -199,6 +214,23 @@ mod kernels {
             let scale = |x: u32| x * factor;
             let val = idx_raw as u32;
             *out_elem = apply_closure(scale, val);
+        }
+    }
+
+    /// Wrapper method named `call` whose generic substitutions contain a
+    /// closure. This is not a closure trait shim: the receiver is the wrapper,
+    /// so the tuple argument must remain one ordinary method argument.
+    #[kernel]
+    pub fn test_wrapper_method_named_call(factor: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let scale = |x: u32| x * factor;
+            let wrapper = ClosureWrapper {
+                f: scale,
+                offset: 1,
+            };
+            *out_elem = wrapper.call((idx_raw as u32,));
         }
     }
 }
@@ -449,6 +481,35 @@ fn main() {
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i * factor as usize) as u32).collect();
+
+        println!("  Output:   {:?}", out);
+        println!("  Expected: {:?}", expected);
+        assert_eq!(out, expected);
+        println!("  ✓ PASSED\n");
+    }
+
+    // =========================================================================
+    // Test 9: Wrapper method named call with closure generic
+    // =========================================================================
+    println!("Test 9: Wrapper::call with closure generic");
+    {
+        const N: usize = 8;
+        let factor: u32 = 6;
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+        println!("  factor = {}", factor);
+
+        module
+            .test_wrapper_method_named_call(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(N as u32),
+                factor,
+                &mut out_dev,
+            )
+            .expect("Kernel launch failed");
+
+        let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
+        let expected: Vec<u32> = (0..N).map(|i| (i as u32) * factor + 1).collect();
 
         println!("  Output:   {:?}", out);
         println!("  Expected: {:?}", expected);
