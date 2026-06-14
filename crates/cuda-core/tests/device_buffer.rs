@@ -58,3 +58,25 @@ fn device_buffer_supports_empty_allocations() {
     assert_eq!(dev_buf_host.num_bytes(), 0);
     assert!(dev_buf_host.is_empty());
 }
+
+#[test]
+fn device_buffer_zeroed_supports_bool_and_char() {
+    let ctx = CudaContext::new(0).expect("failed to create CUDA context");
+    let stream = ctx.new_stream().expect("failed to create CUDA stream");
+
+    let bools = DeviceBuffer::<bool>::zeroed(&stream, 3).expect("failed to allocate bool buffer");
+    assert_eq!(
+        bools
+            .to_host_vec(&stream)
+            .expect("failed to copy bools back to host"),
+        [false, false, false]
+    );
+
+    let chars = DeviceBuffer::<char>::zeroed(&stream, 2).expect("failed to allocate char buffer");
+    assert_eq!(
+        chars
+            .to_host_vec(&stream)
+            .expect("failed to copy chars back to host"),
+        ['\0', '\0']
+    );
+}

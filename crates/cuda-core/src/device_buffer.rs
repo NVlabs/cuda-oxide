@@ -21,6 +21,8 @@
 //! ```
 
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+use std::num::Wrapping;
 use std::sync::Arc;
 
 use cuda_bindings::CUdeviceptr;
@@ -45,10 +47,10 @@ use crate::stream::CudaStream;
 /// `Self`, and the all-zero bit pattern must also be valid because
 /// [`DeviceBuffer::zeroed`] initializes memory with zero bytes.
 ///
-/// `Copy` alone is not enough: types such as `bool`, `char`, and
-/// `NonZeroU32` are `Copy`, but not every byte pattern is a valid value of
-/// those types. `DeviceCopy` is the stronger promise required when
-/// `DeviceBuffer` turns raw device bytes back into initialized Rust values.
+/// `Copy` alone is not enough: types such as `NonZeroU32` are `Copy`, but
+/// their all-zero bit pattern is invalid. `DeviceCopy` is the stronger promise
+/// required when `DeviceBuffer` turns raw device bytes back into initialized
+/// Rust values.
 pub unsafe trait DeviceCopy: Copy {}
 
 macro_rules! impl_device_copy {
@@ -75,12 +77,28 @@ impl_device_copy!(
     usize,
     f16,
     f32,
-    f64
+    f64,
+    // Primitive parity with the historical `cust_core::DeviceCopy` surface.
+    // `bool` and `char` have validity holes (only 0/1 for `bool`, only valid
+    // Unicode scalars for `char`), but their all-zero bit pattern is valid and
+    // Rust-typed code preserves their validity. Mirrors `cust_core` to keep
+    // downstream `#[derive(DeviceCopy)]` users compiling unchanged.
+    bool,
+    char,
 );
 
 unsafe impl<T: DeviceCopy, const N: usize> DeviceCopy for [T; N] {}
 unsafe impl<T: ?Sized> DeviceCopy for *const T {}
 unsafe impl<T: ?Sized> DeviceCopy for *mut T {}
+
+// Wrapper types that don't change the byte representation: a value of the
+// wrapper has the same layout and validity invariants as the inner `T`.
+// `PhantomData<T>` is a zero-sized marker -- always trivially copyable
+// regardless of `T`. `MaybeUninit<T>` accepts any bit pattern by design.
+// `Wrapping<T>` is a `#[repr(transparent)]` newtype.
+unsafe impl<T: ?Sized> DeviceCopy for PhantomData<T> {}
+unsafe impl<T: DeviceCopy> DeviceCopy for MaybeUninit<T> {}
+unsafe impl<T: DeviceCopy> DeviceCopy for Wrapping<T> {}
 
 macro_rules! impl_device_copy_tuple {
     ($($name:ident),+ $(,)?) => {

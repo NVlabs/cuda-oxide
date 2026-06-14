@@ -56,6 +56,19 @@ fn pinned_host_buffer_supports_zero_sized_types() {
 }
 
 #[test]
+fn pinned_host_buffer_zeroed_supports_bool_and_char() {
+    let ctx = CudaContext::new(0).expect("failed to create CUDA context");
+
+    let bools = PinnedHostBuffer::<bool>::zeroed(&ctx, 3)
+        .expect("failed to allocate bool pinned host buffer");
+    assert_eq!(bools.as_slice(), &[false, false, false]);
+
+    let chars = PinnedHostBuffer::<char>::zeroed(&ctx, 2)
+        .expect("failed to allocate char pinned host buffer");
+    assert_eq!(chars.as_slice(), &['\0', '\0']);
+}
+
+#[test]
 fn pinned_host_buffer_roundtrips_through_device_buffer() {
     let ctx = CudaContext::new(0).expect("failed to create CUDA context");
     let stream = ctx.new_stream().expect("failed to create CUDA stream");
