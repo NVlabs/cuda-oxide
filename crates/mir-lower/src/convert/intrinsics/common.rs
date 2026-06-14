@@ -17,7 +17,7 @@
 use crate::helpers;
 use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
-use llvm_export::ops::InlineAsmOpExt;
+use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -154,8 +154,14 @@ pub fn inline_asm_convergent(
     asm_template: &str,
     constraints: &str,
 ) -> Ptr<Operation> {
-    let inline_asm =
-        llvm::InlineAsmOp::new_convergent(ctx, result_ty, inputs, asm_template, constraints);
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        result_ty,
+        inputs,
+        asm_template,
+        constraints,
+        AsmKind::Convergent,
+    );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     inline_asm.get_operation()
 }

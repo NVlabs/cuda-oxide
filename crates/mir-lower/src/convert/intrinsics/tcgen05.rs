@@ -29,7 +29,7 @@
 
 use crate::convert::intrinsics::common::*;
 use llvm_export::ops as llvm;
-use llvm_export::ops::InlineAsmOpExt;
+use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
 use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -69,7 +69,7 @@ pub(crate) fn convert_alloc(
 
     let void_ty = llvm_types::VoidType::get(ctx);
 
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![dst_smem, n_cols],
@@ -83,6 +83,7 @@ pub(crate) fn convert_alloc(
             "}"
         ),
         "l,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -109,12 +110,13 @@ pub(crate) fn convert_dealloc(
     let n_cols = operands[1];
 
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![tmem_addr, n_cols],
         "tcgen05.dealloc.cta_group::1.sync.aligned.b32 $0, $1;",
         "r,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -303,12 +305,13 @@ pub(crate) fn convert_mma_ws(
     );
 
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d],
         &asm_template,
         "r,r,l,l,r,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -348,12 +351,13 @@ pub(crate) fn convert_mma_f16(
     );
 
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![d_tmem, a_desc, b_desc, idesc, enable_d],
         asm_template,
         "r,l,l,r,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -424,7 +428,7 @@ pub(crate) fn convert_ld_16x256b_x8_pure(
     let field_types: Vec<Ptr<TypeObj>> = (0..32).map(|_| f32_ty.into()).collect();
     let struct_ty = llvm_types::StructType::get_unnamed(ctx, field_types);
 
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         struct_ty.into(),
         vec![tmem_addr],
@@ -434,6 +438,7 @@ pub(crate) fn convert_ld_16x256b_x8_pure(
             "$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31}, [$32];"
         ),
         "=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,=f,r",
+        AsmKind::Convergent,
     );
 
     let asm_op = inline_asm.get_operation();
@@ -473,12 +478,13 @@ pub(crate) fn convert_ld_16x256b_pure(
     let field_types: Vec<Ptr<TypeObj>> = (0..4).map(|_| f32_ty.into()).collect();
     let struct_ty = llvm_types::StructType::get_unnamed(ctx, field_types);
 
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         struct_ty.into(),
         vec![tmem_addr],
         "tcgen05.ld.sync.aligned.16x256b.x1.b32 {$0,$1,$2,$3}, [$4];",
         "=f,=f,=f,=f,r",
+        AsmKind::Convergent,
     );
 
     let asm_op = inline_asm.get_operation();
@@ -524,14 +530,14 @@ pub(crate) fn convert_cvt_f32x2_bf16x2(
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
 
-    // Non-convergent inline asm (this is a pure data conversion, not a collective op)
-    let inline_asm = llvm::InlineAsmOp::new(
+    // Pure inline asm (data conversion, not a collective op)
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         i32_ty.into(),
         vec![a_val, b_val],
         "cvt.rn.bf16x2.f32 $0, $2, $1;",
         "=r,f,f",
-        false,
+        AsmKind::Pure,
     );
 
     let asm_op = inline_asm.get_operation();
@@ -605,7 +611,7 @@ pub(crate) fn convert_alloc_cg2(
     let n_cols = operands[1];
 
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![dst_smem, n_cols],
@@ -619,6 +625,7 @@ pub(crate) fn convert_alloc_cg2(
             "}"
         ),
         "l,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -640,12 +647,13 @@ pub(crate) fn convert_dealloc_cg2(
     let n_cols = operands[1];
 
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![tmem_addr, n_cols],
         "tcgen05.dealloc.cta_group::2.sync.aligned.b32 $0, $1;",
         "r,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -704,12 +712,13 @@ pub(crate) fn convert_mma_f16_cg2(
     );
 
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = llvm::InlineAsmOp::new_convergent(
+    let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         void_ty.into(),
         vec![d_tmem, a_desc, b_desc, idesc, enable_d],
         asm_template,
         "r,l,l,r,r,~{memory}",
+        AsmKind::Convergent,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     rewriter.erase_operation(ctx, op);
