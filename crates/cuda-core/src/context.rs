@@ -202,7 +202,7 @@ impl CudaContext {
         let cu_stream = unsafe {
             cuda_bindings::cuStreamCreate(
                 cu_stream.as_mut_ptr(),
-                cuda_bindings::CUstream_flags_enum_CU_STREAM_NON_BLOCKING,
+                cuda_bindings::CUstream_flags_enum_CU_STREAM_NON_BLOCKING as u32,
             )
             .result()?;
             cu_stream.assume_init()
@@ -266,7 +266,7 @@ impl CudaContext {
         if error_state == 0 {
             Ok(())
         } else {
-            Err(DriverError(error_state))
+            Err(DriverError(error_state as cuda_bindings::CUresult))
         }
     }
 
@@ -278,7 +278,7 @@ impl CudaContext {
     /// calls will surface it. A later store overwrites an earlier one.
     pub fn record_err<T>(&self, result: Result<T, DriverError>) {
         if let Err(err) = result {
-            self.error_state.store(err.0, Ordering::Relaxed)
+            self.error_state.store(err.0 as u32, Ordering::Relaxed)
         }
     }
 }

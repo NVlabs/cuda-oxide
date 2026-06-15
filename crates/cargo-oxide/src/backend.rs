@@ -5,27 +5,36 @@
 
 //! Backend discovery and building.
 //!
-//! Finds or builds `librustc_codegen_cuda.so` using this priority:
+//! Finds or builds the codegen backend DLL/SO using this priority:
 //!
 //! 1. `CUDA_OXIDE_BACKEND` env var (explicit override)
 //! 2. Local repo (detected by presence of `crates/rustc-codegen-cuda`)
-//! 3. Cached `.so` at `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`,
+//! 3. Cached library at `~/.cargo/cuda-oxide/`,
 //!    but only when it isn't older than the running `cargo-oxide` binary
 //! 4. Auto-fetch from git and build (one-time, or after a stale-cache miss)
 //!
 //! ## Cache staleness (issue #49)
 //!
 //! `cargo install` always rewrites `~/.cargo/bin/cargo-oxide` on every
-//! upgrade, bumping its mtime. The cached `.so` is only ever written by
+//! upgrade, bumping its mtime. The cached library is only ever written by
 //! step 4 below, so a binary newer than the cache is the canonical signal
 //! that the user has just upgraded `cargo-oxide` and the cached backend
 //! no longer matches the binary loading it. When step 3 detects that, we
-//! drop both the cached `.so` *and* the cached source tree so that step 4
+//! drop both the cached library *and* the cached source tree so that step 4
 //! re-clones fresh and rebuilds, rather than rebuilding from a clone that
 //! was taken whenever the user first installed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Returns the platform-specific backend library filename.
+fn backend_lib_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "rustc_codegen_cuda.dll"
+    } else {
+        "librustc_codegen_cuda.so"
+    }
+}
 
 /// Finds the workspace root by walking up from CWD looking for Cargo.toml
 /// with a `crates/rustc-codegen-cuda` directory.
@@ -64,7 +73,7 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
     // 2. Local repo
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
-        let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+        let so_path = codegen_crate.join(format!("target/debug/{}", backend_lib_name()));
         build_backend_from_source(&codegen_crate);
         return so_path;
     }
@@ -72,7 +81,7 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
     // 3. Cached .so. Only honored when it isn't older than the running
     //    cargo-oxide binary; see the module-level comment about issue #49.
     if let Some(cache_dir) = cache_directory() {
-        let cached_so = cache_dir.join("librustc_codegen_cuda.so");
+        let cached_so = cache_dir.join(backend_lib_name());
         if cached_so.exists() {
             if !cached_backend_is_stale(&cached_so) {
                 return cached_so;
@@ -105,12 +114,12 @@ pub fn backend_so_candidate(workspace_root: &Path) -> PathBuf {
 
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
-        return codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+        return codegen_crate.join(format!("target/debug/{}", backend_lib_name()));
     }
 
     cache_directory()
-        .map(|dir| dir.join("librustc_codegen_cuda.so"))
-        .unwrap_or_else(|| PathBuf::from("librustc_codegen_cuda.so"))
+        .map(|dir| dir.join(backend_lib_name()))
+        .unwrap_or_else(|| PathBuf::from(backend_lib_name()))
 }
 
 /// Returns true when the cached backend `.so` is older than the running
@@ -147,7 +156,7 @@ fn invalidate_cache(cache_dir: &Path) {
         "Detected upgraded cargo-oxide; refreshing cached backend at {} (issue #49).",
         cache_dir.display()
     );
-    let _ = std::fs::remove_file(cache_dir.join("librustc_codegen_cuda.so"));
+    let _ = std::fs::remove_file(cache_dir.join(backend_lib_name()));
     let _ = std::fs::remove_dir_all(cache_dir.join("src"));
 }
 
@@ -211,7 +220,7 @@ fn auto_fetch_and_build() -> PathBuf {
     });
 
     let src_dir = cache_dir.join("src");
-    let so_path = cache_dir.join("librustc_codegen_cuda.so");
+    let so_path = cache_dir.join(backend_lib_name());
 
     std::fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
 
@@ -239,7 +248,7 @@ fn auto_fetch_and_build() -> PathBuf {
     let codegen_crate = src_dir.join("crates/rustc-codegen-cuda");
     build_backend_from_source(&codegen_crate);
 
-    let built_so = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+    let built_so = codegen_crate.join(format!("target/debug/{}", backend_lib_name()));
     if built_so.exists() {
         std::fs::copy(&built_so, &so_path).expect("Failed to copy backend to cache");
         eprintln!("✓ Backend cached at {}", so_path.display());

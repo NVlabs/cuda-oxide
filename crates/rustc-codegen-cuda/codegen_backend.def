@@ -1,0 +1,6 @@
+; Minimal export list for the rustc codegen backend DLL.
+; Only __rustc_codegen_backend is required by rustc to load this as a
+; codegen backend. The default dylib behavior exports ALL public symbols
+; which exceeds the PE 65535 export limit on Windows.
+EXPORTS
+    __rustc_codegen_backend

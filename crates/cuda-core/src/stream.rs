@@ -100,7 +100,7 @@ impl CudaStream {
         let cu_stream = unsafe {
             cuda_bindings::cuStreamCreate(
                 cu_stream.as_mut_ptr(),
-                cuda_bindings::CUstream_flags_enum_CU_STREAM_NON_BLOCKING,
+                cuda_bindings::CUstream_flags_enum_CU_STREAM_NON_BLOCKING as u32,
             )
             .result()?;
             cu_stream.assume_init()
@@ -148,7 +148,7 @@ impl CudaStream {
             cuda_bindings::cuStreamWaitEvent(
                 self.cu_stream,
                 event.cu_event(),
-                cuda_bindings::CUevent_wait_flags_enum_CU_EVENT_WAIT_DEFAULT,
+                cuda_bindings::CUevent_wait_flags_enum_CU_EVENT_WAIT_DEFAULT as u32,
             )
             .result()
         }

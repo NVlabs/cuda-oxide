@@ -244,7 +244,7 @@ pub unsafe fn launch_kernel_ex(
         let base = &mut cluster_attr as *mut _ as *mut u8;
         // id at offset 0
         (base as *mut u32)
-            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION);
+            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION as u32);
         // clusterDim.x/y/z at offsets 8, 12, 16
         let dim_ptr = base.add(8) as *mut u32;
         dim_ptr.write(cluster_dim.0);
@@ -366,7 +366,7 @@ pub unsafe fn launch_kernel_cooperative(
     unsafe {
         let base = &mut coop_attr as *mut _ as *mut u8;
         (base as *mut u32)
-            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_COOPERATIVE);
+            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_COOPERATIVE as u32);
         let val_ptr = base.add(8) as *mut i32;
         val_ptr.write(1);
     }
@@ -475,7 +475,7 @@ pub unsafe fn launch_kernel_ex_cooperative(
     unsafe {
         let base = &mut attrs[0] as *mut _ as *mut u8;
         (base as *mut u32)
-            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION);
+            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION as u32);
         let dim_ptr = base.add(8) as *mut u32;
         dim_ptr.write(cluster_dim.0);
         dim_ptr.add(1).write(cluster_dim.1);
@@ -483,7 +483,7 @@ pub unsafe fn launch_kernel_ex_cooperative(
 
         let base = &mut attrs[1] as *mut _ as *mut u8;
         (base as *mut u32)
-            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_COOPERATIVE);
+            .write(cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_COOPERATIVE as u32);
         let val_ptr = base.add(8) as *mut i32;
         val_ptr.write(1);
     }

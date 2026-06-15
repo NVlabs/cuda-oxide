@@ -546,9 +546,20 @@ pub fn build_host_object_for_target(
     );
     let section = object.section_mut(section_id);
     section.set_data(section_data.to_vec(), 8);
-    section.flags = SectionFlags::Elf {
-        sh_flags: elf::SHF_ALLOC | elf::SHF_GNU_RETAIN,
-    };
+    match target.format {
+        object::BinaryFormat::Elf => {
+            section.flags = SectionFlags::Elf {
+                sh_flags: elf::SHF_ALLOC | elf::SHF_GNU_RETAIN,
+            };
+        }
+        object::BinaryFormat::Coff => {
+            section.flags = SectionFlags::Coff {
+                characteristics: coff::IMAGE_SCN_CNT_INITIALIZED_DATA
+                    | coff::IMAGE_SCN_MEM_READ,
+            };
+        }
+        _ => {}
+    }
 
     if let Some(anchor_symbol) = anchor_symbol {
         // Global binding so the symbol can satisfy undefined references
@@ -597,6 +608,10 @@ impl HostObjectTarget {
 
         let format = if target.contains("linux") {
             object::BinaryFormat::Elf
+        } else if target.contains("windows") {
+            object::BinaryFormat::Coff
+        } else if target.contains("darwin") || target.contains("macos") {
+            object::BinaryFormat::MachO
         } else {
             return Err(ArtifactError::UnsupportedHostTarget(target));
         };
@@ -609,11 +624,19 @@ impl HostObjectTarget {
     }
 }
 
+
 #[cfg(feature = "object-write")]
 mod elf {
     pub const SHF_ALLOC: u64 = 0x2;
     pub const SHF_GNU_RETAIN: u64 = 0x20_0000;
 }
+
+#[cfg(feature = "object-write")]
+mod coff {
+    pub const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
+    pub const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
+}
+
 
 fn validate_spec(spec: &ArtifactBundleSpec<'_>) -> Result<(), ArtifactError> {
     if spec.name.is_empty() {

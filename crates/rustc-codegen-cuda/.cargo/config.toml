@@ -1,0 +1,4 @@
+[target.x86_64-pc-windows-msvc]
+# Use LLVM's lld-link instead of MSVC link.exe.
+# MSVC link.exe has the same 65535 export limit but lld-link gives cleaner errors.
+linker = "C:\\Program Files\\LLVM\\bin\\lld-link.exe"
