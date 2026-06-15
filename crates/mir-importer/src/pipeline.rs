@@ -33,6 +33,7 @@
 //!
 //! Override with `CUDA_OXIDE_TARGET=<target>` environment variable.
 
+use llvm_export::export::{DebugKind, ExportBackendConfig};
 use pliron::common_traits::Verify;
 use rustc_public::mir::mono::Instance;
 
@@ -173,6 +174,9 @@ pub struct PipelineConfig {
     /// Currently supports NVVM 20 dialect (Blackwell+). Architecture is
     /// controlled by `--arch` flag.
     pub emit_nvvm_ir: bool,
+    /// Device debug metadata tier. Full variable/type debug is not implemented
+    /// yet, so `Full` currently emits line tables.
+    pub debug_kind: DebugKind,
 }
 
 impl Default for PipelineConfig {
@@ -184,6 +188,7 @@ impl Default for PipelineConfig {
             show_mir_dialect: false,
             show_llvm_dialect: false,
             emit_nvvm_ir: false,
+            debug_kind: DebugKind::Off,
         }
     }
 }
@@ -387,7 +392,14 @@ pub fn run_pipeline(
         eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
     }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
-    let _llvm_ir = export_llvm_ir(&ctx, module_op_ptr, device_externs, &ll_path, emit_nvvm_ir)?;
+    let _llvm_ir = export_llvm_ir(
+        &ctx,
+        module_op_ptr,
+        device_externs,
+        &ll_path,
+        emit_nvvm_ir,
+        config.debug_kind,
+    )?;
     if config.verbose {
         eprintln!("LLVM IR written to {}", ll_path.display());
     }
@@ -650,16 +662,23 @@ fn export_llvm_ir(
     device_externs: &[DeviceExternDecl],
     path: &Path,
     emit_nvvm_ir: bool,
+    debug_kind: DebugKind,
 ) -> Result<String, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
     let llvm_ir = if emit_nvvm_ir {
-        let config = llvm_export::export::NvvmExportConfig;
+        let config = PipelineExportConfig {
+            inner: llvm_export::export::NvvmExportConfig,
+            debug_kind,
+        };
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
     } else {
-        let config = llvm_export::export::PtxExportConfig;
+        let config = PipelineExportConfig {
+            inner: llvm_export::export::PtxExportConfig,
+            debug_kind,
+        };
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
     };
@@ -667,6 +686,41 @@ fn export_llvm_ir(
     std::fs::write(path, &llvm_ir).map_err(|e| PipelineError::Export(e.to_string()))?;
 
     Ok(llvm_ir)
+}
+
+struct PipelineExportConfig<C> {
+    inner: C,
+    debug_kind: DebugKind,
+}
+
+impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
+    fn datalayout(&self) -> &str {
+        self.inner.datalayout()
+    }
+
+    fn emit_llvm_used(&self) -> bool {
+        self.inner.emit_llvm_used()
+    }
+
+    fn emit_nvvmir_version(&self) -> bool {
+        self.inner.emit_nvvmir_version()
+    }
+
+    fn nvvmir_version(&self) -> [i32; 4] {
+        self.inner.nvvmir_version()
+    }
+
+    fn emit_all_kernel_annotations(&self) -> bool {
+        self.inner.emit_all_kernel_annotations()
+    }
+
+    fn emit_ptx_kernel_keyword(&self) -> bool {
+        self.inner.emit_ptx_kernel_keyword()
+    }
+
+    fn debug_kind(&self) -> DebugKind {
+        self.debug_kind
+    }
 }
 
 /// Checks for WGMMA instructions (Hopper sm_90a only, NOT forward-compatible).
@@ -1141,6 +1195,7 @@ mod tests {
         assert!(!config.show_mir_dialect);
         assert!(!config.show_llvm_dialect);
         assert!(!config.emit_nvvm_ir);
+        assert_eq!(config.debug_kind, DebugKind::Off);
     }
 
     #[test]

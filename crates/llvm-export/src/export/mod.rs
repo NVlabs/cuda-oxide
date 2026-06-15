@@ -37,6 +37,7 @@
 //! - `metadata`: nvvm annotations and version, llvm.used
 
 mod config;
+mod debug;
 mod externs;
 mod function;
 mod literals;
@@ -47,7 +48,7 @@ mod ops;
 mod state;
 mod types;
 
-pub use config::{ExportBackendConfig, NvvmExportConfig, PtxExportConfig};
+pub use config::{DebugKind, ExportBackendConfig, NvvmExportConfig, PtxExportConfig};
 pub use externs::{AsDeviceExtern, DeviceExternAttrs, DeviceExternDecl};
 
 use pliron::{builtin::ops::ModuleOp, context::Context};

@@ -22,6 +22,7 @@
 use super::block;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
+use crate::translator::location::span_to_location;
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
 use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
@@ -30,7 +31,7 @@ use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::context::{Context, Ptr};
 use pliron::identifier::{Identifier, Legaliser};
 use pliron::input_err_noloc;
-use pliron::location::{Located, Location};
+use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
 
@@ -420,12 +421,9 @@ pub fn translate_body(
         1,      // 1 region for function body
     );
 
-    // Set function location
-    // Use body span for location
-    let loc = Location::Named {
-        name: format!("{:?}", body.span),
-        child_loc: Box::new(Location::Unknown),
-    };
+    // Set the function location from rustc's body span. This becomes the
+    // default scope line for line-table debug info once LLVM export is enabled.
+    let loc = span_to_location(ctx, body.span);
     op_ptr.deref_mut(ctx).set_loc(loc);
 
     // Create MirFuncOp and set the function type attribute and symbol name

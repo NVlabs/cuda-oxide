@@ -60,6 +60,7 @@ pub mod intrinsics;
 
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
+use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::{
@@ -110,11 +111,7 @@ pub fn translate_terminator(
     block_map: &[Ptr<BasicBlock>],
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
-    // Use Debug representation of the span as location
-    let loc = Location::Named {
-        name: format!("{:?}", term.span),
-        child_loc: Box::new(Location::Unknown),
-    };
+    let loc = span_to_location(ctx, term.span);
 
     match &term.kind {
         mir::TerminatorKind::Return => translate_return(ctx, value_map, block_ptr, prev_op, loc),

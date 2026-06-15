@@ -15,6 +15,24 @@ pub(super) const NVPTX_DATALAYOUT_FULL: &str = "e-p:64:64:64-p3:32:32:32-i1:8:8-
     i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-f128:128:128-\
     v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64-a:8:8";
 
+/// Device debug metadata to emit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DebugKind {
+    /// Do not emit LLVM debug metadata.
+    #[default]
+    Off,
+    /// Emit enough metadata for source-line breakpoints and stepping.
+    LineTables,
+    /// Reserved for variable/type debug info. For now this emits line tables.
+    Full,
+}
+
+impl DebugKind {
+    pub fn line_tables_enabled(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
 /// Configuration trait for export backends (PTX, LTOIR, etc.).
 ///
 /// This trait allows different backends to customize IR generation without
@@ -40,6 +58,11 @@ pub trait ExportBackendConfig {
 
     /// Whether kernel definitions should use the `ptx_kernel` calling convention.
     fn emit_ptx_kernel_keyword(&self) -> bool;
+
+    /// Which device debug metadata tier to emit.
+    fn debug_kind(&self) -> DebugKind {
+        DebugKind::Off
+    }
 }
 
 /// Default PTX export configuration.

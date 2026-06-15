@@ -94,6 +94,7 @@
 
 use crate::collector::{CollectedFunction, DeviceExternDecl};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
+use rustc_session::config::DebugInfo;
 use std::path::PathBuf;
 
 /// Convert a rustc type to an LLVM type string for device extern declarations.
@@ -459,6 +460,8 @@ pub fn generate_device_code<'tcx>(
             }
         }
 
+        let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
+
         // Create pipeline config
         let pipeline_config = mir_importer::PipelineConfig {
             output_dir: output_dir.clone(),
@@ -467,6 +470,7 @@ pub fn generate_device_code<'tcx>(
             show_mir_dialect: show_mir,
             show_llvm_dialect: show_llvm,
             emit_nvvm_ir,
+            debug_kind,
         };
 
         // Run the cuda-oxide pipeline!
@@ -527,6 +531,37 @@ pub fn generate_device_code<'tcx>(
     }
 }
 
+fn device_debug_kind(rustc_debug: DebugInfo) -> llvm_export::export::DebugKind {
+    device_debug_kind_with_override(
+        rustc_debug,
+        std::env::var("CUDA_OXIDE_DEBUG").ok().as_deref(),
+    )
+}
+
+fn device_debug_kind_with_override(
+    rustc_debug: DebugInfo,
+    override_value: Option<&str>,
+) -> llvm_export::export::DebugKind {
+    if let Some(value) = override_value {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "0" | "off" | "none" => return llvm_export::export::DebugKind::Off,
+            "1" | "line" | "lines" | "line-tables" | "line-tables-only" => {
+                return llvm_export::export::DebugKind::LineTables;
+            }
+            "2" | "full" => return llvm_export::export::DebugKind::Full,
+            _ => {}
+        }
+    }
+
+    match rustc_debug {
+        DebugInfo::None => llvm_export::export::DebugKind::Off,
+        DebugInfo::LineDirectivesOnly
+        | DebugInfo::LineTablesOnly
+        | DebugInfo::Limited
+        | DebugInfo::Full => llvm_export::export::DebugKind::LineTables,
+    }
+}
+
 fn read_compilation_artifact(
     result: &mir_importer::CompilationResult,
 ) -> Result<Option<DeviceCodegenArtifact>, DeviceCodegenError> {
@@ -562,6 +597,38 @@ mod tests {
         let config = DeviceCodegenConfig::default();
         assert!(!config.verbose);
         assert_eq!(config.output_name, "kernel");
+    }
+
+    #[test]
+    fn device_debug_kind_follows_rustc_debuginfo() {
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::None, None),
+            llvm_export::export::DebugKind::Off
+        );
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::LineTablesOnly, None),
+            llvm_export::export::DebugKind::LineTables
+        );
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::Full, None),
+            llvm_export::export::DebugKind::LineTables
+        );
+    }
+
+    #[test]
+    fn device_debug_kind_env_override_wins() {
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::Full, Some("off")),
+            llvm_export::export::DebugKind::Off
+        );
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::None, Some(" Line-Tables ")),
+            llvm_export::export::DebugKind::LineTables
+        );
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::None, Some("full")),
+            llvm_export::export::DebugKind::Full
+        );
     }
 
     #[test]

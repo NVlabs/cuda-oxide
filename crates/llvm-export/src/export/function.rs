@@ -21,6 +21,7 @@ use pliron::{
     },
     context::Ptr,
     linked_list::ContainsLinkedList,
+    location::Located,
     op::Op,
     operation::Operation,
     r#type::Typed,
@@ -227,6 +228,9 @@ impl<'a> ModuleExportState<'a> {
             .next();
 
         if let Some(entry_block) = entry_block_opt {
+            let func_loc = func.get_operation().deref(self.ctx).loc();
+            let debug_scope = self.debug_subprogram_for_function(&fixed_func_name, &func_loc);
+
             write!(output, "define ").unwrap();
             if is_kernel && self.emit_ptx_kernel_keyword {
                 write!(output, "ptx_kernel ").unwrap();
@@ -274,7 +278,11 @@ impl<'a> ModuleExportState<'a> {
             // gets its `bar.sync.aligned` pushed into a `tid`-dependent branch
             // and deadlocks. opt's FunctionAttrs strips `convergent` from
             // functions it proves never reach a convergent op.
-            writeln!(output, ") #0 {{").unwrap();
+            if let Some(scope_id) = debug_scope {
+                writeln!(output, ") #0 !dbg !{scope_id} {{").unwrap();
+            } else {
+                writeln!(output, ") #0 {{").unwrap();
+            }
             self.convergent_used = true;
 
             // Assign labels to all blocks
@@ -447,6 +455,7 @@ impl<'a> ModuleExportState<'a> {
                     &block_labels,
                     &pred_map,
                     i == 0,
+                    debug_scope,
                     output,
                 )?;
             }
@@ -482,6 +491,7 @@ impl<'a> ModuleExportState<'a> {
         block_labels: &HashMap<Ptr<BasicBlock>, String>,
         pred_map: &PredecessorMap,
         is_entry: bool,
+        debug_scope: Option<usize>,
         output: &mut String,
     ) -> Result<(), String> {
         // Always print label to ensure it can be referenced by PHI nodes
@@ -535,7 +545,14 @@ impl<'a> ModuleExportState<'a> {
         }
 
         for op in block.deref(self.ctx).iter(self.ctx) {
-            self.export_op(op, value_names, next_value_id, block_labels, output)?;
+            self.export_op(
+                op,
+                value_names,
+                next_value_id,
+                block_labels,
+                debug_scope,
+                output,
+            )?;
         }
         Ok(())
     }

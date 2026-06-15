@@ -35,6 +35,7 @@
 
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
+use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::{MirStorageDeadOp, MirStorageLiveOp, MirStoreOp};
@@ -65,11 +66,7 @@ pub fn translate_statement(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
-    // Use Debug representation of the span as location
-    let loc = Location::Named {
-        name: format!("{:?}", stmt.span),
-        child_loc: Box::new(Location::Unknown),
-    };
+    let loc = span_to_location(ctx, stmt.span);
 
     match &stmt.kind {
         mir::StatementKind::Assign(place, rvalue) => {

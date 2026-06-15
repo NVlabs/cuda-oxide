@@ -17,6 +17,7 @@ use pliron::{
         op_interfaces::{CallOpCallable, CallOpInterface},
     },
     context::Ptr,
+    location::Located,
     op::Op,
     operation::Operation,
     value::Value,
@@ -216,6 +217,19 @@ impl<'op> TryFrom<&'op dyn Op> for LlvmOp<'op> {
     }
 }
 
+impl LlvmOp<'_> {
+    fn emits_real_instruction(&self) -> bool {
+        !matches!(
+            self,
+            Self::Undef(_) | Self::Constant(_) | Self::AddressOf(_)
+        )
+    }
+
+    fn needs_scoped_debug_location(&self) -> bool {
+        matches!(self, Self::Call(_))
+    }
+}
+
 impl<'a> ModuleExportState<'a> {
     pub(super) fn export_op(
         &mut self,
@@ -223,10 +237,18 @@ impl<'a> ModuleExportState<'a> {
         value_names: &mut HashMap<Value, String>,
         next_value_id: &mut usize,
         block_labels: &HashMap<Ptr<BasicBlock>, String>,
+        debug_scope: Option<usize>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.deref(self.ctx);
+        let op_loc = op_ref.loc();
         let op_obj = Operation::get_op_dyn(op, self.ctx);
+        let llvm_op = LlvmOp::try_from(op_obj.as_ref()).ok();
+        let should_attach_debug = llvm_op.as_ref().is_some_and(LlvmOp::emits_real_instruction);
+        let allow_scope_debug_fallback = llvm_op
+            .as_ref()
+            .is_some_and(LlvmOp::needs_scoped_debug_location);
+        let output_before = output.len();
 
         // Register result names (skip if already named in pre-pass)
         for res in op_ref.results() {
@@ -237,7 +259,7 @@ impl<'a> ModuleExportState<'a> {
             });
         }
 
-        match LlvmOp::try_from(op_obj.as_ref()).ok() {
+        match llvm_op {
             // Terminators
             Some(LlvmOp::Return(op)) => self.emit_return(op, value_names, output)?,
             Some(LlvmOp::Unreachable(_)) => writeln!(output, "  unreachable").unwrap(),
@@ -370,6 +392,16 @@ impl<'a> ModuleExportState<'a> {
                 Operation::get_opid(op, self.ctx)
             )
             .unwrap(),
+        }
+
+        if should_attach_debug {
+            self.attach_debug_to_last_line(
+                output,
+                output_before,
+                debug_scope,
+                &op_loc,
+                allow_scope_debug_fallback,
+            );
         }
 
         Ok(())

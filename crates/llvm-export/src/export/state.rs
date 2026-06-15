@@ -6,7 +6,9 @@
 //! Exporter state and kernel bookkeeping.
 
 use pliron::{basic_block::BasicBlock, context::Ptr, value::Value};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
+
+use super::config::DebugKind;
 
 /// Map from block to its predecessors with the values passed to each predecessor.
 /// Used for PHI node generation when exporting to LLVM IR.
@@ -48,6 +50,28 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
     pub(super) device_functions: Vec<String>,
+    /// Next `!N` metadata ID in this module.
+    ///
+    /// LLVM has one flat numbered metadata namespace per module. Today this is
+    /// used for NVVM annotations/version nodes; debug-info nodes will use the
+    /// same counter so the exporter never has to guess which IDs are free.
+    next_metadata_id: usize,
+    /// Which debug metadata tier this export should emit.
+    pub(super) debug_kind: DebugKind,
+    /// The single compile unit used for Stage 2 line-table debug info.
+    pub(super) debug_compile_unit: Option<usize>,
+    /// `DIFile` nodes keyed by the source path they describe.
+    pub(super) debug_files: HashMap<PathBuf, usize>,
+    /// Shared empty function type used by all line-table-only subprograms.
+    pub(super) debug_subroutine_type: Option<usize>,
+    /// `DISubprogram` file paths, used to avoid attaching locations to the wrong scope.
+    pub(super) debug_subprogram_files: HashMap<usize, PathBuf>,
+    /// Fallback line/column for calls that LLVM requires to have a location.
+    pub(super) debug_subprogram_fallbacks: HashMap<usize, (i32, i32)>,
+    /// `DILocation` nodes keyed by `(scope, line, column)`.
+    pub(super) debug_locations: HashMap<(usize, i32, i32), usize>,
+    /// Numbered debug metadata definitions, in allocation order.
+    pub(super) debug_nodes: Vec<(usize, String)>,
 }
 
 impl<'a> ModuleExportState<'a> {
@@ -55,6 +79,7 @@ impl<'a> ModuleExportState<'a> {
         ctx: &'a pliron::context::Context,
         track_all_kernels: bool,
         emit_ptx_kernel_keyword: bool,
+        debug_kind: DebugKind,
     ) -> Self {
         Self {
             ctx,
@@ -65,7 +90,27 @@ impl<'a> ModuleExportState<'a> {
             track_all_kernels,
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
+            next_metadata_id: 0,
+            debug_kind,
+            debug_compile_unit: None,
+            debug_files: HashMap::new(),
+            debug_subroutine_type: None,
+            debug_subprogram_files: HashMap::new(),
+            debug_subprogram_fallbacks: HashMap::new(),
+            debug_locations: HashMap::new(),
+            debug_nodes: Vec::new(),
         }
+    }
+
+    pub(super) fn alloc_metadata_id(&mut self) -> usize {
+        let id = self.next_metadata_id;
+        self.next_metadata_id += 1;
+        id
+    }
+
+    #[cfg(test)]
+    pub(super) fn next_metadata_id(&self) -> usize {
+        self.next_metadata_id
     }
 
     /// Check if a function name is a known convergent intrinsic.
