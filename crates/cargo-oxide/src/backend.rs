@@ -23,9 +23,29 @@
 //! drop both the cached `.so` *and* the cached source tree so that step 4
 //! re-clones fresh and rebuilds, rather than rebuilding from a clone that
 //! was taken whenever the user first installed.
+//!
+//! ## Cache staleness vs. source (backend source advances)
+//!
+//! The binary-mtime check above does not fire when the developer updates
+//! the backend SOURCE (the `rustc-codegen-cuda` crate) but leaves the
+//! `cargo-oxide` binary unchanged. In that case the cached `.so` is older
+//! than the source it was built from, yet the binary check sees no upgrade
+//! and the stale backend is silently reused. To catch this we also compare
+//! the cached `.so` against the newest mtime of the backend source inputs
+//! (the crate's `src/**` and `Cargo.toml`) found in the cached source tree.
+//! When the source tree cannot be located we degrade gracefully to the
+//! binary-only check rather than erroring.
+//!
+//! The two stale signals call for different recovery. A binary upgrade means
+//! the cached source may no longer match the new binary, so we drop the
+//! source tree and re-clone fresh (above). A source advance means the cached
+//! source IS the newer truth, so we rebuild the `.so` from that existing
+//! source in place; re-cloning would throw away the very source that
+//! triggered the rebuild. Binary staleness takes precedence when both fire.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 /// Finds the workspace root by walking up from CWD looking for Cargo.toml
 /// with a `crates/rustc-codegen-cuda` directory.
@@ -74,10 +94,22 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
     if let Some(cache_dir) = cache_directory() {
         let cached_so = cache_dir.join("librustc_codegen_cuda.so");
         if cached_so.exists() {
-            if !cached_backend_is_stale(&cached_so) {
-                return cached_so;
+            let source_dir = cache_dir.join("src/crates/rustc-codegen-cuda");
+            match cached_backend_status(&cached_so, Some(&source_dir)) {
+                CacheStatus::Fresh => return cached_so,
+                CacheStatus::StaleVsBinary => invalidate_cache(&cache_dir),
+                CacheStatus::StaleVsSource => {
+                    // The cached source advanced; rebuild the `.so` from it in
+                    // place. We do NOT invalidate the cache here, so the
+                    // auto-fetch step below skips the clone (the source tree is
+                    // still present) and rebuilds from the existing source.
+                    eprintln!(
+                        "Cached backend source at {} is newer than the cached \
+                         library; rebuilding from it in place.",
+                        source_dir.display()
+                    );
+                }
             }
-            invalidate_cache(&cache_dir);
         }
     }
 
@@ -113,27 +145,101 @@ pub fn backend_so_candidate(workspace_root: &Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("librustc_codegen_cuda.so"))
 }
 
-/// Returns true when the cached backend `.so` is older than the running
-/// `cargo-oxide` binary, which means the user has upgraded the binary
-/// since the cache was last built.
+/// Why the cached backend is out of date, or that it is current. The two
+/// stale variants drive different recovery (re-clone vs. rebuild in place);
+/// see the module-level comment.
+#[derive(Debug, PartialEq, Eq)]
+enum CacheStatus {
+    /// Cache is up to date; reuse the cached `.so`.
+    Fresh,
+    /// The running `cargo-oxide` binary is newer than the cache: the user
+    /// upgraded the binary, so the cached source may no longer match it.
+    StaleVsBinary,
+    /// The cached backend source is newer than the cached `.so`: the source
+    /// was advanced in place and the `.so` should be rebuilt from it.
+    StaleVsSource,
+}
+
+/// Classifies the cached backend `.so` against the running `cargo-oxide`
+/// binary (the user upgraded the binary) and the newest backend source input
+/// (the developer advanced the source). When `source_dir` is `None`, or no
+/// source inputs can be found under it, only the binary check applies.
+/// Binary staleness takes precedence when both fire, since a binary upgrade
+/// wants a fresh clone (which also picks up the newest source).
 ///
-/// Conservative on errors: if we can't resolve our own executable path or
-/// stat either file, we report "not stale" so a working cache is never
-/// invalidated on a failed metadata read.
-fn cached_backend_is_stale(cached_so: &Path) -> bool {
-    let Ok(self_path) = std::env::current_exe() else {
-        return false;
-    };
-    let Ok(self_meta) = std::fs::metadata(&self_path) else {
-        return false;
-    };
+/// Conservative on errors: if we can't stat the cached `.so`, we report
+/// [`CacheStatus::Fresh`] so a working cache is never invalidated on a failed
+/// metadata read.
+fn cached_backend_status(cached_so: &Path, source_dir: Option<&Path>) -> CacheStatus {
     let Ok(so_meta) = std::fs::metadata(cached_so) else {
-        return false;
+        return CacheStatus::Fresh;
     };
-    let (Ok(self_mtime), Ok(so_mtime)) = (self_meta.modified(), so_meta.modified()) else {
-        return false;
+    let Ok(so_mtime) = so_meta.modified() else {
+        return CacheStatus::Fresh;
     };
-    self_mtime > so_mtime
+
+    let self_mtime = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok());
+
+    // Binary check: if we can't stat our own executable, fall through to the
+    // source check rather than declaring the cache fresh, so the source
+    // signal is still honoured.
+    if matches!(self_mtime, Some(self_mtime) if self_mtime > so_mtime) {
+        return CacheStatus::StaleVsBinary;
+    }
+
+    let stale_vs_source = source_dir
+        .and_then(newest_backend_source_mtime)
+        .map(|src_mtime| src_mtime > so_mtime)
+        .unwrap_or(false);
+    if stale_vs_source {
+        return CacheStatus::StaleVsSource;
+    }
+
+    CacheStatus::Fresh
+}
+
+/// Returns the newest mtime among the backend source inputs under
+/// `source_dir`: every file in `src/**` plus the crate `Cargo.toml`.
+///
+/// Returns `None` when the directory cannot be located or yields no
+/// readable inputs, which lets [`cached_backend_is_stale`] degrade to the
+/// binary-only check. The walk is best-effort: unreadable entries are
+/// skipped rather than treated as failures.
+fn newest_backend_source_mtime(source_dir: &Path) -> Option<SystemTime> {
+    let mut newest: Option<SystemTime> = None;
+
+    let mut consider = |path: &Path| {
+        if let Ok(mtime) = std::fs::metadata(path).and_then(|m| m.modified()) {
+            newest = Some(match newest {
+                Some(cur) if cur >= mtime => cur,
+                _ => mtime,
+            });
+        }
+    };
+
+    consider(&source_dir.join("Cargo.toml"));
+    visit_files(&source_dir.join("src"), &mut consider);
+
+    newest
+}
+
+/// Recursively visits every regular file under `dir`, calling `f` on each.
+/// Best-effort: directories that cannot be read are skipped silently.
+fn visit_files(dir: &Path, f: &mut dyn FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(ft) if ft.is_dir() => visit_files(&path, f),
+            Ok(ft) if ft.is_file() => f(&path),
+            _ => {}
+        }
+    }
 }
 
 /// Drop both the cached `.so` and the cached source tree at `cache_dir`.
@@ -304,9 +410,10 @@ mod tests {
             SystemTime::now() - Duration::from_secs(365 * 24 * 60 * 60),
         );
 
-        assert!(
-            cached_backend_is_stale(&so),
-            "cache backdated by 1y must be reported stale"
+        assert_eq!(
+            cached_backend_status(&so, None),
+            CacheStatus::StaleVsBinary,
+            "cache backdated by 1y must be stale vs the running binary"
         );
     }
 
@@ -323,8 +430,9 @@ mod tests {
             SystemTime::now() + Duration::from_secs(365 * 24 * 60 * 60),
         );
 
-        assert!(
-            !cached_backend_is_stale(&so),
+        assert_eq!(
+            cached_backend_status(&so, None),
+            CacheStatus::Fresh,
             "cache postdating the test binary must be reported fresh"
         );
     }
@@ -336,7 +444,115 @@ mod tests {
     fn not_stale_when_cache_file_missing() {
         let dir = tempdir();
         let so = dir.join("does_not_exist.so");
-        assert!(!cached_backend_is_stale(&so));
+        assert_eq!(cached_backend_status(&so, None), CacheStatus::Fresh);
+    }
+
+    /// A backend source input newer than the cached `.so` must report
+    /// `StaleVsSource` (the "developer advanced the source" case that issue
+    /// #49's binary check alone misses). To isolate the source signal from
+    /// the binary signal, the `.so` is future-dated past the running test
+    /// binary, and the source file is dated later still.
+    #[test]
+    fn stale_when_source_postdates_cache() {
+        let year = Duration::from_secs(365 * 24 * 60 * 60);
+        let dir = tempdir();
+        let so = dir.join("librustc_codegen_cuda.so");
+        // Cache newer than the running binary so binary-staleness does NOT fire.
+        let cache_mtime = SystemTime::now() + year;
+        write_with_mtime(&so, b"built", cache_mtime);
+
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        // Source newer than the cache: this is what trips source-staleness.
+        write_with_mtime(
+            &src.join("lib.rs"),
+            b"// updated source",
+            cache_mtime + year,
+        );
+        // Cargo.toml older than the .so; the src file is what trips staleness.
+        write_with_mtime(&dir.join("Cargo.toml"), b"[package]", SystemTime::now());
+
+        assert_eq!(
+            cached_backend_status(&so, Some(&dir)),
+            CacheStatus::StaleVsSource,
+            "source newer than cached .so must be stale vs source (rebuild in place)"
+        );
+    }
+
+    /// When every source input predates the cached `.so` (and the running
+    /// binary too), the cache is fresh and must not be invalidated.
+    #[test]
+    fn fresh_when_source_predates_cache() {
+        let dir = tempdir();
+        let so = dir.join("librustc_codegen_cuda.so");
+        // Cache far in the future so the running test binary can't make it stale.
+        let cache_mtime = SystemTime::now() + Duration::from_secs(365 * 24 * 60 * 60);
+        write_with_mtime(&so, b"built", cache_mtime);
+
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        write_with_mtime(
+            &src.join("lib.rs"),
+            b"// old source",
+            SystemTime::now() - Duration::from_secs(60),
+        );
+        write_with_mtime(
+            &dir.join("Cargo.toml"),
+            b"[package]",
+            SystemTime::now() - Duration::from_secs(60),
+        );
+
+        assert_eq!(
+            cached_backend_status(&so, Some(&dir)),
+            CacheStatus::Fresh,
+            "source older than cached .so must be reported fresh"
+        );
+    }
+
+    /// A missing source tree must degrade to the binary-only check rather
+    /// than erroring or spuriously invalidating a future-dated cache.
+    #[test]
+    fn fresh_when_source_dir_absent() {
+        let dir = tempdir();
+        let so = dir.join("librustc_codegen_cuda.so");
+        write_with_mtime(
+            &so,
+            b"fresh",
+            SystemTime::now() + Duration::from_secs(365 * 24 * 60 * 60),
+        );
+        let absent = dir.join("no-such-src-tree");
+        assert_eq!(
+            cached_backend_status(&so, Some(&absent)),
+            CacheStatus::Fresh,
+            "absent source tree must fall back to binary-only (fresh here)"
+        );
+    }
+
+    /// When BOTH the running binary and the cached source postdate the `.so`,
+    /// the binary signal wins so recovery re-clones fresh rather than
+    /// rebuilding from a source tree that a binary upgrade may have outdated.
+    #[test]
+    fn binary_staleness_takes_precedence_over_source() {
+        let dir = tempdir();
+        let so = dir.join("librustc_codegen_cuda.so");
+        // Backdate the `.so` so the freshly built test binary is newer than it.
+        let base = SystemTime::now() - Duration::from_secs(365 * 24 * 60 * 60);
+        write_with_mtime(&so, b"built", base);
+
+        // Make the cached source newer than the `.so` too, so both signals fire.
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        write_with_mtime(
+            &src.join("lib.rs"),
+            b"// updated source",
+            base + Duration::from_secs(30),
+        );
+
+        assert_eq!(
+            cached_backend_status(&so, Some(&dir)),
+            CacheStatus::StaleVsBinary,
+            "binary staleness must win over source staleness"
+        );
     }
 
     fn tempdir() -> PathBuf {
