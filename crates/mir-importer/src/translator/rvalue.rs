@@ -3462,8 +3462,18 @@ fn translate_place_addr_from_slot(
 
     let mut current = slot;
     let mut current_prev_op = prev_op;
+    let mut current_is_slice_data = false;
 
     for (proj_idx, elem) in projection.iter().enumerate() {
+        // The slice-data provenance bit only describes the pointer produced by
+        // the immediately-preceding `Deref` of a fat slice (index it by
+        // element, not as a pointer to one array object). Capture it for this
+        // iteration and clear it up front, so the invariant stays local: it is
+        // true only when the previous step handed us a slice DATA pointer, and
+        // no later projection arm can accidentally leak it forward.
+        let entered_as_slice_data = current_is_slice_data;
+        current_is_slice_data = false;
+
         match elem {
             // `*place` -- the place walked so far holds a pointer; the
             // address of the dereferenced place is that pointer VALUE, so a
@@ -3659,17 +3669,25 @@ fn translate_place_addr_from_slot(
                         }
 
                         match &projection[proj_idx + 1] {
-                            // Sized field or element access: hand the data
-                            // pointer to the matching arm of this loop. The
-                            // following `Index` / `ConstantIndex` offsets it
-                            // directly (its pointee is the element type, not
-                            // an array), see `emit_indexed_element_addr`.
-                            mir::ProjectionElem::Field(..)
-                            | mir::ProjectionElem::Index(_)
+                            // Sized field access: hand the data pointer to
+                            // the field arm below.
+                            mir::ProjectionElem::Field(..) => {
+                                current = data_ptr;
+                                continue;
+                            }
+                            // Element access through a slice data pointer is
+                            // pointer arithmetic over the slice element type.
+                            // That remains true when the element type is
+                            // itself an array (`&[[T; N]][i]`), where a
+                            // type-only check would otherwise mistake the
+                            // data pointer for a pointer to one array object
+                            // and index inside row 0.
+                            mir::ProjectionElem::Index(_)
                             | mir::ProjectionElem::ConstantIndex {
                                 from_end: false, ..
                             } => {
                                 current = data_ptr;
+                                current_is_slice_data = true;
                                 continue;
                             }
                             // Unknown continuation: keep the conservative
@@ -3746,10 +3764,13 @@ fn translate_place_addr_from_slot(
                 if *from_end {
                     return Ok(None);
                 }
-                let (pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
+                let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
                 };
+                if entered_as_slice_data {
+                    pointee_kind = PointeeKind::Direct;
+                }
 
                 let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
                 let index_apint = APInt::from_i64(*offset as i64, NonZeroUsize::new(64).unwrap());
@@ -3791,10 +3812,13 @@ fn translate_place_addr_from_slot(
             // and return a pointer to the array's first slot, miscompiling
             // every load through the reference into a load of element 0.
             mir::ProjectionElem::Index(index_local) => {
-                let (pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
+                let (mut pointee_kind, addr_space) = match pointer_pointee_kind(ctx, current) {
                     Some(kind) => kind,
                     None => return Ok(None),
                 };
+                if entered_as_slice_data {
+                    pointee_kind = PointeeKind::Direct;
+                }
 
                 let index_place = mir::Place {
                     local: *index_local,
