@@ -244,6 +244,10 @@ impl<'a> ModuleExportState<'a> {
         let op_loc = op_ref.loc();
         let op_obj = Operation::get_op_dyn(op, self.ctx);
         let llvm_op = LlvmOp::try_from(op_obj.as_ref()).ok();
+        let debug_alloca = llvm_op.as_ref().and_then(|llvm_op| match llvm_op {
+            LlvmOp::Alloca(op) => Some(*op),
+            _ => None,
+        });
         let should_attach_debug = llvm_op.as_ref().is_some_and(LlvmOp::emits_real_instruction);
         let allow_scope_debug_fallback = llvm_op
             .as_ref()
@@ -403,6 +407,9 @@ impl<'a> ModuleExportState<'a> {
                 allow_scope_debug_fallback,
             );
         }
+        if let Some(alloca) = debug_alloca {
+            self.emit_debug_declare_for_alloca(alloca, value_names, debug_scope, &op_loc, output)?;
+        }
 
         Ok(())
     }
@@ -527,6 +534,43 @@ impl<'a> ModuleExportState<'a> {
         let align = crate::ops::op_alignment(self.ctx, op.get_operation())
             .unwrap_or_else(|| self.natural_alignment(elem_llvm_ty));
         writeln!(output, ", align {align}").unwrap();
+        Ok(())
+    }
+
+    fn emit_debug_declare_for_alloca(
+        &mut self,
+        op: &ops::AllocaOp,
+        value_names: &HashMap<Value, String>,
+        debug_scope: Option<usize>,
+        loc: &pliron::location::Location,
+        output: &mut String,
+    ) -> Result<(), String> {
+        if !self.debug_kind.variables_enabled() {
+            return Ok(());
+        }
+
+        let Some(scope) = debug_scope else {
+            return Ok(());
+        };
+        let Some(info) = crate::ops::debug_local_variable(self.ctx, op.get_operation()) else {
+            return Ok(());
+        };
+        let Some((var_id, loc_id)) = self.debug_local_variable_for_scope(scope, loc, &info) else {
+            return Ok(());
+        };
+
+        let alloca_result = op.get_operation().deref(self.ctx).get_result(0);
+        let alloca_name = value_names
+            .get(&alloca_result)
+            .ok_or_else(|| "Missing alloca result name for debug declare".to_string())?;
+
+        writeln!(
+            output,
+            "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
+        )
+        .unwrap();
+        self.debug_declare_used = true;
+
         Ok(())
     }
 

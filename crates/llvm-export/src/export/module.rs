@@ -165,26 +165,32 @@ pub(super) fn export_module_with_externs_impl(
         }
     }
 
-    // 5. Emit attribute groups for convergent intrinsics used by module functions
+    // 5. Debug intrinsic declarations used by full-debug local variables.
+    if state.debug_declare_used {
+        writeln!(&mut output).unwrap();
+        state.emit_debug_intrinsic_declarations(&mut output);
+    }
+
+    // 6. Emit attribute groups for convergent intrinsics used by module functions
     // Note: Device extern declarations no longer get attribute groups - see section 2 comment.
     if state.convergent_used {
         writeln!(&mut output).unwrap();
         writeln!(&mut output, "attributes #0 = {{ convergent }}").unwrap();
     }
 
-    // 6. nvvm.annotations metadata
+    // 7. nvvm.annotations metadata
     if needs_nvvm_annotations(&state, emit_all_annotations) {
         writeln!(&mut output).unwrap();
         emit_nvvm_annotations(&mut output, &mut state, emit_all_annotations);
     }
 
-    // 7. nvvmir.version metadata (if backend requires)
+    // 8. nvvmir.version metadata (if backend requires)
     if config.emit_nvvmir_version() {
         writeln!(&mut output).unwrap();
         emit_nvvmir_version(&mut output, &mut state, config.nvvmir_version());
     }
 
-    // 8. DWARF line-table metadata (if requested and source locations exist)
+    // 9. DWARF metadata (if requested and source locations exist)
     if state.has_debug_metadata() {
         writeln!(&mut output).unwrap();
         state.emit_debug_metadata(&mut output);
@@ -300,6 +306,12 @@ pub(super) fn export_module_to_string_with_config(
             )
             .unwrap();
         }
+    }
+
+    // Emit debug intrinsic declarations used by full-debug local variables.
+    if state.debug_declare_used {
+        writeln!(&mut output).unwrap();
+        state.emit_debug_intrinsic_declarations(&mut output);
     }
 
     // Emit attributes section if convergent operations were used

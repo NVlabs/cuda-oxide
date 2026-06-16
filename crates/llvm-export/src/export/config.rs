@@ -23,13 +23,17 @@ pub enum DebugKind {
     Off,
     /// Emit enough metadata for source-line breakpoints and stepping.
     LineTables,
-    /// Reserved for variable/type debug info. For now this emits line tables.
+    /// Emit line tables plus the supported local-variable/type metadata.
     Full,
 }
 
 impl DebugKind {
     pub fn line_tables_enabled(self) -> bool {
         !matches!(self, Self::Off)
+    }
+
+    pub fn variables_enabled(self) -> bool {
+        matches!(self, Self::Full)
     }
 }
 

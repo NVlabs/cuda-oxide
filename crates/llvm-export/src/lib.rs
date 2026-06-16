@@ -138,7 +138,7 @@ pub mod ops {
     pub use pliron::builtin::ops::ConstantOp;
 
     use pliron::{
-        builtin::attributes::BoolAttr,
+        builtin::attributes::{BoolAttr, StringAttr},
         context::{Context, Ptr},
         identifier::Identifier,
         op::Op,
@@ -190,6 +190,34 @@ pub mod ops {
     /// default for user-authored inline PTX.
     const INLINE_ASM_SIDEEFFECT_KEY: &str = "cuda_oxide_inline_asm_sideeffect";
 
+    /// Debug type metadata for a local variable described by `llvm.dbg.declare`.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub enum DebugLocalTypeKind {
+        /// A scalar `DIBasicType`.
+        Basic {
+            name: String,
+            size_bits: u64,
+            encoding: &'static str,
+        },
+        /// A pointer/reference `DIDerivedType`.
+        Pointer { name: String, size_bits: u64 },
+    }
+
+    /// Debug metadata attached to the alloca that stores a source local.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct DebugLocalVariableInfo {
+        pub name: String,
+        pub argument_index: Option<u16>,
+        pub ty: DebugLocalTypeKind,
+    }
+
+    const DEBUG_LOCAL_NAME_KEY: &str = "cuda_oxide_debug_local_name";
+    const DEBUG_LOCAL_ARG_KEY: &str = "cuda_oxide_debug_local_arg";
+    const DEBUG_LOCAL_TYPE_KIND_KEY: &str = "cuda_oxide_debug_local_type_kind";
+    const DEBUG_LOCAL_TYPE_NAME_KEY: &str = "cuda_oxide_debug_local_type_name";
+    const DEBUG_LOCAL_TYPE_SIZE_KEY: &str = "cuda_oxide_debug_local_type_size_bits";
+    const DEBUG_LOCAL_TYPE_ENCODING_KEY: &str = "cuda_oxide_debug_local_type_encoding";
+
     /// Stamp the ABI alignment (bytes) onto a memory op.
     pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
         let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
@@ -223,6 +251,95 @@ pub mod ops {
             .get::<BoolAttr>(&key)
             .map(|a| bool::from((*a).clone()))
             .unwrap_or(true)
+    }
+
+    /// Attach source-local debug metadata to a memory slot op.
+    pub fn set_debug_local_variable(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        info: DebugLocalVariableInfo,
+    ) {
+        set_string_attr(ctx, op, DEBUG_LOCAL_NAME_KEY, info.name);
+        if let Some(arg) = info.argument_index {
+            set_string_attr(ctx, op, DEBUG_LOCAL_ARG_KEY, arg.to_string());
+        }
+
+        match info.ty {
+            DebugLocalTypeKind::Basic {
+                name,
+                size_bits,
+                encoding,
+            } => {
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_KIND_KEY, "basic".to_string());
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_NAME_KEY, name);
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_SIZE_KEY, size_bits.to_string());
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_ENCODING_KEY, encoding.to_string());
+            }
+            DebugLocalTypeKind::Pointer { name, size_bits } => {
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_KIND_KEY, "pointer".to_string());
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_NAME_KEY, name);
+                set_string_attr(ctx, op, DEBUG_LOCAL_TYPE_SIZE_KEY, size_bits.to_string());
+            }
+        }
+    }
+
+    /// Read source-local debug metadata from a memory slot op, if present.
+    pub fn debug_local_variable(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Option<DebugLocalVariableInfo> {
+        let name = get_string_attr(ctx, op, DEBUG_LOCAL_NAME_KEY)?;
+        let argument_index =
+            get_string_attr(ctx, op, DEBUG_LOCAL_ARG_KEY).and_then(|arg| arg.parse::<u16>().ok());
+        let kind = get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_KIND_KEY)?;
+        let type_name = get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_NAME_KEY)?;
+        let size_bits = get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_SIZE_KEY)?
+            .parse()
+            .ok()?;
+
+        let ty = match kind.as_str() {
+            "basic" => DebugLocalTypeKind::Basic {
+                name: type_name,
+                size_bits,
+                encoding: debug_type_encoding(ctx, op)?,
+            },
+            "pointer" => DebugLocalTypeKind::Pointer {
+                name: type_name,
+                size_bits,
+            },
+            _ => return None,
+        };
+
+        Some(DebugLocalVariableInfo {
+            name,
+            argument_index,
+            ty,
+        })
+    }
+
+    fn set_string_attr(ctx: &mut Context, op: Ptr<Operation>, key: &str, value: String) {
+        let key = Identifier::try_new(key.to_string()).expect("valid identifier");
+        op.deref_mut(ctx)
+            .attributes
+            .set(key, StringAttr::new(value));
+    }
+
+    fn get_string_attr(ctx: &Context, op: Ptr<Operation>, key: &str) -> Option<String> {
+        let key = Identifier::try_new(key.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<StringAttr>(&key)
+            .map(|a| String::from((*a).clone()))
+    }
+
+    fn debug_type_encoding(ctx: &Context, op: Ptr<Operation>) -> Option<&'static str> {
+        match get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_ENCODING_KEY)?.as_str() {
+            "DW_ATE_boolean" => Some("DW_ATE_boolean"),
+            "DW_ATE_float" => Some("DW_ATE_float"),
+            "DW_ATE_signed" => Some("DW_ATE_signed"),
+            "DW_ATE_unsigned" => Some("DW_ATE_unsigned"),
+            _ => None,
+        }
     }
 
     /// Alignment helpers re-homed from the pre-migration local `GlobalOp`.

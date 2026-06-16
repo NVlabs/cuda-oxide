@@ -26,6 +26,8 @@ use crate::translator::location::span_to_location;
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
 use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
+use llvm_export::export::DebugKind;
+use llvm_export::ops::{DebugLocalTypeKind, DebugLocalVariableInfo};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::context::{Context, Ptr};
@@ -39,7 +41,8 @@ use pliron::operation::Operation;
 use rustc_public::CrateDef;
 use rustc_public::mir;
 use rustc_public::mir::mono;
-use rustc_public::ty::{ConstantKind, RigidTy, TyKind};
+use rustc_public::ty::{ConstantKind, FloatTy, IntTy, RigidTy, Ty, TyKind, UintTy};
+use std::collections::HashMap;
 
 /// Cluster dimensions extracted from `#[cluster(x,y,z)]` attribute.
 ///
@@ -204,6 +207,171 @@ fn compute_reachable_blocks(body: &mir::Body) -> std::collections::BTreeSet<usiz
     reachable
 }
 
+#[derive(Clone)]
+struct LocalDebugInfo {
+    variable: DebugLocalVariableInfo,
+    loc: pliron::location::Location,
+}
+
+/// Build the first full-debug variable map.
+///
+/// This stage only supports simple whole-local bindings:
+///
+/// ```text
+/// debug name => _3
+/// ```
+///
+/// Fragments/projections need `DIExpression(DW_OP_LLVM_fragment, ...)` and more
+/// value-location tracking, so they are intentionally skipped until the basic
+/// local/argument path is solid.
+fn collect_debug_locals(
+    ctx: &mut Context,
+    body: &mir::Body,
+) -> HashMap<mir::Local, LocalDebugInfo> {
+    let mut locals = HashMap::new();
+
+    for info in &body.var_debug_info {
+        if info.composite.is_some() {
+            continue;
+        }
+
+        let Some(local) = info.local() else {
+            continue;
+        };
+        let local_idx: usize = local;
+        if local_idx == 0 {
+            continue;
+        }
+
+        let Some(decl) = body.local_decl(local) else {
+            continue;
+        };
+        let Some(ty) = debug_type_for_ty(&decl.ty) else {
+            continue;
+        };
+
+        let name = info.name.to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        locals.entry(local).or_insert_with(|| LocalDebugInfo {
+            variable: DebugLocalVariableInfo {
+                name,
+                argument_index: info.argument_index,
+                ty,
+            },
+            loc: span_to_location(ctx, info.source_info.span),
+        });
+    }
+
+    locals
+}
+
+fn debug_type_for_ty(ty: &Ty) -> Option<DebugLocalTypeKind> {
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Bool) => Some(DebugLocalTypeKind::Basic {
+            name: "bool".to_string(),
+            size_bits: 8,
+            encoding: "DW_ATE_boolean",
+        }),
+        TyKind::RigidTy(RigidTy::Int(int_ty)) => Some(DebugLocalTypeKind::Basic {
+            name: int_name(int_ty).to_string(),
+            size_bits: (int_ty.num_bytes() * 8) as u64,
+            encoding: "DW_ATE_signed",
+        }),
+        TyKind::RigidTy(RigidTy::Uint(uint_ty)) => Some(DebugLocalTypeKind::Basic {
+            name: uint_name(uint_ty).to_string(),
+            size_bits: (uint_ty.num_bytes() * 8) as u64,
+            encoding: "DW_ATE_unsigned",
+        }),
+        TyKind::RigidTy(RigidTy::Float(float_ty)) => Some(DebugLocalTypeKind::Basic {
+            name: float_name(float_ty).to_string(),
+            size_bits: float_size_bits(float_ty),
+            encoding: "DW_ATE_float",
+        }),
+        TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
+            Some(DebugLocalTypeKind::Pointer {
+                name: raw_pointer_name(pointee, mutability),
+                size_bits: 64,
+            })
+        }
+        TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) => {
+            Some(DebugLocalTypeKind::Pointer {
+                name: reference_name(pointee, mutability),
+                size_bits: 64,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn int_name(ty: IntTy) -> &'static str {
+    match ty {
+        IntTy::Isize => "isize",
+        IntTy::I8 => "i8",
+        IntTy::I16 => "i16",
+        IntTy::I32 => "i32",
+        IntTy::I64 => "i64",
+        IntTy::I128 => "i128",
+    }
+}
+
+fn uint_name(ty: UintTy) -> &'static str {
+    match ty {
+        UintTy::Usize => "usize",
+        UintTy::U8 => "u8",
+        UintTy::U16 => "u16",
+        UintTy::U32 => "u32",
+        UintTy::U64 => "u64",
+        UintTy::U128 => "u128",
+    }
+}
+
+fn float_name(ty: FloatTy) -> &'static str {
+    match ty {
+        FloatTy::F16 => "f16",
+        FloatTy::F32 => "f32",
+        FloatTy::F64 => "f64",
+        FloatTy::F128 => "f128",
+    }
+}
+
+fn float_size_bits(ty: FloatTy) -> u64 {
+    match ty {
+        FloatTy::F16 => 16,
+        FloatTy::F32 => 32,
+        FloatTy::F64 => 64,
+        FloatTy::F128 => 128,
+    }
+}
+
+fn raw_pointer_name(pointee: Ty, mutability: mir::Mutability) -> String {
+    let mutability = match mutability {
+        mir::Mutability::Mut => "mut ",
+        mir::Mutability::Not => "const ",
+    };
+    format!("*{mutability}{}", simple_type_name(&pointee))
+}
+
+fn reference_name(pointee: Ty, mutability: mir::Mutability) -> String {
+    let mutability = match mutability {
+        mir::Mutability::Mut => "mut ",
+        mir::Mutability::Not => "",
+    };
+    format!("&{mutability}{}", simple_type_name(&pointee))
+}
+
+fn simple_type_name(ty: &Ty) -> &'static str {
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Bool) => "bool",
+        TyKind::RigidTy(RigidTy::Int(int_ty)) => int_name(int_ty),
+        TyKind::RigidTy(RigidTy::Uint(uint_ty)) => uint_name(uint_ty),
+        TyKind::RigidTy(RigidTy::Float(float_ty)) => float_name(float_ty),
+        _ => "_",
+    }
+}
+
 /// Emit one `mir.alloca` per non-ZST MIR local at the top of the entry block,
 /// then store each function argument into its backing slot.
 ///
@@ -238,8 +406,14 @@ fn emit_entry_allocas(
     entry_block: Ptr<BasicBlock>,
     num_args: usize,
     value_map: &mut ValueMap,
+    debug_kind: DebugKind,
 ) -> Option<Ptr<Operation>> {
     let mut prev_op: Option<Ptr<Operation>> = None;
+    let debug_locals = if debug_kind.variables_enabled() {
+        collect_debug_locals(ctx, body)
+    } else {
+        HashMap::new()
+    };
 
     // Pre-scan the body once: for each local whose translated slot type is a
     // pointer, infer the address space from the *writes* into it rather than
@@ -267,6 +441,10 @@ fn emit_entry_allocas(
         let mir_ty = values::align_pointer_addr_space(ctx, mir_ty, target);
 
         let (op, slot) = ValueMap::emit_alloca(ctx, mir_ty, entry_block, prev_op);
+        if let Some(info) = debug_locals.get(&local) {
+            llvm_export::ops::set_debug_local_variable(ctx, op, info.variable.clone());
+            op.deref_mut(ctx).set_loc(info.loc.clone());
+        }
         prev_op = Some(op);
         value_map.set_slot(local, slot);
     }
@@ -309,6 +487,7 @@ pub fn translate_body(
     is_kernel: bool,
     override_name: Option<&str>,
     legaliser: &mut Legaliser,
+    debug_kind: DebugKind,
 ) -> TranslationResult<Ptr<Operation>> {
     // Create a value map to track MIR locals -> pliron IR values
     let num_locals = body.locals().len();
@@ -570,7 +749,14 @@ pub fn translate_body(
     //
     // The `mem2reg` pass in `pipeline.rs` promotes the scalar slots back into
     // SSA before LLVM lowering.
-    let entry_last_op = emit_entry_allocas(ctx, body, block_map[0], num_args, &mut value_map);
+    let entry_last_op = emit_entry_allocas(
+        ctx,
+        body,
+        block_map[0],
+        num_args,
+        &mut value_map,
+        debug_kind,
+    );
 
     // -------------------------------------------------------------------------
     // PHASE 2: Translate reachable blocks

@@ -174,8 +174,7 @@ pub struct PipelineConfig {
     /// Currently supports NVVM 20 dialect (Blackwell+). Architecture is
     /// controlled by `--arch` flag.
     pub emit_nvvm_ir: bool,
-    /// Device debug metadata tier. Full variable/type debug is not implemented
-    /// yet, so `Full` currently emits line tables.
+    /// Device debug metadata tier.
     pub debug_kind: DebugKind,
 }
 
@@ -267,6 +266,7 @@ pub fn run_pipeline(
             func.is_kernel,
             Some(&func.export_name),
             &mut legaliser,
+            config.debug_kind,
         )
         .map_err(|e| {
             // Use .disp(&ctx) for rich error formatting with location and backtrace
@@ -306,32 +306,39 @@ pub fn run_pipeline(
     }
 
     // Step 4.5: Run mem2reg (promote `mir.alloca` + `mir.load`/`mir.store`
-    // chains back to SSA values). This erases every promotable alloca and
-    // replaces each load with the reaching definition, leaving the subsequent
-    // `dialect-mir` → LLVM dialect lowering to handle only genuinely
-    // address-taken locals.
-    if config.verbose {
-        eprintln!("\n=== Running mem2reg ===");
-    }
-    // pliron's pass infra now threads an AnalysisManager through mem2reg
-    // (caches dominator trees etc.); we run it standalone, so a fresh empty
-    // manager suffices. The returned IRStatus (Changed/Unchanged) is discarded.
-    let mut analyses = pliron::pass_manager::AnalysisManager::default();
-    pliron::opts::mem2reg::mem2reg(module_op_ptr, &mut ctx, &mut analyses).map_err(|e| {
-        PipelineError::Verification {
-            name: "mem2reg".to_string(),
-            message: e.disp(&ctx).to_string(),
-            operation: None,
+    // chains back to SSA values). Full debug deliberately skips this first:
+    // the initial variable-info implementation emits `dbg.declare` against
+    // local slots, so erasing those slots would make the debug locations false.
+    // A later optimized-debug stage can teach Pliron mem2reg to rewrite those
+    // locations into `dbg.value`, like LLVM's mem2reg does.
+    if config.debug_kind.variables_enabled() {
+        if config.verbose {
+            eprintln!("\n=== Skipping mem2reg (full device debug preserves local slots) ===");
         }
-    })?;
-    if config.verbose {
-        eprintln!("mem2reg successful ✓");
+    } else {
+        if config.verbose {
+            eprintln!("\n=== Running mem2reg ===");
+        }
+        // pliron's pass infra now threads an AnalysisManager through mem2reg
+        // (caches dominator trees etc.); we run it standalone, so a fresh empty
+        // manager suffices. The returned IRStatus (Changed/Unchanged) is discarded.
+        let mut analyses = pliron::pass_manager::AnalysisManager::default();
+        pliron::opts::mem2reg::mem2reg(module_op_ptr, &mut ctx, &mut analyses).map_err(|e| {
+            PipelineError::Verification {
+                name: "mem2reg".to_string(),
+                message: e.disp(&ctx).to_string(),
+                operation: None,
+            }
+        })?;
+        if config.verbose {
+            eprintln!("mem2reg successful ✓");
+        }
+        if config.show_mir_dialect {
+            eprintln!("\n=== dialect-mir module (after mem2reg) ===");
+            eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
+        }
+        verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
     }
-    if config.show_mir_dialect {
-        eprintln!("\n=== dialect-mir module (after mem2reg) ===");
-        eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
-    }
-    verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
 
     // Step 5: Lower dialect-mir → LLVM dialect.
     if config.verbose {
@@ -439,7 +446,7 @@ pub fn run_pipeline(
         let ptx_path = config
             .output_dir
             .join(format!("{}.ptx", config.output_name));
-        let target = generate_ptx(&ll_path, &ptx_path)?;
+        let target = generate_ptx(&ll_path, &ptx_path, config.debug_kind)?;
         if config.verbose {
             eprintln!(
                 "✓ PTX written to {} (target: {})",
@@ -969,7 +976,11 @@ fn optimize_ll(ll_path: &Path, toolchain: &LlvmToolchain, verbose: bool) -> Opti
 /// `CUDA_OXIDE_TARGET` override, else the detected-GPU hint
 /// (`CUDA_OXIDE_DEVICE_ARCH`) when that GPU can run the kernel, else the minimum
 /// arch the IR's features require (`select_target`).
-fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError> {
+fn generate_ptx(
+    ll_path: &Path,
+    ptx_path: &Path,
+    debug_kind: DebugKind,
+) -> Result<String, PipelineError> {
     // Explicit, hard override: `--arch` or a parent-set `CUDA_OXIDE_TARGET`.
     let explicit_override = std::env::var("CUDA_OXIDE_TARGET").ok();
     // Advisory hint: the arch of the GPU in this machine, forwarded by
@@ -1047,9 +1058,13 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         ));
     };
 
-    // Run the middle-end (opt -O2) before llc. Feature detection above
+    // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
     // intentionally reads the original (pre-opt) IR so the target is
     // determined by what the source actually needs, not what opt elides.
+    //
+    // Full debug still reaches this point as real LLVM debug intrinsics.
+    // LLVM's optimizer knows how to salvage many `dbg.declare` slot locations
+    // into optimized `dbg.value`/debug-record locations, unlike Pliron mem2reg.
     let optimized = optimize_ll(ll_path, &toolchain, verbose);
     let llc_input: &Path = optimized.as_deref().unwrap_or(ll_path);
 
@@ -1083,7 +1098,17 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         .output();
 
     match result {
-        Ok(output) if output.status.success() => Ok(target.to_string()),
+        Ok(output) if output.status.success() => {
+            if matches!(debug_kind, DebugKind::LineTables) {
+                strip_target_debug_from_ptx(ptx_path)?;
+                if verbose {
+                    eprintln!(
+                        "line-table debug: stripped PTX target debug flag; source line tables remain"
+                    );
+                }
+            }
+            Ok(target.to_string())
+        }
         Ok(output) => Err(PipelineError::PtxGeneration(format!(
             "{} failed:\n{}",
             llc_desc,
@@ -1091,6 +1116,70 @@ fn generate_ptx(ll_path: &Path, ptx_path: &Path) -> Result<String, PipelineError
         ))),
         Err(e) => Err(PipelineError::PtxGeneration(format!("{llc_desc}: {e}"))),
     }
+}
+
+fn strip_target_debug_from_ptx(ptx_path: &Path) -> Result<(), PipelineError> {
+    let ptx = std::fs::read_to_string(ptx_path).map_err(|e| {
+        PipelineError::PtxGeneration(format!(
+            "failed to read PTX for line-table debug cleanup ({}): {e}",
+            ptx_path.display()
+        ))
+    })?;
+    let stripped = strip_target_debug_from_ptx_text(&ptx);
+    if stripped != ptx {
+        std::fs::write(ptx_path, stripped).map_err(|e| {
+            PipelineError::PtxGeneration(format!(
+                "failed to write PTX after line-table debug cleanup ({}): {e}",
+                ptx_path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn strip_target_debug_from_ptx_text(ptx: &str) -> String {
+    let mut out = String::with_capacity(ptx.len());
+    for line in ptx.split_inclusive('\n') {
+        let (line_body, newline) = line
+            .strip_suffix('\n')
+            .map_or((line, ""), |without_newline| (without_newline, "\n"));
+        out.push_str(&strip_target_debug_from_ptx_line(line_body));
+        out.push_str(newline);
+    }
+    out
+}
+
+fn strip_target_debug_from_ptx_line(line: &str) -> String {
+    let indent_len = line.len() - line.trim_start().len();
+    let indent = &line[..indent_len];
+    let body = &line[indent_len..];
+    let Some(rest) = body.strip_prefix(".target") else {
+        return line.to_string();
+    };
+
+    let mut parts = rest.split(',');
+    let Some(arch) = parts.next() else {
+        return line.to_string();
+    };
+
+    let options: Vec<&str> = parts
+        .map(str::trim)
+        .filter(|option| *option != "debug")
+        .collect();
+    if !rest
+        .split(',')
+        .skip(1)
+        .any(|option| option.trim() == "debug")
+    {
+        return line.to_string();
+    }
+
+    let mut stripped = format!("{indent}.target{arch}");
+    for option in options {
+        stripped.push_str(", ");
+        stripped.push_str(option);
+    }
+    stripped
 }
 
 /// Recursively finds the innermost operation that failed verification.
@@ -1196,6 +1285,38 @@ mod tests {
         assert!(!config.show_llvm_dialect);
         assert!(!config.emit_nvvm_ir);
         assert_eq!(config.debug_kind, DebugKind::Off);
+    }
+
+    #[test]
+    fn line_table_ptx_cleanup_strips_only_target_debug_flag() {
+        let ptx = "\
+.version 8.9
+.target sm_120a, debug
+.address_size 64
+
+.section .debug_info
+\t.b8 1;
+";
+
+        let stripped = strip_target_debug_from_ptx_text(ptx);
+
+        assert!(
+            stripped.contains(".target sm_120a\n"),
+            "line-table mode should not ask the driver for debug compilation:\n{stripped}"
+        );
+        assert!(
+            stripped.contains(".section .debug_info"),
+            "line-table mode must keep the emitted DWARF sections:\n{stripped}"
+        );
+    }
+
+    #[test]
+    fn line_table_ptx_cleanup_preserves_other_target_options() {
+        let ptx = ".target sm_90a, texmode_independent, debug\n";
+
+        let stripped = strip_target_debug_from_ptx_text(ptx);
+
+        assert_eq!(stripped, ".target sm_90a, texmode_independent\n");
     }
 
     #[test]

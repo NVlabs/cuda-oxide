@@ -111,6 +111,12 @@ fn copy_alignment(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operat
     }
 }
 
+fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
+    if let Some(info) = llvm_export::ops::debug_local_variable(ctx, mir_op) {
+        llvm_export::ops::set_debug_local_variable(ctx, llvm_op, info);
+    }
+}
+
 /// Convert `mir.load` to `llvm.load`.
 ///
 /// Takes a single pointer operand and returns the loaded value.
@@ -171,6 +177,7 @@ pub(crate) fn convert_alloca(
 
     let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val);
     copy_alignment(ctx, op, alloca.get_operation());
+    copy_debug_local_variable(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
 
@@ -755,6 +762,57 @@ mod tests {
         // Element type should round-trip through convert_type as i32.
         let elem_ty = alloca.result_pointee_type(&ctx);
         assert!(elem_ty.deref(&ctx).is::<IntegerType>());
+    }
+
+    #[test]
+    fn convert_alloca_preserves_debug_local_metadata() {
+        let mut ctx = make_ctx();
+        let i32_ty: Ptr<TypeObj> = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let alloca_op = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        llvm::set_debug_local_variable(
+            &mut ctx,
+            alloca_op,
+            llvm::DebugLocalVariableInfo {
+                name: "x".to_string(),
+                argument_index: Some(1),
+                ty: llvm::DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                },
+            },
+        );
+        alloca_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).unwrap();
+        let info = llvm::debug_local_variable(&ctx, alloca.get_operation())
+            .expect("debug local metadata should survive lowering");
+
+        assert_eq!(info.name, "x");
+        assert_eq!(info.argument_index, Some(1));
+        assert_eq!(
+            info.ty,
+            llvm::DebugLocalTypeKind::Basic {
+                name: "i32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_signed",
+            }
+        );
     }
 
     #[test]

@@ -54,6 +54,7 @@ pub mod types;
 pub mod values;
 
 use crate::error::{TranslationErr, TranslationResult};
+use llvm_export::export::DebugKind;
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Legaliser;
 use pliron::input_error_noloc;
@@ -96,7 +97,15 @@ pub fn translate_function(
     register_dialects(ctx);
 
     // Translate the function body
-    let func_op = body::translate_body(ctx, body, instance, is_kernel, None, legaliser)?;
+    let func_op = body::translate_body(
+        ctx,
+        body,
+        instance,
+        is_kernel,
+        None,
+        legaliser,
+        DebugKind::Off,
+    )?;
 
     // Create a builtin.module operation using ModuleOp::new
     let module_name = instance.name();
