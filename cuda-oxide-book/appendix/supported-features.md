@@ -84,7 +84,8 @@ roadmap, **N/A** = not applicable or no identified need.
 | LTOIR Linking | **Full** | Device-side LTO via libNVVM and nvJitLink. |
 | Float Math Intrinsics (libdevice) | **Full** | Rust `f32`/`f64` math methods (`sin`, `cos`, `exp`, `pow`, `sqrt`, ...) lower to CUDA libdevice (`__nv_*`). cuda-oxide auto-detects libdevice usage and emits NVVM IR; `cuda_host::load_kernel_module` (sync) and `cuda_host::load_kernel_module_async` (async) build the cubin via libNVVM + nvJitLink at runtime. |
 | Pipeline Inspection | **Full** | `cargo oxide pipeline <example>` shows IR at each compilation stage. |
-| cuda-gdb Debug Support | **Full** | Build with debug info and launch `cuda-gdb`. `breakpoint()` intrinsic for programmatic breakpoints. |
+| cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds with device line-table metadata and launches `cuda-gdb`. Supports source breakpoints, stepping, backtraces, and cross-file helper spans. |
+| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` emits basic DWARF metadata for whole locals and arguments with scalar or pointer-shaped types. Rich Rust type trees, projections, destructuring, and Pliron-side optimized variable locations are still work in progress. |
 
 ## Compiler: Inline PTX
 

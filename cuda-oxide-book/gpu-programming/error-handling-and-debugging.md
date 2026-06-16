@@ -150,6 +150,81 @@ cargo oxide debug vecadd --tui    # GDB with TUI
 cargo oxide debug vecadd --cgdb   # cgdb front-end
 ```
 
+By default this gives you **source-level debugging**: cuda-gdb can stop in
+Rust source files and show a useful backtrace. Local-variable inspection is a
+separate, heavier mode that you opt into when you need it.
+
+### Debug info modes
+
+cuda-oxide has three device debug modes:
+
+| Mode | How to enable it | What you get | Cost |
+|:-----|:-----------------|:-------------|:-----|
+| Off | default for normal `build` / `run` | Fastest generated PTX, no source mapping | none |
+| Line tables | `cargo oxide debug`, or `CUDA_OXIDE_DEBUG=line-tables` | Source breakpoints, stepping, backtraces | low |
+| Full | `CUDA_OXIDE_DEBUG=full cargo oxide debug <example>` | Line tables plus basic argument/local inspection | higher |
+
+Think of line tables as a map from machine instructions back to source lines:
+
+```text
+PTX instruction  ──debug line table──>  src/main.rs:39
+```
+
+Full debug adds variable records:
+
+```text
+source local `tid`
+      |
+      v
+LLVM/DWARF says: "tid lives in this stack slot"
+      |
+      v
+cuda-gdb can try: print tid
+```
+
+Use line tables first. They are enough for most "where did execution go?"
+questions, and they avoid the slower CUDA debug target mode. Use full debug
+when you specifically want `print idx`, `print ptr`, or similar local-variable
+inspection. Debuggers are allowed to be nosy; they are not always allowed to be
+fast.
+
+The `CUDA_OXIDE_DEBUG` override works with `build`, `run`, `pipeline`, and
+`debug`:
+
+```bash
+CUDA_OXIDE_DEBUG=line-tables cargo oxide pipeline vecadd
+CUDA_OXIDE_DEBUG=full cargo oxide debug vecadd
+```
+
+Useful aliases:
+
+| Value | Meaning |
+|:------|:--------|
+| `off`, `none`, `0` | no device debug metadata |
+| `line-tables`, `line`, `lines`, `1` | source line tables only |
+| `full`, `2` | line tables plus basic variable metadata |
+
+### What works today
+
+Line-table mode supports:
+
+- breakpoints by kernel name, e.g. `break vecadd`
+- source stepping and backtraces
+- helper/inlined source locations from other files, such as stepping from your
+  kernel into `cuda-device/src/thread.rs`
+
+Full mode currently supports the first simple variable slice:
+
+- whole local variables and arguments that rustc exposes through
+  `var_debug_info`
+- `bool`, integer, float, raw-pointer, and reference-shaped debug types
+- `llvm.dbg.declare` / LLVM-salvaged `dbg.value` metadata where LLVM can keep
+  the variable location alive
+
+Full mode does **not** yet describe rich Rust type trees such as structs,
+tuples, slices, arrays, closures, projections like `x.0`, or destructured
+variables.
+
 ### Breakpoint workflow
 
 1. Build with debug: `cargo oxide debug <example>`
@@ -227,6 +302,8 @@ For more targeted inspection:
 |:-------------------------------|:----------------------------------|
 | `CUDA_OXIDE_VERBOSE=1`         | Verbose compiler output           |
 | `CUDA_OXIDE_SHOW_RUSTC_MIR=1`  | Dump the rustc MIR before import  |
+| `CUDA_OXIDE_DEBUG=line-tables` | Emit source line-table metadata   |
+| `CUDA_OXIDE_DEBUG=full`        | Emit full metadata for basic locals and args |
 
 ## Profiling with Nsight Compute
 

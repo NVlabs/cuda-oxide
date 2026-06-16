@@ -148,16 +148,9 @@ impl<'a> ModuleExportState<'a> {
             return None;
         }
 
-        let (path, pos) = self.source_position_from_location(loc)?;
-        if self
-            .debug_subprogram_files
-            .get(&scope)
-            .is_some_and(|scope_path| scope_path.as_path() != path)
-        {
-            return None;
-        }
-
+        let (path, pos) = self.local_variable_position_from_location(loc)?;
         let file_id = self.ensure_debug_file(&path);
+        let variable_scope = self.debug_scope_for_file(scope, &path)?;
         let type_id = self.ensure_debug_type(&info.ty);
         let location_id = self.debug_location_for_scope(scope, loc)?;
         let name = escape_debug_string(&info.name);
@@ -170,7 +163,7 @@ impl<'a> ModuleExportState<'a> {
         self.debug_nodes.push((
             id,
             format!(
-                "!DILocalVariable(name: \"{name}\", {arg}scope: !{scope}, file: !{file_id}, \
+                "!DILocalVariable(name: \"{name}\", {arg}scope: !{variable_scope}, file: !{file_id}, \
                  line: {}, type: !{type_id})",
                 pos.line
             ),
@@ -275,25 +268,93 @@ impl<'a> ModuleExportState<'a> {
             return None;
         }
 
+        match loc {
+            Location::CallSite { callee, caller } => {
+                return self.debug_call_site_location_for_scope(scope, callee, caller);
+            }
+            Location::Named { child_loc, .. } => {
+                return self.debug_location_for_scope(scope, child_loc);
+            }
+            Location::Fused { locations, .. } => {
+                return locations
+                    .iter()
+                    .find_map(|loc| self.debug_location_for_scope(scope, loc));
+            }
+            Location::SrcPos { .. } | Location::Unknown => {}
+        }
+
         let (path, pos) = self.source_position_from_location(loc)?;
-        if self
-            .debug_subprogram_files
-            .get(&scope)
-            .is_some_and(|scope_path| scope_path.as_path() != path)
-        {
+        let location_scope = self.debug_scope_for_file(scope, &path)?;
+
+        self.ensure_debug_location(location_scope, pos, None)
+    }
+
+    fn debug_call_site_location_for_scope(
+        &mut self,
+        scope: usize,
+        callee: &Location,
+        caller: &Location,
+    ) -> Option<usize> {
+        let caller_location = self
+            .source_position_from_location(caller)
+            .and_then(|(path, pos)| {
+                let caller_scope = self.debug_scope_for_file(scope, &path)?;
+                self.ensure_debug_location(caller_scope, pos, None)
+            });
+
+        let Some((callee_path, callee_pos)) = self.source_position_from_location(callee) else {
+            return caller_location;
+        };
+        let callee_scope = self.debug_scope_for_file(scope, &callee_path)?;
+
+        self.ensure_debug_location(callee_scope, callee_pos, caller_location)
+    }
+
+    fn debug_scope_for_file(&mut self, scope: usize, path: &Path) -> Option<usize> {
+        let scope_path = self.debug_subprogram_files.get(&scope)?;
+        if scope_path.as_path() == path {
+            return Some(scope);
+        }
+
+        let key = (scope, path.to_path_buf());
+        if let Some(id) = self.debug_file_scopes.get(&key).copied() {
+            return Some(id);
+        }
+
+        let file_id = self.ensure_debug_file(path);
+        let id = self.alloc_metadata_id();
+        self.debug_nodes.push((
+            id,
+            format!("!DILexicalBlockFile(scope: !{scope}, file: !{file_id}, discriminator: 0)"),
+        ));
+        self.debug_file_scopes.insert(key, id);
+
+        Some(id)
+    }
+
+    fn ensure_debug_location(
+        &mut self,
+        scope: usize,
+        pos: SourcePosition,
+        inlined_at: Option<usize>,
+    ) -> Option<usize> {
+        if pos.line <= 0 || pos.column <= 0 {
             return None;
         }
 
-        let key = (scope, pos.line, pos.column);
+        let key = (scope, pos.line, pos.column, inlined_at);
         if let Some(id) = self.debug_locations.get(&key).copied() {
             return Some(id);
         }
 
         let id = self.alloc_metadata_id();
+        let inlined_at = inlined_at
+            .map(|location_id| format!(", inlinedAt: !{location_id}"))
+            .unwrap_or_default();
         self.debug_nodes.push((
             id,
             format!(
-                "!DILocation(line: {}, column: {}, scope: !{})",
+                "!DILocation(line: {}, column: {}, scope: !{}{inlined_at})",
                 pos.line, pos.column, scope
             ),
         ));
@@ -304,19 +365,25 @@ impl<'a> ModuleExportState<'a> {
 
     fn debug_fallback_location_for_scope(&mut self, scope: usize) -> Option<usize> {
         let (line, column) = self.debug_subprogram_fallbacks.get(&scope).copied()?;
-        let key = (scope, line, column);
-        if let Some(id) = self.debug_locations.get(&key).copied() {
-            return Some(id);
+        self.ensure_debug_location(scope, SourcePosition { line, column }, None)
+    }
+
+    fn local_variable_position_from_location(
+        &self,
+        loc: &Location,
+    ) -> Option<(PathBuf, SourcePosition)> {
+        match loc {
+            Location::CallSite { callee, caller } => self
+                .source_position_from_location(callee)
+                .or_else(|| self.source_position_from_location(caller)),
+            Location::Named { child_loc, .. } => {
+                self.local_variable_position_from_location(child_loc)
+            }
+            Location::Fused { locations, .. } => locations
+                .iter()
+                .find_map(|loc| self.local_variable_position_from_location(loc)),
+            Location::SrcPos { .. } | Location::Unknown => self.source_position_from_location(loc),
         }
-
-        let id = self.alloc_metadata_id();
-        self.debug_nodes.push((
-            id,
-            format!("!DILocation(line: {line}, column: {column}, scope: !{scope})"),
-        ));
-        self.debug_locations.insert(key, id);
-
-        Some(id)
     }
 
     fn source_position_from_location(&self, loc: &Location) -> Option<(PathBuf, SourcePosition)> {
