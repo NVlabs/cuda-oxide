@@ -589,8 +589,15 @@ pub fn generate_device_code<'tcx>(
         // Install a TyCtxt-backed array-length const evaluator for the type
         // translator (stable_mir can't evaluate `Unevaluated` length consts).
         // The closure borrows `tcx`; we erase its lifetime to store it in a
-        // thread-local and CLEAR it before this `run` scope ends (tcx alive
-        // throughout). Sound because install/use/clear all happen here.
+        // thread-local. The RAII guard below calls clear_array_len_eval() on
+        // drop, guaranteeing cleanup even if run_pipeline panics.
+        struct ArrayLenEvalGuard;
+        impl Drop for ArrayLenEvalGuard {
+            fn drop(&mut self) {
+                mir_importer::clear_array_len_eval();
+            }
+        }
+
         {
             use rustc_public::rustc_internal;
             let eval = move |tc: &rustc_public::ty::TyConst| -> Option<u64> {
@@ -608,10 +615,8 @@ pub fn generate_device_code<'tcx>(
             };
             mir_importer::install_array_len_eval(boxed);
         }
-        let __pipeline_result =
-            mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config);
-        mir_importer::clear_array_len_eval();
-        __pipeline_result
+        let _guard = ArrayLenEvalGuard;
+        mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config)
     });
 
     // Handle the result from rustc_internal::run.
