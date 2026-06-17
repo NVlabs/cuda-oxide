@@ -309,31 +309,45 @@ pub fn run_pipeline(
     }
 
     // Step 4.5: Run mem2reg (promote `mir.alloca` + `mir.load`/`mir.store`
-    // chains back to SSA values). In full-debug mode, tagged local slots leave
-    // behind `mir.dbg_value` records as they are promoted, so variable
-    // locations move from "this stack slot" to "this SSA value here".
-    if config.verbose {
-        eprintln!("\n=== Running mem2reg ===");
-    }
-    // pliron's pass infra now threads an AnalysisManager through mem2reg
-    // (caches dominator trees etc.); we run it standalone, so a fresh empty
-    // manager suffices. The returned IRStatus (Changed/Unchanged) is discarded.
-    let mut analyses = pliron::pass_manager::AnalysisManager::default();
-    pliron::opts::mem2reg::mem2reg(module_op_ptr, &mut ctx, &mut analyses).map_err(|e| {
-        PipelineError::Verification {
-            name: "mem2reg".to_string(),
-            message: e.disp(&ctx).to_string(),
-            operation: None,
+    // chains back to SSA values).
+    //
+    // Full-debug is a `-G`-style build: we keep every source local in its stack
+    // slot so cuda-gdb can read it from a stable memory location for the whole
+    // scope (via `llvm.dbg.declare`). Promoting locals to SSA would narrow each
+    // variable's inspectable range to its register's liveness, which is why an
+    // optimized `dbg.value` build shows `<optimized out>` for in-scope locals.
+    // We therefore skip mem2reg whenever variable info is requested. The
+    // promotion-aware `mir.dbg_value` salvage (see `dialect-mir::ops::debug`)
+    // remains the mechanism for any future optimized-debug tier that *does*
+    // promote.
+    if config.debug_kind.variables_enabled() {
+        if config.verbose {
+            eprintln!("\n=== Skipping mem2reg (full debug keeps locals in memory) ===");
         }
-    })?;
-    if config.verbose {
-        eprintln!("mem2reg successful ✓");
+    } else {
+        if config.verbose {
+            eprintln!("\n=== Running mem2reg ===");
+        }
+        // pliron's pass infra now threads an AnalysisManager through mem2reg
+        // (caches dominator trees etc.); we run it standalone, so a fresh empty
+        // manager suffices. The returned IRStatus (Changed/Unchanged) is discarded.
+        let mut analyses = pliron::pass_manager::AnalysisManager::default();
+        pliron::opts::mem2reg::mem2reg(module_op_ptr, &mut ctx, &mut analyses).map_err(|e| {
+            PipelineError::Verification {
+                name: "mem2reg".to_string(),
+                message: e.disp(&ctx).to_string(),
+                operation: None,
+            }
+        })?;
+        if config.verbose {
+            eprintln!("mem2reg successful ✓");
+        }
+        if config.show_mir_dialect {
+            eprintln!("\n=== dialect-mir module (after mem2reg) ===");
+            eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
+        }
+        verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
     }
-    if config.show_mir_dialect {
-        eprintln!("\n=== dialect-mir module (after mem2reg) ===");
-        eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
-    }
-    verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
 
     // Step 5: Lower dialect-mir → LLVM dialect.
     if config.verbose {
@@ -1057,11 +1071,20 @@ fn generate_ptx(
     // intentionally reads the original (pre-opt) IR so the target is
     // determined by what the source actually needs, not what opt elides.
     //
-    // Full debug still reaches this point as real LLVM debug intrinsics.
-    // Pliron mem2reg has already salvaged simple promoted locals into
-    // `mir.dbg_value`; LLVM's optimizer can continue salvaging many
-    // `dbg.declare`/`dbg.value` locations into optimized debug records.
-    let optimized = optimize_ll(ll_path, &toolchain, verbose);
+    // Full-debug is a `-G`-style build: it keeps every local in memory and
+    // describes it with `llvm.dbg.declare`. Running `opt -O2` would promote
+    // those slots to registers and collapse their live ranges, turning most
+    // in-scope locals into `<optimized out>` under cuda-gdb. So we feed the
+    // unoptimized IR straight to llc when variable info is requested, matching
+    // nvcc `-G`. (llc itself is invoked at `-O0` for the same builds below.)
+    let optimized = if debug_kind.variables_enabled() {
+        if verbose {
+            eprintln!("Skipping opt -O2 (full debug keeps locals inspectable)");
+        }
+        None
+    } else {
+        optimize_ll(ll_path, &toolchain, verbose)
+    };
     let llc_input: &Path = optimized.as_deref().unwrap_or(ll_path);
 
     // Target reference:
@@ -1085,9 +1108,17 @@ fn generate_ptx(
         format!("llc ({})", toolchain.llc_path)
     };
 
-    let result = std::process::Command::new(&toolchain.llc_path)
+    let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
+    llc_cmd
         .arg("-march=nvptx64")
-        .arg(format!("-mcpu={}", target))
+        .arg(format!("-mcpu={}", target));
+    // Full-debug (`-G`-style): run llc at -O0 so its own mem2reg/SROA does not
+    // promote the stack slots we deliberately kept in memory, which would
+    // invalidate the `llvm.dbg.declare` locations cuda-gdb reads.
+    if debug_kind.variables_enabled() {
+        llc_cmd.arg("-O0");
+    }
+    let result = llc_cmd
         .arg(llc_input)
         .arg("-o")
         .arg(ptx_path)
