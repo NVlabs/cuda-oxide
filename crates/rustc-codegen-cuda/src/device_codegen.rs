@@ -600,6 +600,10 @@ pub fn generate_device_code<'tcx>(
 
         {
             use rustc_public::rustc_internal;
+            // Boxed array-length evaluator, factored into an alias so the
+            // lifetime-erasing transmute below does not trip
+            // clippy::type_complexity.
+            type EvalFn<'a> = dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + 'a;
             let eval = move |tc: &rustc_public::ty::TyConst| -> Option<u64> {
                 let internal: rustc_middle::ty::Const<'_> =
                     rustc_internal::internal(tcx, tc.clone());
@@ -607,11 +611,8 @@ pub fn generate_device_code<'tcx>(
                 tcx.normalize_erasing_regions(env, internal)
                     .try_to_target_usize(tcx)
             };
-            let boxed: Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + 'static> = unsafe {
-                std::mem::transmute::<
-                    Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + '_>,
-                    Box<dyn Fn(&rustc_public::ty::TyConst) -> Option<u64> + 'static>,
-                >(Box::new(eval))
+            let boxed: Box<EvalFn<'static>> = unsafe {
+                std::mem::transmute::<Box<EvalFn<'_>>, Box<EvalFn<'static>>>(Box::new(eval))
             };
             mir_importer::install_array_len_eval(boxed);
         }
