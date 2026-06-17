@@ -45,3 +45,6 @@ __pycache__/
 
 # Locally-built bench helper (compiled by bench/build.sh)
 crates/rustc-codegen-cuda/examples/gemm_sol/bench/cublaslt_bench
+
+# cargo-oxide layered build cache (large, externally configured target dir)
+/.layer-target/
