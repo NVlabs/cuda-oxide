@@ -27,6 +27,7 @@
 //! - Shift amounts are cast and masked to match Rust's unchecked shift semantics
 //! - Checked operations return `(result, overflow_flag)` tuples
 
+use crate::convert::intrinsics::common::call_intrinsic;
 use crate::convert::types::convert_type;
 use llvm_export::attributes::{
     FCmpPredicateAttr, FastmathFlags, FastmathFlagsAttr, ICmpPredicateAttr,
@@ -34,6 +35,7 @@ use llvm_export::attributes::{
 };
 use llvm_export::op_interfaces::{BinArithOp, CastOpInterface, IntBinArithOpWithOverflowFlag};
 use llvm_export::ops as llvm;
+use llvm_export::types as llvm_types;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -266,102 +268,84 @@ pub(crate) fn convert_rem(
 // Checked operations (GPU: no overflow checking, just return (result, false))
 // ============================================================================
 
-/// Convert `mir.checked_add` to regular addition returning `(result, false)`.
+/// Convert `mir.checked_add` to `llvm.sadd.with.overflow` / `llvm.uadd.with.overflow`.
 ///
-/// GPU kernels don't perform overflow checking for performance. The overflow
-/// flag is always `false`. Returns a struct `{ result: T, overflow: i1 }`.
+/// Uses the LLVM overflow intrinsic so the overflow flag reflects the actual
+/// addition result rather than a hardcoded `false`. Returns `{iN, i1}`.
 pub(crate) fn convert_checked_add(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let (lhs, rhs) = get_binary_operands(op, ctx)?;
-    convert_checked_binop(ctx, rewriter, op, lhs, rhs, |ctx, l, r| {
-        let flags = IntegerOverflowFlagsAttr::default();
-        llvm::AddOp::new_with_overflow_flag(ctx, l, r, flags).get_operation()
-    })
+    let is_signed = is_signed_int_op(ctx, op, operands_info)?;
+    convert_checked_binop_with_intrinsic(ctx, rewriter, op, lhs, rhs, is_signed, "sadd", "uadd")
 }
 
-/// Convert `mir.checked_mul` to regular multiplication returning `(result, false)`.
+/// Convert `mir.checked_mul` to `llvm.smul.with.overflow` / `llvm.umul.with.overflow`.
 ///
-/// GPU kernels don't perform overflow checking for performance. The overflow
-/// flag is always `false`. Returns a struct `{ result: T, overflow: i1 }`.
+/// Uses the LLVM overflow intrinsic so the overflow flag reflects the actual
+/// multiplication result. Returns `{iN, i1}`.
 pub(crate) fn convert_checked_mul(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let (lhs, rhs) = get_binary_operands(op, ctx)?;
-    convert_checked_binop(ctx, rewriter, op, lhs, rhs, |ctx, l, r| {
-        let flags = IntegerOverflowFlagsAttr::default();
-        llvm::MulOp::new_with_overflow_flag(ctx, l, r, flags).get_operation()
-    })
+    let is_signed = is_signed_int_op(ctx, op, operands_info)?;
+    convert_checked_binop_with_intrinsic(ctx, rewriter, op, lhs, rhs, is_signed, "smul", "umul")
 }
 
-/// Convert `mir.checked_sub` to regular subtraction returning `(result, false)`.
+/// Convert `mir.checked_sub` to `llvm.ssub.with.overflow` / `llvm.usub.with.overflow`.
 ///
-/// GPU kernels don't perform overflow checking for performance. The overflow
-/// flag is always `false`. Returns a struct `{ result: T, overflow: i1 }`.
+/// Uses the LLVM overflow intrinsic so the overflow flag reflects the actual
+/// subtraction result. Returns `{iN, i1}`.
 pub(crate) fn convert_checked_sub(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let (lhs, rhs) = get_binary_operands(op, ctx)?;
-    convert_checked_binop(ctx, rewriter, op, lhs, rhs, |ctx, l, r| {
-        let flags = IntegerOverflowFlagsAttr::default();
-        llvm::SubOp::new_with_overflow_flag(ctx, l, r, flags).get_operation()
-    })
+    let is_signed = is_signed_int_op(ctx, op, operands_info)?;
+    convert_checked_binop_with_intrinsic(ctx, rewriter, op, lhs, rhs, is_signed, "ssub", "usub")
 }
 
-/// Shared implementation for checked binary ops: compute result, pack with `false` overflow flag.
-fn convert_checked_binop<F>(
+/// Emit `llvm.{s,u}{add,sub,mul}.with.overflow.iN` for a checked integer binop.
+///
+/// The LLVM intrinsic returns `{iN, i1}` directly, matching the converted MIR
+/// result type. The `op` is replaced with the intrinsic call, so no
+/// InsertValue reassembly is needed.
+fn convert_checked_binop_with_intrinsic(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     lhs: Value,
     rhs: Value,
-    build_arith: F,
-) -> Result<()>
-where
-    F: FnOnce(&mut Context, Value, Value) -> Ptr<Operation>,
-{
-    let arith_op = build_arith(ctx, lhs, rhs);
-    rewriter.insert_operation(ctx, arith_op);
-    let result_value = arith_op.deref(ctx).get_result(0);
-
-    // Create false constant for overflow flag (GPU doesn't check overflow)
-    let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-    let false_attr = pliron::builtin::attributes::IntegerAttr::new(
-        i1_ty,
-        pliron::utils::apint::APInt::from_u32(0, std::num::NonZeroUsize::new(1).unwrap()),
-    );
-    let false_const = llvm::ConstantOp::new(ctx, false_attr.into());
-    rewriter.insert_operation(ctx, false_const.get_operation());
-    let overflow_flag = false_const.get_operation().deref(ctx).get_result(0);
-
-    // Get result type and convert
-    let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    is_signed: bool,
+    signed_op: &str,   // e.g. "sadd", "ssub", "smul"
+    unsigned_op: &str, // e.g. "uadd", "usub", "umul"
+) -> Result<()> {
     let loc = op.deref(ctx).loc();
-    let llvm_result_ty =
-        convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error!(loc, "{e}"))?;
+    let lhs_ty = lhs.get_type(ctx);
 
-    // Create tuple struct: {result, overflow_flag}
-    let undef = llvm::UndefOp::new(ctx, llvm_result_ty);
-    rewriter.insert_operation(ctx, undef.get_operation());
-    let struct_val = undef.get_operation().deref(ctx).get_result(0);
+    let width = lhs_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .map(|t| t.width())
+        .ok_or_else(|| pliron::input_error!(loc, "checked binop: lhs must be an integer type"))?;
 
-    let insert0 = llvm::InsertValueOp::new(ctx, struct_val, result_value, vec![0]);
-    rewriter.insert_operation(ctx, insert0.get_operation());
-    let struct_with_result = insert0.get_operation().deref(ctx).get_result(0);
+    let chosen_op = if is_signed { signed_op } else { unsigned_op };
+    let intrinsic_name = format!("llvm.{chosen_op}.with.overflow.i{width}");
 
-    let insert1 = llvm::InsertValueOp::new(ctx, struct_with_result, overflow_flag, vec![1]);
-    rewriter.insert_operation(ctx, insert1.get_operation());
+    let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![lhs_ty, i1_ty.into()]);
+    let func_ty = llvm_types::FuncType::get(ctx, struct_ty.into(), vec![lhs_ty, lhs_ty], false);
 
-    rewriter.replace_operation(ctx, op, insert1.get_operation());
+    let call_op = call_intrinsic(ctx, rewriter, op, &intrinsic_name, func_ty, vec![lhs, rhs])?;
+    rewriter.replace_operation(ctx, op, call_op);
     Ok(())
 }
 
