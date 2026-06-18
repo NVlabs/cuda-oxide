@@ -660,6 +660,27 @@ pub fn translate_statement(
                             loc,
                         )
                     }
+                    (
+                        mir::ProjectionElem::Field(_, _),
+                        mir::ProjectionElem::ConstantIndex { .. }
+                        | mir::ProjectionElem::Index(_),
+                    ) => {
+                        // `_local.field[const]` or `_local.field[i]`: step into a
+                        // struct field, then index into the resulting array. The
+                        // walk-and-store helper resolves the full address chain.
+                        store_through_place_address(
+                            ctx,
+                            body,
+                            value_map,
+                            place,
+                            result_value,
+                            rvalue_op_opt,
+                            last_inserted,
+                            prev_op,
+                            block_ptr,
+                            loc,
+                        )
+                    }
                     _ => input_err!(
                         loc,
                         TranslationErr::unsupported(format!(
