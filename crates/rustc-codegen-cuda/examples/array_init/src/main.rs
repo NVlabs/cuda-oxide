@@ -45,6 +45,7 @@ mod kernels {
 
     /// Same but with a repeat expression: [0u32; 8].
     #[kernel]
+    #[allow(clippy::needless_range_loop)]
     pub fn zeroed_array_sum(mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
         let i = idx.get() as u32;
@@ -82,11 +83,11 @@ fn main() {
     let out = out_dev.to_host_vec(&stream).unwrap();
 
     let mut errors = 0usize;
-    for i in 0..N {
+    for (i, &val) in out.iter().enumerate() {
         let expected = 10 + i as u32;
-        if out[i] != expected {
+        if val != expected {
             if errors < 5 {
-                eprintln!("  FAIL array_sum[{}]: got {} want {}", i, out[i], expected);
+                eprintln!("  FAIL array_sum[{}]: got {} want {}", i, val, expected);
             }
             errors += 1;
         }
@@ -100,13 +101,13 @@ fn main() {
         .expect("zeroed_array_sum launch");
     let out2 = out_dev.to_host_vec(&stream).unwrap();
 
-    for i in 0..N {
+    for (i, &val) in out2.iter().enumerate() {
         let expected = 8 * i as u32 + 28;
-        if out2[i] != expected {
+        if val != expected {
             if errors < 5 {
                 eprintln!(
                     "  FAIL zeroed_array_sum[{}]: got {} want {}",
-                    i, out2[i], expected
+                    i, val, expected
                 );
             }
             errors += 1;
