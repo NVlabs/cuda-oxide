@@ -226,8 +226,12 @@ pub(crate) fn convert_redux(
     }
     let (mask, value) = (operands[0], operands[1]);
 
-    let func_ty =
-        llvm_types::FuncType::get(ctx, i32_ty.into(), vec![i32_ty.into(), i32_ty.into()], false);
+    let func_ty = llvm_types::FuncType::get(
+        ctx,
+        i32_ty.into(),
+        vec![i32_ty.into(), i32_ty.into()],
+        false,
+    );
 
     // LLVM intrinsic wants (src, membermask): flip to [value, mask].
     let call_op = call_intrinsic(

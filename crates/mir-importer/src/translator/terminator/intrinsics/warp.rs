@@ -536,7 +536,14 @@ pub fn emit_warp_redux(
     )?;
     last_op = last_op_after;
 
-    let redux_op = Operation::new(ctx, redux_opid, vec![result_ty], vec![mask, value], vec![], 0);
+    let redux_op = Operation::new(
+        ctx,
+        redux_opid,
+        vec![result_ty],
+        vec![mask, value],
+        vec![],
+        0,
+    );
     redux_op.deref_mut(ctx).set_loc(loc.clone());
 
     if let Some(prev) = last_op {
