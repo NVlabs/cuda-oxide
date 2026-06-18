@@ -70,6 +70,24 @@ pub fn translate_statement(
 
     match &stmt.kind {
         mir::StatementKind::Assign(place, rvalue) => {
+            // Fast path: array aggregate assigned to an addressable local.
+            // Write each element directly into the alloca storage instead of
+            // building an SSA aggregate (insertvalue chain) and then storing it.
+            if let mir::Rvalue::Aggregate(mir::AggregateKind::Array(_), operands) = rvalue {
+                if value_map.get_slot(place.local).is_some() {
+                    return translate_array_agg_into_alloca(
+                        ctx,
+                        body,
+                        place,
+                        operands,
+                        value_map,
+                        block_ptr,
+                        prev_op,
+                        loc,
+                    );
+                }
+            }
+
             // Translate the Rvalue to get the value being assigned
             let (rvalue_op_opt, result_value, last_inserted) = rvalue::translate_rvalue(
                 ctx,
@@ -997,4 +1015,68 @@ fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
         .downcast_ref::<dialect_mir::types::MirPtrType>()
         .map(|p| p.address_space)
         .unwrap_or(0)
+}
+
+/// Assign an array aggregate element-by-element into addressable storage.
+///
+/// When the destination has an alloca slot and the RHS is
+/// `Rvalue::Aggregate(Array, operands)`, building a full SSA aggregate
+/// (`MirConstructArrayOp`) followed by a single large store produces a chain
+/// of `insertvalue` instructions in LLVM IR. This helper skips the aggregate
+/// entirely and stores each element directly to its computed address.
+fn translate_array_agg_into_alloca(
+    ctx: &mut Context,
+    body: &mir::Body,
+    dest_place: &mir::Place,
+    operands: &[mir::Operand],
+    value_map: &mut ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<Ptr<Operation>>> {
+    let mut current_prev = prev_op;
+
+    for (i, operand) in operands.iter().enumerate() {
+        let (elem_val, after_operand) = rvalue::translate_operand(
+            ctx,
+            body,
+            operand,
+            value_map,
+            block_ptr,
+            current_prev,
+            loc.clone(),
+        )?;
+        current_prev = after_operand.or(current_prev);
+
+        // Extend the destination place with a ConstantIndex for this element.
+        let elem_place = mir::Place {
+            local: dest_place.local,
+            projection: dest_place
+                .projection
+                .iter()
+                .cloned()
+                .chain(std::iter::once(mir::ProjectionElem::ConstantIndex {
+                    offset: i as u64,
+                    min_length: operands.len() as u64,
+                    from_end: false,
+                }))
+                .collect(),
+        };
+
+        let after_store = store_through_place_address(
+            ctx,
+            body,
+            value_map,
+            &elem_place,
+            elem_val,
+            None,
+            current_prev,
+            current_prev,
+            block_ptr,
+            loc.clone(),
+        )?;
+        current_prev = after_store.or(current_prev);
+    }
+
+    Ok(current_prev)
 }
