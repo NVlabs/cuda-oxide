@@ -23,7 +23,7 @@ use crate::error::{DeviceError, device_assert, device_error};
 use crate::scheduling_policies::{GlobalSchedulingPolicy, SchedulingPolicy, StreamPoolRoundRobin};
 use cuda_core::{CudaContext, CudaFunction, CudaModule, CudaStream};
 use std::cell::Cell;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ pub trait FunctionKey: Hash {
 }
 
 /// Cached mapping from function hash keys to loaded `(module, function)` pairs.
-type DeviceFunctions = HashMap<String, (Arc<CudaModule>, Arc<CudaFunction>)>;
+type DeviceFunctions = FxHashMap<String, (Arc<CudaModule>, Arc<CudaFunction>)>;
 
 /// Per-device state: CUDA context, scheduling policy, deallocator stream, and
 /// compiled-kernel cache.
@@ -77,7 +77,7 @@ pub struct AsyncDeviceContexts {
     /// Currently selected default device ordinal.
     default_device: Cell<usize>,
     /// Lazily initialized map of device ordinal to context.
-    devices: Cell<Option<HashMap<usize, AsyncDeviceContext>>>,
+    devices: Cell<Option<FxHashMap<usize, AsyncDeviceContext>>>,
 }
 
 // Thread-local storage for per-device CUDA state.
@@ -114,7 +114,7 @@ pub fn init_device_contexts(
             "Context already initialized.",
         )
     })?;
-    let devices = HashMap::with_capacity(num_devices);
+    let devices = FxHashMap::with_capacity_and_hasher(num_devices, Default::default());
     DEVICE_CONTEXTS.with(|ctx| {
         ctx.default_device.set(default_device_id);
         ctx.devices.set(Some(devices));
@@ -144,14 +144,14 @@ pub fn new_device_context(
         context,
         deallocator_stream,
         policy: Arc::new(policy),
-        functions: HashMap::new(),
+        functions: FxHashMap::default(),
     })
 }
 
 /// Inserts a new device context into `hashmap`. Errors if the device is
 /// already present.
 fn init_device(
-    hashmap: &mut HashMap<usize, AsyncDeviceContext>,
+    hashmap: &mut FxHashMap<usize, AsyncDeviceContext>,
     device_id: usize,
     policy: GlobalSchedulingPolicy,
 ) -> Result<(), DeviceError> {
@@ -162,7 +162,7 @@ fn init_device(
 
 /// Initializes a device with the default round-robin policy.
 fn init_with_default_policy(
-    hashmap: &mut HashMap<usize, AsyncDeviceContext>,
+    hashmap: &mut FxHashMap<usize, AsyncDeviceContext>,
     device_id: usize,
 ) -> Result<(), DeviceError> {
     let policy =

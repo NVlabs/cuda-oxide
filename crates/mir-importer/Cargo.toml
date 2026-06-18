@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Rust MIR to Pliron IR translation and compilation pipeline"
 
 [dependencies]
+rustc-hash = { workspace = true }
 pliron = { workspace = true }
 pliron-derive = { workspace = true }
 llvm-export = { workspace = true }

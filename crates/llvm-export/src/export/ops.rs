@@ -6,7 +6,7 @@
 //! Operation emission for LLVM IR.
 
 use std::cell::Ref;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt::Write;
 
 use pliron::r#type::Typed;
@@ -237,9 +237,9 @@ impl<'a> ModuleExportState<'a> {
     pub(super) fn export_op(
         &mut self,
         op: Ptr<Operation>,
-        value_names: &mut HashMap<Value, String>,
+        value_names: &mut FxHashMap<Value, String>,
         next_value_id: &mut usize,
-        block_labels: &HashMap<Ptr<BasicBlock>, String>,
+        block_labels: &FxHashMap<Ptr<BasicBlock>, String>,
         debug_scope: Option<usize>,
         output: &mut String,
     ) -> Result<(), String> {
@@ -423,7 +423,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_return(
         &mut self,
         op: &ops::ReturnOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -443,7 +443,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_br(
         &self,
         op: &ops::BrOp,
-        block_labels: &HashMap<Ptr<BasicBlock>, String>,
+        block_labels: &FxHashMap<Ptr<BasicBlock>, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -456,8 +456,8 @@ impl<'a> ModuleExportState<'a> {
     fn emit_cond_br(
         &mut self,
         op: &ops::CondBrOp,
-        value_names: &HashMap<Value, String>,
-        block_labels: &HashMap<Ptr<BasicBlock>, String>,
+        value_names: &FxHashMap<Value, String>,
+        block_labels: &FxHashMap<Ptr<BasicBlock>, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -477,7 +477,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_load(
         &mut self,
         op: &ops::LoadOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -505,7 +505,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_store(
         &mut self,
         op: &ops::StoreOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -534,7 +534,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_alloca(
         &mut self,
         op: &ops::AllocaOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -556,7 +556,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_debug_declare_for_alloca(
         &mut self,
         op: &ops::AllocaOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         debug_scope: Option<usize>,
         loc: &pliron::location::Location,
         output: &mut String,
@@ -595,7 +595,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_debug_value(
         &mut self,
         op: &ops::DebugValueOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         debug_scope: Option<usize>,
         loc: &pliron::location::Location,
         output: &mut String,
@@ -634,7 +634,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_gep(
         &mut self,
         op: &ops::GetElementPtrOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -673,7 +673,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_atomic_load(
         &mut self,
         op: &ops::AtomicLoadOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -697,7 +697,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_atomic_store(
         &mut self,
         op: &ops::AtomicStoreOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -721,7 +721,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_atomic_rmw(
         &mut self,
         op: &ops::AtomicRmwOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -748,7 +748,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_atomic_cmpxchg(
         &mut self,
         op: &ops::AtomicCmpxchgOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -791,7 +791,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_fneg(
         &mut self,
         op: &ops::FNegOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -810,7 +810,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_icmp(
         &mut self,
         op: &ops::ICmpOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -844,7 +844,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_fcmp(
         &mut self,
         op: &ops::FCmpOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -884,7 +884,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_select(
         &mut self,
         op: &ops::SelectOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -912,7 +912,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_call(
         &mut self,
         op: &ops::CallOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -974,7 +974,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_inline_asm(
         &mut self,
         op: &ops::InlineAsmOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -1041,7 +1041,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_zext(
         &mut self,
         op: &ops::ZExtOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -1072,7 +1072,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_extract_value(
         &mut self,
         op: &ops::ExtractValueOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -1094,7 +1094,7 @@ impl<'a> ModuleExportState<'a> {
     fn emit_insert_value(
         &mut self,
         op: &ops::InsertValueOp,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
@@ -1118,12 +1118,12 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-    fn emit_undef(&self, op: &ops::UndefOp, value_names: &mut HashMap<Value, String>) {
+    fn emit_undef(&self, op: &ops::UndefOp, value_names: &mut FxHashMap<Value, String>) {
         let res = op.get_operation().deref(self.ctx).get_result(0);
         value_names.insert(res, "undef".to_string());
     }
 
-    fn emit_constant(&self, op: &ops::ConstantOp, value_names: &mut HashMap<Value, String>) {
+    fn emit_constant(&self, op: &ops::ConstantOp, value_names: &mut FxHashMap<Value, String>) {
         let val_attr = op.get_value(self.ctx);
         let const_str = if let Some(int_attr) = val_attr.downcast_ref::<IntegerAttr>() {
             // Use APInt's proper decimal string conversion instead of parsing debug format.
@@ -1147,7 +1147,7 @@ impl<'a> ModuleExportState<'a> {
         value_names.insert(res, const_str);
     }
 
-    fn emit_address_of(&self, op: &ops::AddressOfOp, value_names: &HashMap<Value, String>) {
+    fn emit_address_of(&self, op: &ops::AddressOfOp, value_names: &FxHashMap<Value, String>) {
         // AddressOfOp is virtual in textual LLVM IR: every use site prints the
         // global symbol directly. The naming pre-pass in export_function
         // registers the result as `@<global_name>` before any block is emitted,
@@ -1168,7 +1168,7 @@ impl<'a> ModuleExportState<'a> {
         &self,
         op_name: &str,
         op: Ptr<Operation>,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.deref(self.ctx);
@@ -1206,7 +1206,7 @@ impl<'a> ModuleExportState<'a> {
         &self,
         op_name: &str,
         op: Ptr<Operation>,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.deref(self.ctx);
@@ -1227,7 +1227,7 @@ impl<'a> ModuleExportState<'a> {
     pub(super) fn export_value(
         &self,
         val: Value,
-        value_names: &HashMap<Value, String>,
+        value_names: &FxHashMap<Value, String>,
         output: &mut String,
     ) -> Result<(), String> {
         if let Some(name) = value_names.get(&val) {

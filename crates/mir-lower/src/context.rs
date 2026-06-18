@@ -9,20 +9,20 @@
 //! automatically. This module provides the CUDA-specific state types that
 //! certain ops need during conversion.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Map from shared memory allocation keys to their LLVM global symbol names.
 ///
 /// In CUDA kernels, shared memory is declared as module-level globals with
 /// address space 3. When multiple operations reference the same shared allocation
 /// (identified by a key string), they should all refer to the same global.
-pub type SharedGlobalsMap = HashMap<String, pliron::identifier::Identifier>;
+pub type SharedGlobalsMap = FxHashMap<String, pliron::identifier::Identifier>;
 
 /// Map from ordinary device static keys to LLVM global symbol names.
 ///
 /// Ordinary Rust `static` / `static mut` values used from device code live in
 /// CUDA global memory (address space 1), not shared memory.
-pub type DeviceGlobalsMap = HashMap<String, pliron::identifier::Identifier>;
+pub type DeviceGlobalsMap = FxHashMap<String, pliron::identifier::Identifier>;
 
 /// Tracking for dynamic shared memory alignment per kernel.
 ///
@@ -34,4 +34,4 @@ pub type DeviceGlobalsMap = HashMap<String, pliron::identifier::Identifier>;
 /// a function to determine the maximum alignment required by any
 /// `DynamicSharedArray<T, ALIGN>` call, ensuring the global is created
 /// with the correct alignment from the start.
-pub type DynamicSmemAlignmentMap = HashMap<String, (pliron::identifier::Identifier, u64)>;
+pub type DynamicSmemAlignmentMap = FxHashMap<String, (pliron::identifier::Identifier, u64)>;

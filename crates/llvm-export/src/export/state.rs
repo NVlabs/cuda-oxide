@@ -6,7 +6,8 @@
 //! Exporter state and kernel bookkeeping.
 
 use pliron::{basic_block::BasicBlock, context::Ptr, value::Value};
-use std::{collections::HashMap, path::PathBuf};
+use rustc_hash::FxHashMap;
+use std::path::PathBuf;
 
 use crate::ops::{DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap};
 
@@ -14,7 +15,7 @@ use super::config::DebugKind;
 
 /// Map from block to its predecessors with the values passed to each predecessor.
 /// Used for PHI node generation when exporting to LLVM IR.
-pub(super) type PredecessorMap = HashMap<Ptr<BasicBlock>, Vec<(Ptr<BasicBlock>, Vec<Value>)>>;
+pub(super) type PredecessorMap = FxHashMap<Ptr<BasicBlock>, Vec<(Ptr<BasicBlock>, Vec<Value>)>>;
 
 /// Cluster dimensions for a kernel (from `#[cluster(x,y,z)]` attribute).
 pub(super) struct KernelClusterConfig {
@@ -63,29 +64,29 @@ pub(super) struct ModuleExportState<'a> {
     /// The single compile unit used for Stage 2 line-table debug info.
     pub(super) debug_compile_unit: Option<usize>,
     /// `DIFile` nodes keyed by the source path they describe.
-    pub(super) debug_files: HashMap<PathBuf, usize>,
+    pub(super) debug_files: FxHashMap<PathBuf, usize>,
     /// Shared empty function type used by all line-table-only subprograms.
     pub(super) debug_subroutine_type: Option<usize>,
     /// `DISubprogram` file paths, used to create file-correct nested scopes.
-    pub(super) debug_subprogram_files: HashMap<usize, PathBuf>,
+    pub(super) debug_subprogram_files: FxHashMap<usize, PathBuf>,
     /// Fallback line/column for calls that LLVM requires to have a location.
-    pub(super) debug_subprogram_fallbacks: HashMap<usize, (i32, i32)>,
+    pub(super) debug_subprogram_fallbacks: FxHashMap<usize, (i32, i32)>,
     /// `DILexicalBlockFile` nodes keyed by `(parent scope, file path)`.
-    pub(super) debug_file_scopes: HashMap<(usize, PathBuf), usize>,
+    pub(super) debug_file_scopes: FxHashMap<(usize, PathBuf), usize>,
     /// `DILexicalBlock` nodes keyed by `(parent scope, file, line, column)`.
-    pub(super) debug_lexical_blocks: HashMap<(usize, PathBuf, i32, i32), usize>,
+    pub(super) debug_lexical_blocks: FxHashMap<(usize, PathBuf, i32, i32), usize>,
     /// Inlined callee `DISubprogram` nodes keyed by `(name, file, line)`.
-    pub(super) debug_inlined_subprograms: HashMap<(String, PathBuf, i32), usize>,
+    pub(super) debug_inlined_subprograms: FxHashMap<(String, PathBuf, i32), usize>,
     /// MIR source-scope tables keyed by the owning function `DISubprogram`.
-    pub(super) debug_source_scope_maps: HashMap<usize, DebugSourceScopeMap>,
+    pub(super) debug_source_scope_maps: FxHashMap<usize, DebugSourceScopeMap>,
     /// Resolved MIR source scopes keyed by `(function DISubprogram, source scope id)`.
-    pub(super) debug_resolved_source_scopes: HashMap<(usize, u32), ResolvedDebugScope>,
+    pub(super) debug_resolved_source_scopes: FxHashMap<(usize, u32), ResolvedDebugScope>,
     /// `DILocation` nodes keyed by `(scope, line, column, inlined-at location)`.
-    pub(super) debug_locations: HashMap<(usize, i32, i32, Option<usize>), usize>,
+    pub(super) debug_locations: FxHashMap<(usize, i32, i32, Option<usize>), usize>,
     /// `DIType` nodes keyed by the simple debug type they describe.
-    pub(super) debug_types: HashMap<DebugLocalTypeKind, usize>,
+    pub(super) debug_types: FxHashMap<DebugLocalTypeKind, usize>,
     /// `DILocalVariable` nodes keyed by scope, source line, and local identity.
-    pub(super) debug_local_variables: HashMap<(usize, PathBuf, i32, DebugLocalVariableInfo), usize>,
+    pub(super) debug_local_variables: FxHashMap<(usize, PathBuf, i32, DebugLocalVariableInfo), usize>,
     /// Numbered debug metadata definitions, in allocation order.
     pub(super) debug_nodes: Vec<(usize, String)>,
     /// Whether any function emitted `llvm.dbg.declare`.
@@ -119,18 +120,18 @@ impl<'a> ModuleExportState<'a> {
             next_metadata_id: 0,
             debug_kind,
             debug_compile_unit: None,
-            debug_files: HashMap::new(),
+            debug_files: FxHashMap::default(),
             debug_subroutine_type: None,
-            debug_subprogram_files: HashMap::new(),
-            debug_subprogram_fallbacks: HashMap::new(),
-            debug_file_scopes: HashMap::new(),
-            debug_lexical_blocks: HashMap::new(),
-            debug_inlined_subprograms: HashMap::new(),
-            debug_source_scope_maps: HashMap::new(),
-            debug_resolved_source_scopes: HashMap::new(),
-            debug_locations: HashMap::new(),
-            debug_types: HashMap::new(),
-            debug_local_variables: HashMap::new(),
+            debug_subprogram_files: FxHashMap::default(),
+            debug_subprogram_fallbacks: FxHashMap::default(),
+            debug_file_scopes: FxHashMap::default(),
+            debug_lexical_blocks: FxHashMap::default(),
+            debug_inlined_subprograms: FxHashMap::default(),
+            debug_source_scope_maps: FxHashMap::default(),
+            debug_resolved_source_scopes: FxHashMap::default(),
+            debug_locations: FxHashMap::default(),
+            debug_types: FxHashMap::default(),
+            debug_local_variables: FxHashMap::default(),
             debug_nodes: Vec::new(),
             debug_declare_used: false,
             debug_value_used: false,

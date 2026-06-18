@@ -129,7 +129,7 @@ pub mod helpers;
 pub mod lowering;
 pub mod type_conversion_interface;
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use pliron::{
     builtin::types::{IntegerType, Signedness},
@@ -275,9 +275,9 @@ impl DialectConversion for MirToLlvmConversionDriver {
 /// `Ok(())` if all operations were successfully converted.
 pub fn lower_mir_to_llvm(ctx: &mut Context, module_op: Ptr<Operation>) -> Result<()> {
     let mut conversion = MirToLlvmConversionDriver {
-        shared_globals: HashMap::new(),
-        device_globals: HashMap::new(),
-        dynamic_smem_alignments: HashMap::new(),
+        shared_globals: FxHashMap::default(),
+        device_globals: FxHashMap::default(),
+        dynamic_smem_alignments: FxHashMap::default(),
     };
     // pliron's DialectConversion now reports an IRStatus (Changed/Unchanged);
     // lowering only cares about success, so discard it.

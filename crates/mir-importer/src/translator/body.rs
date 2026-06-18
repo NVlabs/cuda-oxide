@@ -44,7 +44,7 @@ use rustc_public::CrateDef;
 use rustc_public::mir;
 use rustc_public::mir::mono;
 use rustc_public::ty::{ConstantKind, FloatTy, IntTy, RigidTy, Ty, TyKind, UintTy};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Cluster dimensions extracted from `#[cluster(x,y,z)]` attribute.
 ///
@@ -230,8 +230,8 @@ struct LocalDebugInfo {
 fn collect_debug_locals(
     ctx: &mut Context,
     body: &mir::Body,
-) -> HashMap<mir::Local, LocalDebugInfo> {
-    let mut locals = HashMap::new();
+) -> FxHashMap<mir::Local, LocalDebugInfo> {
+    let mut locals = FxHashMap::default();
 
     for info in &body.var_debug_info {
         if info.composite.is_some() {
@@ -549,7 +549,7 @@ fn emit_entry_allocas(
     let debug_locals = if debug_kind.variables_enabled() {
         collect_debug_locals(ctx, body)
     } else {
-        HashMap::new()
+        FxHashMap::default()
     };
 
     // Pre-scan the body once: for each local whose translated slot type is a

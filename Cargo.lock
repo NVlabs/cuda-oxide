@@ -322,6 +322,7 @@ dependencies = [
  "cuda-bindings",
  "cuda-core",
  "futures",
+ "rustc-hash",
  "thiserror",
 ]
 
@@ -740,6 +741,7 @@ dependencies = [
  "once_cell",
  "pliron",
  "pliron-derive",
+ "rustc-hash",
  "thiserror",
 ]
 
@@ -755,6 +757,7 @@ dependencies = [
  "pliron",
  "pliron-derive",
  "reserved-oxide-symbols",
+ "rustc-hash",
  "thiserror",
 ]
 

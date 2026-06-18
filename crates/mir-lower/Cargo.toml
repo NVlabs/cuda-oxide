@@ -8,6 +8,7 @@ repository.workspace = true
 description = "dialect-mir to LLVM dialect lowering pass"
 
 [dependencies]
+rustc-hash = { workspace = true }
 pliron = { workspace = true }
 llvm-export = { workspace = true }
 pliron-derive = { workspace = true }

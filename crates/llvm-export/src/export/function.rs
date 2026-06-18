@@ -9,7 +9,7 @@
 //! textual IR is stable across runs, and the block-argument → PHI-node translation
 //! that bridges pliron's basic-block argument convention to LLVM's PHI-node convention.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt::Write;
 
 use pliron::{
@@ -249,7 +249,7 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(ret_ty, output)?;
             write!(output, " @{fixed_func_name}(").unwrap();
 
-            let mut value_names = HashMap::new();
+            let mut value_names = FxHashMap::default();
             let mut next_value_id = 0;
 
             let block = entry_block.deref(self.ctx);
@@ -301,7 +301,7 @@ impl<'a> ModuleExportState<'a> {
             self.convergent_used = true;
 
             // Assign labels to all blocks
-            let mut block_labels = HashMap::new();
+            let mut block_labels = FxHashMap::default();
             let mut next_label_id = 0;
             for (i, block_node) in func
                 .get_operation()
@@ -407,7 +407,7 @@ impl<'a> ModuleExportState<'a> {
             }
 
             // Build predecessor map for PHI generation
-            let mut pred_map: PredecessorMap = HashMap::new();
+            let mut pred_map: PredecessorMap = FxHashMap::default();
             for block in func
                 .get_operation()
                 .deref(self.ctx)
@@ -501,9 +501,9 @@ impl<'a> ModuleExportState<'a> {
     pub(super) fn export_block(
         &mut self,
         block: Ptr<BasicBlock>,
-        value_names: &mut HashMap<Value, String>,
+        value_names: &mut FxHashMap<Value, String>,
         next_value_id: &mut usize,
-        block_labels: &HashMap<Ptr<BasicBlock>, String>,
+        block_labels: &FxHashMap<Ptr<BasicBlock>, String>,
         pred_map: &PredecessorMap,
         is_entry: bool,
         debug_scope: Option<usize>,
