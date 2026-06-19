@@ -407,31 +407,26 @@ pub fn is_fully_monomorphized<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>)
     true
 }
 
-/// Paths into `std::sys::cmath` that mir-importer rewrites to a libdevice
-/// intrinsic placeholder.
+/// `std::sys::cmath::*` names we allow in device code and rewrite to GPU math.
 ///
-/// Several `f{32,64}` math methods are declared in `std` and dispatched
-/// through `extern "C"` shims in `std::sys::cmath` (`atan2`, `atan`, `cbrt`,
-/// and the inverse trig). `tan` belongs here too: unlike `sin`/`cos`, it is
-/// not part of this toolchain's `core_float_math`, so `f{32,64}::tan()`
-/// lowers to `std::sys::cmath::tan{,f}` rather than a `core::intrinsics`
-/// call. (`sin`/`cos` are listed defensively in case a build takes the std
-/// path.) These methods are `#[inline]`, so MIR-opt collapses the wrapper
-/// and the surviving call site points directly at one of these shims. Device
-/// codegen must never see them: mir-importer matches the same FQDN and
-/// emits an `__nv_*` libdevice call instead, and the collector silently
-/// skips them here so the std-crate guard doesn't fire.
+/// When you call `x.tan()` (also `atan`, `acos`, `cbrt`, ...), the compiler
+/// turns it into a call to a tiny `std` wrapper like `std::sys::cmath::tan`,
+/// which on a CPU forwards to the system C math library. The GPU has no such
+/// library, and device code may not call into `std`, so our "no std on the
+/// GPU" guard would normally reject the call.
 ///
-/// Keep this list in sync with the `std::sys::cmath` matches in
-/// `mir-importer/src/translator/terminator/intrinsics/float_math.rs`.
+/// We never actually run `std` here: mir-importer rewrites each of these
+/// names to the matching NVIDIA libdevice function (`__nv_tan`, `__nv_atan`,
+/// ...). This list just tells the guard "these are fine, we handle them."
+/// Keep it in sync with the `std::sys::cmath` matches in float_math.rs.
 ///
-/// Only `std::`-crate paths belong here: the guard is consulted solely
-/// inside the forbidden-std branch of `should_collect_from_crate`, where
-/// every def path starts with `std::`. Intrinsic-lowered shims that live
-/// in `core` (e.g. the `core::num::imp::libm::cbrtf` / `cbrt` extern
-/// declarations that back `f{32,64}::cbrt` on the pinned toolchain) never
-/// need an entry: `core` is an allowed crate, and the declarations have
-/// no MIR, so the collector's no-MIR skip already excludes them.
+/// Most math (`sin`, `cos`, `exp`, ...) takes a different route on this
+/// toolchain: the compiler lowers it to a builtin in `core` (an allowed
+/// crate), so it never reaches here. `tan` is the exception that still goes
+/// through `std`, which is the gap this list fixes; `sin`/`cos` are listed
+/// defensively in case a build ever sends them down the `std` route too.
+/// Only `std::`-prefixed names belong here; `core`-based shims are already
+/// allowed.
 fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
     matches!(
         fn_path,
