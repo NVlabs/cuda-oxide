@@ -3,15 +3,12 @@
 
 use cuda_core::DeviceCopy;
 
-// This enum has no zero discriminant, so `DeviceBuffer::zeroed::<Tag>` would
-// create an invalid value.
 #[derive(Copy, Clone, DeviceCopy)]
-#[repr(u8)]
-enum Tag {
-    A = 1,
-    B = 2,
+enum Maybe<T> {
+    Empty,
+    Value(T),
 }
 
 fn main() {
-    let _ = Tag::A;
+    let _ = core::mem::size_of::<Maybe<u32>>();
 }
