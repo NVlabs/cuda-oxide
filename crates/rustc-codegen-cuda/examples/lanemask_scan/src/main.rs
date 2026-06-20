@@ -46,6 +46,27 @@ mod kernels {
         }
     }
 
+    /// Each lane writes all five lanemask register values into a flat buffer
+    /// laid out as [lt, le, eq, ge, gt] per lane (5 * 32 = 160 u32s per warp).
+    ///
+    /// Used to verify that each of the five registers reads correctly for every
+    /// lane position, not just `lt`.
+    #[kernel]
+    pub fn all_lanemasks(mut out: DisjointSlice<u32>) {
+        let gid = thread::index_1d();
+        let n_lanes = out.len() / 5;
+        if gid.in_bounds(n_lanes) {
+            let base = gid.get() * 5;
+            unsafe {
+                *out.get_unchecked_mut(base) = warp::lanemask_lt();
+                *out.get_unchecked_mut(base + 1) = warp::lanemask_le();
+                *out.get_unchecked_mut(base + 2) = warp::lanemask_eq();
+                *out.get_unchecked_mut(base + 3) = warp::lanemask_ge();
+                *out.get_unchecked_mut(base + 4) = warp::lanemask_gt();
+            }
+        }
+    }
+
     /// Warp exclusive prefix sum / stream-compaction rank.
     ///
     /// Each lane "keeps" its element when `data[gid] != 0`. The kept lanes are
@@ -156,6 +177,79 @@ fn main() {
         println!("✗ rank mismatch!");
         println!("  gpu: {:?}", &ranks[..8]);
         println!("  cpu: {:?}", &expected[..8]);
+        std::process::exit(1);
+    }
+
+    // ===== Test 3: all five lanemask registers =====
+    println!("\n--- Test 3: all five lanemask registers (lt/le/eq/ge/gt) ---");
+    // 5 values per lane, one warp (32 lanes).
+    let n_lanes: usize = 32;
+    let mut all_dev = DeviceBuffer::<u32>::zeroed(&stream, n_lanes * 5).unwrap();
+    let cfg1 = LaunchConfig {
+        block_dim: (32, 1, 1),
+        grid_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    module
+        .all_lanemasks((stream).as_ref(), cfg1, &mut all_dev)
+        .expect("Kernel launch failed");
+
+    let all = all_dev.to_host_vec(&stream).unwrap();
+
+    let mut masks_ok = true;
+    for lane in 0u32..32 {
+        let base = (lane as usize) * 5;
+        let lt = all[base];
+        let le = all[base + 1];
+        let eq = all[base + 2];
+        let ge = all[base + 3];
+        let gt = all[base + 4];
+
+        // Mathematical invariants for lane i:
+        //   lt = bits 0..(i-1)  = (1 << i) - 1
+        //   le = bits 0..i      = (2 << i) - 1  [lane 31 wraps to 0xFFFF_FFFF]
+        //   eq = bit i only     = 1 << i
+        //   ge = bits i..31     = !(lt)
+        //   gt = bits (i+1)..31 = !(le)
+        let exp_lt = (1u32 << lane).wrapping_sub(1);
+        let exp_le = (2u32 << lane).wrapping_sub(1);
+        let exp_eq = 1u32 << lane;
+        let exp_ge = !exp_lt;
+        let exp_gt = !exp_le;
+
+        if lt != exp_lt || le != exp_le || eq != exp_eq || ge != exp_ge || gt != exp_gt {
+            println!(
+                "✗ lane {lane}: got lt={lt:#010x} le={le:#010x} eq={eq:#010x} ge={ge:#010x} gt={gt:#010x}"
+            );
+            println!(
+                "  expected    lt={exp_lt:#010x} le={exp_le:#010x} eq={exp_eq:#010x} ge={exp_ge:#010x} gt={exp_gt:#010x}"
+            );
+            masks_ok = false;
+        }
+    }
+
+    // Print a representative row for readability.
+    let sample = |lane: usize| {
+        let b = lane * 5;
+        format!(
+            "lane {:2}: lt={:#010x} le={:#010x} eq={:#010x} ge={:#010x} gt={:#010x}",
+            lane,
+            all[b],
+            all[b + 1],
+            all[b + 2],
+            all[b + 3],
+            all[b + 4]
+        )
+    };
+    println!("{}", sample(0));
+    println!("{}", sample(1));
+    println!("{}", sample(16));
+    println!("{}", sample(31));
+
+    if masks_ok {
+        println!("✓ all five lanemask registers correct for all 32 lanes");
+    } else {
         std::process::exit(1);
     }
 

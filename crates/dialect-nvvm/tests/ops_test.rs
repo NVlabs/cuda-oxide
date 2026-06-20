@@ -4,11 +4,10 @@
  */
 
 use dialect_nvvm::ops::{
-    Barrier0Op, FmaBf16x2Op, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp,
-    ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
-    ReadPtxSregLanemaskLtOp, ReadPtxSregTidXOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp,
-    ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp,
-    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    Barrier0Op, FmaBf16x2Op, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
+    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregTidXOp,
+    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
