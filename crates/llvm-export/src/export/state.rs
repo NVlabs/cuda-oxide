@@ -242,10 +242,23 @@ mod tests {
         assert!(ModuleExportState::is_convergent_intrinsic(
             "llvm.nvvm.redux.sync.add"
         ));
-        // The whole redux.sync family is a warp collective (future min/max/etc.).
-        assert!(ModuleExportState::is_convergent_intrinsic(
-            "llvm.nvvm.redux.sync.umin"
-        ));
+        // The whole redux.sync integer family is a warp collective and must be
+        // flagged convergent (the `llvm.nvvm.redux` prefix covers every name
+        // lowered by the redux ops).
+        for name in [
+            "llvm.nvvm.redux.sync.umin",
+            "llvm.nvvm.redux.sync.min",
+            "llvm.nvvm.redux.sync.umax",
+            "llvm.nvvm.redux.sync.max",
+            "llvm.nvvm.redux.sync.and",
+            "llvm.nvvm.redux.sync.or",
+            "llvm.nvvm.redux.sync.xor",
+        ] {
+            assert!(
+                ModuleExportState::is_convergent_intrinsic(name),
+                "{name} should be convergent"
+            );
+        }
         // A plain ALU/sreg intrinsic must NOT be flagged convergent.
         assert!(!ModuleExportState::is_convergent_intrinsic(
             "llvm.nvvm.read.ptx.sreg.tid.x"

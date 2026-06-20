@@ -5,7 +5,8 @@
 
 use dialect_nvvm::ops::{
     Barrier0Op, FmaBf16x2Op, ReadPtxSregLaneIdOp, ReadPtxSregTidXOp, ReduxSyncAddOp,
-    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -203,4 +204,58 @@ fn test_redux_sync_add_construct_and_verify() {
         0,
     );
     assert!(verify_op(&ReduxSyncAddOp::new(bad_results), &ctx).is_err());
+}
+
+#[test]
+fn test_redux_sync_integer_family_construct_and_verify() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i32_ty.into()]);
+    let mask = block.deref(&ctx).get_argument(0);
+    let value = block.deref(&ctx).get_argument(1);
+
+    // Every integer-family variant has the same 2-operand/1-result shape. A
+    // valid build of each must verify; a wrong operand count must not. The
+    // `new` wrapper is invoked so each concrete op type is exercised.
+    macro_rules! check_variant {
+        ($op:ty) => {{
+            let good = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![mask, value],
+                vec![],
+                0,
+            );
+            assert!(
+                verify_op(&<$op>::new(good), &ctx).is_ok(),
+                "{} should verify with [mask, value] -> i32",
+                stringify!($op)
+            );
+
+            let bad = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![mask],
+                vec![],
+                0,
+            );
+            assert!(
+                verify_op(&<$op>::new(bad), &ctx).is_err(),
+                "{} must reject a single operand",
+                stringify!($op)
+            );
+        }};
+    }
+
+    check_variant!(ReduxSyncUminOp);
+    check_variant!(ReduxSyncMinOp);
+    check_variant!(ReduxSyncUmaxOp);
+    check_variant!(ReduxSyncMaxOp);
+    check_variant!(ReduxSyncAndOp);
+    check_variant!(ReduxSyncOrOp);
+    check_variant!(ReduxSyncXorOp);
 }

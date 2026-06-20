@@ -56,10 +56,11 @@ use dialect_nvvm::ops::{
     ReadPtxSregEnvReg1Op, ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregLaneIdOp,
     ReadPtxSregNclusterIdOp, ReadPtxSregNctaidXOp, ReadPtxSregNctaidYOp, ReadPtxSregNctaidZOp,
     ReadPtxSregNtidXOp, ReadPtxSregNtidYOp, ReadPtxSregNtidZOp, ReadPtxSregTidXOp,
-    ReadPtxSregTidYOp, ReadPtxSregTidZOp, ReduxSyncAddOp, ShflSyncBflyF32Op, ShflSyncBflyI32Op,
-    ShflSyncDownF32Op, ShflSyncDownI32Op, ShflSyncIdxF32Op, ShflSyncIdxI32Op, ShflSyncUpF32Op,
-    ShflSyncUpI32Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
+    ReadPtxSregTidYOp, ReadPtxSregTidZOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp,
+    ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp,
+    ShflSyncBflyF32Op, ShflSyncBflyI32Op, ShflSyncDownF32Op, ShflSyncDownI32Op, ShflSyncIdxF32Op,
+    ShflSyncIdxI32Op, ShflSyncUpF32Op, ShflSyncUpI32Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp,
+    StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
     Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
     Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
     Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
@@ -1881,6 +1882,132 @@ impl MirToLlvmConversion for ReduxSyncAddOp {
             self.get_operation(),
             operands_info,
             "llvm_nvvm_redux_sync_add",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncUminOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_umin",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncMinOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_min",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncUmaxOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_umax",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncMaxOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_max",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncAndOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_and",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncOrOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_or",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ReduxSyncXorOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_redux(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "llvm_nvvm_redux_sync_xor",
         )
     }
 }

@@ -517,3 +517,85 @@ pub fn redux_sync_add(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
     unreachable!("redux_sync_add called outside CUDA kernel context")
 }
+
+// -----------------------------------------------------------------------------
+// Integer min/max/and/or/xor reductions (sm_80+).
+//
+// Same shape and convergence rules as `redux_sync_add` (see its docs): every
+// lane named in `mask` contributes its `value`, and the reduced result is
+// broadcast back to all participating lanes.
+//
+// `min`/`max` come in signed (`_i32`) and unsigned (`_u32`) flavors because the
+// comparison differs: e.g. `min(0xFFFFFFFF, 0)` is `-1` signed but `0` unsigned.
+// `and`/`or`/`xor` are bitwise, so a single `u32` form covers `i32` too.
+// -----------------------------------------------------------------------------
+
+/// Warp-wide unsigned minimum (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.umin` → PTX `redux.sync.min.u32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_min_u32(mask: u32, value: u32) -> u32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_min_u32 called outside CUDA kernel context")
+}
+
+/// Warp-wide signed minimum (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.min` → PTX `redux.sync.min.s32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_min_i32(mask: u32, value: i32) -> i32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_min_i32 called outside CUDA kernel context")
+}
+
+/// Warp-wide unsigned maximum (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.umax` → PTX `redux.sync.max.u32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_max_u32(mask: u32, value: u32) -> u32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_max_u32 called outside CUDA kernel context")
+}
+
+/// Warp-wide signed maximum (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.max` → PTX `redux.sync.max.s32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_max_i32(mask: u32, value: i32) -> i32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_max_i32 called outside CUDA kernel context")
+}
+
+/// Warp-wide bitwise AND reduction (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.and` → PTX `redux.sync.and.b32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_and(mask: u32, value: u32) -> u32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_and called outside CUDA kernel context")
+}
+
+/// Warp-wide bitwise OR reduction (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.or` → PTX `redux.sync.or.b32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_or(mask: u32, value: u32) -> u32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_or called outside CUDA kernel context")
+}
+
+/// Warp-wide bitwise XOR reduction (single instruction, sm_80+).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.xor` → PTX `redux.sync.xor.b32`.
+/// Convergent; participating lanes must be converged at the call.
+#[inline(never)]
+pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_xor called outside CUDA kernel context")
+}

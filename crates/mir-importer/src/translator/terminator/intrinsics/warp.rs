@@ -478,14 +478,18 @@ pub fn emit_warp_match(
     )
 }
 
-/// Emit a warp reduction operation (`redux.sync.add`).
+/// Emit a warp reduction operation (`redux.sync.{add,min,max,and,or,xor}`).
 ///
 /// Same MIR shape as [`emit_warp_match`]: 2 operands `[mask, value]` and 1
-/// result (the u32 sum). Kept as its own helper (rather than reusing
-/// `emit_warp_match`) for clarity and to ease adding min/max/and/or/xor later.
+/// result. Kept as its own helper (rather than reusing `emit_warp_match`) for
+/// clarity and to share the whole integer reduction family.
 ///
 /// # Parameters
 /// - `redux_opid`: The NVVM opid for the specific reduction variant
+/// - `signed`: result signedness — `true` for the signed `min.s32`/`max.s32`
+///   variants (result type must match an `i32` destination slot), `false` for
+///   `add`, the unsigned `min.u32`/`max.u32`, and the bitwise `and`/`or`/`xor`
+///   variants (all `u32`).
 /// - `args`: `[mask, value]`
 pub fn emit_warp_redux(
     ctx: &mut Context,
@@ -494,6 +498,7 @@ pub fn emit_warp_redux(
         fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
         std::any::TypeId,
     ),
+    signed: bool,
     args: &[mir::Operand],
     destination: &mir::Place,
     target: &Option<usize>,
@@ -513,7 +518,14 @@ pub fn emit_warp_redux(
         );
     }
 
-    let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned).to_ptr();
+    // Result signedness must match the destination local's slot type so the
+    // store typechecks: `i32` locals are `Signed`, `u32` locals `Unsigned`.
+    let signedness = if signed {
+        Signedness::Signed
+    } else {
+        Signedness::Unsigned
+    };
+    let result_ty = IntegerType::get(ctx, 32, signedness).to_ptr();
 
     let (mask, mut last_op) = rvalue::translate_operand(
         ctx,

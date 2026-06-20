@@ -677,6 +677,132 @@ impl ReduxSyncAddOp {
     }
 }
 
+/// Warp unsigned-min reduction. `llvm.nvvm.redux.sync.umin` / PTX
+/// `redux.sync.min.u32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_umin",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncUminOp;
+
+impl ReduxSyncUminOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncUminOp { op }
+    }
+}
+
+/// Warp signed-min reduction. `llvm.nvvm.redux.sync.min` / PTX
+/// `redux.sync.min.s32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_min",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncMinOp;
+
+impl ReduxSyncMinOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncMinOp { op }
+    }
+}
+
+/// Warp unsigned-max reduction. `llvm.nvvm.redux.sync.umax` / PTX
+/// `redux.sync.max.u32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_umax",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncUmaxOp;
+
+impl ReduxSyncUmaxOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncUmaxOp { op }
+    }
+}
+
+/// Warp signed-max reduction. `llvm.nvvm.redux.sync.max` / PTX
+/// `redux.sync.max.s32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_max",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncMaxOp;
+
+impl ReduxSyncMaxOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncMaxOp { op }
+    }
+}
+
+/// Warp bitwise-AND reduction. `llvm.nvvm.redux.sync.and` / PTX
+/// `redux.sync.and.b32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_and",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncAndOp;
+
+impl ReduxSyncAndOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncAndOp { op }
+    }
+}
+
+/// Warp bitwise-OR reduction. `llvm.nvvm.redux.sync.or` / PTX
+/// `redux.sync.or.b32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_or",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncOrOp;
+
+impl ReduxSyncOrOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncOrOp { op }
+    }
+}
+
+/// Warp bitwise-XOR reduction. `llvm.nvvm.redux.sync.xor` / PTX
+/// `redux.sync.xor.b32`. sm_80+, convergent. Operands `[mask, value]` (i32),
+/// result `i32`.
+#[pliron_op(
+    name = "nvvm.redux_sync_xor",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct ReduxSyncXorOp;
+
+impl ReduxSyncXorOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReduxSyncXorOp { op }
+    }
+}
+
 /// Register warp operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // Lane identification
@@ -702,6 +828,13 @@ pub(super) fn register(ctx: &mut Context) {
     MatchAllSyncI64Op::register(ctx);
     // Reduction (sm_80+)
     ReduxSyncAddOp::register(ctx);
+    ReduxSyncUminOp::register(ctx);
+    ReduxSyncMinOp::register(ctx);
+    ReduxSyncUmaxOp::register(ctx);
+    ReduxSyncMaxOp::register(ctx);
+    ReduxSyncAndOp::register(ctx);
+    ReduxSyncOrOp::register(ctx);
+    ReduxSyncXorOp::register(ctx);
     // Active mask
     ActiveMaskOp::register(ctx);
     // Warp-scoped barrier
