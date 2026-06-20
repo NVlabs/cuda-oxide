@@ -205,7 +205,7 @@ fn cached_backend_status(cached_so: &Path, source_dir: Option<&Path>) -> CacheSt
 /// `source_dir`: every file in `src/**` plus the crate `Cargo.toml`.
 ///
 /// Returns `None` when the directory cannot be located or yields no
-/// readable inputs, which lets [`cached_backend_is_stale`] degrade to the
+/// readable inputs, which lets [`cached_backend_status`] degrade to the
 /// binary-only check. The walk is best-effort: unreadable entries are
 /// skipped rather than treated as failures.
 fn newest_backend_source_mtime(source_dir: &Path) -> Option<SystemTime> {
