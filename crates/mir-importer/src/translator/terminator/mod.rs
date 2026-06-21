@@ -963,6 +963,36 @@ fn translate_call(
         }
     }
 
+    // Handle cp_async_wait_group specially to extract const generic N
+    if let Some(ref name) = pattern_name
+        && name == "cuda_device::async_copy::cp_async_wait_group"
+    {
+        // Extract the const generic N from the function type
+        if let mir::Operand::Constant(const_op) = func
+            && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(_, substs)) =
+                const_op.const_.ty().kind()
+        {
+            // The const generic N is the first generic argument
+            if let Some(rustc_public::ty::GenericArgKind::Const(c)) = substs.0.first() {
+                use rustc_public::ty::TyConstKind;
+
+                let n_val = match c.kind() {
+                    TyConstKind::Value(_, alloc) => alloc.read_uint().unwrap_or(0) as u32,
+                    _ => c.eval_target_usize().unwrap_or(0) as u32,
+                };
+                return intrinsics::cp_async::emit_cp_async_wait_group(
+                    ctx,
+                    n_val,
+                    &target_usize,
+                    block_ptr,
+                    prev_op,
+                    block_map,
+                    loc,
+                );
+            }
+        }
+    }
+
     // Handle DynamicSharedArray specially to extract the ALIGN const generic
     if let Some(ref name) = pattern_name
         && name.contains("DynamicSharedArray")
@@ -2374,7 +2404,6 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
-
         // =================================================================
         // Async Copy (cp.async)
         // =================================================================
@@ -2388,6 +2417,18 @@ fn try_dispatch_intrinsic(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }
+        "cuda_device::async_copy::cp_async_commit_group" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_commit_group(
+                ctx, target, block_ptr, prev_op, block_map, loc,
+            )?))
+        }
+        "cuda_device::async_copy::cp_async_wait_all" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_wait_all(
+                ctx, target, block_ptr, prev_op, block_map, loc,
+            )?))
+        }
+        // Note: cp_async_wait_group is handled above (before try_dispatch_intrinsic)
+        // because it has a const generic parameter that needs special extraction.
         // =================================================================
         // Type Conversions
         // =================================================================

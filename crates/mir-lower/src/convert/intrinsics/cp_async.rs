@@ -11,6 +11,9 @@
 //! |----------------------|----------------------------------------------------|
 //! | `CpAsyncCg16`        | `cp.async.cg.shared.global [smem], [gmem], 16;`    |
 //! | `CpAsyncCa16`        | `cp.async.ca.shared.global [smem], [gmem], 16;`    |
+//! | `CpAsyncCommitGroup` | `cp.async.commit_group;`                           |
+//! | `CpAsyncWaitGroup`   | `cp.async.wait_group N;`                           |
+//! | `CpAsyncWaitAll`     | `cp.async.wait_all;`                               |
 
 use crate::convert::intrinsics::common::*;
 use llvm_export::types as llvm_types;
@@ -59,7 +62,7 @@ fn convert_cp_async_16_impl(
     Ok(())
 }
 
-/// Convert `cp.async.cg.shared.global` — 16-byte async copy, L2-only cache policy.
+/// Convert `cp.async.cg.shared.global`, 16-byte async copy, L2-only cache policy.
 pub(crate) fn convert_cp_async_cg_16(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -69,7 +72,7 @@ pub(crate) fn convert_cp_async_cg_16(
     convert_cp_async_16_impl(ctx, rewriter, op, "cg")
 }
 
-/// Convert `cp.async.ca.shared.global` — 16-byte async copy, L1+L2 cache policy.
+/// Convert `cp.async.ca.shared.global`, 16-byte async copy, L1+L2 cache policy.
 pub(crate) fn convert_cp_async_ca_16(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -77,4 +80,65 @@ pub(crate) fn convert_cp_async_ca_16(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     convert_cp_async_16_impl(ctx, rewriter, op, "ca")
+}
+
+/// Convert `cp.async.commit_group`, commit all prior cp.async into a group.
+pub(crate) fn convert_cp_async_commit_group(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let void_ty = llvm_types::VoidType::get(ctx);
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        vec![],
+        "cp.async.commit_group;",
+        "~{memory}",
+    );
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Convert `cp.async.wait_group N`, wait for groups.
+///
+/// N is stored as the `wait_n` attribute on the operation.
+pub(crate) fn convert_cp_async_wait_group(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    use dialect_nvvm::ops::CpAsyncWaitGroupOp;
+
+    let wait_op = CpAsyncWaitGroupOp::new(op);
+    let n = wait_op.get_wait_n(ctx).unwrap_or(0);
+
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let asm_str = format!("cp.async.wait_group {};", n);
+    inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], &asm_str, "~{memory}");
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Convert `cp.async.wait_all`, wait for all outstanding groups.
+pub(crate) fn convert_cp_async_wait_all(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let void_ty = llvm_types::VoidType::get(ctx);
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        vec![],
+        "cp.async.wait_all;",
+        "~{memory}",
+    );
+    rewriter.erase_operation(ctx, op);
+    Ok(())
 }

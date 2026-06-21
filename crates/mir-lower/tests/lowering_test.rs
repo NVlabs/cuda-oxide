@@ -1395,3 +1395,57 @@ fn test_cp_async_ca_16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
 }
+
+// ---------------------------------------------------------------------------
+// cp.async synchronization intrinsic lowering tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cp_async_commit_group_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCommitGroupOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.commit_group")
+}
+
+#[test]
+fn test_cp_async_wait_group_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+    let op = nvvm::CpAsyncWaitGroupOp::new_with_n(&mut ctx, 2);
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.wait_group 2")
+}
+
+#[test]
+fn test_cp_async_wait_all_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncWaitAllOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.wait_all")
+}

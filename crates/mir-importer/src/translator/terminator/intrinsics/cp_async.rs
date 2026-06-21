@@ -9,10 +9,13 @@
 //! cp.async operations.
 
 use super::super::helpers::emit_goto;
+use super::sync::emit_zero_arg_void_sync_op;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{CpAsyncCa16Op, CpAsyncCg16Op};
+use dialect_nvvm::ops::{
+    CpAsyncCa16Op, CpAsyncCg16Op, CpAsyncCommitGroupOp, CpAsyncWaitAllOp, CpAsyncWaitGroupOp,
+};
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
@@ -40,19 +43,28 @@ fn emit_cp_async_16_impl<T: Op>(
     if args.len() != 2 {
         return input_err!(
             loc.clone(),
-            TranslationErr::unsupported(format!(
-                "{name} expects 2 arguments, got {}",
-                args.len()
-            ))
+            TranslationErr::unsupported(format!("{name} expects 2 arguments, got {}", args.len()))
         );
     }
 
     let (shared_dst, mut last_op) = rvalue::translate_operand(
-        ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
     )?;
 
     let (global_src, last_op_after) = rvalue::translate_operand(
-        ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
     )?;
     last_op = last_op_after;
 
@@ -101,7 +113,15 @@ pub fn emit_cp_async_cg_16(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_cp_async_16_impl::<CpAsyncCg16Op>(
-        ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "cp_async_cg_16",
     )
 }
@@ -123,7 +143,120 @@ pub fn emit_cp_async_ca_16(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_cp_async_16_impl::<CpAsyncCa16Op>(
-        ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "cp_async_ca_16",
+    )
+}
+
+/// Emit cp_async_commit_group: commit outstanding cp.async ops into a group.
+///
+/// Args: none
+/// Returns: void
+pub fn emit_cp_async_commit_group(
+    ctx: &mut Context,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_zero_arg_void_sync_op(
+        ctx,
+        target,
+        block_ptr,
+        prev_op,
+        block_map,
+        loc,
+        |ctx| {
+            Operation::new(
+                ctx,
+                CpAsyncCommitGroupOp::get_concrete_op_info(),
+                vec![],
+                vec![],
+                vec![],
+                0,
+            )
+        },
+        "cp_async_commit_group",
+    )
+}
+
+/// Emit cp_async_wait_group: wait until at most N groups remain in-flight.
+///
+/// The N value is extracted from the const generic by the caller and stored
+/// as an attribute on the operation.
+///
+/// Args:
+/// - n: u32 (compile-time constant, max groups in flight)
+///
+/// Returns: void
+pub fn emit_cp_async_wait_group(
+    ctx: &mut Context,
+    n: u32,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    let wait_op = CpAsyncWaitGroupOp::new_with_n(ctx, n);
+    wait_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = prev_op {
+        wait_op.insert_after(ctx, prev);
+    } else {
+        wait_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        Ok(emit_goto(ctx, *target_idx, wait_op, block_map, loc))
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "cp_async_wait_group call without target block".to_string()
+            )
+        )
+    }
+}
+
+/// Emit cp_async_wait_all: wait for all outstanding cp.async groups.
+///
+/// Args: none
+/// Returns: void
+pub fn emit_cp_async_wait_all(
+    ctx: &mut Context,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_zero_arg_void_sync_op(
+        ctx,
+        target,
+        block_ptr,
+        prev_op,
+        block_map,
+        loc,
+        |ctx| {
+            Operation::new(
+                ctx,
+                CpAsyncWaitAllOp::get_concrete_op_info(),
+                vec![],
+                vec![],
+                vec![],
+                0,
+            )
+        },
+        "cp_async_wait_all",
     )
 }

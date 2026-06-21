@@ -86,7 +86,7 @@ pub fn emit_sync_threads(
 
 /// Emit a zero-operand, zero-result synchronization op and branch to the
 /// target block.
-fn emit_zero_arg_void_sync_op<F>(
+pub(super) fn emit_zero_arg_void_sync_op<F>(
     ctx: &mut Context,
     target: &Option<usize>,
     block_ptr: Ptr<BasicBlock>,

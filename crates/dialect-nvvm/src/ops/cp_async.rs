@@ -16,7 +16,9 @@
 //! │ Operation            │ PTX                                             │
 //! ├──────────────────────┼─────────────────────────────────────────────────┤
 //! │ CpAsyncCg16Op        │ cp.async.cg.shared.global [smem], [gmem], 16;  │
-//! │ CpAsyncCa16Op        │ cp.async.ca.shared.global [smem], [gmem], 16;  │
+//! │ CpAsyncCommitGroupOp │ cp.async.commit_group;                          │
+//! │ CpAsyncWaitGroupOp   │ cp.async.wait_group N;                          │
+//! │ CpAsyncWaitAllOp     │ cp.async.wait_all;                              │
 //! └──────────────────────┴─────────────────────────────────────────────────┘
 //! ```
 
@@ -80,8 +82,116 @@ impl CpAsyncCa16Op {
     }
 }
 
+/// Commit all prior `cp.async` operations into a completion group.
+///
+/// # Operands
+///
+/// - None
+///
+/// # Results
+///
+/// - None
+#[pliron_op(
+    name = "nvvm.cp_async_commit_group",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+)]
+pub struct CpAsyncCommitGroupOp;
+
+impl CpAsyncCommitGroupOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        CpAsyncCommitGroupOp { op }
+    }
+}
+
+/// Wait until at most N completion groups remain in-flight.
+///
+/// The N value is stored as an attribute on the operation.
+///
+/// # Attributes
+///
+/// * `wait_n` - Number of groups that may remain in-flight (u32)
+///
+/// # Operands
+///
+/// - None
+///
+/// # Results
+///
+/// - None
+#[pliron_op(
+    name = "nvvm.cp_async_wait_group",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+)]
+pub struct CpAsyncWaitGroupOp;
+
+impl CpAsyncWaitGroupOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        CpAsyncWaitGroupOp { op }
+    }
+
+    /// Create a new wait_group operation with the given N value.
+    pub fn new_with_n(ctx: &mut Context, n: u32) -> Ptr<Operation> {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
+
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::builtin::types::{IntegerType, Signedness};
+        use pliron::identifier::Identifier;
+        use pliron::utils::apint::APInt;
+        use std::num::NonZeroUsize;
+
+        let i32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        let apint = APInt::from_u64(n as u64, NonZeroUsize::new(32).unwrap());
+        let attr = IntegerAttr::new(i32_ty, apint);
+        let key = Identifier::try_from("wait_n").unwrap();
+        op.deref_mut(ctx).attributes.set(key, attr);
+
+        op
+    }
+
+    /// Get the N value from the operation's attributes.
+    pub fn get_wait_n(&self, ctx: &Context) -> Option<u32> {
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::identifier::Identifier;
+
+        let key = Identifier::try_from("wait_n").unwrap();
+        let op_ref = self.get_operation().deref(ctx);
+        let int_attr: &IntegerAttr = op_ref.attributes.get(&key)?;
+        Some(int_attr.value().to_u64() as u32)
+    }
+}
+
+/// Wait for all outstanding `cp.async` groups to complete.
+///
+/// # Operands
+///
+/// - None
+///
+/// # Results
+///
+/// - None
+#[pliron_op(
+    name = "nvvm.cp_async_wait_all",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+)]
+pub struct CpAsyncWaitAllOp;
+
+impl CpAsyncWaitAllOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        CpAsyncWaitAllOp { op }
+    }
+}
+
 /// Register all cp.async operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     CpAsyncCg16Op::register(ctx);
     CpAsyncCa16Op::register(ctx);
+    CpAsyncCommitGroupOp::register(ctx);
+    CpAsyncWaitGroupOp::register(ctx);
+    CpAsyncWaitAllOp::register(ctx);
 }
