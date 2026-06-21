@@ -1,8 +1,11 @@
 ---
 name: fork-ci
 
-# Lightweight CI for our PR branches. Catches formatting, clippy, rustdoc, and
+# Enhanced CI for our PR branches. Catches formatting, clippy, rustdoc, and
 # unit-test failures in the packages we modify (no CUDA toolkit needed).
+# Also runs additional quality checks that go beyond upstream CI to ensure
+# clean PRs before upstreaming.
+#
 # Runs on every push to any branch except main (upstream CI covers main).
 
 on:
@@ -80,3 +83,163 @@ jobs:
           export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
 
           cargo test -p ${{ matrix.package }} --all-targets
+
+  rustdoc:
+    name: rustdoc (no warnings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build docs with -D warnings
+        run: |
+          sysroot="$(rustc --print sysroot)"
+          export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
+          export RUSTDOCFLAGS="-D warnings"
+
+          cargo doc --no-deps \
+            -p mir-lower \
+            -p llvm-export \
+            -p dialect-nvvm \
+            -p dialect-mir \
+            -p mir-importer \
+            -p oxide-artifacts \
+            -p reserved-oxide-symbols
+
+  # ---- Fork-only quality gates (beyond upstream CI) ----
+  # These catch patterns the maintainer has historically fixed in contributor
+  # PRs, saving a review round-trip.
+
+  style-checks:
+    name: style (owner fixup patterns)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history for diff against main
+
+      - name: Detect em-dashes in added lines
+        run: |
+          # Only check lines we actually added (not pre-existing upstream code)
+          hits=$(git diff origin/main...HEAD -- '*.rs' | grep '^+' | grep -v '^+++' | grep -n '—' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Em-dash (U+2014) found in added lines"
+            echo "$hits"
+            echo ""
+            echo "The maintainer consistently removes em-dashes from doc comments."
+            echo "Replace with commas, semicolons, or parentheses."
+            exit 1
+          fi
+          echo "Em-dash check: PASS"
+
+      - name: Detect bare brackets in doc comments (warning)
+        run: |
+          # Check added doc comment lines for bare [text] that are NOT
+          # markdown links [text](url), intra-doc links [`item`], or backtick-wrapped
+          hits=$(git diff origin/main...HEAD -- '*.rs' \
+            | grep '^+' | grep -v '^+++' \
+            | grep '///' \
+            | grep -P '\[(?!`)' \
+            | grep -vP '\]\(' \
+            | grep -vP '`[^`]*\[' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "::warning::Possible bare brackets in doc comments (may cause rustdoc errors)"
+            echo "$hits"
+            echo ""
+            echo "Wrap in backticks or use a markdown link."
+          else
+            echo "Bare bracket check: PASS"
+          fi
+          # Warning only — some brackets are valid intra-doc links
+
+      - name: Check SPDX license headers on new files
+        run: |
+          new_files=$(git diff --name-only --diff-filter=A origin/main...HEAD -- '*.rs' 2>/dev/null || true)
+          if [ -z "$new_files" ]; then
+            echo "No new .rs files"
+            exit 0
+          fi
+
+          found=0
+          for f in $new_files; do
+            if [ -f "$f" ]; then
+              has_spdx=$(head -4 "$f" | grep -c 'SPDX' || true)
+              if [ "$has_spdx" -eq 0 ]; then
+                echo "::error file=$f::Missing SPDX license header"
+                found=1
+              fi
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            echo ""
+            echo "New .rs files must start with the SPDX header block."
+            exit 1
+          fi
+
+      - name: Check for unnecessary &mut on type getters
+        run: |
+          # Only check lines we added
+          diff_added=$(git diff origin/main...HEAD -- '*.rs' | grep '^+' | grep -v '^+++' || true)
+          if [ -z "$diff_added" ]; then
+            echo "No added lines"
+            exit 0
+          fi
+
+          found=0
+          for pattern in 'FP32Type::get(&mut' 'FP64Type::get(&mut' 'VoidType::get(&mut' 'FP16Type::get(&mut'; do
+            hits=$(echo "$diff_added" | grep "$pattern" || true)
+            if [ -n "$hits" ]; then
+              echo "::error::$pattern found in added lines (takes &Context, not &mut Context)"
+              echo "$hits"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            echo ""
+            echo "pliron type getters (FP32Type, FP64Type, VoidType, FP16Type) take &Context."
+            echo "Note: IntegerType::get, PointerType::get, MirPtrType::get_generic legitimately take &mut Context."
+            exit 1
+          fi
+          echo "Type getter mutability check: PASS"
+
+      - name: Check for float equality assertions (warning)
+        run: |
+          hits=$(git diff origin/main...HEAD -- '*.rs' | grep '^+' | grep -v '^+++' | grep -P 'assert_eq!\(.*\d+\.\d+f(32|64)' || true)
+          if [ -n "$hits" ]; then
+            echo "::warning::Float equality assertion in added lines (clippy::float_cmp)"
+            echo "$hits"
+            echo ""
+            echo 'Use: assert!((val - expected).abs() < 1e-6, "got {}, want {}", val, expected);'
+          else
+            echo "Float equality check: PASS"
+          fi
+          # Warning only
+
+      - name: Check for useless vec patterns (warning)
+        run: |
+          hits=$(git diff origin/main...HEAD -- '*.rs' | grep '^+' | grep -v '^+++' | grep '&vec!\[' || true)
+          if [ -n "$hits" ]; then
+            echo "::warning::&vec![...] in added lines (clippy::useless_vec)"
+            echo "$hits"
+            echo ""
+            echo "Use &[...] slice literal instead."
+          else
+            echo "Useless vec check: PASS"
+          fi
+          # Warning only
+
+  cargo-deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check dependencies
+        run: cargo deny check
