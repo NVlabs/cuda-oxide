@@ -71,6 +71,8 @@ use dialect_nvvm::ops::{
     VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VprintfOp, WgmmaCommitGroupSyncAlignedOp,
     WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
     WgmmaWaitGroupSyncAlignedOp,
+    // WMMA (Ampere SM_80+)
+    LdmatrixX4Op, LdmatrixX2Op, LdmatrixX4TransOp, LdmatrixX2TransOp,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -2141,6 +2143,76 @@ impl MirToLlvmConversion for CvtF16x2F32Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::convert::convert_cvt_f16x2_f32(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+// ---- NVVM WMMA ops (Ampere SM_80+) -----------------------------------------
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX4Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_ldmatrix_x4(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_ldmatrix_x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX4TransOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_ldmatrix_x4_trans(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for LdmatrixX2TransOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_ldmatrix_x2_trans(
             ctx,
             rewriter,
             self.get_operation(),

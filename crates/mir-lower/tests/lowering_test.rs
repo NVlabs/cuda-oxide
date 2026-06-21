@@ -1449,3 +1449,115 @@ fn test_cp_async_wait_all_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.wait_all")
 }
+
+// ---------------------------------------------------------------------------
+// ldmatrix intrinsic lowering tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ldmatrix_x4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into()]);
+
+    let smem_ptr = entry.deref(&ctx).get_argument(0);
+    let dest_ptr = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::LdmatrixX4Op::get_concrete_op_info(),
+        vec![],
+        vec![smem_ptr, dest_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "ldmatrix.sync.aligned.m8n8.x4")
+}
+
+#[test]
+fn test_ldmatrix_x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into()]);
+
+    let smem_ptr = entry.deref(&ctx).get_argument(0);
+    let dest_ptr = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::LdmatrixX2Op::get_concrete_op_info(),
+        vec![],
+        vec![smem_ptr, dest_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "ldmatrix.sync.aligned.m8n8.x2")
+}
+
+#[test]
+fn test_ldmatrix_x4_trans_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into()]);
+
+    let smem_ptr = entry.deref(&ctx).get_argument(0);
+    let dest_ptr = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::LdmatrixX4TransOp::get_concrete_op_info(),
+        vec![],
+        vec![smem_ptr, dest_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, ".trans")
+}
+
+#[test]
+fn test_ldmatrix_x2_trans_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into()]);
+
+    let smem_ptr = entry.deref(&ctx).get_argument(0);
+    let dest_ptr = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::LdmatrixX2TransOp::get_concrete_op_info(),
+        vec![],
+        vec![smem_ptr, dest_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "ldmatrix.sync.aligned.m8n8.x2.trans")
+}
