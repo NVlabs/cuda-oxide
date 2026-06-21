@@ -3000,7 +3000,7 @@ fn try_dispatch_intrinsic(
 
 
         // =================================================================
-        // WMMA / ldmatrix (from intrinsics::wmma) — Ampere SM_80+
+        // WMMA / ldmatrix / mma.sync (from intrinsics::wmma), Ampere SM_80+
         // =================================================================
         "cuda_device::wmma::ldmatrix_x4" => {
             Ok(Some(intrinsics::wmma::emit_ldmatrix_x4(
@@ -3020,6 +3020,11 @@ fn try_dispatch_intrinsic(
         "cuda_device::wmma::ldmatrix_x2_trans" => {
             Ok(Some(intrinsics::wmma::emit_ldmatrix_x2_trans(
                 ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::wmma::mma_m16n8k16_f32_f16" => {
+            Ok(Some(intrinsics::wmma::emit_mma_m16n8k16_f32_f16(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }
         // =================================================================

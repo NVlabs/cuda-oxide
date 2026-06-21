@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Ampere+ ldmatrix intrinsics.
+//! Ampere+ WMMA (mma.sync) intrinsics.
 //!
-//! Handles SM75+ warp-level shared memory matrix load operations.
+//! Handles SM80+ warp-level matrix multiply-accumulate operations.
 
 use super::super::helpers::emit_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
-    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp,
+    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MmaM16N8K16F32F16Op,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
@@ -176,4 +176,99 @@ pub fn emit_ldmatrix_x2_trans(
         ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
         "ldmatrix_x2_trans",
     )
+}
+
+/// Emit mma_m16n8k16_f32_f16: Warp MMA with f32 accumulator and f16 inputs.
+///
+/// Args:
+/// - args[0]: &mut [f32; 4] (accumulator pointer, read-modify-write)
+/// - args[1]: &[u32; 4] (A fragment pointer)
+/// - args[2]: &[u32; 2] (B fragment pointer)
+///
+/// Returns: void (accumulator updated in-place)
+pub fn emit_mma_m16n8k16_f32_f16(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "mma_m16n8k16_f32_f16 expects 3 arguments (acc, a, b), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    // arg[0]: acc_ptr (&mut [f32; 4])
+    let (acc_ptr, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    // arg[1]: a_ptr (&[u32; 4])
+    let (a_ptr, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    // arg[2]: b_ptr (&[u32; 2])
+    let (b_ptr, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    // Create the MMA operation: (acc_ptr, a_ptr, b_ptr) → void
+    let mma_op = Operation::new(
+        ctx,
+        MmaM16N8K16F32F16Op::get_concrete_op_info(),
+        vec![],
+        vec![acc_ptr, a_ptr, b_ptr],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        Ok(emit_goto(ctx, *target_idx, mma_op, block_map, loc))
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "mma_m16n8k16_f32_f16 call without target block".to_string()
+            )
+        )
+    }
 }
