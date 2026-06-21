@@ -12,6 +12,7 @@ pub use cuda_macros::{
 };
 
 // Re-export for convenience
+pub mod async_copy;
 pub mod atomic;
 pub mod barrier;
 pub mod bf16x2;
