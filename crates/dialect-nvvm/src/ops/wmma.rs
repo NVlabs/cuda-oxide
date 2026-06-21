@@ -145,6 +145,29 @@ impl MmaM16N8K16F32F16Op {
     }
 }
 
+/// Fused K-step: ldmatrix_x4(A) + 4×ldmatrix_x2_trans(B) + 4×mma.sync
+///
+/// Single inline asm block that loads A and B fragments from shared memory
+/// and performs 4 mma.sync operations, keeping all fragments in PTX registers.
+///
+/// # Operands (9)
+///
+/// - `a_smem_ptr` (ptr): shared memory for A tile
+/// - `b_smem0..3` (ptr): shared memory for 4 B column groups
+/// - `acc0..3` (ptr): pointers to [f32; 4] accumulators (read-modify-write)
+#[pliron_op(
+    name = "nvvm.wmma_fused_k_step_4x",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<9>, NResultsInterface<0>],
+)]
+pub struct WmmaFusedKStep4xOp;
+
+impl WmmaFusedKStep4xOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        WmmaFusedKStep4xOp { op }
+    }
+}
 /// Register WMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     LdmatrixX4Op::register(ctx);
@@ -152,4 +175,5 @@ pub(super) fn register(ctx: &mut Context) {
     LdmatrixX4TransOp::register(ctx);
     LdmatrixX2TransOp::register(ctx);
     MmaM16N8K16F32F16Op::register(ctx);
+    WmmaFusedKStep4xOp::register(ctx);
 }

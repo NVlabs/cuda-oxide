@@ -2998,32 +2998,68 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
-
         // =================================================================
         // WMMA / ldmatrix / mma.sync (from intrinsics::wmma), Ampere SM_80+
         // =================================================================
-        "cuda_device::wmma::ldmatrix_x4" => {
-            Ok(Some(intrinsics::wmma::emit_ldmatrix_x4(
-                ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::wmma::ldmatrix_x2" => {
-            Ok(Some(intrinsics::wmma::emit_ldmatrix_x2(
-                ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
+        "cuda_device::wmma::ldmatrix_x4" => Ok(Some(intrinsics::wmma::emit_ldmatrix_x4(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::wmma::ldmatrix_x2" => Ok(Some(intrinsics::wmma::emit_ldmatrix_x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         "cuda_device::wmma::ldmatrix_x4_trans" => {
             Ok(Some(intrinsics::wmma::emit_ldmatrix_x4_trans(
-                ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
             )?))
         }
         "cuda_device::wmma::ldmatrix_x2_trans" => {
             Ok(Some(intrinsics::wmma::emit_ldmatrix_x2_trans(
-                ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
             )?))
         }
         "cuda_device::wmma::mma_m16n8k16_f32_f16" => {
             Ok(Some(intrinsics::wmma::emit_mma_m16n8k16_f32_f16(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::wmma::fused_k_step_4x" => {
+            Ok(Some(intrinsics::wmma::emit_wmma_fused_k_step_4x(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }

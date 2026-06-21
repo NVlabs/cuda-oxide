@@ -209,6 +209,39 @@ pub unsafe fn mma_m16n8k16_f32_f16(acc: &mut [f32; 4], a: &[u32; 4], b: &[u32; 2
     unreachable!("mma_m16n8k16_f32_f16 called outside CUDA kernel context")
 }
 
+/// Fused K-step: ldmatrix_x4(A) + 4×ldmatrix_x2_trans(B) + 4×mma.sync in one asm block.
+///
+/// This eliminates all intermediate local memory round-trips between ldmatrix and mma
+/// by keeping A/B fragments in PTX registers within a single inline asm scope.
+///
+/// # Parameters
+///
+/// - `a_smem_ptr`: shared memory pointer for A tile (from ldmatrix_x4 addressing)
+/// - `b_smem0..3`: shared memory pointers for 4 B column groups (from ldmatrix_x2_trans addressing)
+/// - `acc0..3`: mutable accumulators for 4 output column groups (4 × [f32; 4])
+///
+/// # Safety
+///
+/// - All smem pointers must point to valid shared memory with correct alignment
+/// - Must be called by all threads in a warp
+/// - Must be called from within a CUDA kernel context on sm_80+
+#[inline(never)]
+pub unsafe fn fused_k_step_4x(
+    a_smem_ptr: *const u32,
+    b_smem0: *const u32,
+    b_smem1: *const u32,
+    b_smem2: *const u32,
+    b_smem3: *const u32,
+    acc0: &mut [f32; 4],
+    acc1: &mut [f32; 4],
+    acc2: &mut [f32; 4],
+    acc3: &mut [f32; 4],
+) {
+    let _ = (
+        a_smem_ptr, b_smem0, b_smem1, b_smem2, b_smem3, acc0, acc1, acc2, acc3,
+    );
+    unreachable!("fused_k_step_4x called outside CUDA kernel context")
+}
 /// Type alias for the WMMA accumulator (m16n8 tile, 4 floats per thread).
 pub type Acc16x8 = [f32; 4];
 

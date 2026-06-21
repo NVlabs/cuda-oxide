@@ -70,7 +70,7 @@ use dialect_nvvm::ops::{
     Tcgen05RelinquishAllocPermitOp, Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp,
     ThreadfenceSystemOp, TrapOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VprintfOp,
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp, WmmaFusedKStep4xOp,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -2144,6 +2144,23 @@ impl MirToLlvmConversion for WgmmaMmaM64N64K16F32Bf16Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::wgmma::convert_mma(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for WmmaFusedKStep4xOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_wmma_fused_k_step_4x(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
     }
 }
 

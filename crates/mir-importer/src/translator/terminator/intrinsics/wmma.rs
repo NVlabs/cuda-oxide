@@ -13,6 +13,7 @@ use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
     LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MmaM16N8K16F32F16Op,
+    WmmaFusedKStep4xOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
@@ -64,15 +65,18 @@ fn emit_ldmatrix_impl<T: Op>(
     if args.len() != 1 {
         return input_err!(
             loc.clone(),
-            TranslationErr::unsupported(format!(
-                "{name} expects 1 argument, got {}",
-                args.len()
-            ))
+            TranslationErr::unsupported(format!("{name} expects 1 argument, got {}", args.len()))
         );
     }
 
     let (smem_ptr, last_op) = rvalue::translate_operand(
-        ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
     )?;
 
     let dest_ptr = get_dest_slot(value_map, destination, &loc, name)?;
@@ -116,7 +120,16 @@ pub fn emit_ldmatrix_x4(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX4Op>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x4",
     )
 }
@@ -135,7 +148,16 @@ pub fn emit_ldmatrix_x2(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX2Op>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x2",
     )
 }
@@ -154,7 +176,16 @@ pub fn emit_ldmatrix_x4_trans(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX4TransOp>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x4_trans",
     )
 }
@@ -173,7 +204,16 @@ pub fn emit_ldmatrix_x2_trans(
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
     emit_ldmatrix_impl::<LdmatrixX2TransOp>(
-        ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
         "ldmatrix_x2_trans",
     )
 }
@@ -269,6 +309,69 @@ pub fn emit_mma_m16n8k16_f32_f16(
             TranslationErr::unsupported(
                 "mma_m16n8k16_f32_f16 call without target block".to_string()
             )
+        )
+    }
+}
+
+/// Emit fused K-step: ldmatrix_x4(A) + 4×ldmatrix_x2_trans(B) + 4×mma.sync
+///
+/// Args:
+/// - args[0]: *const u32 (A shared memory pointer)
+/// - args[1..5]: *const u32 (B shared memory pointers for 4 column groups)
+/// - args[5..9]: &mut [f32; 4] (4 accumulator pointers)
+pub fn emit_wmma_fused_k_step_4x(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 9 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "fused_k_step_4x expects 9 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+    let mut operands = Vec::with_capacity(9);
+
+    for (i, arg) in args.iter().enumerate() {
+        let (val, last_op_after) =
+            rvalue::translate_operand(ctx, body, arg, value_map, block_ptr, last_op, loc.clone())?;
+        last_op = last_op_after;
+        operands.push(val);
+        let _ = i;
+    }
+
+    let fused_op = Operation::new(
+        ctx,
+        WmmaFusedKStep4xOp::get_concrete_op_info(),
+        vec![],
+        operands,
+        vec![],
+        0,
+    );
+    fused_op.deref_mut(ctx).set_loc(loc.clone());
+    if let Some(prev) = last_op {
+        fused_op.insert_after(ctx, prev);
+    } else {
+        fused_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        Ok(emit_goto(ctx, *target_idx, fused_op, block_map, loc))
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported("fused_k_step_4x call without target block".to_string())
         )
     }
 }

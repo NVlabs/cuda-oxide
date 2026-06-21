@@ -22,7 +22,6 @@ use llvm_export::types as llvm_types;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::rewriter::Rewriter;
-use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
@@ -33,7 +32,7 @@ use pliron::result::Result;
 ///
 /// Note: `smem_ptr` is a generic-space pointer. The PTX uses `cvta.to.shared`
 /// to convert it (same pattern as stmatrix.rs). Do NOT use
-/// `cast_to_shared_addrspace` — that would double-convert.
+/// `cast_to_shared_addrspace`,that would double-convert.
 fn convert_ldmatrix_impl(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -80,12 +79,19 @@ fn convert_ldmatrix_impl(
          }}"
     );
 
-    inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![dest_ptr, smem_ptr], &asm, "l,l");
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        vec![dest_ptr, smem_ptr],
+        &asm,
+        "l,l",
+    );
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
 
-/// Convert `ldmatrix.sync.aligned.m8n8.x4.shared.b16` — load 4 × u32 from shared.
+/// Convert `ldmatrix.sync.aligned.m8n8.x4.shared.b16`,load 4 × u32 from shared.
 pub(crate) fn convert_ldmatrix_x4(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -95,7 +101,7 @@ pub(crate) fn convert_ldmatrix_x4(
     convert_ldmatrix_impl(ctx, rewriter, op, 4, false, "ldmatrix_x4")
 }
 
-/// Convert `ldmatrix.sync.aligned.m8n8.x2.shared.b16` — load 2 × u32 from shared.
+/// Convert `ldmatrix.sync.aligned.m8n8.x2.shared.b16`,load 2 × u32 from shared.
 pub(crate) fn convert_ldmatrix_x2(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -105,7 +111,7 @@ pub(crate) fn convert_ldmatrix_x2(
     convert_ldmatrix_impl(ctx, rewriter, op, 2, false, "ldmatrix_x2")
 }
 
-/// Convert `ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16` — load 4 × u32 transposed.
+/// Convert `ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16`,load 4 × u32 transposed.
 pub(crate) fn convert_ldmatrix_x4_trans(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -115,7 +121,7 @@ pub(crate) fn convert_ldmatrix_x4_trans(
     convert_ldmatrix_impl(ctx, rewriter, op, 4, true, "ldmatrix_x4_trans")
 }
 
-/// Convert `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16` — load 2 × u32 transposed.
+/// Convert `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16`,load 2 × u32 transposed.
 pub(crate) fn convert_ldmatrix_x2_trans(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -186,6 +192,148 @@ pub(crate) fn convert_mma_m16n8k16_f32_f16(
         vec![acc_ptr, a_ptr, b_ptr],
         asm,
         "l,l,l,~{memory}",
+    );
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Convert fused K-step: ldmatrix_x4(A) + 4×ldmatrix_x2_trans(B) + 4×mma.sync
+///
+/// Operands: [a_smem, b_smem0, b_smem1, b_smem2, b_smem3, acc0, acc1, acc2, acc3]
+///
+/// All pointer loads/stores and MMA operations are fused into a single inline
+/// asm block. The accumulator pointers are read-modify-write: the asm loads
+/// current accumulator values, executes four MMA instructions (one per B tile
+/// column), and stores the updated accumulators back.
+pub(crate) fn convert_wmma_fused_k_step_4x(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let void_ty = llvm_types::VoidType::get(ctx);
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() < 9 {
+        return pliron::input_err_noloc!("wmma_fused_k_step_4x requires 9 operands");
+    }
+    let a_smem = operands[0];
+    let b_smem0 = operands[1];
+    let b_smem1 = operands[2];
+    let b_smem2 = operands[3];
+    let b_smem3 = operands[4];
+    let acc0_ptr = operands[5];
+    let acc1_ptr = operands[6];
+    let acc2_ptr = operands[7];
+    let acc3_ptr = operands[8];
+
+    // Single inline asm block that does everything via pointer ld/st.
+    //
+    // Operand mapping:
+    //   $0 = a_smem   (shared ptr, ldmatrix_x4 source)
+    //   $1 = b_smem0  (shared ptr, ldmatrix_x2_trans for col 0)
+    //   $2 = b_smem1  (shared ptr, ldmatrix_x2_trans for col 1)
+    //   $3 = b_smem2  (shared ptr, ldmatrix_x2_trans for col 2)
+    //   $4 = b_smem3  (shared ptr, ldmatrix_x2_trans for col 3)
+    //   $5 = acc0_ptr (generic ptr, f32×4 accumulator tile 0)
+    //   $6 = acc1_ptr (generic ptr, f32×4 accumulator tile 1)
+    //   $7 = acc2_ptr (generic ptr, f32×4 accumulator tile 2)
+    //   $8 = acc3_ptr (generic ptr, f32×4 accumulator tile 3)
+    let asm = concat!(
+        "{ ",
+        ".reg .b32 a<4>; ",
+        ".reg .b32 b<2>; ",
+        ".reg .f32 d0_<4>; ",
+        ".reg .f32 d1_<4>; ",
+        ".reg .f32 d2_<4>; ",
+        ".reg .f32 d3_<4>; ",
+        ".reg .u64 smem64; ",
+        ".reg .u32 smem32; ",
+        // Load accumulators from generic-space pointers
+        "ld.f32 d0_0, [$5]; ",
+        "ld.f32 d0_1, [$5+4]; ",
+        "ld.f32 d0_2, [$5+8]; ",
+        "ld.f32 d0_3, [$5+12]; ",
+        "ld.f32 d1_0, [$6]; ",
+        "ld.f32 d1_1, [$6+4]; ",
+        "ld.f32 d1_2, [$6+8]; ",
+        "ld.f32 d1_3, [$6+12]; ",
+        "ld.f32 d2_0, [$7]; ",
+        "ld.f32 d2_1, [$7+4]; ",
+        "ld.f32 d2_2, [$7+8]; ",
+        "ld.f32 d2_3, [$7+12]; ",
+        "ld.f32 d3_0, [$8]; ",
+        "ld.f32 d3_1, [$8+4]; ",
+        "ld.f32 d3_2, [$8+8]; ",
+        "ld.f32 d3_3, [$8+12]; ",
+        // ldmatrix_x4 for A tile ($0 = a_smem)
+        "cvta.to.shared.u64 smem64, $0; ",
+        "cvt.u32.u64 smem32, smem64; ",
+        "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {a0, a1, a2, a3}, [smem32]; ",
+        // B0 + mma0 ($1 = b_smem0, acc tile 0)
+        "cvta.to.shared.u64 smem64, $1; ",
+        "cvt.u32.u64 smem32, smem64; ",
+        "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {b0, b1}, [smem32]; ",
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+        "{d0_0, d0_1, d0_2, d0_3}, ",
+        "{a0, a1, a2, a3}, ",
+        "{b0, b1}, ",
+        "{d0_0, d0_1, d0_2, d0_3}; ",
+        // B1 + mma1 ($2 = b_smem1, acc tile 1)
+        "cvta.to.shared.u64 smem64, $2; ",
+        "cvt.u32.u64 smem32, smem64; ",
+        "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {b0, b1}, [smem32]; ",
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+        "{d1_0, d1_1, d1_2, d1_3}, ",
+        "{a0, a1, a2, a3}, ",
+        "{b0, b1}, ",
+        "{d1_0, d1_1, d1_2, d1_3}; ",
+        // B2 + mma2 ($3 = b_smem2, acc tile 2)
+        "cvta.to.shared.u64 smem64, $3; ",
+        "cvt.u32.u64 smem32, smem64; ",
+        "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {b0, b1}, [smem32]; ",
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+        "{d2_0, d2_1, d2_2, d2_3}, ",
+        "{a0, a1, a2, a3}, ",
+        "{b0, b1}, ",
+        "{d2_0, d2_1, d2_2, d2_3}; ",
+        // B3 + mma3 ($4 = b_smem3, acc tile 3)
+        "cvta.to.shared.u64 smem64, $4; ",
+        "cvt.u32.u64 smem32, smem64; ",
+        "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {b0, b1}, [smem32]; ",
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+        "{d3_0, d3_1, d3_2, d3_3}, ",
+        "{a0, a1, a2, a3}, ",
+        "{b0, b1}, ",
+        "{d3_0, d3_1, d3_2, d3_3}; ",
+        // Store accumulators back
+        "st.f32 [$5], d0_0; ",
+        "st.f32 [$5+4], d0_1; ",
+        "st.f32 [$5+8], d0_2; ",
+        "st.f32 [$5+12], d0_3; ",
+        "st.f32 [$6], d1_0; ",
+        "st.f32 [$6+4], d1_1; ",
+        "st.f32 [$6+8], d1_2; ",
+        "st.f32 [$6+12], d1_3; ",
+        "st.f32 [$7], d2_0; ",
+        "st.f32 [$7+4], d2_1; ",
+        "st.f32 [$7+8], d2_2; ",
+        "st.f32 [$7+12], d2_3; ",
+        "st.f32 [$8], d3_0; ",
+        "st.f32 [$8+4], d3_1; ",
+        "st.f32 [$8+8], d3_2; ",
+        "st.f32 [$8+12], d3_3; ",
+        "}"
+    );
+
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        vec![
+            a_smem, b_smem0, b_smem1, b_smem2, b_smem3, acc0_ptr, acc1_ptr, acc2_ptr, acc3_ptr,
+        ],
+        asm,
+        "l,l,l,l,l,l,l,l,l,~{memory}",
     );
     rewriter.erase_operation(ctx, op);
     Ok(())

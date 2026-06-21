@@ -1561,3 +1561,36 @@ fn test_ldmatrix_x2_trans_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     assert_inline_asm_lowering(&mut ctx, module_ptr, "ldmatrix.sync.aligned.m8n8.x2.trans")
 }
+
+// ---------------------------------------------------------------------------
+// wmma fused K-step lowering test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_wmma_fused_k_step_4x_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    // 9 pointer args: a_smem, b_smem0..3, acc0..3
+    let arg_tys = vec![ptr_ty.into(); 9];
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, arg_tys);
+
+    let args: Vec<_> = (0..9).map(|i| entry.deref(&ctx).get_argument(i)).collect();
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::WmmaFusedKStep4xOp::get_concrete_op_info(),
+        vec![],
+        args,
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    // The fused asm block contains mma.sync instructions
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "mma.sync.aligned.m16n8k16")
+}
