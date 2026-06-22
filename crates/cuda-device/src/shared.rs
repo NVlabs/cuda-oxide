@@ -455,3 +455,79 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
         unreachable!("DynamicSharedArray::offset called outside CUDA kernel context")
     }
 }
+
+// =============================================================================
+// cp.async with zero-fill (src_size parameter)
+// =============================================================================
+
+/// Asynchronously copy 4 bytes from global to shared memory with zero-fill.
+///
+/// Issues a `cp.async.ca.shared.global [dst], [src], 4, src_size` instruction.
+/// When `src_size < 4`, the remaining bytes in the destination are zero-filled.
+/// This is useful for handling boundary conditions in tiled algorithms where
+/// the last tile may be smaller than the tile size.
+///
+/// # Arguments
+///
+/// - `dst`: Destination pointer in shared memory (must be 4-byte aligned)
+/// - `src`: Source pointer in global memory
+/// - `src_size`: Number of valid source bytes (0..=4). Bytes beyond `src_size`
+///   are zero-filled in the destination.
+///
+/// # Safety
+///
+/// - `dst` must point to shared memory and be properly aligned.
+/// - `src` must point to valid global memory for `src_size` bytes.
+/// - Must be followed by `cp_async_commit_group` and `cp_async_wait_group`.
+#[inline(never)]
+pub unsafe fn cp_async_ca_zfill_4(_dst: *mut u8, _src: *const u8, _src_size: u32) {
+    unreachable!("cp_async_ca_zfill_4 called outside CUDA kernel context")
+}
+
+/// Asynchronously copy 8 bytes from global to shared memory with zero-fill.
+///
+/// Issues a `cp.async.ca.shared.global [dst], [src], 8, src_size` instruction.
+/// When `src_size < 8`, the remaining bytes in the destination are zero-filled.
+/// This is useful for handling boundary conditions in tiled algorithms where
+/// the last tile may be smaller than the tile size.
+///
+/// # Arguments
+///
+/// - `dst`: Destination pointer in shared memory (must be 8-byte aligned)
+/// - `src`: Source pointer in global memory
+/// - `src_size`: Number of valid source bytes (0..=8). Bytes beyond `src_size`
+///   are zero-filled in the destination.
+///
+/// # Safety
+///
+/// - `dst` must point to shared memory and be properly aligned.
+/// - `src` must point to valid global memory for `src_size` bytes.
+/// - Must be followed by `cp_async_commit_group` and `cp_async_wait_group`.
+#[inline(never)]
+pub unsafe fn cp_async_ca_zfill_8(_dst: *mut u8, _src: *const u8, _src_size: u32) {
+    unreachable!("cp_async_ca_zfill_8 called outside CUDA kernel context")
+}
+
+/// Asynchronously copy 16 bytes from global to shared memory with zero-fill.
+///
+/// Issues a `cp.async.ca.shared.global [dst], [src], 16, src_size` instruction.
+/// When `src_size < 16`, the remaining bytes in the destination are zero-filled.
+/// This is useful for handling boundary conditions in tiled algorithms where
+/// the last tile may be smaller than the tile size.
+///
+/// # Arguments
+///
+/// - `dst`: Destination pointer in shared memory (must be 16-byte aligned)
+/// - `src`: Source pointer in global memory
+/// - `src_size`: Number of valid source bytes (0..=16). Bytes beyond `src_size`
+///   are zero-filled in the destination.
+///
+/// # Safety
+///
+/// - `dst` must point to shared memory and be properly aligned.
+/// - `src` must point to valid global memory for `src_size` bytes.
+/// - Must be followed by `cp_async_commit_group` and `cp_async_wait_group`.
+#[inline(never)]
+pub unsafe fn cp_async_ca_zfill_16(_dst: *mut u8, _src: *const u8, _src_size: u32) {
+    unreachable!("cp_async_ca_zfill_16 called outside CUDA kernel context")
+}

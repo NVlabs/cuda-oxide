@@ -3172,6 +3172,22 @@ fn try_dispatch_intrinsic(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }
+        // cp.async zero-fill variants (from cuda_device::shared)
+        "cuda_device::shared::cp_async_ca_zfill_4" => {
+            Ok(Some(intrinsics::memory::emit_cp_async_ca_zfill_4(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::shared::cp_async_ca_zfill_8" => {
+            Ok(Some(intrinsics::memory::emit_cp_async_ca_zfill_8(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::shared::cp_async_ca_zfill_16" => {
+            Ok(Some(intrinsics::memory::emit_cp_async_ca_zfill_16(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
         "cuda_device::tcgen05::cvt_f32x2_bf16x2" => {
             Ok(Some(intrinsics::memory::emit_cvt_f32x2_bf16x2(
                 ctx,

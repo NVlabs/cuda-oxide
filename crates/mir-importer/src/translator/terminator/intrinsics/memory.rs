@@ -14,8 +14,8 @@ use crate::translator::{rvalue, types};
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::{MirCastOp, MirConstantOp, MirDivOp, MirSubOp};
 use dialect_nvvm::ops::{
-    CvtF32x2Bf16x2Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp,
+    CpAsyncCaZfill4Op, CpAsyncCaZfill8Op, CpAsyncCaZfill16Op, CvtF32x2Bf16x2Op, StmatrixM8n8X2Op,
+    StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::IntegerAttr;
@@ -1352,4 +1352,206 @@ pub fn emit_dynamic_shared_offset(
         loc,
         "DynamicSharedArray::offset call without target block",
     )
+}
+
+// =============================================================================
+// cp.async zero-fill emit functions
+// =============================================================================
+
+/// Emit `cp.async.ca.shared.global [dst], [src], 4, src_size`.
+///
+/// Asynchronously copies up to 4 bytes from global to shared memory.
+/// When `src_size < 4`, the remaining bytes are zero-filled.
+///
+/// Args: (dst: *mut u8, src: *const u8, src_size: u32)
+pub fn emit_cp_async_ca_zfill_4(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "cp_async_ca_zfill_4 expects 3 arguments (dst, src, src_size), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+    let mut operands = Vec::with_capacity(3);
+
+    for arg in args.iter().take(3) {
+        let (val, last_op_after) =
+            rvalue::translate_operand(ctx, body, arg, value_map, block_ptr, last_op, loc.clone())?;
+        last_op = last_op_after;
+        operands.push(val);
+    }
+
+    let cp_op = Operation::new(
+        ctx,
+        CpAsyncCaZfill4Op::get_concrete_op_info(),
+        vec![],
+        operands,
+        vec![],
+        0,
+    );
+    cp_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        cp_op.insert_after(ctx, prev);
+    } else {
+        cp_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, cp_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "cp_async_ca_zfill_4 call without target block".to_string(),
+            )
+        )
+    }
+}
+
+/// Emit `cp.async.ca.shared.global [dst], [src], 8, src_size`.
+///
+/// Asynchronously copies up to 8 bytes from global to shared memory.
+/// When `src_size < 8`, the remaining bytes are zero-filled.
+///
+/// Args: (dst: *mut u8, src: *const u8, src_size: u32)
+pub fn emit_cp_async_ca_zfill_8(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "cp_async_ca_zfill_8 expects 3 arguments (dst, src, src_size), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+    let mut operands = Vec::with_capacity(3);
+
+    for arg in args.iter().take(3) {
+        let (val, last_op_after) =
+            rvalue::translate_operand(ctx, body, arg, value_map, block_ptr, last_op, loc.clone())?;
+        last_op = last_op_after;
+        operands.push(val);
+    }
+
+    let cp_op = Operation::new(
+        ctx,
+        CpAsyncCaZfill8Op::get_concrete_op_info(),
+        vec![],
+        operands,
+        vec![],
+        0,
+    );
+    cp_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        cp_op.insert_after(ctx, prev);
+    } else {
+        cp_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, cp_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "cp_async_ca_zfill_8 call without target block".to_string(),
+            )
+        )
+    }
+}
+
+/// Emit `cp.async.ca.shared.global [dst], [src], 16, src_size`.
+///
+/// Asynchronously copies up to 16 bytes from global to shared memory.
+/// When `src_size < 16`, the remaining bytes are zero-filled.
+///
+/// Args: (dst: *mut u8, src: *const u8, src_size: u32)
+pub fn emit_cp_async_ca_zfill_16(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "cp_async_ca_zfill_16 expects 3 arguments (dst, src, src_size), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+    let mut operands = Vec::with_capacity(3);
+
+    for arg in args.iter().take(3) {
+        let (val, last_op_after) =
+            rvalue::translate_operand(ctx, body, arg, value_map, block_ptr, last_op, loc.clone())?;
+        last_op = last_op_after;
+        operands.push(val);
+    }
+
+    let cp_op = Operation::new(
+        ctx,
+        CpAsyncCaZfill16Op::get_concrete_op_info(),
+        vec![],
+        operands,
+        vec![],
+        0,
+    );
+    cp_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        cp_op.insert_after(ctx, prev);
+    } else {
+        cp_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, cp_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "cp_async_ca_zfill_16 call without target block".to_string(),
+            )
+        )
+    }
 }
