@@ -1337,3 +1337,75 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// mma.sync m16n8k128 b1 (xor.popc) intrinsic lowering test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mma_m16n8k128_s32_b1_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use llvm_export::types::PointerType;
+
+    let mut ctx = make_test_ctx();
+    let ptr_ty = PointerType::get(&mut ctx, 0);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc_ptr = entry.deref(&ctx).get_argument(0);
+    let a_ptr = entry.deref(&ctx).get_argument(1);
+    let b_ptr = entry.deref(&ctx).get_argument(2);
+
+    // MmaM16N8K128S32B1Op: 3 pointer operands, 0 results
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K128S32B1Op::get_concrete_op_info(),
+        vec![],
+        vec![acc_ptr, a_ptr, b_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popc",
+    )
+}
+
+// ---------------------------------------------------------------------------
+// mma.sync m16n8k256 b1 (xor.popc) intrinsic lowering test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mma_m16n8k256_s32_b1_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use llvm_export::types::PointerType;
+
+    let mut ctx = make_test_ctx();
+    let ptr_ty = PointerType::get(&mut ctx, 0);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc_ptr = entry.deref(&ctx).get_argument(0);
+    let a_ptr = entry.deref(&ctx).get_argument(1);
+    let b_ptr = entry.deref(&ctx).get_argument(2);
+
+    // MmaM16N8K256S32B1Op: 3 pointer operands, 0 results
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K256S32B1Op::get_concrete_op_info(),
+        vec![],
+        vec![acc_ptr, a_ptr, b_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc",
+    )
+}
