@@ -3428,6 +3428,24 @@ fn try_dispatch_intrinsic(
         // try_dispatch_intrinsic() call.
 
         // =================================================================
+        // WMMA Operations (movmatrix)
+        // =================================================================
+        "cuda_device::wmma::movmatrix_trans_b16" => {
+            Ok(Some(intrinsics::wmma::emit_movmatrix_trans_b16(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
+        // =================================================================
         // Atomic Operations (all cuda_device::atomic::* types and scopes)
         // =================================================================
         path if intrinsics::atomic::is_atomic_path(path) => intrinsics::atomic::dispatch(
