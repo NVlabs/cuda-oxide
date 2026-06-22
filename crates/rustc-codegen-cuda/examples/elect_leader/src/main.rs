@@ -146,7 +146,10 @@ fn main() {
         .expect("Kernel launch failed");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
-    println!("out[0] = {} (expected 16 — lowest lane of the active subset)", out[0]);
+    println!(
+        "out[0] = {} (expected 16 — lowest lane of the active subset)",
+        out[0]
+    );
 
     if out[0] == 16 {
         println!("✓ subset leader is the lowest participating lane");
