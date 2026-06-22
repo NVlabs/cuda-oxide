@@ -79,6 +79,7 @@ pub mod cluster;
 pub mod common;
 pub mod convert;
 pub mod debug;
+pub mod dotprod;
 pub mod mbarrier;
 pub mod stmatrix;
 pub mod tcgen05;
