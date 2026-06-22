@@ -612,6 +612,47 @@ pub fn gridDim_z() -> u32 {
 }
 
 // =============================================================================
+// SM and Grid Identification
+// =============================================================================
+
+/// Get the SM (Streaming Multiprocessor) ID of the current thread.
+///
+/// Corresponds to PTX `%smid`. The SM ID identifies which physical
+/// multiprocessor is executing this thread's block. Useful for
+/// SM-aware scheduling and diagnostics.
+///
+/// # Note
+///
+/// The SM ID is a hardware identifier and is not contiguous across
+/// blocks. It may change between kernel launches.
+#[inline(never)]
+pub fn smid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.smid()
+    unreachable!("smid called outside CUDA kernel context")
+}
+
+/// Get the number of SMs on the device.
+///
+/// Corresponds to PTX `%nsmid`. Returns the total number of
+/// streaming multiprocessors available on the GPU.
+#[inline(never)]
+pub fn nsmid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nsmid()
+    unreachable!("nsmid called outside CUDA kernel context")
+}
+
+/// Get the current grid ID.
+///
+/// Corresponds to PTX `%gridid`. Each kernel launch is assigned a
+/// unique grid ID. Useful for distinguishing work from different
+/// launches when using CUDA streams or graphs.
+#[inline(never)]
+pub fn gridid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.gridid()
+    unreachable!("gridid called outside CUDA kernel context")
+}
+
+// =============================================================================
 // Synchronization Intrinsics
 // =============================================================================
 

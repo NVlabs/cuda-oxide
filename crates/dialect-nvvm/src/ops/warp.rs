@@ -677,6 +677,141 @@ impl ReduxSyncAddOp {
     }
 }
 
+// =============================================================================
+// Warp and Lane Mask Special Registers
+// =============================================================================
+
+/// Read the hardware warp ID within the current SM.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.warpid` / PTX `%warpid`.
+///
+/// # Verification
+///
+/// - Must have 0 operands
+/// - Must have 1 result of type `i32`
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_warpid",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregWarpIdOp;
+
+impl ReadPtxSregWarpIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregWarpIdOp { op }
+    }
+}
+
+/// Read the maximum number of warp slots per SM.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.nwarpid` / PTX `%nwarpid`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_nwarpid",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregNwarpIdOp;
+
+impl ReadPtxSregNwarpIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregNwarpIdOp { op }
+    }
+}
+
+/// Lane mask: bit set at exactly the calling lane's position.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.lanemask.eq` / PTX `%lanemask_eq`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_lanemask_eq",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregLanemaskEqOp;
+
+impl ReadPtxSregLanemaskEqOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregLanemaskEqOp { op }
+    }
+}
+
+/// Lane mask: bits set for lanes <= calling lane.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.lanemask.le` / PTX `%lanemask_le`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_lanemask_le",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregLanemaskLeOp;
+
+impl ReadPtxSregLanemaskLeOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregLanemaskLeOp { op }
+    }
+}
+
+/// Lane mask: bits set for lanes < calling lane.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.lanemask.lt` / PTX `%lanemask_lt`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_lanemask_lt",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregLanemaskLtOp;
+
+impl ReadPtxSregLanemaskLtOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregLanemaskLtOp { op }
+    }
+}
+
+/// Lane mask: bits set for lanes >= calling lane.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.lanemask.ge` / PTX `%lanemask_ge`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_lanemask_ge",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregLanemaskGeOp;
+
+impl ReadPtxSregLanemaskGeOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregLanemaskGeOp { op }
+    }
+}
+
+/// Lane mask: bits set for lanes > calling lane.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.lanemask.gt` / PTX `%lanemask_gt`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_lanemask_gt",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregLanemaskGtOp;
+
+impl ReadPtxSregLanemaskGtOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregLanemaskGtOp { op }
+    }
+}
+
 /// Register warp operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // Lane identification
@@ -706,4 +841,12 @@ pub(super) fn register(ctx: &mut Context) {
     ActiveMaskOp::register(ctx);
     // Warp-scoped barrier
     BarWarpSyncOp::register(ctx);
+    // Special registers: warp & lane masks
+    ReadPtxSregWarpIdOp::register(ctx);
+    ReadPtxSregNwarpIdOp::register(ctx);
+    ReadPtxSregLanemaskEqOp::register(ctx);
+    ReadPtxSregLanemaskLeOp::register(ctx);
+    ReadPtxSregLanemaskLtOp::register(ctx);
+    ReadPtxSregLanemaskGeOp::register(ctx);
+    ReadPtxSregLanemaskGtOp::register(ctx);
 }

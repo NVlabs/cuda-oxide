@@ -804,6 +804,64 @@ impl ThreadfenceSystemOp {
     }
 }
 
+// =============================================================================
+// SM and Grid Identification
+// =============================================================================
+
+/// Read the SM (Streaming Multiprocessor) ID.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.smid` / PTX `%smid`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_smid",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregSmIdOp;
+
+impl ReadPtxSregSmIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregSmIdOp { op }
+    }
+}
+
+/// Read the number of SMs on the device.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.nsmid` / PTX `%nsmid`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_nsmid",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregNsmIdOp;
+
+impl ReadPtxSregNsmIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregNsmIdOp { op }
+    }
+}
+
+/// Read the current grid ID.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.gridid` / PTX `%gridid`.
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_gridid",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregGridIdOp;
+
+impl ReadPtxSregGridIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregGridIdOp { op }
+    }
+}
+
 /// Register thread indexing operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // X-dimension
@@ -830,4 +888,8 @@ pub(super) fn register(ctx: &mut Context) {
     ThreadfenceBlockOp::register(ctx);
     ThreadfenceOp::register(ctx);
     ThreadfenceSystemOp::register(ctx);
+    // SM and grid identification
+    ReadPtxSregSmIdOp::register(ctx);
+    ReadPtxSregNsmIdOp::register(ctx);
+    ReadPtxSregGridIdOp::register(ctx);
 }

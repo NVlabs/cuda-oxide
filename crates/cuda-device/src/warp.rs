@@ -70,6 +70,82 @@ pub fn lane_id() -> u32 {
     unreachable!("lane_id called outside CUDA kernel context")
 }
 
+/// Read the hardware warp ID within the current SM.
+///
+/// Corresponds to PTX `%warpid`. Unlike [`warp_id`] (which computes
+/// `threadIdx.x / 32`), this returns the hardware warp slot assigned by
+/// the scheduler. The value is not guaranteed to be contiguous across
+/// blocks sharing the same SM.
+///
+/// # Note
+///
+/// The warp identifier can be reused across different blocks executing
+/// on the same SM. Do not rely on it for cross-block uniqueness.
+#[inline(never)]
+pub fn warpid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.warpid()
+    unreachable!("warpid called outside CUDA kernel context")
+}
+
+/// Maximum number of warp slots per SM.
+///
+/// Corresponds to PTX `%nwarpid`. This is the upper bound on values
+/// returned by [`warpid`], **not** the number of warps currently active.
+#[inline(never)]
+pub fn nwarpid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nwarpid()
+    unreachable!("nwarpid called outside CUDA kernel context")
+}
+
+/// Bitmask with a single bit set at the position of the calling lane.
+///
+/// Corresponds to PTX `%lanemask_eq`. Equivalent to `1 << lane_id()`.
+#[inline(never)]
+pub fn lanemask_eq() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.eq()
+    unreachable!("lanemask_eq called outside CUDA kernel context")
+}
+
+/// Bitmask with bits set for all lanes whose ID is less than or equal to
+/// the calling lane's ID.
+///
+/// Corresponds to PTX `%lanemask_le`.
+#[inline(never)]
+pub fn lanemask_le() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.le()
+    unreachable!("lanemask_le called outside CUDA kernel context")
+}
+
+/// Bitmask with bits set for all lanes whose ID is less than the calling
+/// lane's ID.
+///
+/// Corresponds to PTX `%lanemask_lt`.
+#[inline(never)]
+pub fn lanemask_lt() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.lt()
+    unreachable!("lanemask_lt called outside CUDA kernel context")
+}
+
+/// Bitmask with bits set for all lanes whose ID is greater than or equal to
+/// the calling lane's ID.
+///
+/// Corresponds to PTX `%lanemask_ge`.
+#[inline(never)]
+pub fn lanemask_ge() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.ge()
+    unreachable!("lanemask_ge called outside CUDA kernel context")
+}
+
+/// Bitmask with bits set for all lanes whose ID is greater than the calling
+/// lane's ID.
+///
+/// Corresponds to PTX `%lanemask_gt`.
+#[inline(never)]
+pub fn lanemask_gt() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.gt()
+    unreachable!("lanemask_gt called outside CUDA kernel context")
+}
+
 /// Synchronize a subset of warp lanes given by `mask`.
 ///
 /// PTX `bar.warp.sync mask` (LLVM `@llvm.nvvm.bar.warp.sync(i32)`). All
