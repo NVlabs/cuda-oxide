@@ -3373,6 +3373,58 @@ fn try_dispatch_intrinsic(
         )?)),
 
         // =================================================================
+        // Integer dot products (from intrinsics::dotprod)
+        // =================================================================
+        "cuda_device::dotprod::dp4a_s32" => Ok(Some(intrinsics::dotprod::emit_dp4a_s32(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::dotprod::dp4a_u32" => Ok(Some(intrinsics::dotprod::emit_dp4a_u32(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::dotprod::dp2a_s32" => Ok(Some(intrinsics::dotprod::emit_dp2a_s32(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::dotprod::dp2a_u32" => Ok(Some(intrinsics::dotprod::emit_dp2a_u32(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+
+        // =================================================================
         // CLC - Cluster Launch Control (from intrinsics::clc)
         // =================================================================
         "cuda_device::clc::clc_try_cancel" => Ok(Some(intrinsics::clc::emit_clc_try_cancel(

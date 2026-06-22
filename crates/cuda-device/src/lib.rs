@@ -23,6 +23,7 @@ pub mod cooperative_groups;
 pub mod cusimd;
 pub mod debug;
 pub mod disjoint;
+pub mod dotprod;
 pub mod fence;
 pub mod grid;
 pub mod ptx;

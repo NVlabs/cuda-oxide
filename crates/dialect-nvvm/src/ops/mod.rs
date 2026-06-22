@@ -102,6 +102,7 @@ mod clc;
 mod cluster;
 mod convert;
 mod debug;
+mod dotprod;
 mod grid;
 mod mbarrier;
 mod stmatrix;
@@ -121,6 +122,7 @@ pub use clc::*;
 pub use cluster::*;
 pub use convert::*;
 pub use debug::*;
+pub use dotprod::*;
 pub use grid::*;
 pub use mbarrier::*;
 pub use stmatrix::*;
@@ -150,4 +152,5 @@ pub fn register(ctx: &mut Context) {
     tcgen05::register(ctx);
     stmatrix::register(ctx);
     debug::register(ctx);
+    dotprod::register(ctx);
 }
