@@ -4,8 +4,8 @@
 //! Packed `bf16x2` arithmetic operations.
 //!
 //! Single-thread, non-convergent packed bf16 ALU ops lowered to inline PTX.
-//! Currently only FMA is exposed because `add.bf16x2` / `mul.bf16x2` require
-//! `sm_90+`, while `fma.rn.bf16x2` is supported from `sm_80`.
+//! FMA is supported from `sm_80`; the remaining ops (`add`, `sub`, `mul`,
+//! `min`, `max`, `neg`, `abs`) require `sm_90+`.
 
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
@@ -18,20 +18,7 @@ use pliron_derive::pliron_op;
 
 /// Fused multiply-add on packed bf16x2 values: `d = a * b + c`.
 ///
-/// Each operand is a `u32` carrying two bf16 lanes (low 16 / high 16). The
-/// result is the packed pairwise FMA.
-///
 /// PTX: `fma.rn.bf16x2 $0, $1, $2, $3;`  (requires `sm_80+`)
-///
-/// # Operands
-///
-/// - `a` (u32): packed bf16x2 multiplicand
-/// - `b` (u32): packed bf16x2 multiplier
-/// - `c` (u32): packed bf16x2 addend
-///
-/// # Results
-///
-/// - `d` (u32): packed bf16x2 result
 #[pliron_op(
     name = "nvvm.fma_bf16x2",
     format,
@@ -47,7 +34,140 @@ impl FmaBf16x2Op {
     }
 }
 
+/// Packed bf16x2 addition: `d = a + b`.
+///
+/// PTX: `add.rn.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.add_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct AddBf16x2Op;
+
+impl AddBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        AddBf16x2Op { op }
+    }
+}
+
+/// Packed bf16x2 subtraction: `d = a - b`.
+///
+/// PTX: `sub.rn.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.sub_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct SubBf16x2Op;
+
+impl SubBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        SubBf16x2Op { op }
+    }
+}
+
+/// Packed bf16x2 multiplication: `d = a * b`.
+///
+/// PTX: `mul.rn.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.mul_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct MulBf16x2Op;
+
+impl MulBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MulBf16x2Op { op }
+    }
+}
+
+/// Packed bf16x2 minimum: `d = min(a, b)`.
+///
+/// PTX: `min.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.min_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct MinBf16x2Op;
+
+impl MinBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MinBf16x2Op { op }
+    }
+}
+
+/// Packed bf16x2 maximum: `d = max(a, b)`.
+///
+/// PTX: `max.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.max_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct MaxBf16x2Op;
+
+impl MaxBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MaxBf16x2Op { op }
+    }
+}
+
+/// Packed bf16x2 negation: `d = -a`.
+///
+/// PTX: `neg.bf16x2 $0, $1;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.neg_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct NegBf16x2Op;
+
+impl NegBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        NegBf16x2Op { op }
+    }
+}
+
+/// Packed bf16x2 absolute value: `d = |a|`.
+///
+/// PTX: `abs.bf16x2 $0, $1;`  (requires `sm_90+`)
+#[pliron_op(
+    name = "nvvm.abs_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct AbsBf16x2Op;
+
+impl AbsBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        AbsBf16x2Op { op }
+    }
+}
+
 /// Register bf16x2 operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     FmaBf16x2Op::register(ctx);
+    AddBf16x2Op::register(ctx);
+    SubBf16x2Op::register(ctx);
+    MulBf16x2Op::register(ctx);
+    MinBf16x2Op::register(ctx);
+    MaxBf16x2Op::register(ctx);
+    NegBf16x2Op::register(ctx);
+    AbsBf16x2Op::register(ctx);
 }

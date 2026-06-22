@@ -41,3 +41,136 @@ pub fn fma_bf16x2(a: u32, b: u32, c: u32) -> u32 {
     let _ = (a, b, c);
     unreachable!("fma_bf16x2 called outside CUDA kernel context")
 }
+
+/// Packed bf16x2 addition: `d = a + b`.
+///
+/// Both operands and the result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// add.rn.bf16x2 %d, %a, %b;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn add_bf16x2(a: u32, b: u32) -> u32 {
+    let _ = (a, b);
+    unreachable!("add_bf16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 subtraction: `d = a - b`.
+///
+/// Both operands and the result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// sub.rn.bf16x2 %d, %a, %b;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn sub_bf16x2(a: u32, b: u32) -> u32 {
+    let _ = (a, b);
+    unreachable!("sub_bf16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 multiplication: `d = a * b`.
+///
+/// Both operands and the result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// mul.rn.bf16x2 %d, %a, %b;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn mul_bf16x2(a: u32, b: u32) -> u32 {
+    let _ = (a, b);
+    unreachable!("mul_bf16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 minimum: `d = min(a, b)`.
+///
+/// Both operands and the result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// min.bf16x2 %d, %a, %b;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn min_bf16x2(a: u32, b: u32) -> u32 {
+    let _ = (a, b);
+    unreachable!("min_bf16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 maximum: `d = max(a, b)`.
+///
+/// Both operands and the result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// max.bf16x2 %d, %a, %b;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn max_bf16x2(a: u32, b: u32) -> u32 {
+    let _ = (a, b);
+    unreachable!("max_bf16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 negation: `d = -a`.
+///
+/// The operand and result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// neg.bf16x2 %d, %a;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn neg_bf16x2(a: u32) -> u32 {
+    let _ = a;
+    unreachable!("neg_bf16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 absolute value: `d = |a|`.
+///
+/// The operand and result are packed `bf16x2` carried as `u32`.
+///
+/// # PTX
+///
+/// ```ptx
+/// abs.bf16x2 %d, %a;
+/// ```
+///
+/// # Supported on
+///
+/// - `sm_90+` (Hopper onwards).
+#[inline(never)]
+pub fn abs_bf16x2(a: u32) -> u32 {
+    let _ = a;
+    unreachable!("abs_bf16x2 called outside CUDA kernel context")
+}
