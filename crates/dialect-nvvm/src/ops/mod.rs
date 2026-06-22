@@ -98,6 +98,7 @@
 mod asm;
 pub mod atomic;
 mod bf16x2;
+mod bitops;
 mod clc;
 mod cluster;
 mod convert;
@@ -117,6 +118,7 @@ use pliron::context::Context;
 pub use asm::*;
 pub use atomic::*;
 pub use bf16x2::*;
+pub use bitops::*;
 pub use clc::*;
 pub use cluster::*;
 pub use convert::*;
@@ -138,6 +140,7 @@ pub fn register(ctx: &mut Context) {
     atomic::register(ctx);
     asm::register(ctx);
     bf16x2::register(ctx);
+    bitops::register(ctx);
     clc::register(ctx);
     convert::register(ctx);
     thread::register(ctx);

@@ -74,6 +74,7 @@ pub mod asm;
 pub mod atomic;
 pub mod basic;
 pub mod bf16x2;
+pub mod bitops;
 pub mod clc;
 pub mod cluster;
 pub mod common;

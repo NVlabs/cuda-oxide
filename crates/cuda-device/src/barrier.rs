@@ -445,6 +445,31 @@ pub unsafe fn mbarrier_arrive_cluster(remote_bar_addr: u64) {
     unreachable!("mbarrier_arrive_cluster called outside CUDA kernel context")
 }
 
+/// Signal that this thread is dropping out of future barrier phases.
+///
+/// After calling `mbarrier_arrive_drop`, this thread will no longer
+/// participate in subsequent phases of the barrier. The barrier's
+/// expected arrival count is decremented for all future phases.
+///
+/// This is useful for dynamic thread participation patterns where some
+/// threads exit early while others continue using the barrier.
+///
+/// # Safety
+///
+/// - `addr` must point to a valid, initialized mbarrier in shared memory
+/// - The calling thread must be a registered participant of the barrier
+///
+/// # PTX
+///
+/// ```ptx
+/// mbarrier.arrive_drop.shared.b64 _, [addr];
+/// ```
+#[inline(never)]
+pub unsafe fn mbarrier_arrive_drop(addr: *mut u64) {
+    let _ = addr;
+    unreachable!("mbarrier_arrive_drop called outside CUDA kernel context")
+}
+
 // =============================================================================
 // Barrier Invalidation
 // =============================================================================
@@ -469,6 +494,31 @@ pub unsafe fn mbarrier_inval(bar: *mut Barrier) {
     let _ = bar;
     // Lowered to: call void @llvm.nvvm.mbarrier.inval.shared(ptr %bar)
     unreachable!("mbarrier_inval called outside CUDA kernel context")
+}
+
+/// Extract the pending arrival count from an mbarrier state token.
+///
+/// The state token is obtained from `mbarrier.test_wait` or similar
+/// operations. This instruction extracts the number of arrivals still
+/// pending before the barrier phase completes.
+///
+/// # Arguments
+///
+/// - `state` - the 64-bit mbarrier state token
+///
+/// # Returns
+///
+/// The number of arrivals still pending (as a `u32`).
+///
+/// # PTX
+///
+/// ```ptx
+/// mbarrier.pending_count.b64 count, state;
+/// ```
+#[inline(never)]
+pub fn mbarrier_pending_count(state: u64) -> u32 {
+    let _ = state;
+    unreachable!("mbarrier_pending_count called outside CUDA kernel context")
 }
 
 // =============================================================================

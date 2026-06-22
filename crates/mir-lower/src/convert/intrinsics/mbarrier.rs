@@ -334,3 +334,59 @@ pub(crate) fn convert_nanosleep(
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
+
+/// mbarrier.pending_count.b64: (state: i64) -> i32 (inline PTX)
+pub(crate) fn convert_pending_count(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 {
+        return pliron::input_err_noloc!("mbarrier_pending_count requires 1 operand (state: i64)");
+    }
+    let state = operands[0];
+
+    let asm_template = "mbarrier.pending_count.b64 $0, $1;";
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        i32_ty.into(),
+        vec![state],
+        asm_template,
+        "=r,l",
+    );
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
+/// mbarrier.arrive_drop.shared.b64: (addr) -> void (inline PTX)
+pub(crate) fn convert_arrive_drop(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let void_ty = llvm_types::VoidType::get(ctx);
+
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 {
+        return pliron::input_err_noloc!("mbarrier_arrive_drop requires 1 operand (addr: ptr)");
+    }
+    let bar_ptr = cast_to_shared_addrspace(ctx, rewriter, operands[0]);
+
+    let asm_template = "mbarrier.arrive_drop.shared.b64 _, [$0];";
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        vec![bar_ptr],
+        asm_template,
+        "l,~{memory}",
+    );
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}

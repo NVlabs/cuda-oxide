@@ -378,6 +378,65 @@ impl NanosleepOp {
     }
 }
 
+/// Extract pending arrival count from mbarrier state token.
+///
+/// Given a 64-bit state token (obtained from `mbarrier.test_wait` or similar),
+/// returns the number of arrivals still pending before the phase completes.
+///
+/// PTX: `mbarrier.pending_count.b64 $0, $1;`
+///
+/// # Operands
+///
+/// - `state` (i64): mbarrier state token
+///
+/// # Results
+///
+/// - `count` (i32): pending arrival count
+#[pliron_op(
+    name = "nvvm.mbarrier_pending_count",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+)]
+pub struct MbarrierPendingCountOp;
+
+impl MbarrierPendingCountOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MbarrierPendingCountOp { op }
+    }
+}
+
+/// Signal that the calling thread drops out of future barrier phases.
+///
+/// After this operation, the thread will no longer participate in subsequent
+/// phases of the barrier. The expected arrival count is decremented for all
+/// future phases.
+///
+/// PTX: `mbarrier.arrive_drop.shared.b64 _, [$0];`
+///
+/// # Operands
+///
+/// - `addr` (ptr addrspace(3)): pointer to barrier in shared memory
+///
+/// # Results
+///
+/// - None
+#[pliron_op(
+    name = "nvvm.mbarrier_arrive_drop_shared",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
+)]
+pub struct MbarrierArriveDropSharedOp;
+
+impl MbarrierArriveDropSharedOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MbarrierArriveDropSharedOp { op }
+    }
+}
+
 /// Register mbarrier operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     MbarrierInitSharedOp::register(ctx);
@@ -390,4 +449,6 @@ pub(super) fn register(ctx: &mut Context) {
     MbarrierInvalSharedOp::register(ctx);
     FenceProxyAsyncSharedCtaOp::register(ctx);
     NanosleepOp::register(ctx);
+    MbarrierPendingCountOp::register(ctx);
+    MbarrierArriveDropSharedOp::register(ctx);
 }

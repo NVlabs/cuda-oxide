@@ -16,10 +16,11 @@ use crate::translator::rvalue;
 use crate::translator::types;
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
-    FenceProxyAsyncSharedCtaOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxSharedOp,
-    MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
-    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, NanosleepOp, ThreadfenceBlockOp,
-    ThreadfenceOp, ThreadfenceSystemOp,
+    FenceProxyAsyncSharedCtaOp, MbarrierArriveClusterOp, MbarrierArriveDropSharedOp,
+    MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp, MbarrierInitSharedOp,
+    MbarrierInvalSharedOp, MbarrierPendingCountOp, MbarrierTestWaitSharedOp,
+    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, NanosleepOp, PrmtB32Op,
+    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -985,4 +986,238 @@ pub fn emit_fence_proxy_async_shared_cta(
             )
         )
     }
+}
+
+/// Emit mbarrier_pending_count: extract pending count from mbarrier state.
+///
+/// Args:
+/// - `args[0]`: u64 (mbarrier state token)
+///
+/// Returns: u32 (pending count)
+pub fn emit_mbarrier_pending_count(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 1 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "mbarrier_pending_count expects 1 argument, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (state, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let i32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let pending_op = Operation::new(
+        ctx,
+        MbarrierPendingCountOp::get_concrete_op_info(),
+        vec![i32_type.to_ptr()],
+        vec![state],
+        vec![],
+        0,
+    );
+    pending_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        pending_op.insert_after(ctx, prev);
+    } else {
+        pending_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = pending_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        pending_op,
+        value_map,
+        block_map,
+        loc,
+        "mbarrier_pending_count call without target block",
+    )
+}
+
+/// Emit mbarrier_arrive_drop: signal thread departure from barrier.
+///
+/// Args:
+/// - `args[0]`: *mut u64 (pointer to barrier in shared memory)
+///
+/// Returns: void
+pub fn emit_mbarrier_arrive_drop(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 1 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "mbarrier_arrive_drop expects 1 argument, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let (bar_ptr, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let drop_op = Operation::new(
+        ctx,
+        MbarrierArriveDropSharedOp::get_concrete_op_info(),
+        vec![],
+        vec![bar_ptr],
+        vec![],
+        0,
+    );
+    drop_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        drop_op.insert_after(ctx, prev);
+    } else {
+        drop_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, drop_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "mbarrier_arrive_drop call without target block".to_string(),
+            )
+        )
+    }
+}
+
+/// Emit prmt_b32: byte permute on two 32-bit words.
+///
+/// Args:
+/// - `args[0]`: u32 (a - upper source)
+/// - `args[1]`: u32 (b - lower source)
+/// - `args[2]`: u32 (c - control word)
+///
+/// Returns: u32 (permuted result)
+pub fn emit_prmt_b32(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "prmt_b32 expects 3 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+    let (a_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (b_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (c_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let i32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let prmt_op = Operation::new(
+        ctx,
+        PrmtB32Op::get_concrete_op_info(),
+        vec![i32_type.to_ptr()],
+        vec![a_val, b_val, c_val],
+        vec![],
+        0,
+    );
+    prmt_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        prmt_op.insert_after(ctx, prev);
+    } else {
+        prmt_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = prmt_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        prmt_op,
+        value_map,
+        block_map,
+        loc,
+        "prmt_b32 call without target block",
+    )
 }
