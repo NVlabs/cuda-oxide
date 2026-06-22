@@ -37,3 +37,77 @@ pub fn cvt_f16x2_f32(lo: f32, hi: f32) -> u32 {
     let _ = (lo, hi);
     unreachable!("cvt_f16x2_f32 called outside CUDA kernel context")
 }
+
+/// Convert two f32 values to a packed f16x2 (u32) with truncation rounding.
+///
+/// Uses round-toward-zero (truncation) instead of the default
+/// round-to-nearest-even mode.
+///
+/// Maps to PTX: `cvt.rz.f16x2.f32 d, hi, lo;`
+///
+/// # Arguments
+/// - `lo`: f32 value for the low 16 bits (bits `[15:0]`)
+/// - `hi`: f32 value for the high 16 bits (bits `[31:16]`)
+///
+/// # Returns
+/// A u32 containing two packed f16 values (truncation rounded).
+#[inline(never)]
+pub fn cvt_rz_f16x2_f32(lo: f32, hi: f32) -> u32 {
+    let _ = (lo, hi);
+    unreachable!("cvt_rz_f16x2_f32 called outside CUDA kernel context")
+}
+
+/// Convert two f32 values to a packed f16x2 (u32) with fused ReLU.
+///
+/// Negative values are clamped to zero before packing.
+///
+/// Maps to PTX: `cvt.rn.relu.f16x2.f32 d, hi, lo;`
+///
+/// # Arguments
+/// - `lo`: f32 value for the low 16 bits (bits `[15:0]`)
+/// - `hi`: f32 value for the high 16 bits (bits `[31:16]`)
+///
+/// # Returns
+/// A u32 containing two packed f16 values (ReLU applied).
+#[inline(never)]
+pub fn cvt_rn_relu_f16x2_f32(lo: f32, hi: f32) -> u32 {
+    let _ = (lo, hi);
+    unreachable!("cvt_rn_relu_f16x2_f32 called outside CUDA kernel context")
+}
+
+/// Convert two f32 values to a packed bf16x2 (u32) with fused ReLU.
+///
+/// Negative values are clamped to zero before packing.
+///
+/// Maps to PTX: `cvt.rn.relu.bf16x2.f32 d, hi, lo;`
+///
+/// # Arguments
+/// - `lo`: f32 value for the low 16 bits (bits `[15:0]`)
+/// - `hi`: f32 value for the high 16 bits (bits `[31:16]`)
+///
+/// # Returns
+/// A u32 containing two packed bf16 values (ReLU applied).
+#[inline(never)]
+pub fn cvt_rn_relu_bf16x2_f32(lo: f32, hi: f32) -> u32 {
+    let _ = (lo, hi);
+    unreachable!("cvt_rn_relu_bf16x2_f32 called outside CUDA kernel context")
+}
+
+/// Convert two f32 values to a packed bf16x2 (u32) with truncation rounding.
+///
+/// Uses round-toward-zero (truncation) instead of the default
+/// round-to-nearest-even mode.
+///
+/// Maps to PTX: `cvt.rz.bf16x2.f32 d, hi, lo;`
+///
+/// # Arguments
+/// - `lo`: f32 value for the low 16 bits (bits `[15:0]`)
+/// - `hi`: f32 value for the high 16 bits (bits `[31:16]`)
+///
+/// # Returns
+/// A u32 containing two packed bf16 values (truncation rounded).
+#[inline(never)]
+pub fn cvt_rz_bf16x2_f32(lo: f32, hi: f32) -> u32 {
+    let _ = (lo, hi);
+    unreachable!("cvt_rz_bf16x2_f32 called outside CUDA kernel context")
+}

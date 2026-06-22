@@ -2389,6 +2389,62 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
+        "cuda_device::convert::cvt_rz_f16x2_f32" => {
+            Ok(Some(intrinsics::convert::emit_cvt_rz_f16x2_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+        "cuda_device::convert::cvt_rn_relu_f16x2_f32" => {
+            Ok(Some(intrinsics::convert::emit_cvt_rn_relu_f16x2_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+        "cuda_device::convert::cvt_rn_relu_bf16x2_f32" => {
+            Ok(Some(intrinsics::convert::emit_cvt_rn_relu_bf16x2_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+        "cuda_device::convert::cvt_rz_bf16x2_f32" => {
+            Ok(Some(intrinsics::convert::emit_cvt_rz_bf16x2_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
 
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)
@@ -3191,6 +3247,90 @@ fn try_dispatch_intrinsic(
         // bf16x2 packed arithmetic (from intrinsics::bf16x2)
         // =================================================================
         "cuda_device::bf16x2::fma_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_fma_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::add_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_add_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::sub_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_sub_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::mul_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_mul_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::min_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_min_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::max_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_max_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::neg_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_neg_bf16x2(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::bf16x2::abs_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_abs_bf16x2(
             ctx,
             body,
             args,
