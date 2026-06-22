@@ -68,8 +68,8 @@ use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 
 use dialect_nvvm::ops::atomic::{
-    AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
-    NvvmAtomicRmwOp, NvvmAtomicStoreOp,
+    AtomicOrdering, AtomicRmwKind, AtomicScope, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
+    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
 };
 
 use dialect_mir::ops::MirNegOp;
@@ -1327,5 +1327,175 @@ fn emit_core_atomic_cmpxchg(
         block_map,
         loc,
         "core atomic cmpxchg call without target block",
+    )
+}
+
+// =============================================================================
+// Packed Atomic Add (f16x2, bf16x2) — standalone intrinsics
+// =============================================================================
+
+/// Emit `atom_add_f16x2`: packed f16x2 atomic add on global memory.
+///
+/// Args: `(addr: *mut u32, val: u32)`.
+/// Returns: `u32`, the previous packed f16x2 value.
+pub fn emit_atom_add_f16x2(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "atom_add_f16x2 expects 2 arguments (addr: *mut u32, val: u32), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (addr_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (val_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let op_ptr = Operation::new(
+        ctx,
+        NvvmAtomAddF16x2Op::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![addr_val, val_val],
+        vec![],
+        0,
+    );
+    op_ptr.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        op_ptr.insert_after(ctx, prev);
+    } else {
+        op_ptr.insert_at_front(block_ptr, ctx);
+    }
+
+    let result = op_ptr.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        op_ptr,
+        value_map,
+        block_map,
+        loc,
+        "atom_add_f16x2 call without target block",
+    )
+}
+
+/// Emit `atom_add_bf16x2`: packed bf16x2 atomic add on global memory.
+///
+/// Args: `(addr: *mut u32, val: u32)`.
+/// Returns: `u32`, the previous packed bf16x2 value.
+pub fn emit_atom_add_bf16x2(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 2 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "atom_add_bf16x2 expects 2 arguments (addr: *mut u32, val: u32), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (addr_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (val_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let op_ptr = Operation::new(
+        ctx,
+        NvvmAtomAddBf16x2Op::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![addr_val, val_val],
+        vec![],
+        0,
+    );
+    op_ptr.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        op_ptr.insert_after(ctx, prev);
+    } else {
+        op_ptr.insert_at_front(block_ptr, ctx);
+    }
+
+    let result = op_ptr.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        op_ptr,
+        value_map,
+        block_map,
+        loc,
+        "atom_add_bf16x2 call without target block",
     )
 }

@@ -54,7 +54,9 @@ use dialect_nvvm::ops::atomic::{
 };
 use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
 use llvm_export::ops as llvm;
+use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 
+use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
@@ -269,5 +271,85 @@ pub(crate) fn convert_atomic_cmpxchg(
     rewriter.insert_operation(ctx, extract.get_operation());
     rewriter.replace_operation(ctx, op, extract.get_operation());
 
+    Ok(())
+}
+
+// =============================================================================
+// Packed Atomic Add (f16x2, bf16x2) — inline PTX
+// =============================================================================
+
+/// Convert `nvvm.atom_add_f16x2` to inline PTX.
+///
+/// ```ptx
+/// atom.global.add.noftz.f16x2 $0, [$1], $2;
+/// ```
+///
+/// Constraints: `=r,l,r,~{memory}` — output register, address pointer, input
+/// register, memory clobber.
+///
+/// Uses `SideEffect` (not convergent): atomics are per-thread, not
+/// warp-synchronous.
+pub(crate) fn convert_atom_add_f16x2(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let addr = operands[0];
+    let val = operands[1];
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        i32_ty.into(),
+        vec![addr, val],
+        "atom.global.add.noftz.f16x2 $0, [$1], $2;",
+        "=r,l,r,~{memory}",
+        AsmKind::SideEffect,
+    );
+
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
+/// Convert `nvvm.atom_add_bf16x2` to inline PTX.
+///
+/// ```ptx
+/// atom.global.add.noftz.bf16x2 $0, [$1], $2;
+/// ```
+///
+/// Constraints: `=r,l,r,~{memory}` — output register, address pointer, input
+/// register, memory clobber.
+///
+/// Uses `SideEffect` (not convergent): atomics are per-thread, not
+/// warp-synchronous.
+pub(crate) fn convert_atom_add_bf16x2(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let addr = operands[0];
+    let val = operands[1];
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        i32_ty.into(),
+        vec![addr, val],
+        "atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+        "=r,l,r,~{memory}",
+        AsmKind::SideEffect,
+    );
+
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
+    rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
 }
