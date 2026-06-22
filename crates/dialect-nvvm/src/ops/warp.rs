@@ -990,8 +990,9 @@ impl ReduxSyncXorOp {
 ///
 /// # Results
 ///
-/// - `leader` (i32): lane id of the elected leader (lowest lane in `mask`),
-///   identical on every participating lane
+/// - `leader` (i32): lane id of the elected leader (lowest lane in `mask`).
+///   PTX only defines this value on the elected lane; it is unspecified on
+///   non-elected lanes
 /// - `is_elected` (i1): true only on the calling lane if it is the leader
 #[pliron_op(
     name = "nvvm.elect_sync",

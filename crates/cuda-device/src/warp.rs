@@ -702,8 +702,10 @@ pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
 /// The lowest-numbered lane set in `mask` becomes the leader. Returns
 /// `(leader_lane, is_elected)`:
 ///
-/// - `leader_lane`: the lane id of the elected leader — the same value on every
-///   participating lane.
+/// - `leader_lane`: the lane id of the elected leader. PTX only defines this
+///   value on the elected lane itself; it is unspecified on non-elected lanes,
+///   so broadcast it (e.g. via [`shuffle_sync`]) if the rest of the warp needs
+///   it.
 /// - `is_elected`: `true` only for the calling lane if it is the leader.
 ///
 /// Requires Hopper (sm_90+). Convergent: every lane named in `mask` must be
