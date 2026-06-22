@@ -1337,3 +1337,135 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     );
     Ok(())
 }
+
+#[test]
+fn test_mma_m16n8k32_s32_s4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc = entry.deref(&ctx).get_argument(0);
+    let a = entry.deref(&ctx).get_argument(1);
+    let b = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K32S32S4Op::get_concrete_op_info(),
+        vec![],
+        vec![acc, a, b],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32",
+    )
+}
+
+#[test]
+fn test_mma_m16n8k32_s32_u4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc = entry.deref(&ctx).get_argument(0);
+    let a = entry.deref(&ctx).get_argument(1);
+    let b = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K32S32U4Op::get_concrete_op_info(),
+        vec![],
+        vec![acc, a, b],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m16n8k32.row.col.s32.u4.u4.s32",
+    )
+}
+
+#[test]
+fn test_mma_m16n8k64_s32_s4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc = entry.deref(&ctx).get_argument(0);
+    let a = entry.deref(&ctx).get_argument(1);
+    let b = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K64S32S4Op::get_concrete_op_info(),
+        vec![],
+        vec![acc, a, b],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32",
+    )
+}
+
+#[test]
+fn test_mma_m16n8k64_s32_u4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc = entry.deref(&ctx).get_argument(0);
+    let a = entry.deref(&ctx).get_argument(1);
+    let b = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K64S32U4Op::get_concrete_op_info(),
+        vec![],
+        vec![acc, a, b],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m16n8k64.row.col.s32.u4.u4.s32",
+    )
+}

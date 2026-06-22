@@ -2915,6 +2915,28 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // WGMMA (from intrinsics::wgmma)
         // =================================================================
+
+        // ---- WMMA int4 MMA ops ----
+        "cuda_device::wmma::mma_m16n8k32_s32_s4" => {
+            Ok(Some(intrinsics::wmma::emit_mma_m16n8k32_s32_s4(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::wmma::mma_m16n8k32_s32_u4" => {
+            Ok(Some(intrinsics::wmma::emit_mma_m16n8k32_s32_u4(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::wmma::mma_m16n8k64_s32_s4" => {
+            Ok(Some(intrinsics::wmma::emit_mma_m16n8k64_s32_s4(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::wmma::mma_m16n8k64_s32_u4" => {
+            Ok(Some(intrinsics::wmma::emit_mma_m16n8k64_s32_u4(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
         "cuda_device::wgmma::wgmma_fence" => Ok(Some(intrinsics::wgmma::emit_wgmma_fence(
             ctx, args, target, block_ptr, prev_op, block_map, loc,
         )?)),
