@@ -385,6 +385,108 @@ pub fn emit_warp_shuffle_f32(
     )
 }
 
+/// Emit a 64-bit warp shuffle operation.
+///
+/// Identical in shape to [`emit_warp_shuffle_i32`] but the value operand and
+/// result are `u64`. The 64-bit shuffle ops carry no LLVM intrinsic; they are
+/// lowered to inline PTX that splits the value into two 32-bit halves (see the
+/// lowering's `convert_shuffle_i64`). `f64` shuffles reach this via a device-side
+/// bitcast through `u64`, so only the integer op is needed here.
+///
+/// # Parameters
+/// - `shuffle_opid`: the NVVM opid for the specific 64-bit shuffle variant
+/// - `args`: `[mask, value, lane/lane_mask/delta]`
+pub fn emit_warp_shuffle_i64(
+    ctx: &mut Context,
+    body: &mir::Body,
+    shuffle_opid: (
+        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    ),
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "warp shuffle u64 expects 3 arguments [mask, value, lane], got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let u64_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
+
+    let (mask, mut last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
+    let (val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (lane_or_delta, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let shuffle_op = Operation::new(
+        ctx,
+        shuffle_opid,
+        vec![u64_type.to_handle()],
+        vec![mask, val, lane_or_delta],
+        vec![],
+        0,
+    );
+    shuffle_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        shuffle_op.insert_after(ctx, prev);
+    } else {
+        shuffle_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = shuffle_op.deref(ctx).get_result(0);
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result_value,
+        target,
+        block_ptr,
+        shuffle_op,
+        value_map,
+        block_map,
+        loc,
+        "warp shuffle u64 call without target block",
+    )
+}
+
 /// Emit a warp match operation (`match.any.sync` or `match.all.sync`).
 ///
 /// Both ops have the same shape from MIR's perspective: 2 operands

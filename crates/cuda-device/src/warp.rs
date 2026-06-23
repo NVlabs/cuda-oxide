@@ -395,6 +395,142 @@ pub fn shuffle_up_f32(var: f32, delta: u32) -> f32 {
 }
 
 // =============================================================================
+// Warp Shuffle - 64-bit (u64 / f64)
+// =============================================================================
+//
+// PTX `shfl.sync` only moves 32-bit registers — there is no `shfl.sync.*.b64`
+// instruction and no `@llvm.nvvm.shfl.sync.*.i64` intrinsic. A 64-bit shuffle
+// is therefore two 32-bit shuffles: split the value into its low/high halves,
+// shuffle each with the same lane argument, and reassemble. We do that split in
+// one convergent inline-PTX block (`mov.b64 {lo,hi}, x; shfl…; shfl…; mov.b64`)
+// so the two halves stay a single fused collective at the call site.
+//
+// `u64` is the carrier (data movement is bit-exact, so it also covers `i64` —
+// cast with `as u64` / `as i64`). The `f64` forms are zero-cost wrappers that
+// bitcast through `u64`, mirroring how the 32-bit API offers `u32` and `f32`.
+
+/// Shuffle (masked) u64: read `var` from `src_lane` for the given participation mask.
+///
+/// 64-bit analogue of [`shuffle_sync`] (PTX `shfl.sync.idx`, decomposed into two
+/// `shfl.sync.idx.b32`). The full-warp shorthand is [`shuffle_u64`].
+///
+/// # Parameters
+///
+/// - `mask`: warp lane participation mask (`u32::MAX` = all 32 lanes)
+/// - `var`: the 64-bit value to share (each lane provides its own)
+/// - `src_lane`: the lane ID (0-31) to read from
+#[inline(never)]
+pub fn shuffle_u64_sync(mask: u32, var: u64, src_lane: u32) -> u64 {
+    let _ = (mask, var, src_lane);
+    unreachable!("shuffle_u64_sync called outside CUDA kernel context")
+}
+
+/// Shuffle XOR (masked) u64: butterfly exchange under a mask.
+///
+/// 64-bit analogue of [`shuffle_xor_sync`] (PTX `shfl.sync.bfly`). The full-warp
+/// shorthand is [`shuffle_xor_u64`].
+#[inline(never)]
+pub fn shuffle_xor_u64_sync(mask: u32, var: u64, lane_mask: u32) -> u64 {
+    let _ = (mask, var, lane_mask);
+    unreachable!("shuffle_xor_u64_sync called outside CUDA kernel context")
+}
+
+/// Shuffle down (masked) u64: read from `(lane_id + delta)` under a mask.
+///
+/// 64-bit analogue of [`shuffle_down_sync`] (PTX `shfl.sync.down`). The full-warp
+/// shorthand is [`shuffle_down_u64`].
+#[inline(never)]
+pub fn shuffle_down_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
+    let _ = (mask, var, delta);
+    unreachable!("shuffle_down_u64_sync called outside CUDA kernel context")
+}
+
+/// Shuffle up (masked) u64: read from `(lane_id - delta)` under a mask.
+///
+/// 64-bit analogue of [`shuffle_up_sync`] (PTX `shfl.sync.up`). The full-warp
+/// shorthand is [`shuffle_up_u64`].
+#[inline(never)]
+pub fn shuffle_up_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
+    let _ = (mask, var, delta);
+    unreachable!("shuffle_up_u64_sync called outside CUDA kernel context")
+}
+
+/// Shuffle u64 (full-warp): equivalent to [`shuffle_u64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_u64(var: u64, src_lane: u32) -> u64 {
+    shuffle_u64_sync(u32::MAX, var, src_lane)
+}
+
+/// Shuffle XOR u64 (full-warp): equivalent to [`shuffle_xor_u64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_xor_u64(var: u64, lane_mask: u32) -> u64 {
+    shuffle_xor_u64_sync(u32::MAX, var, lane_mask)
+}
+
+/// Shuffle down u64 (full-warp): equivalent to [`shuffle_down_u64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_down_u64(var: u64, delta: u32) -> u64 {
+    shuffle_down_u64_sync(u32::MAX, var, delta)
+}
+
+/// Shuffle up u64 (full-warp): equivalent to [`shuffle_up_u64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_up_u64(var: u64, delta: u32) -> u64 {
+    shuffle_up_u64_sync(u32::MAX, var, delta)
+}
+
+/// Shuffle (masked) f64: float variant of [`shuffle_u64_sync`].
+///
+/// Bitcasts through `u64` (`f64::to_bits` / `f64::from_bits`), so it moves the
+/// exact bit pattern — NaN payloads are preserved.
+#[inline(always)]
+pub fn shuffle_f64_sync(mask: u32, var: f64, src_lane: u32) -> f64 {
+    f64::from_bits(shuffle_u64_sync(mask, var.to_bits(), src_lane))
+}
+
+/// Shuffle XOR (masked) f64: float variant of [`shuffle_xor_u64_sync`].
+#[inline(always)]
+pub fn shuffle_xor_f64_sync(mask: u32, var: f64, lane_mask: u32) -> f64 {
+    f64::from_bits(shuffle_xor_u64_sync(mask, var.to_bits(), lane_mask))
+}
+
+/// Shuffle down (masked) f64: float variant of [`shuffle_down_u64_sync`].
+#[inline(always)]
+pub fn shuffle_down_f64_sync(mask: u32, var: f64, delta: u32) -> f64 {
+    f64::from_bits(shuffle_down_u64_sync(mask, var.to_bits(), delta))
+}
+
+/// Shuffle up (masked) f64: float variant of [`shuffle_up_u64_sync`].
+#[inline(always)]
+pub fn shuffle_up_f64_sync(mask: u32, var: f64, delta: u32) -> f64 {
+    f64::from_bits(shuffle_up_u64_sync(mask, var.to_bits(), delta))
+}
+
+/// Shuffle f64 (full-warp): equivalent to [`shuffle_f64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_f64(var: f64, src_lane: u32) -> f64 {
+    shuffle_f64_sync(u32::MAX, var, src_lane)
+}
+
+/// Shuffle XOR f64 (full-warp): equivalent to [`shuffle_xor_f64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_xor_f64(var: f64, lane_mask: u32) -> f64 {
+    shuffle_xor_f64_sync(u32::MAX, var, lane_mask)
+}
+
+/// Shuffle down f64 (full-warp): equivalent to [`shuffle_down_f64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_down_f64(var: f64, delta: u32) -> f64 {
+    shuffle_down_f64_sync(u32::MAX, var, delta)
+}
+
+/// Shuffle up f64 (full-warp): equivalent to [`shuffle_up_f64_sync`]`(u32::MAX, ...)`.
+#[inline(always)]
+pub fn shuffle_up_f64(var: f64, delta: u32) -> f64 {
+    shuffle_up_f64_sync(u32::MAX, var, delta)
+}
+
+// =============================================================================
 // Warp Vote Operations
 // =============================================================================
 

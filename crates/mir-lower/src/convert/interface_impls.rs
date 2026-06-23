@@ -61,12 +61,13 @@ use dialect_nvvm::ops::{
     ReadPtxSregNctaidZOp, ReadPtxSregNtidXOp, ReadPtxSregNtidYOp, ReadPtxSregNtidZOp,
     ReadPtxSregTidXOp, ReadPtxSregTidYOp, ReadPtxSregTidZOp, ReduxSyncAddOp, ReduxSyncAndOp,
     ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp,
-    ReduxSyncXorOp, ShflSyncBflyF32Op, ShflSyncBflyI32Op, ShflSyncDownF32Op, ShflSyncDownI32Op,
-    ShflSyncIdxF32Op, ShflSyncIdxI32Op, ShflSyncUpF32Op, ShflSyncUpI32Op, StmatrixM8n8X2Op,
-    StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op,
-    Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp,
-    Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op,
-    Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
+    ReduxSyncXorOp, ShflSyncBflyF32Op, ShflSyncBflyI32Op, ShflSyncBflyI64Op, ShflSyncDownF32Op,
+    ShflSyncDownI32Op, ShflSyncDownI64Op, ShflSyncIdxF32Op, ShflSyncIdxI32Op, ShflSyncIdxI64Op,
+    ShflSyncUpF32Op, ShflSyncUpI32Op, ShflSyncUpI64Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp,
+    StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
+    Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
+    Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
+    Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
     Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
     Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
     Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
@@ -1772,6 +1773,82 @@ impl MirToLlvmConversion for ShflSyncUpF32Op {
             self.get_operation(),
             operands_info,
             "llvm_nvvm_shfl_sync_up_f32",
+            0,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ShflSyncIdxI64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_shuffle_i64(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "idx",
+            31,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ShflSyncBflyI64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_shuffle_i64(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "bfly",
+            31,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ShflSyncDownI64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_shuffle_i64(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "down",
+            31,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for ShflSyncUpI64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::warp::convert_shuffle_i64(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+            "up",
             0,
         )
     }

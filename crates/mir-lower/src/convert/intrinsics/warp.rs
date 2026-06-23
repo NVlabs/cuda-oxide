@@ -131,6 +131,60 @@ pub(crate) fn convert_shuffle_f32(
     Ok(())
 }
 
+/// Convert a 64-bit shuffle op to convergent inline PTX.
+///
+/// PTX `shfl.sync` only moves 32-bit registers (no `.b64` form, no
+/// `@llvm.nvvm.shfl.sync.*.i64` intrinsic), so a 64-bit shuffle is two 32-bit
+/// shuffles. We emit a single inline-PTX block that unpacks the value into
+/// `{lo, hi}` halves with `mov.b64`, runs `shfl.sync.<mode>.b32` on each half
+/// with the shared lane and membermask operands, then repacks the result.
+/// Keeping both halves inside one convergent asm block keeps the pair a single
+/// fused warp collective, the same way the elect.sync lowering uses inline PTX
+/// to dodge a missing intrinsic.
+///
+/// The shfl `c` (clamp/segmentation) operand is baked into the template per
+/// mode: `31` for idx/bfly/down and `0` for up — exactly the value the 32-bit
+/// intrinsic path passes (see [`convert_shuffle_i32`]).
+///
+/// Operand layout: `[mask, value, lane_or_delta]`. Inline-asm operand order is
+/// `$0`=result, `$1`=value (i64, `l`), `$2`=lane/delta (i32, `r`),
+/// `$3`=membermask (i32, `r`).
+pub(crate) fn convert_shuffle_i64(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+    mode: &str,
+    clamp: i32,
+) -> Result<()> {
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 3 {
+        return pliron::input_err_noloc!(
+            "Warp shuffle i64 requires 3 operands [mask, value, lane_or_delta]"
+        );
+    }
+    let (mask, val, lane_or_delta) = (operands[0], operands[1], operands[2]);
+
+    let asm_template = format!(
+        "{{ .reg .b32 lo; .reg .b32 hi; mov.b64 {{lo, hi}}, $1; \
+         shfl.sync.{mode}.b32 lo, lo, $2, {clamp}, $3; \
+         shfl.sync.{mode}.b32 hi, hi, $2, {clamp}, $3; \
+         mov.b64 $0, {{lo, hi}}; }}"
+    );
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        i64_ty.into(),
+        vec![val, lane_or_delta, mask],
+        &asm_template,
+        "=l,l,r,r",
+    );
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
 /// Convert vote operation to LLVM intrinsic call.
 ///
 /// Operand layout: `[mask, predicate]`. See `convert_shuffle_i32` for

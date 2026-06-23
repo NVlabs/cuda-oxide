@@ -521,6 +521,129 @@ impl ShflSyncUpF32Op {
 }
 
 // =============================================================================
+// Warp Shuffle - 64-bit (i64)
+// =============================================================================
+//
+// PTX `shfl.sync` is 32-bit only (no `.b64` form, no `@llvm.nvvm.shfl.sync.*.i64`
+// intrinsic), so these ops do not map to a single intrinsic. Each lowers to one
+// convergent inline-PTX block that splits the 64-bit value into two 32-bit
+// halves, runs two `shfl.sync.*.b32`, and reassembles the result. They carry an
+// `i64` value operand and produce an `i64` result; `f64` shuffles reuse them via
+// a bitcast in the device layer.
+
+/// Warp shuffle: read from a specific lane (idx mode) for i64.
+///
+/// Lowered to inline PTX (two `shfl.sync.idx.b32`); see the module note above.
+///
+/// # Operands
+///
+/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
+/// - `value` (i64): the 64-bit value to share
+/// - `src_lane` (i32): the lane index to read from (0-31)
+///
+/// # Results
+///
+/// - `result` (i64): the value from the source lane
+#[pliron_op(
+    name = "nvvm.shfl_sync_idx_i64",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],
+)]
+pub struct ShflSyncIdxI64Op;
+
+impl ShflSyncIdxI64Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ShflSyncIdxI64Op { op }
+    }
+}
+
+/// Warp shuffle: butterfly (XOR) pattern for i64.
+///
+/// Lowered to inline PTX (two `shfl.sync.bfly.b32`); see the module note above.
+///
+/// # Operands
+///
+/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
+/// - `value` (i64): the 64-bit value to exchange
+/// - `lane_mask` (i32): XOR mask for lane calculation
+///
+/// # Results
+///
+/// - `result` (i64): the value from lane `(self XOR mask)`
+#[pliron_op(
+    name = "nvvm.shfl_sync_bfly_i64",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],
+)]
+pub struct ShflSyncBflyI64Op;
+
+impl ShflSyncBflyI64Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ShflSyncBflyI64Op { op }
+    }
+}
+
+/// Warp shuffle: read from higher lane (down mode) for i64.
+///
+/// Lowered to inline PTX (two `shfl.sync.down.b32`); see the module note above.
+///
+/// # Operands
+///
+/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
+/// - `value` (i64): the 64-bit value to share
+/// - `delta` (i32): offset to add to lane ID
+///
+/// # Results
+///
+/// - `result` (i64): the value from lane `(self + delta)`
+#[pliron_op(
+    name = "nvvm.shfl_sync_down_i64",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],
+)]
+pub struct ShflSyncDownI64Op;
+
+impl ShflSyncDownI64Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ShflSyncDownI64Op { op }
+    }
+}
+
+/// Warp shuffle: read from lower lane (up mode) for i64.
+///
+/// Lowered to inline PTX (two `shfl.sync.up.b32`); see the module note above.
+///
+/// # Operands
+///
+/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
+/// - `value` (i64): the 64-bit value to share
+/// - `delta` (i32): offset to subtract from lane ID
+///
+/// # Results
+///
+/// - `result` (i64): the value from lane `(self - delta)`
+#[pliron_op(
+    name = "nvvm.shfl_sync_up_i64",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],
+)]
+pub struct ShflSyncUpI64Op;
+
+impl ShflSyncUpI64Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ShflSyncUpI64Op { op }
+    }
+}
+
+// =============================================================================
 // Warp Vote Operations
 // =============================================================================
 
@@ -1029,6 +1152,11 @@ pub(super) fn register(ctx: &mut Context) {
     ShflSyncBflyF32Op::register(ctx);
     ShflSyncDownF32Op::register(ctx);
     ShflSyncUpF32Op::register(ctx);
+    // Shuffle - i64
+    ShflSyncIdxI64Op::register(ctx);
+    ShflSyncBflyI64Op::register(ctx);
+    ShflSyncDownI64Op::register(ctx);
+    ShflSyncUpI64Op::register(ctx);
     // Vote
     VoteSyncAllOp::register(ctx);
     VoteSyncAnyOp::register(ctx);

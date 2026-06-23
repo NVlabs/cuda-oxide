@@ -8,7 +8,8 @@ use dialect_nvvm::ops::{
     ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
     ReadPtxSregLanemaskLtOp, ReadPtxSregTidXOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp,
     ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp,
-    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, ThreadfenceBlockOp,
+    ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -18,6 +19,12 @@ use pliron::{
     op::{Op, verify_op},
     operation::Operation,
 };
+
+/// The `(constructor, TypeId)` pair returned by `get_concrete_op_info()`.
+type OpInfo = (
+    fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+    std::any::TypeId,
+);
 
 #[test]
 fn test_thread_register_ops_verify_i32_results() {
@@ -384,4 +391,56 @@ fn test_elect_sync_construct_and_verify() {
         0,
     );
     assert!(verify_op(&ElectSyncOp::new(bad_results), &ctx).is_err());
+}
+
+#[test]
+fn test_shfl_sync_i64_construct_and_verify() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+
+    // A block supplies [mask (i32), value (i64), lane/delta (i32)].
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), i32_ty.into()],
+    );
+    let mask = block.deref(&ctx).get_argument(0);
+    let value = block.deref(&ctx).get_argument(1);
+    let lane = block.deref(&ctx).get_argument(2);
+
+    // All four modes share the same shape: 3 operands [mask, value, lane], 1
+    // i64 result (NOpdsInterface<3>/NResultsInterface<1>).
+    let modes: [OpInfo; 4] = [
+        ShflSyncIdxI64Op::get_concrete_op_info(),
+        ShflSyncBflyI64Op::get_concrete_op_info(),
+        ShflSyncDownI64Op::get_concrete_op_info(),
+        ShflSyncUpI64Op::get_concrete_op_info(),
+    ];
+
+    for opid in modes {
+        // Valid.
+        let op = Operation::new(
+            &mut ctx,
+            opid,
+            vec![i64_ty.into()],
+            vec![mask, value, lane],
+            vec![],
+            0,
+        );
+        assert!(verify_op(&ShflSyncIdxI64Op::new(op), &ctx).is_ok());
+
+        // Invalid: wrong operand count (2 instead of 3) must fail verification.
+        let bad = Operation::new(
+            &mut ctx,
+            opid,
+            vec![i64_ty.into()],
+            vec![mask, value],
+            vec![],
+            0,
+        );
+        assert!(verify_op(&ShflSyncIdxI64Op::new(bad), &ctx).is_err());
+    }
 }

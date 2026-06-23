@@ -601,6 +601,122 @@ fn test_elect_sync_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// The exact inline-PTX template `convert_shuffle_i64` must emit for `mode`/`clamp`.
+/// Mirrors the production `format!` so a drift in either side fails the test.
+fn expected_shfl_i64_template(mode: &str, clamp: i32) -> String {
+    format!(
+        "{{ .reg .b32 lo; .reg .b32 hi; mov.b64 {{lo, hi}}, $1; \
+         shfl.sync.{mode}.b32 lo, lo, $2, {clamp}, $3; \
+         shfl.sync.{mode}.b32 hi, hi, $2, {clamp}, $3; \
+         mov.b64 $0, {{lo, hi}}; }}"
+    )
+}
+
+/// 64-bit warp shuffle has no LLVM intrinsic (`shfl.sync` is 32-bit only), so it
+/// lowers to convergent inline PTX that splits the value into two halves and runs
+/// two `shfl.sync.*.b32`. Inline asm is opaque to LLVM, so a wrong mnemonic,
+/// swapped operand order, wrong clamp, or missing `convergent` would only surface
+/// as bad PTX downstream. This pins, for every mode, the exact template (incl. the
+/// per-mode clamp: 31 for idx/bfly/down, 0 for up), the `=l,l,r,r` constraints,
+/// and the convergent flag.
+#[test]
+fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    // Kernel args: [mask (i32), value (i64), lane/delta (i32)].
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i32_ty.into(), i64_ty.into(), i32_ty.into()]);
+    let mask = entry.deref(&ctx).get_argument(0);
+    let value = entry.deref(&ctx).get_argument(1);
+    let lane = entry.deref(&ctx).get_argument(2);
+
+    // One op per mode, all sharing the same [mask, value, lane] operands.
+    type OpInfo = (
+        fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    );
+    let modes: [(OpInfo, &str, i32); 4] = [
+        (nvvm::ShflSyncIdxI64Op::get_concrete_op_info(), "idx", 31),
+        (nvvm::ShflSyncBflyI64Op::get_concrete_op_info(), "bfly", 31),
+        (nvvm::ShflSyncDownI64Op::get_concrete_op_info(), "down", 31),
+        (nvvm::ShflSyncUpI64Op::get_concrete_op_info(), "up", 0),
+    ];
+    for (opid, _, _) in modes {
+        let op = Operation::new(
+            &mut ctx,
+            opid,
+            vec![i64_ty.into()],
+            vec![mask, value, lane],
+            vec![],
+            0,
+        );
+        op.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Collect every inline-asm template emitted into the kernel body.
+    let mut templates: Vec<String> = Vec::new();
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .as_deref(),
+                    Some("=l,l,r,r"),
+                    "shfl.b64 constraints must be [out i64, value i64, lane i32, mask i32]"
+                );
+                assert!(
+                    inline_asm
+                        .get_attr_inline_asm_convergent(&ctx)
+                        .is_some_and(|b| bool::from((*b).clone())),
+                    "shfl.b64 inline asm must be convergent"
+                );
+                templates.push(
+                    inline_asm
+                        .get_attr_inline_asm_template(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .unwrap_or_default(),
+                );
+            }
+        }
+    }
+
+    assert_eq!(
+        templates.len(),
+        4,
+        "each of the 4 shfl.b64 modes must lower to one inline-asm op"
+    );
+    for (_, mode, clamp) in modes {
+        let want = expected_shfl_i64_template(mode, clamp);
+        assert!(
+            templates.contains(&want),
+            "missing inline PTX for shfl.sync.{mode}.b32 (clamp {clamp}); got {templates:?}"
+        );
+    }
+
+    Ok(())
+}
+
 /// Regression cover for the per-call-site address-space coercion pass.
 ///
 /// When a caller passes a pointer in one address space to a callee whose
