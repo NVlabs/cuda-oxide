@@ -167,7 +167,7 @@ impl NvvmAtomicLoadOp {
     pub fn build(
         ctx: &mut Context,
         ptr: Value,
-        result_ty: Ptr<pliron::r#type::TypeObj>,
+        result_ty: pliron::r#type::TypeHandle,
         ordering: AtomicOrdering,
         scope: AtomicScope,
     ) -> Self {
@@ -337,7 +337,7 @@ impl NvvmAtomicRmwOp {
         ctx: &mut Context,
         ptr: Value,
         val: Value,
-        result_ty: Ptr<pliron::r#type::TypeObj>,
+        result_ty: pliron::r#type::TypeHandle,
         rmw_kind: AtomicRmwKind,
         ordering: AtomicOrdering,
         scope: AtomicScope,
@@ -444,7 +444,7 @@ impl NvvmAtomicCmpxchgOp {
         ptr: Value,
         cmp: Value,
         new: Value,
-        result_ty: Ptr<pliron::r#type::TypeObj>,
+        result_ty: pliron::r#type::TypeHandle,
         success_ordering: AtomicOrdering,
         failure_ordering: AtomicOrdering,
         scope: AtomicScope,

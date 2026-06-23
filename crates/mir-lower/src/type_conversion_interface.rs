@@ -17,16 +17,16 @@
 //!   actual conversion (function-pointer indirection is required because
 //!   `type_cast` borrows `ctx` immutably, but conversion needs `&mut ctx`).
 
-use pliron::context::{Context, Ptr};
+use pliron::context::Context;
 use pliron::derive::type_interface;
 use pliron::result::Result;
-use pliron::r#type::{Type, TypeObj};
+use pliron::r#type::{Type, TypeHandle};
 
 /// Function pointer type for MIR → LLVM type conversion.
 ///
 /// The indirection lets us extract a `Copy` value from the immutable borrow,
 /// drop the borrow, then call with `&mut Context`.
-pub type ConvertMirTypeFn = fn(Ptr<TypeObj>, &mut Context) -> anyhow::Result<Ptr<TypeObj>>;
+pub type ConvertMirTypeFn = fn(TypeHandle, &mut Context) -> anyhow::Result<TypeHandle>;
 
 /// Marker interface: "this type has an LLVM equivalent".
 ///

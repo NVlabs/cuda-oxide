@@ -46,7 +46,7 @@ pub mod types {
         pub const TMEM: u32 = 6;
     }
 
-    use pliron::{context::Context, r#type::TypePtr};
+    use pliron::{context::Context, r#type::TypedHandle};
     pub use pliron_llvm::types::PointerType;
 
     /// Address-space convenience constructors/predicates re-homed from the
@@ -54,13 +54,13 @@ pub mod types {
     /// `PointerType::get(ctx, address_space)` + `address_space()`.
     pub trait PointerTypeExt {
         /// Pointer into the generic address space.
-        fn get_generic(ctx: &mut Context) -> TypePtr<PointerType>;
+        fn get_generic(ctx: &mut Context) -> TypedHandle<PointerType>;
         /// Pointer into the shared address space.
-        fn get_shared(ctx: &mut Context) -> TypePtr<PointerType>;
+        fn get_shared(ctx: &mut Context) -> TypedHandle<PointerType>;
         /// Pointer into the global address space.
-        fn get_global(ctx: &mut Context) -> TypePtr<PointerType>;
+        fn get_global(ctx: &mut Context) -> TypedHandle<PointerType>;
         /// Pointer into tensor memory.
-        fn get_tmem(ctx: &mut Context) -> TypePtr<PointerType>;
+        fn get_tmem(ctx: &mut Context) -> TypedHandle<PointerType>;
         /// True if this pointer is in the shared address space.
         fn is_shared(&self) -> bool;
         /// True if this pointer is in tensor memory.
@@ -68,16 +68,16 @@ pub mod types {
     }
 
     impl PointerTypeExt for PointerType {
-        fn get_generic(ctx: &mut Context) -> TypePtr<PointerType> {
+        fn get_generic(ctx: &mut Context) -> TypedHandle<PointerType> {
             PointerType::get(ctx, address_space::GENERIC)
         }
-        fn get_shared(ctx: &mut Context) -> TypePtr<PointerType> {
+        fn get_shared(ctx: &mut Context) -> TypedHandle<PointerType> {
             PointerType::get(ctx, address_space::SHARED)
         }
-        fn get_global(ctx: &mut Context) -> TypePtr<PointerType> {
+        fn get_global(ctx: &mut Context) -> TypedHandle<PointerType> {
             PointerType::get(ctx, address_space::GLOBAL)
         }
-        fn get_tmem(ctx: &mut Context) -> TypePtr<PointerType> {
+        fn get_tmem(ctx: &mut Context) -> TypedHandle<PointerType> {
             PointerType::get(ctx, address_space::TMEM)
         }
         fn is_shared(&self) -> bool {
@@ -152,7 +152,7 @@ pub mod ops {
         op::Op,
         operation::Operation,
         result::Error,
-        r#type::TypeObj,
+        r#type::TypeHandle,
         value::Value,
     };
     use pliron_derive::{pliron_attr, pliron_op};
@@ -205,7 +205,7 @@ pub mod ops {
         /// Build an `InlineAsmOp` tagged with the given [`AsmKind`].
         fn build(
             ctx: &mut Context,
-            result_ty: Ptr<TypeObj>,
+            result_ty: TypeHandle,
             inputs: Vec<Value>,
             asm_template: &str,
             constraints: &str,
@@ -216,7 +216,7 @@ pub mod ops {
     impl InlineAsmOpExt for InlineAsmOp {
         fn build(
             ctx: &mut Context,
-            result_ty: Ptr<TypeObj>,
+            result_ty: TypeHandle,
             inputs: Vec<Value>,
             asm_template: &str,
             constraints: &str,
@@ -968,7 +968,7 @@ pub mod ops {
         fn new_with_alignment(
             ctx: &mut Context,
             name: Identifier,
-            ty: Ptr<TypeObj>,
+            ty: TypeHandle,
             alignment: u64,
         ) -> Self;
         /// Read the explicit alignment (bytes), if one was set.
@@ -979,7 +979,7 @@ pub mod ops {
         fn new_with_alignment(
             ctx: &mut Context,
             name: Identifier,
-            ty: Ptr<TypeObj>,
+            ty: TypeHandle,
             alignment: u64,
         ) -> Self {
             let op = GlobalOp::new(ctx, name, ty);

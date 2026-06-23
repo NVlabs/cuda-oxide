@@ -115,12 +115,12 @@ impl Verify for MirCastOp {
                 if opd_ty_obj.downcast_ref::<IntegerType>().is_none() {
                     return verify_err!(loc, "IntToFloat cast requires integer operand type");
                 }
-                if !type_impls::<dyn FloatTypeInterface>(&**res_ty_obj) {
+                if !type_impls::<dyn FloatTypeInterface>(&*res_ty_obj) {
                     return verify_err!(loc, "IntToFloat cast requires float result type");
                 }
             }
             MirCastKindAttr::FloatToInt => {
-                if !type_impls::<dyn FloatTypeInterface>(&**opd_ty_obj) {
+                if !type_impls::<dyn FloatTypeInterface>(&*opd_ty_obj) {
                     return verify_err!(loc, "FloatToInt cast requires float operand type");
                 }
                 if res_ty_obj.downcast_ref::<IntegerType>().is_none() {
@@ -128,10 +128,10 @@ impl Verify for MirCastOp {
                 }
             }
             MirCastKindAttr::FloatToFloat => {
-                if !type_impls::<dyn FloatTypeInterface>(&**opd_ty_obj) {
+                if !type_impls::<dyn FloatTypeInterface>(&*opd_ty_obj) {
                     return verify_err!(loc, "FloatToFloat cast requires float operand type");
                 }
-                if !type_impls::<dyn FloatTypeInterface>(&**res_ty_obj) {
+                if !type_impls::<dyn FloatTypeInterface>(&*res_ty_obj) {
                     return verify_err!(loc, "FloatToFloat cast requires float result type");
                 }
             }

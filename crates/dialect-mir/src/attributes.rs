@@ -9,9 +9,9 @@ use std::hash::{Hash, Hasher};
 
 use pliron::attribute::Attribute;
 use pliron::builtin::attr_interfaces::{FloatAttr, TypedAttrInterface};
-use pliron::context::{Context, Ptr};
+use pliron::context::Context;
 use pliron::derive::{attr_interface_impl, pliron_attr};
-use pliron::r#type::{TypeObj, Typed};
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apfloat::{self, Float, GetSemantics};
 
 use crate::types::MirFP16Type;
@@ -112,14 +112,14 @@ impl Hash for MirFP16Attr {
 }
 
 impl Typed for MirFP16Attr {
-    fn get_type(&self, ctx: &Context) -> Ptr<TypeObj> {
+    fn get_type(&self, ctx: &Context) -> TypeHandle {
         MirFP16Type::get(ctx).into()
     }
 }
 
 #[attr_interface_impl]
 impl TypedAttrInterface for MirFP16Attr {
-    fn get_type(&self, ctx: &Context) -> Ptr<TypeObj> {
+    fn get_type(&self, ctx: &Context) -> TypeHandle {
         MirFP16Type::get(ctx).into()
     }
 }

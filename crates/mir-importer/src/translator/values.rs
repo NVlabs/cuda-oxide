@@ -42,7 +42,7 @@ use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::r#type::{TypeObj, Typed};
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 use rustc_public::CrateDef;
 use rustc_public::mir;
@@ -95,7 +95,7 @@ impl ValueMap {
     /// Returns the inserted op and its result pointer value.
     pub fn emit_alloca(
         ctx: &mut Context,
-        elem_ty: Ptr<TypeObj>,
+        elem_ty: TypeHandle,
         block: Ptr<BasicBlock>,
         prev_op: Option<Ptr<Operation>>,
     ) -> (Ptr<Operation>, Value) {
@@ -178,7 +178,7 @@ impl ValueMap {
 fn maybe_ptr_coerce(
     ctx: &mut Context,
     value: Value,
-    target_ty: Ptr<TypeObj>,
+    target_ty: TypeHandle,
     block: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
 ) -> (Value, Option<Ptr<Operation>>) {
@@ -213,7 +213,7 @@ fn maybe_ptr_coerce(
 /// Recover the pointee (element) type of a slot value. Panics if the value is
 /// not a `MirPtrType`; this invariant is established when a slot is recorded
 /// via [`ValueMap::set_slot`] after an [`ValueMap::emit_alloca`] call.
-fn slot_pointee(ctx: &Context, slot: Value) -> Ptr<TypeObj> {
+fn slot_pointee(ctx: &Context, slot: Value) -> TypeHandle {
     let ptr_ty = slot.get_type(ctx);
     ptr_ty
         .deref(ctx)
@@ -598,11 +598,7 @@ fn propagate_from_local(local: mir::Local, classes: &[SlotAddrSpace]) -> WriteCl
 ///
 /// Used by `body::emit_entry_allocas` to override a Rust-declared pointer
 /// addrspace with the one inferred by [`SlotAddrSpaceMap`].
-pub fn align_pointer_addr_space(
-    ctx: &mut Context,
-    elem_ty: Ptr<TypeObj>,
-    target: u32,
-) -> Ptr<TypeObj> {
+pub fn align_pointer_addr_space(ctx: &mut Context, elem_ty: TypeHandle, target: u32) -> TypeHandle {
     let ptr_info = elem_ty
         .deref(ctx)
         .downcast_ref::<MirPtrType>()
@@ -619,7 +615,7 @@ pub fn align_pointer_addr_space(
 /// Extract a pointer type's address space, or `None` if `elem_ty` is not a
 /// [`MirPtrType`]. Useful as the `rust_declared` fallback for
 /// [`SlotAddrSpaceMap::effective`].
-pub fn pointer_addr_space(ctx: &Context, elem_ty: Ptr<TypeObj>) -> Option<u32> {
+pub fn pointer_addr_space(ctx: &Context, elem_ty: TypeHandle) -> Option<u32> {
     elem_ty
         .deref(ctx)
         .downcast_ref::<MirPtrType>()

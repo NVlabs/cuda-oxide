@@ -89,7 +89,7 @@ use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
-use pliron::r#type::{TypeObj, Typed};
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use std::num::NonZeroUsize;
@@ -327,7 +327,7 @@ impl RustFloatMathIntrinsic {
     fn libdevice_name(
         self,
         ctx: &Context,
-        result_ty: Ptr<TypeObj>,
+        result_ty: TypeHandle,
         loc: pliron::location::Location,
     ) -> Result<&'static str> {
         match self {
@@ -898,7 +898,7 @@ fn convert_rust_carrying_mul_add(
         );
     };
 
-    let wide_ty: Ptr<TypeObj> = IntegerType::get(ctx, width * 2, Signedness::Signless).into();
+    let wide_ty: TypeHandle = IntegerType::get(ctx, width * 2, Signedness::Signless).into();
 
     // Widen every operand to 2*N bits with the signedness-appropriate extension.
     let mut wide_args = Vec::with_capacity(4);
@@ -1079,7 +1079,7 @@ fn lower_fast_binop(
 /// Read the width from an integer type, or report a useful lowering error.
 fn integer_bit_width(
     ctx: &Context,
-    ty: Ptr<TypeObj>,
+    ty: TypeHandle,
     loc: pliron::location::Location,
 ) -> Result<u32> {
     let ty_ref = ty.deref(ctx);
@@ -1092,7 +1092,7 @@ fn integer_bit_width(
 /// Return the libdevice `fabs` entry point for the concrete float type.
 fn fabs_libdevice_name(
     ctx: &Context,
-    ty: Ptr<TypeObj>,
+    ty: TypeHandle,
     loc: pliron::location::Location,
 ) -> Result<&'static str> {
     let ty_ref = ty.deref(ctx);
@@ -1131,7 +1131,7 @@ fn cast_integer_value_to_type(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     value: Value,
-    target_ty: Ptr<TypeObj>,
+    target_ty: TypeHandle,
     loc: pliron::location::Location,
 ) -> Result<(Value, Option<Ptr<Operation>>)> {
     let source_width = integer_bit_width(ctx, value.get_type(ctx), loc.clone())?;
@@ -1177,13 +1177,13 @@ fn flatten_arguments(
     rewriter: &mut DialectConversionRewriter,
     args: &[Value],
     operands_info: &OperandsInfo,
-    expected_param_tys: Option<&[Ptr<TypeObj>]>,
-) -> Result<(Vec<Value>, Vec<Ptr<TypeObj>>)> {
+    expected_param_tys: Option<&[TypeHandle]>,
+) -> Result<(Vec<Value>, Vec<TypeHandle>)> {
     let mut flattened_args = Vec::new();
     let mut flattened_arg_types = Vec::new();
 
     // Helper: pull the next expected param type, if any.
-    let take_expected = |flattened_arg_types: &Vec<Ptr<TypeObj>>| -> Option<Ptr<TypeObj>> {
+    let take_expected = |flattened_arg_types: &Vec<TypeHandle>| -> Option<TypeHandle> {
         let idx = flattened_arg_types.len();
         expected_param_tys.and_then(|tys| tys.get(idx).copied())
     };
@@ -1310,9 +1310,9 @@ fn coerce_arg_to_param_ty(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     arg: Value,
-    arg_ty: Ptr<TypeObj>,
-    expected_ty: Option<Ptr<TypeObj>>,
-) -> Result<(Value, Ptr<TypeObj>)> {
+    arg_ty: TypeHandle,
+    expected_ty: Option<TypeHandle>,
+) -> Result<(Value, TypeHandle)> {
     if let Some(expected_ty) = expected_ty {
         if arg_ty == expected_ty {
             return Ok((arg, arg_ty));
@@ -1348,7 +1348,7 @@ fn coerce_arg_to_param_ty(
 }
 
 /// Return the address space of `ty` if it is an LLVM pointer type.
-fn pointer_addrspace(ctx: &Context, ty: Ptr<TypeObj>) -> Option<u32> {
+fn pointer_addrspace(ctx: &Context, ty: TypeHandle) -> Option<u32> {
     ty.deref(ctx)
         .downcast_ref::<llvm_types::PointerType>()
         .map(|ptr_ty| ptr_ty.address_space())
@@ -1378,7 +1378,7 @@ fn find_callee_arg_types(
     ctx: &mut Context,
     op: Ptr<Operation>,
     callee_ident: &pliron::identifier::Identifier,
-) -> Option<Vec<Ptr<TypeObj>>> {
+) -> Option<Vec<TypeHandle>> {
     let block = op.deref(ctx).get_parent_block()?;
     let func_op = block.deref(ctx).get_parent_op(ctx)?;
     let module_op = func_op.deref(ctx).get_parent_op(ctx)?;

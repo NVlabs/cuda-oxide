@@ -48,7 +48,7 @@ pub fn emit_lane_id(
     let lane_id_op = Operation::new(
         ctx,
         ReadPtxSregLaneIdOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -99,7 +99,7 @@ pub fn emit_active_mask(
     let active_mask_op = Operation::new(
         ctx,
         ActiveMaskOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -259,7 +259,7 @@ pub fn emit_warp_shuffle_i32(
     let shuffle_op = Operation::new(
         ctx,
         shuffle_opid,
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![mask, val, lane_or_delta],
         vec![],
         0,
@@ -424,7 +424,7 @@ pub fn emit_warp_match(
 
     let _ = value_is_i64;
 
-    let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned).to_ptr();
+    let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned).to_handle();
 
     let (mask, mut last_op) = rvalue::translate_operand(
         ctx,
@@ -525,7 +525,7 @@ pub fn emit_warp_redux(
     } else {
         Signedness::Unsigned
     };
-    let result_ty = IntegerType::get(ctx, 32, signedness).to_ptr();
+    let result_ty = IntegerType::get(ctx, 32, signedness).to_handle();
 
     let (mask, mut last_op) = rvalue::translate_operand(
         ctx,
@@ -742,9 +742,9 @@ pub fn emit_warp_vote(
     last_op = last_op_after;
 
     let result_type = if result_is_i32 {
-        IntegerType::get(ctx, 32, Signedness::Unsigned).to_ptr()
+        IntegerType::get(ctx, 32, Signedness::Unsigned).to_handle()
     } else {
-        types::get_bool_type(ctx).to_ptr()
+        types::get_bool_type(ctx).to_handle()
     };
 
     let vote_op = Operation::new(

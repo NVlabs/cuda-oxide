@@ -34,7 +34,7 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::r#type::TypeObj;
+use pliron::r#type::TypeHandle;
 use pliron::value::Value;
 use rustc_public::mir;
 
@@ -51,7 +51,7 @@ fn destination_struct_type(
     body: &mir::Body,
     destination: &mir::Place,
     loc: Location,
-) -> TranslationResult<Ptr<TypeObj>> {
+) -> TranslationResult<TypeHandle> {
     let dest_rust_ty = match destination.ty(body.locals()) {
         Ok(t) => t,
         Err(e) => {

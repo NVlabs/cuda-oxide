@@ -342,8 +342,8 @@ pub fn emit_mbarrier_arrive(
     let arrive_op = Operation::new(
         ctx,
         MbarrierArriveSharedOp::get_concrete_op_info(),
-        vec![i64_type.to_ptr()], // Result: i64 token
-        vec![bar_ptr],           // Operand: ptr
+        vec![i64_type.to_handle()], // Result: i64 token
+        vec![bar_ptr],              // Operand: ptr
         vec![],
         0,
     );
@@ -435,8 +435,8 @@ pub fn emit_mbarrier_arrive_expect_tx(
     let arrive_op = Operation::new(
         ctx,
         MbarrierArriveExpectTxSharedOp::get_concrete_op_info(),
-        vec![i64_type.to_ptr()], // Result: i64 token
-        vec![bar_ptr, bytes],    // Operands: ptr, bytes
+        vec![i64_type.to_handle()], // Result: i64 token
+        vec![bar_ptr, bytes],       // Operands: ptr, bytes
         vec![],
         0,
     );
@@ -658,8 +658,8 @@ pub fn emit_mbarrier_test_wait(
     let test_wait_op = Operation::new(
         ctx,
         MbarrierTestWaitSharedOp::get_concrete_op_info(),
-        vec![i1_type.to_ptr()], // Result: i1 (bool)
-        vec![bar_ptr, token],   // Operands: ptr, token
+        vec![i1_type.to_handle()], // Result: i1 (bool)
+        vec![bar_ptr, token],      // Operands: ptr, token
         vec![],
         0,
     );
@@ -749,8 +749,8 @@ pub fn emit_mbarrier_try_wait(
     let try_wait_op = Operation::new(
         ctx,
         MbarrierTryWaitSharedOp::get_concrete_op_info(),
-        vec![i1_type.to_ptr()], // Result: i1 (bool)
-        vec![bar_ptr, token],   // Operands: ptr, token
+        vec![i1_type.to_handle()], // Result: i1 (bool)
+        vec![bar_ptr, token],      // Operands: ptr, token
         vec![],
         0,
     );

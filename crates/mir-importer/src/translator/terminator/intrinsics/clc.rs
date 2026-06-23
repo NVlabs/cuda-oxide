@@ -258,7 +258,7 @@ fn emit_clc_query(
     let query_op = Operation::new(
         ctx,
         concrete_op_info,
-        vec![i32_type.to_ptr()],
+        vec![i32_type.to_handle()],
         vec![resp_lo, resp_hi],
         vec![],
         0,

@@ -963,7 +963,7 @@ fn test_mir_global_alloc_verify() {
 
     // Helper: build a MirGlobalAllocOp whose result pointer is in `ptr_ty`
     // address space, with valid attributes.
-    let build = |ctx: &mut Context, ptr_ty: pliron::r#type::TypePtr<MirPtrType>| {
+    let build = |ctx: &mut Context, ptr_ty: pliron::r#type::TypedHandle<MirPtrType>| {
         let op = Operation::new(
             ctx,
             MirGlobalAllocOp::get_concrete_op_info(),

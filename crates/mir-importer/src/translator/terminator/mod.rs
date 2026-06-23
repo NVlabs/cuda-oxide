@@ -355,7 +355,7 @@ fn translate_assert(
         let not_op = Operation::new(
             ctx,
             MirNotOp::get_concrete_op_info(),
-            vec![bool_type.to_ptr()],
+            vec![bool_type.to_handle()],
             vec![cond_value],
             vec![],
             0,
@@ -467,7 +467,7 @@ fn translate_switch(
         let discr_ty = discr_value.get_type(ctx);
         let bool_ty = types::get_bool_type(ctx);
 
-        let (condition, last_inserted_op) = if discr_ty == bool_ty.to_ptr() {
+        let (condition, last_inserted_op) = if discr_ty == bool_ty.to_handle() {
             // discr is already i1
             // For boolean switch: val=0 means "if false", val=1 means "if true"
             // switchInt(bool) -> [0: bb_false, otherwise: bb_true]
@@ -477,7 +477,7 @@ fn translate_switch(
                 let not_op = Operation::new(
                     ctx,
                     MirNotOp::get_concrete_op_info(),
-                    vec![bool_ty.to_ptr()],
+                    vec![bool_ty.to_handle()],
                     vec![discr_value],
                     vec![],
                     0,
@@ -551,7 +551,7 @@ fn translate_switch(
             let eq_op = Operation::new(
                 ctx,
                 MirEqOp::get_concrete_op_info(),
-                vec![bool_ty.to_ptr()],
+                vec![bool_ty.to_handle()],
                 vec![discr_value, const_val],
                 vec![],
                 0,
@@ -692,7 +692,7 @@ fn translate_switch(
         let cmp_op = Operation::new(
             ctx,
             MirEqOp::get_concrete_op_info(),
-            vec![bool_ty.to_ptr()],
+            vec![bool_ty.to_handle()],
             vec![discr_value, const_val],
             vec![],
             0,

@@ -9,8 +9,7 @@ use std::fmt::Write;
 
 use pliron::{
     builtin::types::{FP32Type, FP64Type, IntegerType},
-    context::Ptr,
-    r#type::TypeObj,
+    r#type::TypeHandle,
 };
 
 use crate::types::{HalfType, PointerType, StructType, VoidType};
@@ -18,7 +17,7 @@ use crate::types::{HalfType, PointerType, StructType, VoidType};
 use super::state::ModuleExportState;
 
 impl<'a> ModuleExportState<'a> {
-    pub(super) fn export_type(&self, ty: Ptr<TypeObj>, output: &mut String) -> Result<(), String> {
+    pub(super) fn export_type(&self, ty: TypeHandle, output: &mut String) -> Result<(), String> {
         let ty_ref = ty.deref(self.ctx);
         if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
             write!(output, "i{}", int_ty.width()).unwrap();
@@ -65,7 +64,7 @@ impl<'a> ModuleExportState<'a> {
     /// Used as the fallback when no explicit alignment is stamped on a
     /// load/store/alloca op. Required for atomic loads/stores (LLVM IR
     /// mandates explicit alignment) and for vectorization hints.
-    pub(super) fn natural_alignment(&self, ty: Ptr<TypeObj>) -> u32 {
+    pub(super) fn natural_alignment(&self, ty: TypeHandle) -> u32 {
         let ty_ref = ty.deref(self.ctx);
         if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
             // ceil(width / 8), minimum 1.

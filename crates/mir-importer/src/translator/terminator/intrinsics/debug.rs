@@ -55,8 +55,8 @@ pub fn emit_clock(
     let clock_op = Operation::new(
         ctx,
         ReadPtxSregClockOp::get_concrete_op_info(),
-        vec![i32_type.to_ptr()], // Result: i32
-        vec![],                  // No operands
+        vec![i32_type.to_handle()], // Result: i32
+        vec![],                     // No operands
         vec![],
         0,
     );
@@ -110,8 +110,8 @@ pub fn emit_clock64(
     let clock_op = Operation::new(
         ctx,
         ReadPtxSregClock64Op::get_concrete_op_info(),
-        vec![i64_type.to_ptr()], // Result: i64
-        vec![],                  // No operands
+        vec![i64_type.to_handle()], // Result: i64
+        vec![],                     // No operands
         vec![],
         0,
     );
@@ -163,7 +163,7 @@ pub fn emit_globaltimer(
     let timer_op = Operation::new(
         ctx,
         ReadPtxSregGlobaltimerOp::get_concrete_op_info(),
-        vec![i64_type.to_ptr()],
+        vec![i64_type.to_handle()],
         vec![],
         vec![],
         0,

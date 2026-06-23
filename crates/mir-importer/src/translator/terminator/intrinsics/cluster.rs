@@ -54,7 +54,7 @@ pub fn emit_cluster_ctaid_x(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterCtaidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -100,7 +100,7 @@ pub fn emit_cluster_ctaid_y(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterCtaidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -146,7 +146,7 @@ pub fn emit_cluster_ctaid_z(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterCtaidZOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -196,7 +196,7 @@ pub fn emit_cluster_nctaid_x(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterNctaidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -242,7 +242,7 @@ pub fn emit_cluster_nctaid_y(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterNctaidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -288,7 +288,7 @@ pub fn emit_cluster_nctaid_z(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterNctaidZOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -338,7 +338,7 @@ pub fn emit_cluster_idx(
     let op = Operation::new(
         ctx,
         ReadPtxSregClusterIdxOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -384,7 +384,7 @@ pub fn emit_num_clusters(
     let op = Operation::new(
         ctx,
         ReadPtxSregNclusterIdOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -605,7 +605,7 @@ pub fn emit_dsmem_read_u32(
     let op = Operation::new(
         ctx,
         DsmemReadU32Op::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![src_ptr, rank],
         vec![],
         0,

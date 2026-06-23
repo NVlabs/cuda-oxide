@@ -100,12 +100,17 @@ fn export_volatile_load_prints_keyword() {
     let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
     let ptr_ty = PointerType::get(&mut ctx, 0);
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![ptr_ty.to_ptr()], false);
+    let func_ty = FuncType::get(
+        &mut ctx,
+        void_ty.to_handle(),
+        vec![ptr_ty.to_handle()],
+        false,
+    );
     let func = FuncOp::new(&mut ctx, "volatile_load_test".try_into().unwrap(), func_ty);
     let entry = func.get_or_create_entry_block(&mut ctx);
     let ptr = entry.deref(&ctx).get_argument(0);
 
-    let load = LoadOp::new(&mut ctx, ptr, i32_ty.to_ptr());
+    let load = LoadOp::new(&mut ctx, ptr, i32_ty.to_handle());
     llvm_export::ops::set_op_volatile(&mut ctx, load.get_operation(), true);
     load.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
@@ -137,8 +142,8 @@ fn export_volatile_store_prints_keyword() {
     let void_ty = VoidType::get(&ctx);
     let func_ty = FuncType::get(
         &mut ctx,
-        void_ty.to_ptr(),
-        vec![ptr_ty.to_ptr(), i32_ty.to_ptr()],
+        void_ty.to_handle(),
+        vec![ptr_ty.to_handle(), i32_ty.to_handle()],
         false,
     );
     let func = FuncOp::new(&mut ctx, "volatile_store_test".try_into().unwrap(), func_ty);
@@ -190,13 +195,13 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     let global = GlobalOp::new(
         &mut ctx,
         "__shared_mem_20".try_into().unwrap(),
-        i32_ty.to_ptr(),
+        i32_ty.to_handle(),
     );
     global.set_address_space(&mut ctx, 3);
     global.get_operation().insert_at_back(module_block, &ctx);
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "uses_late_addressof".try_into().unwrap(), func_ty);
     let entry = func.get_or_create_entry_block(&mut ctx);
     let func_region = func.get_operation().deref(&ctx).get_region(0);
@@ -220,7 +225,7 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
         &mut ctx,
         address_value,
         vec![GepIndex::Constant(0)],
-        i32_ty.to_ptr(),
+        i32_ty.to_handle(),
     );
     gep.get_operation().insert_at_back(use_block, &ctx);
     ReturnOp::new(&mut ctx, None)
@@ -263,7 +268,7 @@ fn export_inline_asm_respects_sideeffect_marker() {
     let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "has_inline_asm".try_into().unwrap(), func_ty);
     let entry = func.get_or_create_entry_block(&mut ctx);
 
@@ -306,7 +311,7 @@ fn export_inline_asm_escapes_llvm_string_literals() {
     let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(
         &mut ctx,
         "has_escaped_inline_asm".try_into().unwrap(),
@@ -351,7 +356,7 @@ fn nvvm_metadata_version_uses_next_allocated_metadata_id() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "bounded_kernel".try_into().unwrap(), func_ty);
     let entry = func.get_or_create_entry_block(&mut ctx);
     ReturnOp::new(&mut ctx, None)
@@ -400,7 +405,7 @@ fn line_table_debug_metadata_emits_function_scope_and_instruction_locations() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 7, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -471,7 +476,7 @@ fn export_alwaysinline_function_attribute_uses_llvm_define_syntax() {
     let module_block = module_top_block(&mut ctx, &module);
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "inline_helper".try_into().unwrap(), func_ty);
     let entry = func.get_or_create_entry_block(&mut ctx);
     ReturnOp::new(&mut ctx, None)
@@ -510,7 +515,7 @@ fn export_alwaysinline_coexists_with_debug_scope() {
     let module_block = module_top_block(&mut ctx, &module);
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "inline_helper".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 7, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -559,7 +564,7 @@ fn line_table_debug_metadata_uses_file_scope_for_cross_file_locations() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 38, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -620,7 +625,7 @@ fn line_table_debug_metadata_emits_inlined_at_for_callsite_locations() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 38, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -673,7 +678,7 @@ fn debug_metadata_shares_allocator_with_nvvm_metadata() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 10, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -739,7 +744,7 @@ fn debug_locations_use_rustc_source_scope_positions() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 10, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -826,7 +831,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 30, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -936,7 +941,7 @@ fn full_debug_metadata_uses_file_scope_for_cross_file_local_variables() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 30, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -1016,7 +1021,7 @@ fn full_debug_metadata_emits_dbg_value_for_promoted_locals() {
 
     let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![i32_ty.into()], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![i32_ty.into()], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 30, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -1101,7 +1106,7 @@ fn full_debug_metadata_uses_inlined_callee_scope_for_inlined_arguments() {
 
     let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![i32_ty.into()], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![i32_ty.into()], false);
     let func = FuncOp::new(&mut ctx, "caller_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 30, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -1235,7 +1240,7 @@ fn line_table_debug_metadata_ignores_tagged_alloca_variables() {
     };
 
     let void_ty = VoidType::get(&ctx);
-    let func_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let func_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 40, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
@@ -1304,11 +1309,11 @@ fn line_table_debug_metadata_adds_fallback_locations_to_calls() {
 
     let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
     let void_ty = VoidType::get(&ctx);
-    let helper_ty = FuncType::get(&mut ctx, i32_ty.to_ptr(), vec![], false);
+    let helper_ty = FuncType::get(&mut ctx, i32_ty.to_handle(), vec![], false);
     let helper = FuncOp::new(&mut ctx, "helper".try_into().unwrap(), helper_ty);
     helper.get_operation().insert_at_back(module_block, &ctx);
 
-    let caller_ty = FuncType::get(&mut ctx, void_ty.to_ptr(), vec![], false);
+    let caller_ty = FuncType::get(&mut ctx, void_ty.to_handle(), vec![], false);
     let caller = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), caller_ty);
     let caller_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 20, 3);
     caller.get_operation().deref_mut(&ctx).set_loc(caller_loc);
@@ -1418,7 +1423,7 @@ fn export_emits_fast_math_flags_only_on_flagged_float_ops() {
     let void_ty = VoidType::get(&ctx);
     let func_ty = FuncType::get(
         &mut ctx,
-        void_ty.to_ptr(),
+        void_ty.to_handle(),
         vec![f32_ty.into(), f32_ty.into()],
         false,
     );

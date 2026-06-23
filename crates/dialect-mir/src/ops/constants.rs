@@ -20,7 +20,7 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Error,
-    r#type::{TypeObj, Typed},
+    r#type::{TypeHandle, Typed},
     verify_err,
 };
 use pliron_derive::pliron_op;
@@ -212,7 +212,7 @@ pub struct MirUndefOp;
 
 impl MirUndefOp {
     /// Create a new `MirUndefOp` producing a single result of `result_ty`.
-    pub fn new(ctx: &mut Context, result_ty: Ptr<TypeObj>) -> Self {
+    pub fn new(ctx: &mut Context, result_ty: TypeHandle) -> Self {
         MirUndefOp {
             op: Operation::new(
                 ctx,

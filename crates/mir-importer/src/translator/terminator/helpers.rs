@@ -129,7 +129,7 @@ pub fn emit_function_call(
     callee_name: &str,
     args: &[mir::Operand],
     destination: &mir::Place,
-    return_type: Ptr<pliron::r#type::TypeObj>,
+    return_type: pliron::r#type::TypeHandle,
     target: &Option<usize>,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -220,7 +220,7 @@ pub fn emit_nvvm_intrinsic(
 ) -> TranslationResult<Ptr<Operation>> {
     let u32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
 
-    let nvvm_op = Operation::new(ctx, opid, vec![u32_type.to_ptr()], vec![], vec![], 0);
+    let nvvm_op = Operation::new(ctx, opid, vec![u32_type.to_handle()], vec![], vec![], 0);
     nvvm_op.deref_mut(ctx).set_loc(loc.clone());
 
     let last_op = if let Some(prev) = prev_op {

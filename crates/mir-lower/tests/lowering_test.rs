@@ -804,7 +804,7 @@ fn test_cmp_predicate_lowering() -> Result<(), anyhow::Error> {
 
     // Args: (f32, f32, i32, u32). The integer args carry pre-conversion
     // signedness, which is what selects signed vs unsigned icmp predicates.
-    let arg_tys: Vec<pliron::context::Ptr<pliron::r#type::TypeObj>> = vec![
+    let arg_tys: Vec<pliron::r#type::TypeHandle> = vec![
         f32_ty.into(),
         f32_ty.into(),
         i32_signed.into(),
@@ -1016,7 +1016,7 @@ fn make_test_ctx() -> Context {
 /// returning the module ptr and entry block.
 fn build_test_kernel(
     ctx: &mut Context,
-    arg_tys: Vec<pliron::context::Ptr<pliron::r#type::TypeObj>>,
+    arg_tys: Vec<pliron::r#type::TypeHandle>,
 ) -> (
     pliron::context::Ptr<Operation>,
     pliron::context::Ptr<pliron::basic_block::BasicBlock>,
@@ -1072,13 +1072,13 @@ fn test_fast_float_intrinsics_lower_to_explicit_fast_binops() -> Result<(), anyh
     use pliron::builtin::attributes::StringAttr;
     use pliron::builtin::op_interfaces::CallOpInterface;
     use pliron::builtin::types::{FP32Type, FP64Type};
-    use pliron::r#type::{TypeObj, Typed};
+    use pliron::r#type::{TypeHandle, Typed};
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
     let f64_ty = FP64Type::get(&ctx);
-    let f32_ty_obj: pliron::context::Ptr<TypeObj> = f32_ty.into();
-    let f64_ty_obj: pliron::context::Ptr<TypeObj> = f64_ty.into();
+    let f32_ty_obj: TypeHandle = f32_ty.into();
+    let f64_ty_obj: TypeHandle = f64_ty.into();
     let (module_ptr, entry) = build_test_kernel(
         &mut ctx,
         vec![f32_ty_obj, f32_ty_obj, f64_ty_obj, f64_ty_obj],
@@ -1454,7 +1454,7 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     let module_ptr = module.get_operation();
 
     let bool_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
-    let arg_tys: Vec<pliron::context::Ptr<pliron::r#type::TypeObj>> =
+    let arg_tys: Vec<pliron::r#type::TypeHandle> =
         vec![bool_ty.into(), bool_ty.into(), bool_ty.into()];
     let func_name = "bool_phi_cmp";
     let func_ty = FunctionType::get(&mut ctx, arg_tys.clone(), vec![]);
@@ -1565,7 +1565,7 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
         }
     }
 
-    let i1: pliron::context::Ptr<pliron::r#type::TypeObj> = bool_ty.into();
+    let i1: pliron::r#type::TypeHandle = bool_ty.into();
     assert_eq!(
         icmps,
         vec![(ICmpPredicateAttr::EQ, i1), (ICmpPredicateAttr::ULT, i1),],

@@ -13,7 +13,7 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Error,
-    r#type::TypeObj,
+    r#type::TypeHandle,
     value::Value,
     verify_err,
 };
@@ -44,7 +44,7 @@ impl InlinePtxOp {
     /// Build an inline PTX operation with zero or one result.
     pub fn build(
         ctx: &mut Context,
-        result_tys: Vec<Ptr<TypeObj>>,
+        result_tys: Vec<TypeHandle>,
         inputs: Vec<Value>,
         template: &str,
         constraints: &str,

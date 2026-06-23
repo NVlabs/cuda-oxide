@@ -74,12 +74,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "arrayvec"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-
-[[package]]
 name = "awint"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -804,6 +798,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "once_vec"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6298074a1742b584aaca148a6c61ecb27f0b55fdf237c235939c84924377a1"
+
+[[package]]
 name = "oxide-artifacts"
 version = "0.2.1"
 dependencies = [
@@ -818,8 +818,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pliron"
-version = "0.15.0"
-source = "git+https://github.com/pliron-org/pliron?rev=af1b7d07dda91dad140c1df1df665754cd1646e5#af1b7d07dda91dad140c1df1df665754cd1646e5"
+version = "0.16.0"
+source = "git+https://github.com/pliron-org/pliron?rev=847561916b34649ba944d4eb7db50d02cf9ddf30#847561916b34649ba944d4eb7db50d02cf9ddf30"
 dependencies = [
  "awint",
  "combine",
@@ -830,6 +830,7 @@ dependencies = [
  "inventory",
  "linkme",
  "log",
+ "once_vec",
  "pliron-derive",
  "regex",
  "rustc-hash",
@@ -837,13 +838,12 @@ dependencies = [
  "slotmap",
  "spin",
  "thiserror",
- "utf8-chars",
 ]
 
 [[package]]
 name = "pliron-derive"
-version = "0.15.0"
-source = "git+https://github.com/pliron-org/pliron?rev=af1b7d07dda91dad140c1df1df665754cd1646e5#af1b7d07dda91dad140c1df1df665754cd1646e5"
+version = "0.16.0"
+source = "git+https://github.com/pliron-org/pliron?rev=847561916b34649ba944d4eb7db50d02cf9ddf30#847561916b34649ba944d4eb7db50d02cf9ddf30"
 dependencies = [
  "combine",
  "convert_case",
@@ -855,8 +855,8 @@ dependencies = [
 
 [[package]]
 name = "pliron-llvm"
-version = "0.15.0"
-source = "git+https://github.com/pliron-org/pliron?rev=af1b7d07dda91dad140c1df1df665754cd1646e5#af1b7d07dda91dad140c1df1df665754cd1646e5"
+version = "0.16.0"
+source = "git+https://github.com/pliron-org/pliron?rev=847561916b34649ba944d4eb7db50d02cf9ddf30#847561916b34649ba944d4eb7db50d02cf9ddf30"
 dependencies = [
  "bitflags",
  "log",
@@ -1182,15 +1182,6 @@ name = "unicode-segmentation"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
-
-[[package]]
-name = "utf8-chars"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebe49e006d6df172d7f14794568a90fe41e05a1fa9e03dc276fa6da4bb747ec3"
-dependencies = [
- "arrayvec",
-]
 
 [[package]]
 name = "utf8parse"

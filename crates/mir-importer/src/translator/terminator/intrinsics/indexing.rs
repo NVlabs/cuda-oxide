@@ -72,7 +72,7 @@ pub fn emit_index_1d_expansion(
     let tid_op = Operation::new(
         ctx,
         ReadPtxSregTidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -94,7 +94,7 @@ pub fn emit_index_1d_expansion(
     let bid_op = Operation::new(
         ctx,
         ReadPtxSregCtaidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -107,7 +107,7 @@ pub fn emit_index_1d_expansion(
     let bdim_op = Operation::new(
         ctx,
         ReadPtxSregNtidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -120,7 +120,7 @@ pub fn emit_index_1d_expansion(
     let mul_op = Operation::new(
         ctx,
         MirMulOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![bid_val, bdim_val],
         vec![],
         0,
@@ -133,7 +133,7 @@ pub fn emit_index_1d_expansion(
     let add_op = Operation::new(
         ctx,
         MirAddOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![mul_val, tid_val],
         vec![],
         0,
@@ -146,7 +146,7 @@ pub fn emit_index_1d_expansion(
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
-        vec![usize_type.to_ptr()],
+        vec![usize_type.to_handle()],
         vec![add_val],
         vec![],
         0,
@@ -189,7 +189,7 @@ pub fn emit_index_2d_row(
     let tid_op = Operation::new(
         ctx,
         ReadPtxSregTidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -211,7 +211,7 @@ pub fn emit_index_2d_row(
     let bid_op = Operation::new(
         ctx,
         ReadPtxSregCtaidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -224,7 +224,7 @@ pub fn emit_index_2d_row(
     let bdim_op = Operation::new(
         ctx,
         ReadPtxSregNtidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -237,7 +237,7 @@ pub fn emit_index_2d_row(
     let mul_op = Operation::new(
         ctx,
         MirMulOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![bid_val, bdim_val],
         vec![],
         0,
@@ -250,7 +250,7 @@ pub fn emit_index_2d_row(
     let add_op = Operation::new(
         ctx,
         MirAddOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![mul_val, tid_val],
         vec![],
         0,
@@ -263,7 +263,7 @@ pub fn emit_index_2d_row(
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
-        vec![usize_type.to_ptr()],
+        vec![usize_type.to_handle()],
         vec![add_val],
         vec![],
         0,
@@ -353,7 +353,7 @@ pub fn emit_index_2d(
     let tid_y_op = Operation::new(
         ctx,
         ReadPtxSregTidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -369,7 +369,7 @@ pub fn emit_index_2d(
     let bid_y_op = Operation::new(
         ctx,
         ReadPtxSregCtaidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -382,7 +382,7 @@ pub fn emit_index_2d(
     let bdim_y_op = Operation::new(
         ctx,
         ReadPtxSregNtidYOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -395,7 +395,7 @@ pub fn emit_index_2d(
     let mul_y_op = Operation::new(
         ctx,
         MirMulOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![bid_y_val, bdim_y_val],
         vec![],
         0,
@@ -408,7 +408,7 @@ pub fn emit_index_2d(
     let row_u32_op = Operation::new(
         ctx,
         MirAddOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![mul_y_val, tid_y_val],
         vec![],
         0,
@@ -422,7 +422,7 @@ pub fn emit_index_2d(
     let row_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
-        vec![usize_type.to_ptr()],
+        vec![usize_type.to_handle()],
         vec![row_u32_val],
         vec![],
         0,
@@ -437,7 +437,7 @@ pub fn emit_index_2d(
     let tid_x_op = Operation::new(
         ctx,
         ReadPtxSregTidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -450,7 +450,7 @@ pub fn emit_index_2d(
     let bid_x_op = Operation::new(
         ctx,
         ReadPtxSregCtaidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -463,7 +463,7 @@ pub fn emit_index_2d(
     let bdim_x_op = Operation::new(
         ctx,
         ReadPtxSregNtidXOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -476,7 +476,7 @@ pub fn emit_index_2d(
     let mul_x_op = Operation::new(
         ctx,
         MirMulOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![bid_x_val, bdim_x_val],
         vec![],
         0,
@@ -489,7 +489,7 @@ pub fn emit_index_2d(
     let col_u32_op = Operation::new(
         ctx,
         MirAddOp::get_concrete_op_info(),
-        vec![u32_type.to_ptr()],
+        vec![u32_type.to_handle()],
         vec![mul_x_val, tid_x_val],
         vec![],
         0,
@@ -503,7 +503,7 @@ pub fn emit_index_2d(
     let col_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
-        vec![usize_type.to_ptr()],
+        vec![usize_type.to_handle()],
         vec![col_u32_val],
         vec![],
         0,
@@ -518,7 +518,7 @@ pub fn emit_index_2d(
     let row_stride_op = Operation::new(
         ctx,
         MirMulOp::get_concrete_op_info(),
-        vec![usize_type.to_ptr()],
+        vec![usize_type.to_handle()],
         vec![row_val, stride_val],
         vec![],
         0,
@@ -532,7 +532,7 @@ pub fn emit_index_2d(
     let result_op = Operation::new(
         ctx,
         MirAddOp::get_concrete_op_info(),
-        vec![usize_type.to_ptr()],
+        vec![usize_type.to_handle()],
         vec![row_stride_val, col_val],
         vec![],
         0,
@@ -646,11 +646,11 @@ pub fn emit_get_thread_local(
     // Determine if we have a DisjointSlice value or a pointer to one
     enum SliceKind {
         Direct {
-            element_ty: Ptr<pliron::r#type::TypeObj>,
+            element_ty: pliron::r#type::TypeHandle,
         },
         Pointer {
-            pointee: Ptr<pliron::r#type::TypeObj>,
-            element_ty: Ptr<pliron::r#type::TypeObj>,
+            pointee: pliron::r#type::TypeHandle,
+            element_ty: pliron::r#type::TypeHandle,
         },
     }
 

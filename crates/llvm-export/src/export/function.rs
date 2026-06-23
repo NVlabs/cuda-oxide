@@ -180,9 +180,7 @@ impl<'a> ModuleExportState<'a> {
             }
         }
 
-        use pliron::r#type::TypeObj;
-        let func_type = func.get_type(self.ctx);
-        let ft = Ptr::<TypeObj>::from(func_type);
+        let ft: pliron::r#type::TypeHandle = func.get_type(self.ctx).into();
         let ft_ref = ft.deref(self.ctx);
         let func_ty = ft_ref
             .downcast_ref::<FuncType>()

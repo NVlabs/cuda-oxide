@@ -175,10 +175,10 @@ fn convert_int_to_int(
     ctx: &mut Context,
     _rewriter: &mut DialectConversionRewriter,
     val: pliron::value::Value,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
+    llvm_ty: pliron::r#type::TypeHandle,
     src_w: u32,
     dst_w: u32,
-    mir_opd_ty: Ptr<pliron::r#type::TypeObj>,
+    mir_opd_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     if dst_w > src_w {
         let is_signed = {
@@ -215,8 +215,8 @@ fn convert_int_to_float(
     ctx: &mut Context,
     _rewriter: &mut DialectConversionRewriter,
     val: pliron::value::Value,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
-    mir_opd_ty: Ptr<pliron::r#type::TypeObj>,
+    llvm_ty: pliron::r#type::TypeHandle,
+    mir_opd_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let is_signed = {
         let ty_obj = mir_opd_ty.deref(ctx);
@@ -253,8 +253,8 @@ fn convert_float_to_int(
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     val: pliron::value::Value,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
-    mir_result_ty: Ptr<pliron::r#type::TypeObj>,
+    llvm_ty: pliron::r#type::TypeHandle,
+    mir_result_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let val_ty = val.get_type(ctx);
     let is_signed = {
@@ -336,9 +336,9 @@ fn emit_unsize_cast(
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     val: pliron::value::Value,
-    val_ty: Ptr<pliron::r#type::TypeObj>,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
-    mir_opd_ty: Ptr<pliron::r#type::TypeObj>,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
+    mir_opd_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let array_len = {
         let mir_ref = mir_opd_ty.deref(ctx);
@@ -416,8 +416,8 @@ fn emit_pointer_cast(
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     val: pliron::value::Value,
-    val_ty: Ptr<pliron::r#type::TypeObj>,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let src_is_struct = val_ty.deref(ctx).is::<llvm_export::types::StructType>();
     let dst_is_struct = llvm_ty.deref(ctx).is::<llvm_export::types::StructType>();
@@ -538,7 +538,7 @@ fn const_i64(
 fn const_int_of(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
-    ty: Ptr<pliron::r#type::TypeObj>,
+    ty: pliron::r#type::TypeHandle,
     value: i64,
 ) -> Result<pliron::value::Value> {
     let int_ty = ty
@@ -571,8 +571,8 @@ const MAX_NEWTYPE_DEPTH: usize = 8;
 /// slot exists within `MAX_NEWTYPE_DEPTH` layers.
 fn deep_scalar_index_path(
     ctx: &Context,
-    aggregate_ty: Ptr<pliron::r#type::TypeObj>,
-    scalar_ty: Ptr<pliron::r#type::TypeObj>,
+    aggregate_ty: pliron::r#type::TypeHandle,
+    scalar_ty: pliron::r#type::TypeHandle,
 ) -> Option<Vec<u32>> {
     let mut path = Vec::new();
     let mut current = aggregate_ty;
@@ -627,8 +627,8 @@ fn emit_scalar_to_niched_enum(
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     val: pliron::value::Value,
-    val_ty: Ptr<pliron::r#type::TypeObj>,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
     niche: dialect_mir::attributes::NicheEncodingAttr,
 ) -> Result<Ptr<Operation>> {
     let (disc_ty, payload_ty) = {
@@ -688,7 +688,7 @@ fn emit_scalar_to_niched_enum(
     // when niche_start is 0, the case rustc actually emits).
     let src_is_ptr = val_ty.deref(ctx).is::<llvm_export::types::PointerType>();
     let cmp_const = if src_is_ptr {
-        let i64_ty: Ptr<pliron::r#type::TypeObj> =
+        let i64_ty: pliron::r#type::TypeHandle =
             IntegerType::get(ctx, 64, Signedness::Signless).into();
         let i64_const = const_int_of(ctx, rewriter, i64_ty, niche.niche_start as i64)?;
         let i2p = llvm::IntToPtrOp::new(ctx, i64_const, val_ty);
@@ -744,8 +744,8 @@ fn emit_struct_to_scalar(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     val: pliron::value::Value,
-    val_ty: Ptr<pliron::r#type::TypeObj>,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let dst_width = llvm_ty
         .deref(ctx)
@@ -785,7 +785,7 @@ fn emit_struct_to_scalar(
 /// Walks single-field struct wrappers (`{ { i64 } }`, `{ ptr }`, etc.)
 /// and returns the bit width of the innermost scalar, or `None` if the
 /// aggregate has any layer that is not a single-field wrapper.
-fn single_scalar_struct_width(ctx: &Context, ty: Ptr<pliron::r#type::TypeObj>) -> Option<u32> {
+fn single_scalar_struct_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u32> {
     let mut current = ty;
     for _ in 0..MAX_NEWTYPE_DEPTH {
         let r = current.deref(ctx);
@@ -831,8 +831,8 @@ fn emit_transmute_via_memory(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     val: pliron::value::Value,
-    val_ty: Ptr<pliron::r#type::TypeObj>,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let Some(src_bytes) = type_byte_size(ctx, val_ty) else {
         return pliron::input_err_noloc!(
@@ -889,12 +889,12 @@ fn emit_transmute_via_memory(
 /// computed confidently (a struct that needs padding, an opaque struct,
 /// or an unknown type), so callers refuse the transmute loudly instead
 /// of guessing.
-fn type_byte_size(ctx: &Context, ty: Ptr<pliron::r#type::TypeObj>) -> Option<u64> {
+fn type_byte_size(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u64> {
     let r = ty.deref(ctx);
     if let Some(i) = r.downcast_ref::<IntegerType>() {
         return Some((i.width() as u64).div_ceil(8));
     }
-    if let Some(f) = type_cast::<dyn FloatTypeInterface>(&**r) {
+    if let Some(f) = type_cast::<dyn FloatTypeInterface>(&*r) {
         return Some((f.get_semantics().bits as u64).div_ceil(8));
     }
     if r.is::<llvm_export::types::PointerType>() {
@@ -936,12 +936,12 @@ fn type_byte_size(ctx: &Context, ty: Ptr<pliron::r#type::TypeObj>) -> Option<u64
 /// the natural-alignment fallback in the textual `.ll` exporter so the
 /// alignment stamped on a transmute stack slot agrees with what the
 /// exporter assumes for direct loads/stores of the same type.
-fn abi_alignment_bytes(ctx: &Context, ty: Ptr<pliron::r#type::TypeObj>) -> u32 {
+fn abi_alignment_bytes(ctx: &Context, ty: pliron::r#type::TypeHandle) -> u32 {
     let r = ty.deref(ctx);
     if let Some(i) = r.downcast_ref::<IntegerType>() {
         return std::cmp::max(1, i.width() / 8);
     }
-    if let Some(f) = type_cast::<dyn FloatTypeInterface>(&**r) {
+    if let Some(f) = type_cast::<dyn FloatTypeInterface>(&*r) {
         return std::cmp::max(1, (f.get_semantics().bits / 8) as u32);
     }
     if r.is::<llvm_export::types::PointerType>() {
@@ -971,8 +971,8 @@ fn convert_float_to_float(
     ctx: &mut Context,
     _rewriter: &mut DialectConversionRewriter,
     val: pliron::value::Value,
-    llvm_ty: Ptr<pliron::r#type::TypeObj>,
-    val_ty: Ptr<pliron::r#type::TypeObj>,
+    llvm_ty: pliron::r#type::TypeHandle,
+    val_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
     let src_width = float_bit_width(ctx, val_ty)?;
     let dst_width = float_bit_width(ctx, llvm_ty)?;
@@ -999,9 +999,9 @@ fn convert_float_to_float(
     }
 }
 
-fn float_bit_width(ctx: &Context, ty: Ptr<pliron::r#type::TypeObj>) -> Result<usize> {
+fn float_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Result<usize> {
     let ty_ref = ty.deref(ctx);
-    let Some(float_ty) = type_cast::<dyn FloatTypeInterface>(&**ty_ref) else {
+    let Some(float_ty) = type_cast::<dyn FloatTypeInterface>(&*ty_ref) else {
         return pliron::input_err_noloc!("expected floating-point type");
     };
     Ok(float_ty.get_semantics().bits)

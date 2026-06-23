@@ -24,7 +24,7 @@ use pliron::{
         AllocInfo, PromotableAllocationInterface, PromotableOpInterface, PromotableOpKind,
     },
     result::Error,
-    r#type::{TypeObj, Typed},
+    r#type::{TypeHandle, Typed},
     value::Value,
     verify_err,
 };
@@ -93,7 +93,7 @@ impl MirAllocaOp {
     }
 
     /// Return the pointee (element) type carried by the result pointer.
-    pub fn pointee_type(&self, ctx: &Context) -> Ptr<TypeObj> {
+    pub fn pointee_type(&self, ctx: &Context) -> TypeHandle {
         let res_ty = self.get_operation().deref(ctx).get_result(0).get_type(ctx);
         let ty_ref = res_ty.deref(ctx);
         ty_ref

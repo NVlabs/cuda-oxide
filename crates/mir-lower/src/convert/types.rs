@@ -106,7 +106,7 @@ use pliron::builtin::type_interfaces::FunctionTypeInterface;
 use pliron::builtin::types::{FP32Type, FP64Type, FunctionType, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
-use pliron::r#type::{TypeObj, type_cast};
+use pliron::r#type::{TypeHandle, type_cast};
 
 use crate::type_conversion_interface::MirTypeConversion;
 
@@ -165,7 +165,7 @@ pub fn is_kernel_func(ctx: &Context, op: Ptr<Operation>) -> bool {
 ///
 /// By stripping ZSTs at the LLVM type level, we avoid this issue regardless of
 /// inlining decisions.
-pub fn is_zero_sized_type(ctx: &Context, ty: Ptr<TypeObj>) -> bool {
+pub fn is_zero_sized_type(ctx: &Context, ty: TypeHandle) -> bool {
     // Check if LLVM StructType with zero fields
     if let Some(struct_ty) = ty.deref(ctx).downcast_ref::<llvm_types::StructType>() {
         let num_fields = struct_ty.num_fields();
@@ -191,11 +191,11 @@ pub fn is_zero_sized_type(ctx: &Context, ty: Ptr<TypeObj>) -> bool {
 /// The function-pointer indirection avoids a borrow-checker conflict:
 /// `type_cast` borrows `ctx` immutably, but conversion needs `&mut ctx`.
 /// We extract the `Copy` function pointer, drop the borrow, then call it.
-pub fn convert_type(ctx: &mut Context, ty: Ptr<TypeObj>) -> Result<Ptr<TypeObj>, anyhow::Error> {
+pub fn convert_type(ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle, anyhow::Error> {
     // Phase 1: extract a Copy function pointer while ctx is immutably borrowed.
     let converter_fn = {
         let ty_ref = ty.deref(ctx);
-        type_cast::<dyn MirTypeConversion>(&**ty_ref).map(|conv| conv.converter())
+        type_cast::<dyn MirTypeConversion>(&*ty_ref).map(|conv| conv.converter())
     };
     // Phase 2: borrow dropped — ctx is free for &mut.
     if let Some(conv_fn) = converter_fn {
@@ -281,9 +281,9 @@ pub fn convert_type(ctx: &mut Context, ty: Ptr<TypeObj>) -> Result<Ptr<TypeObj>,
 /// reconstruction paths.
 pub fn convert_function_type(
     ctx: &mut Context,
-    func_type: pliron::r#type::TypePtr<FunctionType>,
+    func_type: pliron::r#type::TypedHandle<FunctionType>,
     is_kernel_entry: bool,
-) -> Result<pliron::r#type::TypePtr<llvm_types::FuncType>, anyhow::Error> {
+) -> Result<pliron::r#type::TypedHandle<llvm_types::FuncType>, anyhow::Error> {
     // Extract input/output types before mutating context
     let (inputs_ptr, results_ptr) = {
         let func_ty_ref = func_type.deref(ctx);
@@ -304,7 +304,7 @@ pub fn convert_function_type(
         enum FlattenKind {
             Slice,
             Struct {
-                field_types: Vec<Ptr<TypeObj>>,
+                field_types: Vec<TypeHandle>,
                 mem_to_decl: Vec<usize>,
             },
             None,
@@ -391,7 +391,7 @@ pub fn convert_function_type(
 /// `&mut Context` for type interning.
 pub(crate) struct StructLayoutInfo {
     /// Field types in declaration order.
-    pub field_types: Vec<Ptr<TypeObj>>,
+    pub field_types: Vec<TypeHandle>,
     /// Memory order: `mem_to_decl[mem_idx] = decl_idx`. Always full length
     /// (identity when rustc did not reorder).
     pub mem_to_decl: Vec<usize>,
@@ -436,12 +436,12 @@ impl StructLayoutInfo {
 /// `[N x i8]` padding slots) happened.
 pub(crate) struct StructSlotMap {
     /// The final LLVM struct type, including any `[N x i8]` padding slots.
-    pub llvm_struct_ty: Ptr<TypeObj>,
+    pub llvm_struct_ty: TypeHandle,
     /// `decl_to_llvm[decl_idx]` = LLVM slot of that declaration-order field;
     /// `None` when the field is zero-sized and was stripped.
     pub decl_to_llvm: Vec<Option<u32>>,
     /// Converted LLVM type of each declaration-order field (ZSTs included).
-    pub field_llvm_types: Vec<Ptr<TypeObj>>,
+    pub field_llvm_types: Vec<TypeHandle>,
 }
 
 /// Lower a struct/tuple layout to its LLVM struct type and slot map.
@@ -505,7 +505,7 @@ pub(crate) fn build_struct_slot_map(
         field_llvm_types.push(convert_type(ctx, field_ty)?);
     }
 
-    let mut llvm_fields: Vec<Ptr<TypeObj>> = Vec::new();
+    let mut llvm_fields: Vec<TypeHandle> = Vec::new();
     let mut decl_to_llvm: Vec<Option<u32>> = vec![None; num_fields];
     let mut current_offset: u64 = 0;
 
@@ -557,7 +557,7 @@ pub(crate) fn build_struct_slot_map(
 }
 
 /// Create a padding type: `[N x i8]` for N bytes of padding.
-fn make_padding_type(ctx: &mut Context, size: u64) -> Ptr<TypeObj> {
+fn make_padding_type(ctx: &mut Context, size: u64) -> TypeHandle {
     let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
     llvm_types::ArrayType::get(ctx, i8_ty.into(), size).into()
 }
@@ -569,7 +569,7 @@ fn make_padding_type(ctx: &mut Context, size: u64) -> Ptr<TypeObj> {
 /// of such aggregates multiply it out. Returns `None` when no stored size
 /// is available (e.g. niched/single-variant enums store 0) and the caller
 /// must fall back to the LLVM-level approximation.
-fn mir_stored_size(ctx: &Context, mir_ty: Ptr<TypeObj>) -> Option<u64> {
+fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
     let ty_ref = mir_ty.deref(ctx);
     if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
         if s.total_size() > 0 {
@@ -598,7 +598,7 @@ fn mir_stored_size(ctx: &Context, mir_ty: Ptr<TypeObj>) -> Option<u64> {
 /// Unlike [`get_type_size`], which sums struct fields without alignment,
 /// this computes the real allocation size, which is what GEP striding and
 /// the enum size check below need.
-pub(crate) fn llvm_type_size_align(ctx: &Context, ty: Ptr<TypeObj>) -> (u64, u64) {
+pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> (u64, u64) {
     let ty_ref = ty.deref(ctx);
 
     if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
@@ -639,7 +639,7 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: Ptr<TypeObj>) -> (u64, u64
 /// the last field, `size` is `end` rounded up to the struct alignment (the
 /// allocation size LLVM uses for GEP striding), and `align` is the widest
 /// field alignment.
-pub(crate) fn natural_struct_layout(ctx: &Context, fields: &[Ptr<TypeObj>]) -> (u64, u64, u64) {
+pub(crate) fn natural_struct_layout(ctx: &Context, fields: &[TypeHandle]) -> (u64, u64, u64) {
     let mut end = 0u64;
     let mut align = 1u64;
     for field in fields {
@@ -661,7 +661,7 @@ pub(crate) fn natural_struct_layout(ctx: &Context, fields: &[Ptr<TypeObj>]) -> (
 /// separately is how the issue #128 class of bug happened for structs.)
 pub(crate) struct EnumSlotMap {
     /// The final LLVM struct type, including any `[N x i8]` filler slots.
-    pub llvm_struct_ty: Ptr<TypeObj>,
+    pub llvm_struct_ty: TypeHandle,
     /// Which struct slot holds the tag.
     pub tag_slot: u32,
     /// Which struct slot holds each payload field, in the flattened
@@ -674,7 +674,7 @@ pub(crate) struct EnumSlotMap {
     /// the type; empty when the layout was not recorded).
     pub field_offsets: Vec<u64>,
     /// Converted LLVM type of each payload field.
-    pub field_llvm_types: Vec<Ptr<TypeObj>>,
+    pub field_llvm_types: Vec<TypeHandle>,
 }
 
 /// Build the LLVM struct for an enum, placing everything at the byte
@@ -722,7 +722,7 @@ pub(crate) struct EnumSlotMap {
 /// hard error rather than a debug assertion.
 pub(crate) fn build_enum_slot_map(
     ctx: &mut Context,
-    ty: Ptr<TypeObj>,
+    ty: TypeHandle,
 ) -> Result<EnumSlotMap, anyhow::Error> {
     let (
         name,
@@ -784,7 +784,7 @@ pub(crate) fn build_enum_slot_map(
     // Phase 1: decide who gets a struct slot. The tag goes first so a
     // payload field can never take its bytes.
     // claims: (byte position, byte size, converted type), no two overlap.
-    let mut claims: Vec<(u64, u64, Ptr<TypeObj>)> = Vec::new();
+    let mut claims: Vec<(u64, u64, TypeHandle)> = Vec::new();
     let (tag_size, tag_align) = llvm_type_size_align(ctx, llvm_discr_ty);
     if tag_offset % tag_align.max(1) != 0 || tag_offset + tag_size > total_size {
         return Err(anyhow::anyhow!(
@@ -847,7 +847,7 @@ pub(crate) fn build_enum_slot_map(
     // the tail) with [N x i8] so the struct's size is exactly rustc's.
     let mut emit_order: Vec<usize> = (0..claims.len()).collect();
     emit_order.sort_by_key(|&ci| claims[ci].0);
-    let mut llvm_fields: Vec<Ptr<TypeObj>> = Vec::new();
+    let mut llvm_fields: Vec<TypeHandle> = Vec::new();
     let mut slot_of_claim: Vec<u32> = vec![0; claims.len()];
     let mut current_offset: u64 = 0;
     for &ci in &emit_order {
@@ -902,8 +902,8 @@ pub(crate) fn build_enum_slot_map(
 /// the slot map, never compute it by hand.
 pub(crate) fn convert_enum_to_llvm(
     ctx: &mut Context,
-    ty: Ptr<TypeObj>,
-) -> Result<Ptr<TypeObj>, anyhow::Error> {
+    ty: TypeHandle,
+) -> Result<TypeHandle, anyhow::Error> {
     Ok(build_enum_slot_map(ctx, ty)?.llvm_struct_ty)
 }
 
@@ -938,7 +938,7 @@ pub(crate) fn convert_enum_to_llvm(
 /// for the two sides to disagree about.
 ///
 /// Returns the enum's name when its bytes are unmodeled, else `None`.
-pub(crate) fn enum_unmodeled_in_memory(ctx: &Context, ty: Ptr<TypeObj>) -> Option<String> {
+pub(crate) fn enum_unmodeled_in_memory(ctx: &Context, ty: TypeHandle) -> Option<String> {
     let ty_ref = ty.deref(ctx);
     let enum_ty = ty_ref.downcast_ref::<MirEnumType>()?;
     (enum_ty.total_size() == 0 && enum_ty.variant_count() > 1).then(|| enum_ty.name().to_string())
@@ -958,12 +958,12 @@ pub(crate) fn enum_unmodeled_in_memory(ctx: &Context, ty: Ptr<TypeObj>) -> Optio
 /// fine and is deliberately not rejected: there, both reader and writer
 /// are the device, using one consistent layout.
 ///
-/// `visited` breaks cycles through recursive types (`Ptr<TypeObj>` is
+/// `visited` breaks cycles through recursive types (`TypeHandle` is
 /// interned, so equality is identity).
 pub(crate) fn find_unmodeled_enum_in_abi(
     ctx: &mut Context,
-    ty: Ptr<TypeObj>,
-    visited: &mut Vec<Ptr<TypeObj>>,
+    ty: TypeHandle,
+    visited: &mut Vec<TypeHandle>,
 ) -> Result<Option<String>, anyhow::Error> {
     if visited.contains(&ty) {
         return Ok(None);
@@ -974,7 +974,7 @@ pub(crate) fn find_unmodeled_enum_in_abi(
         return Ok(Some(name));
     }
 
-    let children: Vec<Ptr<TypeObj>> = {
+    let children: Vec<TypeHandle> = {
         let ty_ref = ty.deref(ctx);
         if let Some(p) = ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
             vec![p.pointee]
@@ -1010,7 +1010,7 @@ pub(crate) fn find_unmodeled_enum_in_abi(
 /// built with explicit padding (the pads are real fields) but an
 /// approximation otherwise; prefer [`mir_stored_size`] whenever the MIR
 /// type is at hand.
-pub(crate) fn get_type_size(ctx: &Context, ty: Ptr<TypeObj>) -> u64 {
+pub(crate) fn get_type_size(ctx: &Context, ty: TypeHandle) -> u64 {
     let ty_ref = ty.deref(ctx);
 
     // Integer types
@@ -1078,7 +1078,7 @@ pub(crate) fn get_type_size(ctx: &Context, ty: Ptr<TypeObj>) -> u64 {
 /// - `&[T]` slice arguments
 /// - `DisjointSlice<T>` (unique-ownership slice) arguments
 /// - Any other fat pointer representation
-pub(crate) fn make_slice_struct(ctx: &mut Context) -> Ptr<TypeObj> {
+pub(crate) fn make_slice_struct(ctx: &mut Context) -> TypeHandle {
     let ptr_ty = llvm_types::PointerType::get_generic(ctx);
     let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     llvm_types::StructType::get_unnamed(ctx, vec![ptr_ty.into(), len_ty.into()]).into()
@@ -1101,26 +1101,26 @@ mod tests {
     }
 
     /// A MIR-level unsigned integer type (what the importer produces).
-    fn mir_uint(ctx: &mut Context, width: u32) -> Ptr<TypeObj> {
+    fn mir_uint(ctx: &mut Context, width: u32) -> TypeHandle {
         IntegerType::get(ctx, width, Signedness::Unsigned).into()
     }
 
     /// A converted (signless) LLVM integer type.
-    fn llvm_int(ctx: &mut Context, width: u32) -> Ptr<TypeObj> {
+    fn llvm_int(ctx: &mut Context, width: u32) -> TypeHandle {
         IntegerType::get(ctx, width, Signedness::Signless).into()
     }
 
     /// `[n x i8]` padding type, as `make_padding_type` builds it.
-    fn pad(ctx: &mut Context, n: u64) -> Ptr<TypeObj> {
+    fn pad(ctx: &mut Context, n: u64) -> TypeHandle {
         make_padding_type(ctx, n)
     }
 
     /// A zero-sized MIR struct (PhantomData shape).
-    fn mir_zst(ctx: &mut Context) -> Ptr<TypeObj> {
+    fn mir_zst(ctx: &mut Context) -> TypeHandle {
         MirStructType::get(ctx, "Phantom".into(), vec![], vec![]).into()
     }
 
-    fn struct_fields(ctx: &Context, ty: Ptr<TypeObj>) -> Vec<Ptr<TypeObj>> {
+    fn struct_fields(ctx: &Context, ty: TypeHandle) -> Vec<TypeHandle> {
         ty.deref(ctx)
             .downcast_ref::<llvm_types::StructType>()
             .expect("expected an LLVM struct type")
@@ -1236,7 +1236,7 @@ mod tests {
         //     layout=0     pad=1     big=2 cap=3 stride=4
         let discr = mir_uint(&mut ctx, 8);
         let payload = mir_uint(&mut ctx, 32);
-        let layout_enum: Ptr<TypeObj> = MirEnumType::get(
+        let layout_enum: TypeHandle = MirEnumType::get(
             &mut ctx,
             "Layout".into(),
             discr,
@@ -1269,7 +1269,7 @@ mod tests {
         let i8s = llvm_int(&mut ctx, 8);
         let i32s = llvm_int(&mut ctx, 32);
         let i64s = llvm_int(&mut ctx, 64);
-        let enum_llvm: Ptr<TypeObj> =
+        let enum_llvm: TypeHandle =
             llvm_types::StructType::get_unnamed(&mut ctx, vec![i8s, i32s]).into();
         let pad3 = pad(&mut ctx, 3);
         assert_eq!(
@@ -1287,7 +1287,7 @@ mod tests {
         // field's offset exactly: NO interior pad before it.
         let x = mir_uint(&mut ctx, 8);
         let y = mir_uint(&mut ctx, 64);
-        let inner: Ptr<TypeObj> = MirStructType::get_with_full_layout(
+        let inner: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "Inner".into(),
             vec!["x".into(), "y".into()],

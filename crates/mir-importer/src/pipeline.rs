@@ -677,7 +677,7 @@ fn add_device_extern_declarations(
 }
 
 /// Convert LLVM type string to pliron type.
-fn llvm_type_string_to_pliron(ctx: &mut Context, type_str: &str) -> Ptr<pliron::r#type::TypeObj> {
+fn llvm_type_string_to_pliron(ctx: &mut Context, type_str: &str) -> pliron::r#type::TypeHandle {
     use llvm_export::types::PointerType;
     use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 

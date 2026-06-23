@@ -109,7 +109,7 @@ impl Verify for MirExtractFieldOp {
                 return verify_err!(op.loc(), "MirExtractFieldOp index out of bounds for tuple");
             }
             let expected_ty = types[index];
-            // Types are Ptr<TypeObj>, can compare directly
+            // Types are TypeHandle, can compare directly
             if res_ty != expected_ty {
                 return verify_err!(
                     op.loc(),

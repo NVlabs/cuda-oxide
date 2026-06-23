@@ -53,9 +53,8 @@ use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::printable::Printable;
 use pliron::result::Result;
-use pliron::r#type::{TypeObj, Typed};
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use std::num::NonZeroUsize;
@@ -563,7 +562,7 @@ fn spill_enum_value(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     enum_val: Value,
-    llvm_struct_ty: Ptr<TypeObj>,
+    llvm_struct_ty: TypeHandle,
     abi_align: u64,
 ) -> Value {
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
@@ -597,7 +596,7 @@ fn enum_byte_gep(
     offset: u64,
 ) -> Value {
     use llvm_export::ops::GepIndex;
-    let i8_ty: Ptr<TypeObj> = IntegerType::get(ctx, 8, Signedness::Signless).into();
+    let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
     let gep_op =
         llvm::GetElementPtrOp::new(ctx, base, vec![GepIndex::Constant(offset as u32)], i8_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
@@ -638,7 +637,7 @@ pub(crate) fn convert_construct_enum(
     let (variant_discriminants, variant_field_counts, mir_discr_ty, abi_align): (
         Vec<u64>,
         Vec<u32>,
-        Ptr<TypeObj>,
+        TypeHandle,
         u64,
     ) = {
         let ty_ref = result_ty.deref(ctx);
@@ -797,7 +796,7 @@ fn enum_slot_map_of_operand(
         }
     };
     let abi_align = enum_ty.abi_align();
-    let mir_ty: Ptr<TypeObj> = pliron::r#type::Type::register_instance(enum_ty, ctx).into();
+    let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty, ctx).into();
     let map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
     Ok((map, abi_align))
 }

@@ -100,7 +100,7 @@ pub struct AtomicTypeInfo {
 
 impl AtomicTypeInfo {
     /// Get the pliron result type for this atomic's element.
-    fn element_type(&self, ctx: &mut Context) -> Ptr<pliron::r#type::TypeObj> {
+    fn element_type(&self, ctx: &mut Context) -> pliron::r#type::TypeHandle {
         if self.is_float {
             match self.bit_width {
                 // Rust `f16` is represented by dialect-mir's own `mir.fp16` (apfloat::Half);
@@ -116,7 +116,7 @@ impl AtomicTypeInfo {
             } else {
                 Signedness::Unsigned
             };
-            IntegerType::get(ctx, self.bit_width, signedness).to_ptr()
+            IntegerType::get(ctx, self.bit_width, signedness).to_handle()
         }
     }
 }

@@ -130,7 +130,7 @@ pub fn call_intrinsic(
     rewriter: &mut DialectConversionRewriter,
     current_op: Ptr<Operation>,
     intrinsic_name: &str,
-    func_ty: pliron::r#type::TypePtr<llvm_types::FuncType>,
+    func_ty: pliron::r#type::TypedHandle<llvm_types::FuncType>,
     args: Vec<Value>,
 ) -> Result<Ptr<Operation>> {
     let parent_block = current_op.deref(ctx).get_parent_block().unwrap();
@@ -149,7 +149,7 @@ pub fn call_intrinsic(
 pub fn inline_asm_convergent(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
-    result_ty: Ptr<pliron::r#type::TypeObj>,
+    result_ty: pliron::r#type::TypeHandle,
     inputs: Vec<Value>,
     asm_template: &str,
     constraints: &str,

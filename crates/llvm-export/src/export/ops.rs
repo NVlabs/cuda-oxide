@@ -1274,7 +1274,7 @@ fn fastmath_keywords(flags: FastmathFlags) -> String {
 }
 
 /// Return the address space of a pointer type, or 0 for non-pointer types.
-fn addrspace_of(ty: Ptr<pliron::r#type::TypeObj>, ctx: &pliron::context::Context) -> u32 {
+fn addrspace_of(ty: pliron::r#type::TypeHandle, ctx: &pliron::context::Context) -> u32 {
     ty.deref(ctx)
         .downcast_ref::<crate::types::PointerType>()
         .map_or(0, crate::types::PointerType::address_space)

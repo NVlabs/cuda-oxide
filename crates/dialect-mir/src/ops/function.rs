@@ -38,7 +38,7 @@ use pliron::{
     printable::{Printable, State, indented_nl},
     region::Region,
     result::Error,
-    r#type::{TypePtr, Typed, type_cast},
+    r#type::{TypeHandle, Typed, TypedHandle, type_cast},
     verify_err,
 };
 use pliron_derive::pliron_op;
@@ -94,16 +94,16 @@ impl MirFuncOp {
     }
 
     /// Get the function type.
-    pub fn get_type(&self, ctx: &Context) -> TypePtr<FunctionType> {
+    pub fn get_type(&self, ctx: &Context) -> TypedHandle<FunctionType> {
         let ty = attr_cast::<dyn TypedAttrInterface>(&*self.get_attr_mir_func_type(ctx).unwrap())
             .unwrap()
             .get_type(ctx);
-        TypePtr::from_ptr(ty, ctx).unwrap()
+        TypedHandle::from_handle(ty, ctx).unwrap()
     }
 }
 
 impl Typed for MirFuncOp {
-    fn get_type(&self, ctx: &Context) -> Ptr<pliron::r#type::TypeObj> {
+    fn get_type(&self, ctx: &Context) -> TypeHandle {
         self.get_type(ctx).into()
     }
 }

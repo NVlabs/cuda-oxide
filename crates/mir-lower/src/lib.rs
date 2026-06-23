@@ -141,7 +141,7 @@ use pliron::{
     op::{Op, op_cast},
     operation::Operation,
     result::Result,
-    r#type::{TypeObj, type_impls},
+    r#type::{TypeHandle, type_impls},
 };
 
 use context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
@@ -181,7 +181,7 @@ impl DialectConversion for MirToLlvmConversionDriver {
         is_mir_or_nvvm_op(ctx, op)
     }
 
-    fn can_convert_type(&self, ctx: &Context, ty: Ptr<TypeObj>) -> bool {
+    fn can_convert_type(&self, ctx: &Context, ty: TypeHandle) -> bool {
         let ty_ref = ty.deref(ctx);
 
         // Signed/unsigned integers need signless normalisation (LLVM convention).
@@ -189,10 +189,10 @@ impl DialectConversion for MirToLlvmConversionDriver {
             return int_ty.signedness() != Signedness::Signless;
         }
 
-        type_impls::<dyn MirConvertibleType>(&**ty_ref)
+        type_impls::<dyn MirConvertibleType>(&*ty_ref)
     }
 
-    fn convert_type(&mut self, ctx: &mut Context, ty: Ptr<TypeObj>) -> Result<Ptr<TypeObj>> {
+    fn convert_type(&mut self, ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle> {
         convert_type(ctx, ty).map_err(|e| pliron::input_error_noloc!("{e}"))
     }
 

@@ -359,7 +359,7 @@ impl VprintfOp {
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![i32_ty.to_ptr()],      // Result: i32
+            vec![i32_ty.to_handle()],   // Result: i32
             vec![format_ptr, args_ptr], // Operands: format_ptr, args_ptr
             vec![],
             0,

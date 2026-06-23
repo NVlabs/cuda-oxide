@@ -39,7 +39,7 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
-use pliron::r#type::TypeObj;
+use pliron::r#type::TypeHandle;
 
 // ============================================================================
 // Allocation operations
@@ -425,7 +425,7 @@ pub(crate) fn convert_ld_16x256b_x8_pure(
     let tmem_addr = op.deref(ctx).get_operand(0);
 
     let f32_ty = FP32Type::get(ctx);
-    let field_types: Vec<Ptr<TypeObj>> = (0..32).map(|_| f32_ty.into()).collect();
+    let field_types: Vec<TypeHandle> = (0..32).map(|_| f32_ty.into()).collect();
     let struct_ty = llvm_types::StructType::get_unnamed(ctx, field_types);
 
     let inline_asm = llvm::InlineAsmOp::build(
@@ -475,7 +475,7 @@ pub(crate) fn convert_ld_16x256b_pure(
     let tmem_addr = op.deref(ctx).get_operand(0);
 
     let f32_ty = FP32Type::get(ctx);
-    let field_types: Vec<Ptr<TypeObj>> = (0..4).map(|_| f32_ty.into()).collect();
+    let field_types: Vec<TypeHandle> = (0..4).map(|_| f32_ty.into()).collect();
     let struct_ty = llvm_types::StructType::get_unnamed(ctx, field_types);
 
     let inline_asm = llvm::InlineAsmOp::build(

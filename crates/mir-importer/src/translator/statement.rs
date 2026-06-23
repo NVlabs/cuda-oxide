@@ -947,7 +947,7 @@ fn slot_array_element_ty(
     ctx: &pliron::context::Context,
     arr_ptr: Value,
     loc: &Location,
-) -> TranslationResult<(pliron::context::Ptr<pliron::r#type::TypeObj>, u32)> {
+) -> TranslationResult<(pliron::r#type::TypeHandle, u32)> {
     let arr_ptr_ty = arr_ptr.get_type(ctx);
     let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
     let mir_ptr_ty = arr_ptr_ty_ref
@@ -983,7 +983,7 @@ fn emit_array_element_store(
     array_ptr: Value,
     index: Value,
     value: Value,
-    element_ty: pliron::context::Ptr<pliron::r#type::TypeObj>,
+    element_ty: pliron::r#type::TypeHandle,
     address_space: u32,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,

@@ -474,7 +474,7 @@ fn mask_shift_amount(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     rhs: Value,
-    lhs_ty: Ptr<pliron::r#type::TypeObj>,
+    lhs_ty: pliron::r#type::TypeHandle,
     lhs_width: u32,
 ) -> Value {
     use pliron::utils::apint::APInt;
@@ -780,7 +780,7 @@ fn emit_cmp_value(
 fn emit_discriminant_const(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
-    discr_ty: Ptr<pliron::r#type::TypeObj>,
+    discr_ty: pliron::r#type::TypeHandle,
     value: u64,
 ) -> Result<Value> {
     use pliron::utils::apint::APInt;
@@ -813,7 +813,7 @@ mod tests {
     use llvm_export::attributes::FastmathFlags;
     use llvm_export::op_interfaces::FastMathFlags as FastMathFlagsTrait;
     use llvm_export::ops as llvm;
-    use pliron::r#type::TypeObj;
+    use pliron::r#type::TypeHandle;
 
     /// A float `mir.mul` lowers to `llvm.fmul` carrying exactly the `contract`
     /// fast-math flag: enough for the NVPTX backend to fuse a feeding multiply
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn convert_mul_float_sets_only_contract_flag() {
         let mut ctx = make_ctx();
-        let f32_ty: Ptr<TypeObj> = pliron::builtin::types::FP32Type::get(&ctx).into();
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![f32_ty, f32_ty], vec![]);
         let lhs = block.deref(&ctx).get_argument(0);
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn convert_add_float_sets_only_contract_flag() {
         let mut ctx = make_ctx();
-        let f32_ty: Ptr<TypeObj> = pliron::builtin::types::FP32Type::get(&ctx).into();
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![f32_ty, f32_ty], vec![]);
         let lhs = block.deref(&ctx).get_argument(0);

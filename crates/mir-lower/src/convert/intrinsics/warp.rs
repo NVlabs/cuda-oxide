@@ -151,7 +151,7 @@ pub(crate) fn convert_vote(
     }
     let (mask, predicate) = (operands[0], operands[1]);
 
-    let result_ty: Ptr<pliron::r#type::TypeObj> = if intrinsic_name.contains("ballot") {
+    let result_ty: pliron::r#type::TypeHandle = if intrinsic_name.contains("ballot") {
         i32_ty.into()
     } else {
         i1_ty.into()
@@ -181,7 +181,7 @@ pub(crate) fn convert_match_any(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     intrinsic_name: &str,
-    value_ty: Ptr<pliron::r#type::TypeObj>,
+    value_ty: pliron::r#type::TypeHandle,
 ) -> Result<()> {
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
 
@@ -308,7 +308,7 @@ pub(crate) fn convert_match_all(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     intrinsic_name: &str,
-    value_ty: Ptr<pliron::r#type::TypeObj>,
+    value_ty: pliron::r#type::TypeHandle,
 ) -> Result<()> {
     use llvm_export::ops::ExtractValueOp;
 

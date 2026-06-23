@@ -49,7 +49,7 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Result,
-    r#type::{TypeObj, Typed},
+    r#type::{TypeHandle, Typed},
     value::Value,
 };
 
@@ -273,7 +273,7 @@ fn propagate_alwaysinline_attr(
 /// per-argument and emits the matching reconstruction sequence.
 fn build_entry_prologue(
     ctx: &mut Context,
-    mir_arg_types: &[Ptr<TypeObj>],
+    mir_arg_types: &[TypeHandle],
     llvm_entry: Ptr<BasicBlock>,
     is_kernel_entry: bool,
 ) -> std::result::Result<Vec<Value>, anyhow::Error> {
@@ -356,7 +356,7 @@ enum ReconstructKind {
 /// both ABIs.
 fn classify_argument_type(
     ctx: &mut Context,
-    arg_ty: Ptr<TypeObj>,
+    arg_ty: TypeHandle,
     is_kernel_entry: bool,
 ) -> ReconstructKind {
     let (is_slice, struct_fields) = {
@@ -414,7 +414,7 @@ fn reconstruct_slice(
     ctx: &mut Context,
     llvm_block: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
-    mir_ty: Ptr<TypeObj>,
+    mir_ty: TypeHandle,
     ptr_val: Value,
     len_val: Value,
 ) -> std::result::Result<(Value, Ptr<Operation>), anyhow::Error> {
@@ -453,7 +453,7 @@ fn reconstruct_struct(
     ctx: &mut Context,
     llvm_block: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
-    mir_ty: Ptr<TypeObj>,
+    mir_ty: TypeHandle,
     field_vals: &[Value],
 ) -> std::result::Result<(Value, Ptr<Operation>), anyhow::Error> {
     let layout = {
@@ -572,7 +572,7 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
 /// lowers to `{ i8, [7 x i8] }` looks like "align 1" to LLVM even when
 /// Rust requires align 8. Memory ops touching such values get stamped
 /// with the recorded alignment instead.
-fn aggregate_over_align(ctx: &Context, ty: Ptr<TypeObj>) -> Option<u64> {
+fn aggregate_over_align(ctx: &Context, ty: TypeHandle) -> Option<u64> {
     let ty_ref = ty.deref(ctx);
     if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
         return Some(s.abi_align).filter(|a| *a > 0);

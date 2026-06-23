@@ -116,7 +116,7 @@ fn convert_g2s_impl(
     let dst_casted = cast_to_cluster_shared_addrspace(ctx, rewriter, operands[0]);
     let barrier_casted = cast_to_shared_addrspace(ctx, rewriter, operands[1]);
 
-    let mut arg_types: Vec<Ptr<pliron::r#type::TypeObj>> = vec![
+    let mut arg_types: Vec<pliron::r#type::TypeHandle> = vec![
         shared_cluster_ptr_ty.into(),
         smem_ptr_ty.into(),
         generic_ptr_ty.into(),
@@ -193,7 +193,7 @@ pub(crate) fn convert_s2g(
 
     let src_casted = cast_to_shared_addrspace(ctx, rewriter, operands[0]);
 
-    let mut arg_types: Vec<Ptr<pliron::r#type::TypeObj>> =
+    let mut arg_types: Vec<pliron::r#type::TypeHandle> =
         vec![smem_ptr_ty.into(), generic_ptr_ty.into()];
     for _ in 0..dims {
         arg_types.push(i32_ty.into());

@@ -148,7 +148,7 @@ pub fn emit_tma_g2s(
     let cta_mask_raw_op = Operation::new(
         ctx,
         MirConstantOp::get_concrete_op_info(),
-        vec![i16_type.to_ptr()],
+        vec![i16_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -174,7 +174,7 @@ pub fn emit_tma_g2s(
     let cache_hint_raw_op = Operation::new(
         ctx,
         MirConstantOp::get_concrete_op_info(),
-        vec![i64_type.to_ptr()],
+        vec![i64_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -485,7 +485,7 @@ pub fn emit_tma_g2s_multicast(
     let cache_hint_raw_op = Operation::new(
         ctx,
         MirConstantOp::get_concrete_op_info(),
-        vec![i64_type.to_ptr()],
+        vec![i64_type.to_handle()],
         vec![],
         vec![],
         0,
@@ -656,7 +656,7 @@ pub fn emit_tma_g2s_multicast_cg2(
     let cache_hint_raw_op = Operation::new(
         ctx,
         MirConstantOp::get_concrete_op_info(),
-        vec![i64_type.to_ptr()],
+        vec![i64_type.to_handle()],
         vec![],
         vec![],
         0,

@@ -34,8 +34,8 @@
 //! | `TmaDescriptor`   | `[u64; 16]` (128-byte opaque blob)    |
 
 use crate::error::{TranslationErr, TranslationResult};
-use pliron::context::{Context, Ptr};
-use pliron::r#type::TypeObj;
+use pliron::context::Context;
+use pliron::r#type::TypeHandle;
 use pliron::{input_err_noloc, input_error_noloc};
 use rustc_public::CrateDef;
 use rustc_public_bridge::IndexedVal;
@@ -49,21 +49,21 @@ use rustc_public::mir::Mutability;
 /// Returns the signed 32-bit integer type.
 pub fn get_i32_type(
     ctx: &mut Context,
-) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+) -> pliron::r#type::TypedHandle<pliron::builtin::types::IntegerType> {
     pliron::builtin::types::IntegerType::get(ctx, 32, pliron::builtin::types::Signedness::Signed)
 }
 
 /// Returns the boolean type (i1, signless).
 pub fn get_bool_type(
     ctx: &mut Context,
-) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+) -> pliron::r#type::TypedHandle<pliron::builtin::types::IntegerType> {
     pliron::builtin::types::IntegerType::get(ctx, 1, pliron::builtin::types::Signedness::Signless)
 }
 
 /// Returns the `usize` type (u64 on 64-bit targets).
 pub fn get_usize_type(
     ctx: &mut Context,
-) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+) -> pliron::r#type::TypedHandle<pliron::builtin::types::IntegerType> {
     pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Unsigned)
 }
 
@@ -87,14 +87,14 @@ fn closure_upvar_tys(substs: &rustc_public::ty::GenericArgs) -> Option<Vec<rustc
 /// Returns the `isize` type (i64 on 64-bit targets).
 pub fn get_isize_type(
     ctx: &mut Context,
-) -> pliron::r#type::TypePtr<pliron::builtin::types::IntegerType> {
+) -> pliron::r#type::TypedHandle<pliron::builtin::types::IntegerType> {
     pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Signed)
 }
 
 /// Returns the 32-bit floating point type.
 pub fn get_f32_type(
     ctx: &mut Context,
-) -> pliron::r#type::TypePtr<pliron::builtin::types::FP32Type> {
+) -> pliron::r#type::TypedHandle<pliron::builtin::types::FP32Type> {
     pliron::builtin::types::FP32Type::get(ctx)
 }
 
@@ -110,7 +110,7 @@ pub fn get_f32_type(
 /// - Lifetime/variance tracking (`PhantomData<&'a T>`)
 /// - Typestate patterns (`struct Allocated;`, `struct Deallocated;`)
 /// - Type-level markers for layout/configuration
-pub fn is_zst_type(ctx: &pliron::context::Context, ty: Ptr<TypeObj>) -> bool {
+pub fn is_zst_type(ctx: &pliron::context::Context, ty: TypeHandle) -> bool {
     let ty_ref = ty.deref(ctx);
 
     // Empty tuple - e.g., () or MirTupleType with no fields
@@ -215,7 +215,7 @@ fn translate_pointer_like(
     ctx: &mut Context,
     pointee: &rustc_public::ty::Ty,
     is_mutable: bool,
-) -> TranslationResult<Ptr<TypeObj>> {
+) -> TranslationResult<TypeHandle> {
     match pointee.kind() {
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(elem_ty)) => {
             // `*const [T]` / `*mut [T]` have the same runtime layout as `&[T]`
@@ -298,7 +298,7 @@ fn shared_array_element_type(
     ctx: &mut Context,
     substs: &rustc_public::ty::GenericArgs,
     label: &'static str,
-) -> TranslationResult<Ptr<TypeObj>> {
+) -> TranslationResult<TypeHandle> {
     for arg in substs.0.iter() {
         if let rustc_public::ty::GenericArgKind::Type(t) = arg {
             return translate_type(ctx, t);
@@ -326,7 +326,7 @@ pub fn translate_destination_type(
     body: &rustc_public::mir::Body,
     destination: &rustc_public::mir::Place,
     loc: &pliron::location::Location,
-) -> TranslationResult<Ptr<TypeObj>> {
+) -> TranslationResult<TypeHandle> {
     let dest_rust_ty = match destination.ty(body.locals()) {
         Ok(t) => t,
         Err(e) => {
@@ -347,7 +347,7 @@ pub fn translate_destination_type(
 pub fn translate_type(
     ctx: &mut Context,
     rust_ty: &rustc_public::ty::Ty,
-) -> TranslationResult<Ptr<TypeObj>> {
+) -> TranslationResult<TypeHandle> {
     let ty_kind = rust_ty.kind();
 
     match ty_kind {
@@ -695,7 +695,7 @@ pub fn translate_type(
                     // except for Direct-tag enums, where mir-lower uses
                     // them to build the memory-faithful representation.
                     let (discriminant_ty, tag_offset, total_size, abi_align): (
-                        Ptr<TypeObj>,
+                        TypeHandle,
                         u64,
                         u64,
                         u64,

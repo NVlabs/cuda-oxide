@@ -77,7 +77,7 @@ pub fn emit_cvt_f16x2_f32(
     let cvt_op = Operation::new(
         ctx,
         CvtF16x2F32Op::get_concrete_op_info(),
-        vec![i32_type.to_ptr()],
+        vec![i32_type.to_handle()],
         vec![lo_val, hi_val],
         vec![],
         0,

@@ -7,11 +7,10 @@
 
 use pliron::builtin::type_interfaces::FloatTypeInterface;
 use pliron::context::Context;
-use pliron::context::Ptr;
 use pliron::derive::{pliron_type, type_interface_impl};
 use pliron::location::Location;
 use pliron::result::Error;
-use pliron::r#type::{Type, TypeObj, TypePtr};
+use pliron::r#type::{Type, TypeHandle, TypedHandle};
 use pliron::utils::apfloat::{self, GetSemantics, Semantics};
 use pliron::{common_traits::Verify, verify_err};
 
@@ -38,19 +37,19 @@ impl FloatTypeInterface for MirFP16Type {
 #[pliron_type(name = "mir.tuple", format = "`<` vec($types, CharSpace(`,`)) `>`")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirTupleType {
-    pub types: Vec<Ptr<TypeObj>>,
+    pub types: Vec<TypeHandle>,
 }
 
 impl MirTupleType {
-    pub fn get(ctx: &mut Context, types: Vec<Ptr<TypeObj>>) -> TypePtr<Self> {
+    pub fn get(ctx: &mut Context, types: Vec<TypeHandle>) -> TypedHandle<Self> {
         Type::register_instance(MirTupleType { types }, ctx)
     }
 
-    pub fn get_existing(ctx: &Context, types: Vec<Ptr<TypeObj>>) -> Option<TypePtr<Self>> {
+    pub fn get_existing(ctx: &Context, types: Vec<TypeHandle>) -> Option<TypedHandle<Self>> {
         Type::get_instance(MirTupleType { types }, ctx)
     }
 
-    pub fn get_types(&self) -> &[Ptr<TypeObj>] {
+    pub fn get_types(&self) -> &[TypeHandle] {
         &self.types
     }
 }
@@ -100,7 +99,7 @@ pub mod address_space {
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirPtrType {
-    pub pointee: Ptr<TypeObj>,
+    pub pointee: TypeHandle,
     pub is_mutable: bool,
     pub address_space: u32,
 }
@@ -109,10 +108,10 @@ impl MirPtrType {
     /// Create a pointer type with explicit address space.
     pub fn get(
         ctx: &mut Context,
-        pointee: Ptr<TypeObj>,
+        pointee: TypeHandle,
         is_mutable: bool,
         address_space: u32,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         Type::register_instance(
             MirPtrType {
                 pointee,
@@ -126,42 +125,50 @@ impl MirPtrType {
     /// Create a pointer in generic address space (0).
     pub fn get_generic(
         ctx: &mut Context,
-        pointee: Ptr<TypeObj>,
+        pointee: TypeHandle,
         is_mutable: bool,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         Self::get(ctx, pointee, is_mutable, address_space::GENERIC)
     }
 
     /// Create a pointer in shared memory address space (3).
-    pub fn get_shared(ctx: &mut Context, pointee: Ptr<TypeObj>, is_mutable: bool) -> TypePtr<Self> {
+    pub fn get_shared(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        is_mutable: bool,
+    ) -> TypedHandle<Self> {
         Self::get(ctx, pointee, is_mutable, address_space::SHARED)
     }
 
     /// Create a pointer in global memory address space (1).
-    pub fn get_global(ctx: &mut Context, pointee: Ptr<TypeObj>, is_mutable: bool) -> TypePtr<Self> {
+    pub fn get_global(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        is_mutable: bool,
+    ) -> TypedHandle<Self> {
         Self::get(ctx, pointee, is_mutable, address_space::GLOBAL)
     }
 
     /// Create a pointer in constant memory address space (4).
     pub fn get_constant(
         ctx: &mut Context,
-        pointee: Ptr<TypeObj>,
+        pointee: TypeHandle,
         is_mutable: bool,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         Self::get(ctx, pointee, is_mutable, address_space::CONSTANT)
     }
 
     /// Create a pointer in tensor memory address space (6) - Blackwell+ tcgen05.
-    pub fn get_tmem(ctx: &mut Context, pointee: Ptr<TypeObj>, is_mutable: bool) -> TypePtr<Self> {
+    pub fn get_tmem(ctx: &mut Context, pointee: TypeHandle, is_mutable: bool) -> TypedHandle<Self> {
         Self::get(ctx, pointee, is_mutable, address_space::TMEM)
     }
 
     pub fn get_existing(
         ctx: &Context,
-        pointee: Ptr<TypeObj>,
+        pointee: TypeHandle,
         is_mutable: bool,
         address_space: u32,
-    ) -> Option<TypePtr<Self>> {
+    ) -> Option<TypedHandle<Self>> {
         Type::get_instance(
             MirPtrType {
                 pointee,
@@ -208,19 +215,19 @@ impl Verify for MirPtrType {
 #[pliron_type(name = "mir.slice", format = "`<` $element_ty `>`")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirSliceType {
-    pub element_ty: Ptr<TypeObj>,
+    pub element_ty: TypeHandle,
 }
 
 impl MirSliceType {
-    pub fn get(ctx: &mut Context, element_ty: Ptr<TypeObj>) -> TypePtr<Self> {
+    pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
         Type::register_instance(MirSliceType { element_ty }, ctx)
     }
 
-    pub fn get_existing(ctx: &Context, element_ty: Ptr<TypeObj>) -> Option<TypePtr<Self>> {
+    pub fn get_existing(ctx: &Context, element_ty: TypeHandle) -> Option<TypedHandle<Self>> {
         Type::get_instance(MirSliceType { element_ty }, ctx)
     }
 
-    pub fn element_type(&self) -> Ptr<TypeObj> {
+    pub fn element_type(&self) -> TypeHandle {
         self.element_ty
     }
 }
@@ -241,19 +248,19 @@ impl Verify for MirSliceType {
 #[pliron_type(name = "mir.disjoint_slice", format = "`<` $element_ty `>`")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirDisjointSliceType {
-    pub element_ty: Ptr<TypeObj>,
+    pub element_ty: TypeHandle,
 }
 
 impl MirDisjointSliceType {
-    pub fn get(ctx: &mut Context, element_ty: Ptr<TypeObj>) -> TypePtr<Self> {
+    pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
         Type::register_instance(MirDisjointSliceType { element_ty }, ctx)
     }
 
-    pub fn get_existing(ctx: &Context, element_ty: Ptr<TypeObj>) -> Option<TypePtr<Self>> {
+    pub fn get_existing(ctx: &Context, element_ty: TypeHandle) -> Option<TypedHandle<Self>> {
         Type::get_instance(MirDisjointSliceType { element_ty }, ctx)
     }
 
-    pub fn element_type(&self) -> Ptr<TypeObj> {
+    pub fn element_type(&self) -> TypeHandle {
         self.element_ty
     }
 }
@@ -300,7 +307,7 @@ pub struct MirStructType {
     /// Field names in declaration order
     pub field_names: Vec<String>,
     /// Field types in declaration order (parallel to field_names)
-    pub field_types: Vec<Ptr<TypeObj>>,
+    pub field_types: Vec<TypeHandle>,
     /// Memory order mapping: `mem_to_decl[mem_idx] = decl_idx`.
     /// Empty means identity (no reordering).
     pub mem_to_decl: Vec<usize>,
@@ -324,8 +331,8 @@ impl MirStructType {
         ctx: &mut Context,
         name: String,
         field_names: Vec<String>,
-        field_types: Vec<Ptr<TypeObj>>,
-    ) -> TypePtr<Self> {
+        field_types: Vec<TypeHandle>,
+    ) -> TypedHandle<Self> {
         Self::get_with_layout(ctx, name, field_names, field_types, vec![])
     }
 
@@ -337,9 +344,9 @@ impl MirStructType {
         ctx: &mut Context,
         name: String,
         field_names: Vec<String>,
-        field_types: Vec<Ptr<TypeObj>>,
+        field_types: Vec<TypeHandle>,
         mem_to_decl: Vec<usize>,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         Self::get_with_full_layout(
             ctx,
             name,
@@ -367,12 +374,12 @@ impl MirStructType {
         ctx: &mut Context,
         name: String,
         field_names: Vec<String>,
-        field_types: Vec<Ptr<TypeObj>>,
+        field_types: Vec<TypeHandle>,
         mem_to_decl: Vec<usize>,
         field_offsets: Vec<u64>,
         total_size: u64,
         abi_align: u64,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         Type::register_instance(
             MirStructType {
                 name,
@@ -392,8 +399,8 @@ impl MirStructType {
         ctx: &Context,
         name: String,
         field_names: Vec<String>,
-        field_types: Vec<Ptr<TypeObj>>,
-    ) -> Option<TypePtr<Self>> {
+        field_types: Vec<TypeHandle>,
+    ) -> Option<TypedHandle<Self>> {
         Type::get_instance(
             MirStructType {
                 name,
@@ -424,7 +431,7 @@ impl MirStructType {
     }
 
     /// Get field types.
-    pub fn field_types(&self) -> &[Ptr<TypeObj>] {
+    pub fn field_types(&self) -> &[TypeHandle] {
         &self.field_types
     }
 
@@ -466,12 +473,12 @@ impl MirStructType {
     }
 
     /// Get the type of a field by index.
-    pub fn get_field_type(&self, index: usize) -> Option<Ptr<TypeObj>> {
+    pub fn get_field_type(&self, index: usize) -> Option<TypeHandle> {
         self.field_types.get(index).copied()
     }
 
     /// Get the type of a field by name.
-    pub fn get_field_type_by_name(&self, name: &str) -> Option<Ptr<TypeObj>> {
+    pub fn get_field_type_by_name(&self, name: &str) -> Option<TypeHandle> {
         self.get_field_index(name)
             .and_then(|idx| self.get_field_type(idx))
     }
@@ -497,27 +504,27 @@ impl Verify for MirStructType {
 #[pliron_type(name = "mir.array", format = "`<` $element_ty `,` $size `>`")]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirArrayType {
-    pub element_ty: Ptr<TypeObj>,
+    pub element_ty: TypeHandle,
     pub size: u64,
 }
 
 impl MirArrayType {
     /// Create a new array type.
-    pub fn get(ctx: &mut Context, element_ty: Ptr<TypeObj>, size: u64) -> TypePtr<Self> {
+    pub fn get(ctx: &mut Context, element_ty: TypeHandle, size: u64) -> TypedHandle<Self> {
         Type::register_instance(MirArrayType { element_ty, size }, ctx)
     }
 
     /// Get an existing array type if it exists.
     pub fn get_existing(
         ctx: &Context,
-        element_ty: Ptr<TypeObj>,
+        element_ty: TypeHandle,
         size: u64,
-    ) -> Option<TypePtr<Self>> {
+    ) -> Option<TypedHandle<Self>> {
         Type::get_instance(MirArrayType { element_ty, size }, ctx)
     }
 
     /// Get the element type.
-    pub fn element_type(&self) -> Ptr<TypeObj> {
+    pub fn element_type(&self) -> TypeHandle {
         self.element_ty
     }
 
@@ -541,7 +548,7 @@ pub struct EnumVariant {
     /// Variant name (e.g., "Some", "None", "Ok", "Err")
     pub name: String,
     /// Field types for this variant (empty for unit variants like None)
-    pub field_types: Vec<Ptr<TypeObj>>,
+    pub field_types: Vec<TypeHandle>,
     /// Where each field lives, as a byte position inside the ENUM (not
     /// inside the variant), from rustc's layout. Same order as
     /// `field_types`. Different variants reuse the same positions because
@@ -551,7 +558,7 @@ pub struct EnumVariant {
 
 impl EnumVariant {
     /// Create a new enum variant with unknown field offsets.
-    pub fn new(name: String, field_types: Vec<Ptr<TypeObj>>) -> Self {
+    pub fn new(name: String, field_types: Vec<TypeHandle>) -> Self {
         EnumVariant {
             name,
             field_types,
@@ -563,7 +570,7 @@ impl EnumVariant {
     /// each field (parallel to `field_types`).
     pub fn new_with_offsets(
         name: String,
-        field_types: Vec<Ptr<TypeObj>>,
+        field_types: Vec<TypeHandle>,
         field_offsets: Vec<u64>,
     ) -> Self {
         EnumVariant {
@@ -639,7 +646,7 @@ pub struct MirEnumType {
     /// width and signedness for Direct-tag enums (so `#[repr(uN/iN)]`,
     /// `#[repr(C)]`, sparse and negative discriminants are all honoured); a
     /// variant-count fallback for the niched / single-variant models.
-    pub discriminant_ty: Ptr<TypeObj>,
+    pub discriminant_ty: TypeHandle,
     /// Variant names in order
     pub variant_names: Vec<String>,
     /// Declared discriminant VALUES in variant order, as the unsigned bit
@@ -649,7 +656,7 @@ pub struct MirEnumType {
     /// Number of fields for each variant (parallel to variant_names)
     pub variant_field_counts: Vec<u32>,
     /// All field types concatenated (use variant_field_counts to split)
-    pub all_field_types: Vec<Ptr<TypeObj>>,
+    pub all_field_types: Vec<TypeHandle>,
     /// Where each field lives, as a byte position inside the enum, from
     /// rustc's layout (same order as `all_field_types`). Positions repeat
     /// across variants because variants share bytes. Empty when the
@@ -679,10 +686,10 @@ impl MirEnumType {
     pub fn get(
         ctx: &mut Context,
         name: String,
-        discriminant_ty: Ptr<TypeObj>,
+        discriminant_ty: TypeHandle,
         variant_discriminants: Vec<u64>,
         variants: Vec<EnumVariant>,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         Self::get_with_layout(
             ctx,
             name,
@@ -705,13 +712,13 @@ impl MirEnumType {
     pub fn get_with_layout(
         ctx: &mut Context,
         name: String,
-        discriminant_ty: Ptr<TypeObj>,
+        discriminant_ty: TypeHandle,
         variant_discriminants: Vec<u64>,
         variants: Vec<EnumVariant>,
         tag_offset: u64,
         total_size: u64,
         abi_align: u64,
-    ) -> TypePtr<Self> {
+    ) -> TypedHandle<Self> {
         // Flatten variants into parallel vectors
         let mut variant_names = Vec::with_capacity(variants.len());
         let mut variant_field_counts = Vec::with_capacity(variants.len());
@@ -748,7 +755,7 @@ impl MirEnumType {
     }
 
     /// Get the discriminant type.
-    pub fn discriminant_type(&self) -> Ptr<TypeObj> {
+    pub fn discriminant_type(&self) -> TypeHandle {
         self.discriminant_ty
     }
 

@@ -49,7 +49,7 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::printable::Printable;
-use pliron::r#type::{TypeObj, Typed};
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use pliron::{input_err, input_err_noloc, input_error, input_error_noloc};
@@ -74,7 +74,7 @@ use std::num::NonZeroUsize;
 fn cast_to_generic_addrspace_if_needed(
     ctx: &mut Context,
     value: Value,
-    expected_type: Ptr<TypeObj>,
+    expected_type: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -82,14 +82,14 @@ fn cast_to_generic_addrspace_if_needed(
     let value_type = value.get_type(ctx);
 
     // Check if both are pointer types
-    let value_ptr_info: Option<(Ptr<TypeObj>, bool, u32)> = {
+    let value_ptr_info: Option<(TypeHandle, bool, u32)> = {
         let ty_ref = value_type.deref(ctx);
         ty_ref
             .downcast_ref::<dialect_mir::types::MirPtrType>()
             .map(|pt| (pt.pointee, pt.is_mutable, pt.address_space))
     };
 
-    let expected_ptr_info: Option<(Ptr<TypeObj>, bool, u32)> = {
+    let expected_ptr_info: Option<(TypeHandle, bool, u32)> = {
         let ty_ref = expected_type.deref(ctx);
         ty_ref
             .downcast_ref::<dialect_mir::types::MirPtrType>()
@@ -142,13 +142,13 @@ fn cast_to_generic_addrspace_if_needed(
 fn cast_struct_fields_to_expected_types(
     ctx: &mut Context,
     field_values: Vec<Value>,
-    struct_type: Ptr<TypeObj>,
+    struct_type: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> (Vec<Value>, Option<Ptr<Operation>>) {
     // Get field types from the struct type
-    let field_types: Vec<Ptr<TypeObj>> = {
+    let field_types: Vec<TypeHandle> = {
         let ty_ref = struct_type.deref(ctx);
         if let Some(st) = ty_ref.downcast_ref::<dialect_mir::types::MirStructType>() {
             st.field_types.clone()
@@ -188,14 +188,14 @@ fn cast_struct_fields_to_expected_types(
 fn cast_enum_fields_to_expected_types(
     ctx: &mut Context,
     field_values: Vec<Value>,
-    enum_type: Ptr<TypeObj>,
+    enum_type: TypeHandle,
     variant_idx: usize,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> (Vec<Value>, Option<Ptr<Operation>>) {
     // Get the field types for this variant from the enum type
-    let variant_field_types: Vec<Ptr<TypeObj>> = {
+    let variant_field_types: Vec<TypeHandle> = {
         let ty_ref = enum_type.deref(ctx);
         if let Some(et) = ty_ref.downcast_ref::<dialect_mir::types::MirEnumType>() {
             // Calculate the field offset for this variant
@@ -361,27 +361,27 @@ pub fn translate_rvalue(
                 // Comparison operations - return bool (i1)
                 mir::BinOp::Lt => (
                     MirLtOp::get_concrete_op_info(),
-                    types::get_bool_type(ctx).to_ptr(),
+                    types::get_bool_type(ctx).to_handle(),
                 ),
                 mir::BinOp::Le => (
                     MirLeOp::get_concrete_op_info(),
-                    types::get_bool_type(ctx).to_ptr(),
+                    types::get_bool_type(ctx).to_handle(),
                 ),
                 mir::BinOp::Gt => (
                     MirGtOp::get_concrete_op_info(),
-                    types::get_bool_type(ctx).to_ptr(),
+                    types::get_bool_type(ctx).to_handle(),
                 ),
                 mir::BinOp::Ge => (
                     MirGeOp::get_concrete_op_info(),
-                    types::get_bool_type(ctx).to_ptr(),
+                    types::get_bool_type(ctx).to_handle(),
                 ),
                 mir::BinOp::Eq => (
                     MirEqOp::get_concrete_op_info(),
-                    types::get_bool_type(ctx).to_ptr(),
+                    types::get_bool_type(ctx).to_handle(),
                 ),
                 mir::BinOp::Ne => (
                     MirNeOp::get_concrete_op_info(),
-                    types::get_bool_type(ctx).to_ptr(),
+                    types::get_bool_type(ctx).to_handle(),
                 ),
                 // Three-way comparison (`Ord::cmp`) - returns
                 // `core::cmp::Ordering`. rustc's `BinOp::ty` knows the
@@ -472,7 +472,7 @@ pub fn translate_rvalue(
                     let op = Operation::new(
                         ctx,
                         MirExtractFieldOp::get_concrete_op_info(),
-                        vec![result_type.to_ptr()],
+                        vec![result_type.to_handle()],
                         vec![operand_val],
                         vec![],
                         0,
@@ -667,7 +667,7 @@ pub fn translate_rvalue(
                     let operand_type = left_val.get_type(ctx);
                     let bool_type = types::get_bool_type(ctx).into();
                     let tuple_type = types::MirTupleType::get(ctx, vec![operand_type, bool_type]);
-                    let result_type_ptr = tuple_type.to_ptr();
+                    let result_type_ptr = tuple_type.to_handle();
 
                     // Create a checked operation based on the binary operator
                     let op_id = match bin_op {
@@ -1307,7 +1307,7 @@ pub fn translate_rvalue(
                             // pointer. Values coming from shared memory carry
                             // addrspace(3); normalize them like the struct/array
                             // arms do.
-                            let expected_ptr_ty: Ptr<TypeObj> =
+                            let expected_ptr_ty: TypeHandle =
                                 dialect_mir::types::MirPtrType::get_generic(
                                     ctx,
                                     element_type,
@@ -2557,7 +2557,7 @@ pub fn translate_operand(
             use pliron::builtin::types::{IntegerType, Signedness};
             use pliron::utils::apint::APInt;
 
-            let bool_ty: Ptr<TypeObj> = IntegerType::get(ctx, 1, Signedness::Signless).into();
+            let bool_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
             let false_val = APInt::from_u64(0, std::num::NonZeroUsize::new(1).unwrap());
             let const_attr =
                 IntegerAttr::new(IntegerType::get(ctx, 1, Signedness::Signless), false_val);
@@ -2969,7 +2969,7 @@ fn translate_place_value_fallback(
                     let base_ty = base_value.get_type(ctx);
 
                     // Extract pointee info while holding the borrow, then release before fallback
-                    let pointee_info: Option<(Ptr<pliron::r#type::TypeObj>, bool)> = {
+                    let pointee_info: Option<(pliron::r#type::TypeHandle, bool)> = {
                         let base_ty_ref = base_ty.deref(ctx);
                         base_ty_ref
                             .downcast_ref::<dialect_mir::types::MirPtrType>()
@@ -2990,7 +2990,7 @@ fn translate_place_value_fallback(
 
                     let (res_ty, is_zst) = pointee_info.unwrap_or_else(|| {
                         // Fallback: assume i32 if we can't determine the type
-                        (types::get_i32_type(ctx).to_ptr(), false)
+                        (types::get_i32_type(ctx).to_handle(), false)
                     });
 
                     // For ZST pointees (like SharedArray), don't create a load op.
@@ -3411,11 +3411,11 @@ fn apply_deref_projection(
 
     enum DerefKind {
         Ptr {
-            pointee: Ptr<pliron::r#type::TypeObj>,
+            pointee: pliron::r#type::TypeHandle,
             is_zst: bool,
         },
         Slice {
-            element_ty: Ptr<pliron::r#type::TypeObj>,
+            element_ty: pliron::r#type::TypeHandle,
         },
     }
 
@@ -3533,7 +3533,7 @@ fn apply_field_addr_and_load(
     use dialect_mir::ops::MirFieldAddrOp;
 
     let field_type = types::translate_type(ctx, field_ty)?;
-    let field_ptr_ty: Ptr<TypeObj> =
+    let field_ptr_ty: TypeHandle =
         dialect_mir::types::MirPtrType::get_generic(ctx, field_type, false).into();
 
     let addr_op = Operation::new(
@@ -3857,7 +3857,7 @@ fn translate_place_addr_from_slot(
                         // Its pointee is the slice's element type: the
                         // struct itself for a fat struct reference, or the
                         // element for an ordinary `&[T]` / `DisjointSlice`.
-                        let data_ptr_ty: Ptr<TypeObj> =
+                        let data_ptr_ty: TypeHandle =
                             dialect_mir::types::MirPtrType::get_generic(ctx, elem_ty, is_mutable)
                                 .into();
                         let extract_ptr = Operation::new(
@@ -3900,7 +3900,7 @@ fn translate_place_addr_from_slot(
                             // type (see `translate_type`'s ADT arm), so the
                             // field-addr result is a pointer to the element
                             // and the dialect verifier agrees.
-                            let tail_ptr_ty: Ptr<TypeObj> =
+                            let tail_ptr_ty: TypeHandle =
                                 dialect_mir::types::MirPtrType::get_generic(
                                     ctx,
                                     tail_elem_ty,
@@ -3928,7 +3928,7 @@ fn translate_place_addr_from_slot(
                             let extract_len = Operation::new(
                                 ctx,
                                 MirExtractFieldOp::get_concrete_op_info(),
-                                vec![usize_ty.to_ptr()],
+                                vec![usize_ty.to_handle()],
                                 vec![fat_val],
                                 vec![],
                                 0,
@@ -4162,7 +4162,7 @@ fn translate_place_addr_from_slot(
 enum PointeeKind {
     /// Pointee is `[T; N]` (carries `T`). Element addressing GEPs through
     /// the array type via `mir.array_element_addr`.
-    Array(Ptr<TypeObj>),
+    Array(TypeHandle),
     /// Pointee is any other type. When an `Index` / `ConstantIndex`
     /// projection meets such a pointer, MIR typing guarantees the indexed
     /// place is a slice whose data pointer (produced by the fat-pointer
@@ -4173,11 +4173,11 @@ enum PointeeKind {
 
 fn indexed_element_ptr_type(
     ctx: &mut Context,
-    current_ptr_ty: Ptr<TypeObj>,
+    current_ptr_ty: TypeHandle,
     pointee_kind: PointeeKind,
     addr_space: u32,
     is_mutable: bool,
-) -> Ptr<TypeObj> {
+) -> TypeHandle {
     match pointee_kind {
         PointeeKind::Array(element_ty) => {
             dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into()
@@ -4251,7 +4251,7 @@ fn pointer_pointee_kind(ctx: &Context, ptr_value: Value) -> Option<(PointeeKind,
 
 /// Inspect a pointer type and return its pointee kind + address space, or
 /// `None` if the type isn't a `MirPtrType`.
-fn pointer_type_pointee_kind(ctx: &Context, ptr_ty: Ptr<TypeObj>) -> Option<(PointeeKind, u32)> {
+fn pointer_type_pointee_kind(ctx: &Context, ptr_ty: TypeHandle) -> Option<(PointeeKind, u32)> {
     let ty_ref = ptr_ty.deref(ctx);
     let mir_ptr_ty = ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>()?;
     let pointee = mir_ptr_ty.pointee;
@@ -4266,20 +4266,20 @@ fn pointer_type_pointee_kind(ctx: &Context, ptr_ty: Ptr<TypeObj>) -> Option<(Poi
     Some((kind, addr_space))
 }
 
-fn mir_ptr_pointee(ctx: &Context, ptr_ty: Ptr<TypeObj>) -> Option<Ptr<TypeObj>> {
+fn mir_ptr_pointee(ctx: &Context, ptr_ty: TypeHandle) -> Option<TypeHandle> {
     ptr_ty
         .deref(ctx)
         .downcast_ref::<dialect_mir::types::MirPtrType>()
         .map(|ptr_ty| ptr_ty.pointee)
 }
 
-fn is_empty_tuple_type(ctx: &Context, ty: Ptr<TypeObj>) -> bool {
+fn is_empty_tuple_type(ctx: &Context, ty: TypeHandle) -> bool {
     ty.deref(ctx)
         .downcast_ref::<dialect_mir::types::MirTupleType>()
         .is_some_and(|tt| tt.get_types().is_empty())
 }
 
-fn slice_like_element_type(ctx: &Context, ty: Ptr<TypeObj>) -> Option<Ptr<TypeObj>> {
+fn slice_like_element_type(ctx: &Context, ty: TypeHandle) -> Option<TypeHandle> {
     let ty_ref = ty.deref(ctx);
     ty_ref
         .downcast_ref::<dialect_mir::types::MirSliceType>()
@@ -4460,11 +4460,11 @@ pub fn translate_place_iterative(
                 // before creating operations (which need &mut ctx).
                 enum IndexableKind {
                     Array {
-                        element_ty: Ptr<TypeObj>,
+                        element_ty: TypeHandle,
                     },
                     Ptr {
-                        element_ty: Ptr<TypeObj>,
-                        ptr_ty: Ptr<TypeObj>,
+                        element_ty: TypeHandle,
+                        ptr_ty: TypeHandle,
                     },
                 }
 
@@ -4588,11 +4588,11 @@ pub fn translate_place_iterative(
                 // before creating operations (which need &mut ctx).
                 enum ConstIndexKind {
                     Array {
-                        element_ty: Ptr<TypeObj>,
+                        element_ty: TypeHandle,
                     },
                     Ptr {
-                        element_ty: Ptr<TypeObj>,
-                        ptr_ty: Ptr<TypeObj>,
+                        element_ty: TypeHandle,
+                        ptr_ty: TypeHandle,
                     },
                 }
 
@@ -4772,7 +4772,7 @@ pub fn translate_place_iterative(
 fn translate_ptr_to_array_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
-    const_ty_ptr: Ptr<TypeObj>,
+    const_ty_ptr: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -4850,7 +4850,7 @@ fn translate_ptr_to_array_constant(
 fn translate_array_value_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
-    const_ty_ptr: Ptr<TypeObj>,
+    const_ty_ptr: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -4876,7 +4876,7 @@ fn translate_array_value_constant(
 /// constant rule instead of falling through to a generic byte-lowering error.
 fn array_constant_type_byte_size(
     ctx: &Context,
-    ty: Ptr<TypeObj>,
+    ty: TypeHandle,
     loc: Location,
 ) -> TranslationResult<usize> {
     use pliron::builtin::types::{FP32Type, FP64Type, IntegerType};
@@ -4920,7 +4920,7 @@ fn array_constant_type_byte_size(
 /// etc.) are handled by repeated decomposition.
 fn build_array_op_from_bytes(
     ctx: &mut Context,
-    array_ty: Ptr<TypeObj>,
+    array_ty: TypeHandle,
     bytes: &[u8],
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -5174,7 +5174,7 @@ fn build_array_op_from_bytes(
 fn translate_array_value_constant_inner(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
-    array_ty: Ptr<TypeObj>,
+    array_ty: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -5200,7 +5200,7 @@ fn translate_struct_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
     _rust_ty: &rustc_public::ty::Ty, // Reserved for future layout computation
-    const_ty_ptr: Ptr<TypeObj>,
+    const_ty_ptr: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -5209,7 +5209,7 @@ fn translate_struct_constant(
 
     // Get the struct type to access field information
     // Clone field types to avoid borrow conflicts when we need to mutate ctx later
-    let field_types: Vec<Ptr<TypeObj>> = {
+    let field_types: Vec<TypeHandle> = {
         let ty_obj = const_ty_ptr.deref(ctx);
         let struct_ty = ty_obj
             .downcast_ref::<dialect_mir::types::MirStructType>()
@@ -5683,7 +5683,7 @@ fn translate_tuple_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
     rust_ty: &rustc_public::ty::Ty,
-    const_ty_ptr: Ptr<TypeObj>,
+    const_ty_ptr: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -5800,7 +5800,7 @@ fn translate_tuple_constant(
     Ok((op.deref(ctx).get_result(0), Some(op)))
 }
 
-fn constant_storage_size(ctx: &Context, ty_ptr: Ptr<TypeObj>) -> Option<usize> {
+fn constant_storage_size(ctx: &Context, ty_ptr: TypeHandle) -> Option<usize> {
     let ty_ref = ty_ptr.deref(ctx);
     if types::is_zst_type(ctx, ty_ptr) {
         Some(0)
@@ -5836,7 +5836,7 @@ fn constant_storage_size(ctx: &Context, ty_ptr: Ptr<TypeObj>) -> Option<usize> {
 /// structs), which the flat per-field path could not translate.
 fn build_const_from_bytes(
     ctx: &mut Context,
-    ty_ptr: Ptr<TypeObj>,
+    ty_ptr: TypeHandle,
     bytes: &[u8],
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -6006,7 +6006,7 @@ fn translate_enum_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
     rust_ty: &rustc_public::ty::Ty,
-    const_ty_ptr: Ptr<TypeObj>,
+    const_ty_ptr: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -6027,7 +6027,7 @@ fn translate_enum_constant(
 fn translate_enum_constant_from_bytes(
     ctx: &mut Context,
     rust_ty: &rustc_public::ty::Ty,
-    const_ty_ptr: Ptr<TypeObj>,
+    const_ty_ptr: TypeHandle,
     enum_bytes: &[u8],
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -6183,7 +6183,7 @@ fn translate_enum_constant_from_bytes(
 fn translate_constant_value_from_bytes(
     ctx: &mut Context,
     rust_ty: &rustc_public::ty::Ty,
-    ty_ptr: Ptr<TypeObj>,
+    ty_ptr: TypeHandle,
     bytes: &[u8],
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -6472,7 +6472,7 @@ fn translate_constant_value_from_bytes(
 /// Build a zero-sized struct or tuple value.
 fn translate_zero_sized_constant_value(
     ctx: &mut Context,
-    ty_ptr: Ptr<TypeObj>,
+    ty_ptr: TypeHandle,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -6509,7 +6509,7 @@ fn translate_zero_sized_constant_value(
     // synthesize a ZST value for each field type (e.g. `TryFromIntError(())`,
     // which surfaces when building `core` for nvptx via `-Zbuild-std`).
     if matches!(zero_sized_kind, ZeroSizedKind::Struct) {
-        let field_types: Vec<Ptr<TypeObj>> = {
+        let field_types: Vec<TypeHandle> = {
             let ty_ref = ty_ptr.deref(ctx);
             ty_ref
                 .downcast_ref::<dialect_mir::types::MirStructType>()
@@ -7253,7 +7253,7 @@ fn get_static_pointer_info(ty: &rustc_public::ty::Ty) -> Option<(rustc_public::t
 fn extract_shared_array_info(
     ctx: &mut Context,
     ty: &rustc_public::ty::Ty,
-) -> TranslationResult<(Ptr<pliron::r#type::TypeObj>, usize, usize)> {
+) -> TranslationResult<(pliron::r#type::TypeHandle, usize, usize)> {
     use rustc_public::ty::{GenericArgKind, RigidTy, TyKind};
 
     /// Parse a const generic value from debug string
@@ -7355,7 +7355,7 @@ fn extract_shared_array_info(
 /// The caller is responsible for inserting the returned op into a block.
 fn create_zst_aggregate(
     ctx: &mut Context,
-    ty_ptr: Ptr<pliron::r#type::TypeObj>,
+    ty_ptr: pliron::r#type::TypeHandle,
     loc: Location,
 ) -> Ptr<Operation> {
     use dialect_mir::ops::{MirConstructStructOp, MirConstructTupleOp};
@@ -7398,7 +7398,7 @@ fn create_zst_aggregate(
 /// link it via `insert_after` / `insert_at_front`.
 fn create_ghost_enum_default(
     ctx: &mut Context,
-    ty_ptr: Ptr<pliron::r#type::TypeObj>,
+    ty_ptr: pliron::r#type::TypeHandle,
     loc: Location,
 ) -> Ptr<Operation> {
     use dialect_mir::ops::MirConstructEnumOp;

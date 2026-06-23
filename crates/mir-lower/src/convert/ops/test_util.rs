@@ -26,7 +26,7 @@ use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::r#type::TypeObj;
+use pliron::r#type::TypeHandle;
 use pliron::value::Value;
 
 /// Fresh context with every dialect this crate's lowering needs registered.
@@ -45,8 +45,8 @@ pub(crate) fn make_ctx() -> Context {
 /// block; the caller appends ops (including the terminator) before lowering.
 pub(crate) fn build_kernel(
     ctx: &mut Context,
-    arg_tys: Vec<Ptr<TypeObj>>,
-    ret_tys: Vec<Ptr<TypeObj>>,
+    arg_tys: Vec<TypeHandle>,
+    ret_tys: Vec<TypeHandle>,
 ) -> (Ptr<Operation>, Ptr<BasicBlock>) {
     let module = ModuleOp::new(ctx, "test_module".try_into().unwrap());
     let module_ptr = module.get_operation();
@@ -78,7 +78,7 @@ pub(crate) fn build_kernel(
 pub(crate) fn append_block(
     ctx: &mut Context,
     entry: Ptr<BasicBlock>,
-    arg_tys: Vec<Ptr<TypeObj>>,
+    arg_tys: Vec<TypeHandle>,
 ) -> Ptr<BasicBlock> {
     let region = entry.deref(ctx).get_parent_region().unwrap();
     let block = BasicBlock::new(ctx, None, arg_tys);
