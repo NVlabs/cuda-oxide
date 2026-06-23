@@ -2429,6 +2429,91 @@ impl Parse for LaunchBoundsArgs {
     }
 }
 
+/// Requests loop unrolling for every loop in the annotated function.
+///
+/// `#[unroll]` requests a *full* unroll (factor `0`): every loop with a
+/// compile-time-constant trip count is unrolled completely, so the induction
+/// variable becomes a literal in each copy (this is what lets index arithmetic
+/// such as `i & 3` fold to a constant). `#[unroll(N)]` requests unrolling every
+/// loop in the function by a factor of `N`, leaving a remainder loop when `N`
+/// does not divide the trip count.
+///
+/// # Usage
+///
+/// ```ignore
+/// use cuda_device::{kernel, unroll, DisjointSlice};
+///
+/// #[kernel]
+/// #[unroll]                      // full unroll
+/// pub fn full(output: DisjointSlice<f32>) { ... }
+///
+/// #[kernel]
+/// #[unroll(4)]                   // unroll every loop by a factor of 4
+/// pub fn by_four(output: DisjointSlice<f32>) { ... }
+/// ```
+///
+/// # Requirements
+///
+/// - The `#[unroll]` attribute must come AFTER `#[kernel]` (or `#[device]`)
+///
+/// # How It Works
+///
+/// The macro injects `cuda_device::thread::__unroll_config::<FACTOR>()` at the
+/// start of the function body. The MIR importer detects this marker, attaches a
+/// `mir.unroll(FACTOR)` attribute to the function op, and drops the marker call.
+/// The loop-unroll pass reads that attribute.
+#[proc_macro_attribute]
+pub fn unroll(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args: UnrollArgs = parse_macro_input!(attr as UnrollArgs);
+    let mut input = parse_macro_input!(item as ItemFn);
+
+    let factor = args.factor;
+
+    // Inject the unroll config marker at the start of the function body.
+    let marker_call: syn::Stmt = syn::parse_quote! {
+        cuda_device::thread::__unroll_config::<#factor>();
+    };
+
+    // Prepend the marker to the function body.
+    input.block.stmts.insert(0, marker_call);
+
+    quote! {
+        #input
+    }
+    .into()
+}
+
+/// Arguments for the `#[unroll]` / `#[unroll(N)]` attribute.
+///
+/// Bare `#[unroll]` parses to factor `0` (full unroll); `#[unroll(N)]` parses to
+/// factor `N`.
+struct UnrollArgs {
+    factor: u32,
+}
+
+impl Parse for UnrollArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // Bare `#[unroll]` => full unroll (factor 0).
+        if input.is_empty() {
+            return Ok(UnrollArgs { factor: 0 });
+        }
+
+        let args: Punctuated<syn::LitInt, Token![,]> = Punctuated::parse_terminated(input)?;
+        let values: Vec<u32> = args
+            .iter()
+            .map(|lit| lit.base10_parse::<u32>())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        match values.len() {
+            1 => Ok(UnrollArgs { factor: values[0] }),
+            _ => Err(syn::Error::new_spanned(
+                args.first().unwrap(),
+                "unroll expects no argument (full unroll) or one factor: #[unroll] or #[unroll(N)]",
+            )),
+        }
+    }
+}
+
 /// Specifies compile-time cluster dimensions for a kernel.
 ///
 /// This attribute sets the thread block cluster size at compile time by emitting

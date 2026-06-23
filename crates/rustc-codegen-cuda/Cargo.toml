@@ -42,3 +42,13 @@ thiserror = "2"           # must match workspace
 
 [package.metadata.rust-analyzer]
 rustc_private = true
+
+# Local pliron override (loop-unroll dev only). This isolated build root must
+# resolve pliron to the SAME local checkout as the main workspace (branch
+# feat/op-clone = master + in-progress clone), or pliron resolves to two distinct
+# crates and types stop unifying. Keep in sync with the root Cargo.toml [patch];
+# NEVER commit to a shared branch -- delete both when the clone PR merges.
+[patch."https://github.com/pliron-org/pliron"]
+pliron = { path = "/home/nihalp/dev/pliron" }
+pliron-derive = { path = "/home/nihalp/dev/pliron/pliron-derive" }
+pliron-llvm = { path = "/home/nihalp/dev/pliron/pliron-llvm" }

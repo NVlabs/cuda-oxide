@@ -169,6 +169,55 @@ fn detect_launch_bounds_config(body: &mir::Body) -> Option<LaunchBounds> {
     None
 }
 
+/// Scans MIR for `__unroll_config::<FACTOR>()` marker and extracts the unroll
+/// factor.
+///
+/// The `#[unroll]` / `#[unroll(N)]` macro injects this call at the start of the
+/// function body. We scan the MIR to find it and extract the const generic
+/// parameter. Bare `#[unroll]` injects `__unroll_config::<0>()` (full unroll);
+/// `#[unroll(N)]` injects `__unroll_config::<N>()`.
+///
+/// Returns `Some(factor)` if the marker is found, `None` otherwise.
+fn detect_unroll_config(body: &mir::Body) -> Option<u32> {
+    use rustc_public::ty::TyConstKind;
+
+    for block in &body.blocks {
+        let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
+            continue;
+        };
+        let mir::Operand::Constant(constant) = func else {
+            continue;
+        };
+        let ConstantKind::ZeroSized = constant.const_.kind() else {
+            continue;
+        };
+        let TyKind::RigidTy(RigidTy::FnDef(def_id, args)) = constant.const_.ty().kind() else {
+            continue;
+        };
+
+        let fn_name = def_id.name();
+        if fn_name != "__unroll_config" && !fn_name.ends_with("::__unroll_config") {
+            continue;
+        }
+
+        // Extract the single const generic arg (FACTOR). Default to 0 (full
+        // unroll) if it cannot be read, matching the bare `#[unroll]` semantics.
+        let mut factor = 0u32;
+        if let Some(arg) = args.0.first()
+            && let rustc_public::ty::GenericArgKind::Const(c) = arg
+        {
+            factor = match c.kind() {
+                TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|v| v as u32),
+                _ => c.eval_target_usize().ok().map(|v| v as u32),
+            }
+            .unwrap_or(0);
+        }
+
+        return Some(factor);
+    }
+    None
+}
+
 /// Return the non-unwind successors of a terminator.
 ///
 /// [`mir::Terminator::successors`] includes unwind cleanup blocks alongside
@@ -856,6 +905,13 @@ pub fn translate_body(
         }
     }
 
+    // Detect compile-time loop-unroll request from #[unroll] / #[unroll(N)].
+    //
+    // Unlike launch bounds and cluster dims (which only make sense on `.entry`
+    // kernels), `#[unroll]` applies to the loops of any function, so detection
+    // is not gated on `is_kernel`. The loop-unroll pass reads this attribute.
+    set_unroll_attr_from_marker(ctx, &mir_func_op, body);
+
     if let Some(scope_map) = debug_source_scopes
         && debug_kind.variables_enabled()
     {
@@ -985,6 +1041,49 @@ fn set_alwaysinline_attr_from_flag(
     }
 }
 
+/// Attach a `mir.unroll(factor)` attribute to the function op when the author
+/// wrote `#[unroll]` / `#[unroll(N)]`.
+///
+/// The attribute key is the [`UnrollAttr`] dialect attribute's registered name
+/// (`"mir.unroll"`). Bare `#[unroll]` => `UnrollAttr(0)` (full unroll);
+/// `#[unroll(N)]` => `UnrollAttr(N)`. The loop-unroll pass reads this attribute.
+fn set_unroll_attr_from_marker(ctx: &mut Context, mir_func_op: &MirFuncOp, body: &mir::Body) {
+    if let Some(factor) = detect_unroll_config(body) {
+        set_unroll_attr(ctx, mir_func_op, factor);
+
+        if std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {
+            eprintln!("  Unroll request detected: factor={factor}");
+        }
+    }
+}
+
+/// Attach `UnrollAttr(factor)` to the function op under [`UNROLL_ATTR_KEY`].
+///
+/// Split out from [`set_unroll_attr_from_marker`] so it can be exercised
+/// directly (without fabricating a `mir::Body`), mirroring how the
+/// `#[inline(always)]` test drives `set_alwaysinline_attr_from_flag`.
+fn set_unroll_attr(ctx: &mut Context, mir_func_op: &MirFuncOp, factor: u32) {
+    use dialect_mir::attributes::UnrollAttr;
+
+    // Key the attribute dict entry on the bare `UnrollAttr` name so the
+    // loop-unroll pass can look it up by the same constant. The attribute dict
+    // is `Identifier`-keyed; `"unroll"` is the bare attr name (the `"mir."`
+    // dialect prefix is not part of the dict key, mirroring how `maxntid` /
+    // `alwaysinline` are keyed).
+    let key: Identifier = UNROLL_ATTR_KEY.try_into().unwrap();
+    mir_func_op
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .set(key, UnrollAttr(factor));
+}
+
+/// Attribute-dict key used for the function-level [`dialect_mir::attributes::UnrollAttr`].
+///
+/// This is the bare attribute name (the `mir.` dialect prefix is implied);
+/// the loop-unroll pass reads the function op's attribute dict under this key.
+pub const UNROLL_ATTR_KEY: &str = "unroll";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,5 +1161,74 @@ mod tests {
                 .contains_key(&key),
             "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
         );
+    }
+
+    /// Build a bare `mir.func` named `name` inside a fresh module so attribute
+    /// helpers can be exercised without fabricating a `mir::Body`.
+    fn make_bare_mir_func(ctx: &mut Context, name: &str) -> MirFuncOp {
+        let func_type = FunctionType::get(ctx, vec![], vec![]);
+        let func_type_attr = TypeAttr::new(func_type.into());
+        let op = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let func = MirFuncOp::new(ctx, op, func_type_attr);
+        func.set_symbol_name(ctx, name.try_into().unwrap());
+        func
+    }
+
+    #[test]
+    fn unroll_marker_factor_reaches_mir_func_attr() {
+        use dialect_mir::attributes::UnrollAttr;
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let key: Identifier = UNROLL_ATTR_KEY.try_into().unwrap();
+
+        // `#[unroll(4)]` => UnrollAttr(4)
+        let func_by_four = make_bare_mir_func(&mut ctx, "unroll_by_four");
+        set_unroll_attr(&mut ctx, &func_by_four, 4);
+        {
+            let op = func_by_four.get_operation();
+            let op_ref = op.deref(&ctx);
+            let attr = op_ref
+                .attributes
+                .get::<UnrollAttr>(&key)
+                .expect("`#[unroll(4)]` must set a `mir.unroll` attribute on the MirFuncOp");
+            assert_eq!(attr, &UnrollAttr(4), "`#[unroll(4)]` => UnrollAttr(4)");
+        }
+
+        // bare `#[unroll]` => UnrollAttr(0) (full unroll)
+        let func_full = make_bare_mir_func(&mut ctx, "unroll_full");
+        set_unroll_attr(&mut ctx, &func_full, 0);
+        {
+            let op = func_full.get_operation();
+            let op_ref = op.deref(&ctx);
+            let attr = op_ref
+                .attributes
+                .get::<UnrollAttr>(&key)
+                .expect("bare `#[unroll]` must set a `mir.unroll` attribute on the MirFuncOp");
+            assert_eq!(
+                attr,
+                &UnrollAttr(0),
+                "bare `#[unroll]` => UnrollAttr(0) (full unroll)"
+            );
+        }
+
+        // A function with no `#[unroll]` marker carries no attribute.
+        let func_none = make_bare_mir_func(&mut ctx, "no_unroll");
+        {
+            let op = func_none.get_operation();
+            let op_ref = op.deref(&ctx);
+            assert!(
+                op_ref.attributes.get::<UnrollAttr>(&key).is_none(),
+                "a function without `#[unroll]` must not carry a `mir.unroll` attribute",
+            );
+        }
     }
 }

@@ -706,3 +706,42 @@ pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
     // The const generics are extracted to set launch bounds.
     // No runtime code is generated.
 }
+
+/// Compile-time loop-unroll request marker (internal, do not call directly).
+///
+/// This is a compile-time configuration marker that tells the compiler to
+/// attach a `mir.unroll` attribute to the enclosing function so the loop-unroll
+/// pass can find it. It does NOT generate any runtime code.
+///
+/// # Usage
+///
+/// This function should NOT be called directly. Use the `#[unroll]` /
+/// `#[unroll(N)]` attribute macro instead, which injects this marker:
+///
+/// ```rust,ignore
+/// #[kernel]
+/// #[unroll]                      // full unroll (factor 0)
+/// pub fn my_kernel(output: DisjointSlice<f32>) { ... }
+///
+/// #[kernel]
+/// #[unroll(4)]                   // unroll every loop by a factor of 4
+/// pub fn other_kernel(output: DisjointSlice<f32>) { ... }
+/// ```
+///
+/// # How It Works
+///
+/// 1. The `#[unroll]` macro injects `__unroll_config::<FACTOR>()` at fn start
+/// 2. MIR importer detects this call and extracts the const generic parameter
+/// 3. The marker call is NOT compiled - it's removed during compilation
+/// 4. The loop-unroll pass reads the `mir.unroll` attribute on the function op
+///
+/// # Parameters
+///
+/// - `FACTOR` - `0` requests a full unroll (every constant-trip-count loop is
+///   unrolled completely); `n > 0` requests unrolling every loop by `n`.
+#[inline(never)]
+pub fn __unroll_config<const FACTOR: u32>() {
+    // This function is detected at compile time and removed.
+    // The const generic FACTOR is extracted to set the loop-unroll request.
+    // No runtime code is generated.
+}

@@ -1,0 +1,14 @@
+[package]
+name = "mir-transforms"
+version = "0.2.1"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Optimization passes over the MIR dialect (loop unroll, ...)"
+
+[dependencies]
+pliron = { workspace = true }
+dialect-mir = { workspace = true }
+rustc-hash = { workspace = true }
+thiserror = { workspace = true }

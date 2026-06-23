@@ -2718,6 +2718,46 @@ fn try_dispatch_intrinsic(
                 loc,
             )))
         }
+        "cuda_device::thread::__unroll_config" => {
+            // Compile-time loop-unroll marker from #[unroll] / #[unroll(N)].
+            // The unroll factor is extracted in body.rs during MIR scanning and
+            // attached to the function op as a `mir.unroll` attribute. This call
+            // generates no runtime code - just emit a goto to the target block.
+            //
+            // We need a prev_op to insert after. If none exists, create a dummy
+            // constant (mirrors the launch_bounds / cluster marker arms).
+            let actual_prev_op = match prev_op {
+                Some(op) => op,
+                None => {
+                    let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+                    let dummy = Operation::new(
+                        ctx,
+                        MirConstantOp::get_concrete_op_info(),
+                        vec![bool_ty.into()],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    dummy.deref_mut(ctx).set_loc(loc.clone());
+                    let const_op = MirConstantOp::new(dummy);
+                    use pliron::builtin::attributes::IntegerAttr;
+                    use pliron::utils::apint::APInt;
+                    use std::num::NonZeroUsize;
+                    let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
+                    const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
+                    let dummy = const_op.get_operation();
+                    dummy.insert_at_front(block_ptr, ctx);
+                    dummy
+                }
+            };
+            Ok(Some(helpers::emit_goto(
+                ctx,
+                target.expect("__unroll_config must have target"),
+                actual_prev_op,
+                block_map,
+                loc,
+            )))
+        }
 
         // =================================================================
         // Warp Primitives (from intrinsics::warp)

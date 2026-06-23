@@ -61,6 +61,22 @@ pub struct FieldIndexAttr(pub u32);
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct VariantIndexAttr(pub u32);
 
+/// Loop-unroll request for the loops in a function, attached to the function op
+/// when the author wrote `#[unroll]` / `#[unroll(N)]`.
+///
+/// * `0` -- **full unroll**: unroll every compile-time-constant-trip-count loop
+///   in the function completely, so the induction variable becomes a literal in
+///   each copy (this is what lets index arithmetic such as `i & 3` fold to a
+///   constant).
+/// * `n > 0` -- **unroll by `n`**: unroll every loop in the function by a factor
+///   of `n`, leaving a remainder loop when `n` does not divide the trip count.
+///
+/// Function-level for now (it applies to all loops in the function); per-loop
+/// targeting can refine this later without changing the transform.
+#[pliron_attr(name = "mir.unroll", format = "$0", verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub struct UnrollAttr(pub u32);
+
 /// Niche encoding for a `Cast(Transmute)` whose destination is a
 /// niche-optimised enum.
 ///
@@ -154,6 +170,7 @@ pub fn register(ctx: &mut Context) {
     MutabilityAttr::register(ctx);
     FieldIndexAttr::register(ctx);
     VariantIndexAttr::register(ctx);
+    UnrollAttr::register(ctx);
     NicheEncodingAttr::register(ctx);
     MirFP16Attr::register(ctx);
 }

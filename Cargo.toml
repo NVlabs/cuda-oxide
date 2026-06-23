@@ -10,6 +10,7 @@ members = [
     "crates/dialect-nvvm",
     "crates/mir-importer",
     "crates/mir-lower",
+    "crates/mir-transforms",
     "crates/cargo-oxide",
     "crates/oxide-artifacts",
     # FFI bindings
@@ -53,6 +54,7 @@ dialect-mir = { path = "crates/dialect-mir" }
 dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
 mir-importer = { path = "crates/mir-importer" }
+mir-transforms = { path = "crates/mir-transforms" }
 cuda-device = { path = "crates/cuda-device" }
 cuda-host = { path = "crates/cuda-host" }
 cuda-macros = { path = "crates/cuda-macros" }
@@ -85,3 +87,15 @@ dyn-clone = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "visit", "visit-mut"] }
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
+
+# --- Local pliron override (loop-unroll dev only, branch feat/loop-unroll-pass) ---
+# We are adding op/region cloning (IRMapping + Operation::clone) upstream in pliron
+# for the loop-unroll pass. Until that PR merges we build against the local pliron
+# checkout (branch feat/op-clone = master + the in-progress clone). The declared
+# rev above (847561916, real master) is what we resolve versions against; this path
+# patch overrides the source. NEVER commit this section to a shared branch: delete
+# it and bump the rev to the clone's merge commit once it lands.
+[patch."https://github.com/pliron-org/pliron"]
+pliron = { path = "/home/nihalp/dev/pliron" }
+pliron-derive = { path = "/home/nihalp/dev/pliron/pliron-derive" }
+pliron-llvm = { path = "/home/nihalp/dev/pliron/pliron-llvm" }
