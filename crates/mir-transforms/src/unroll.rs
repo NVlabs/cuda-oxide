@@ -3,13 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Annotation-driven loop unrolling over `dialect-mir`.
+//! Loop unrolling, switched on by a `#[unroll]` annotation.
 //!
-//! Driven by a `mir.unroll` attribute (`UnrollAttr`) on a function op:
-//! `0` = full unroll of a constant-trip-count loop, `n` = unroll by `n` with a
-//! remainder loop (Step 4, in progress). Built on the reusable
-//! [`LoopInfo`](crate::loop_info) + [`induction`](crate::induction) analyses and
-//! pliron's IR cloning (`pliron::irbuild::cloning`).
+//! Unrolling means making copies of a loop body so the loop runs fewer times
+//! (or not at all), trading bigger code for less per-iteration overhead and more
+//! chances to optimise. For example:
+//!
+//! ```text
+//!   for i in 0..4 { f(i) }      unrolled fully becomes:   f(0); f(1); f(2); f(3);
+//! ```
+//!
+//! The user asks for it with `#[unroll]` or `#[unroll(N)]`, which the frontend
+//! records as a `mir.unroll` attribute (`UnrollAttr`) on the function. A factor
+//! of `0` means **full unroll**: replace a loop whose iteration count is known
+//! at compile time with that many straight-line copies of the body, no loop
+//! left. A factor of `N` (>= 2) means **partial unroll**: do `N` body copies per
+//! trip and add a small leftover ("remainder") loop for the iterations that
+//! don't divide evenly.
+//!
+//! This pass is the reference example for writing an optimisation pass in oxide.
+//! It builds on two reusable analyses, [`LoopInfo`](crate::analyses::loop_info)
+//! (finds the loops) and [`induction`] (finds the counters and how many times
+//! each loop runs), and on pliron's IR cloning (`pliron::irbuild::cloning`) to
+//! duplicate the body.
 
 use dialect_mir::attributes::UnrollAttr;
 use dialect_mir::ops::arithmetic::{MirAddOp, MirBitAndOp, MirSubOp};
@@ -44,15 +60,21 @@ use std::num::NonZero;
 use crate::analyses::induction::{self, ArgKind, CmpPred};
 use crate::analyses::loop_info::LoopInfo;
 
-/// Attribute-dict key under which `#[unroll]` plumbing stores the `UnrollAttr`.
+/// The name `#[unroll]` uses to store its `UnrollAttr` in a function's
+/// attribute dictionary; we look it up by this key.
 const UNROLL_ATTR_KEY: &str = "unroll";
 
 fn verbose() -> bool {
     std::env::var("CUDA_OXIDE_VERBOSE").is_ok()
 }
 
-/// Run annotation-driven loop unrolling over every function in `module` that
-/// carries a `mir.unroll` attribute. A no-op for functions without it.
+/// The pass entry point. Unrolls the loops of every function in `module` that
+/// carries a `#[unroll]` annotation, and leaves all other functions untouched.
+///
+/// For each annotated function it finds the loops, analyses each loop's counter,
+/// then full- or partial-unrolls per the requested factor. Afterwards it runs
+/// two cleanup passes so the leftover dead code and now-unreachable original
+/// loop blocks are removed.
 pub fn unroll_annotated_loops(
     module: Ptr<Operation>,
     ctx: &mut Context,
@@ -73,7 +95,8 @@ pub fn unroll_annotated_loops(
             LoopInfo::compute(ctx, region, dom)
         };
 
-        // Collect each loop's preheader + IV analysis up front.
+        // For each loop, grab its preheader (the entry block) and run the
+        // counter analysis once, up front, before we start changing anything.
         let mut targets = Vec::new();
         for id in 0..info.loops().len() {
             if let Some(ph) = info.preheader(ctx, region, id) {
@@ -88,10 +111,11 @@ pub fn unroll_annotated_loops(
 
         for (id, ph, rec) in &targets {
             let unrolled = if factor == 0 {
-                // Full unroll: needs a constant trip count.
+                // Full unroll: only works when the trip count is a constant.
                 full_unroll(ctx, &info, region, *id, *ph, rec)?
             } else {
-                // Partial unroll by `factor`, with a remainder loop for the tail.
+                // Partial unroll by `factor`, keeping a small remainder loop for
+                // the iterations that don't divide evenly by `factor`.
                 partial_unroll(ctx, &info, region, *id, *ph, rec, factor)?
             };
             changed |= unrolled;
@@ -99,27 +123,32 @@ pub fn unroll_annotated_loops(
     }
 
     if changed {
-        // Clean up: DCE removes the now-dead index `bitand`s (replaced by the
-        // congruence fold) and full-unroll's dead IV increments; simplify_cfg
-        // deletes the unreachable original loop blocks. Both reusable pliron passes.
+        // Clean up after ourselves with two stock pliron passes. Dead-code
+        // elimination (dce) drops the leftovers unrolling makes unused: the
+        // `& mask` ops we replaced with constants, and full unroll's now-unused
+        // counter increments. simplify_cfg then deletes the original loop blocks,
+        // which are no longer reachable once the loop is gone.
         dce(module, ctx)?;
         simplify_cfg(module, ctx)?;
     }
     Ok(())
 }
 
-/// Fully unroll a constant-trip-count counted loop.
+/// Fully unroll a loop whose iteration count is known at compile time, so no
+/// loop is left at all.
 ///
-/// Handles the canonical post-mem2reg shape: a header carrying the loop's
-/// block-arguments and an exit guard, plus a single latch block holding the
-/// body and the back-edge. Bails (returns `Ok(false)`, leaving IR untouched)
-/// for anything outside that shape.
+/// It handles only the simple two-block shape mem2reg leaves a counted loop in:
+/// a **header** block (carries the loop's per-iteration values as block
+/// arguments and holds the `i < n` exit test) and one **latch** block (holds the
+/// body and the branch back to the header). Anything more complicated returns
+/// `Ok(false)` and leaves the IR alone.
 ///
-/// For trip count `T` it lays `T` straight-line copies of the body into the
-/// preheader, substituting the induction variable with the literal value of
-/// that iteration (`init + k*step`) and threading the other carried values copy
-/// to copy. The preheader's back-edge is then redirected to the loop exit and
-/// the original header/latch become unreachable (removed by `simplify_cfg`).
+/// For a trip count `T`, it writes `T` back-to-back copies of the body into the
+/// preheader. In copy `k` the counter is replaced by its actual value that
+/// iteration, `init + k*step` (a compile-time constant), and the other carried
+/// values are passed from one copy to the next. Finally the preheader's branch
+/// is pointed straight at the loop's exit, so the original header and latch
+/// become unreachable and get deleted later by `simplify_cfg`.
 fn full_unroll(
     ctx: &mut Context,
     info: &LoopInfo,
@@ -129,7 +158,8 @@ fn full_unroll(
     rec: &induction::LoopRecurrences,
 ) -> Result<bool> {
     let l = &info.loops()[id];
-    // Canonical shape only: a flat (non-nested) loop of exactly {header, latch}.
+    // Only the simple shape: a loop that is neither inside another loop nor has
+    // one inside it, and is made of exactly two blocks (header and latch).
     if l.parent.is_some() || !l.children.is_empty() {
         return Ok(false);
     }
@@ -146,6 +176,7 @@ fn full_unroll(
     }
     let exit = exits[0];
 
+    // We need both a counter and a known iteration count to unroll fully.
     let (iv_idx, trip) = match (rec.primary_iv, rec.trip_count) {
         (Some(i), Some(t)) => (i, t),
         _ => return Ok(false),
@@ -177,19 +208,23 @@ fn full_unroll(
         Some(t) => t,
         None => return Ok(false),
     };
-    // The loop body to replicate: the latch's ops minus its back-edge terminator.
+    // The body we copy is everything in the latch except its final branch (the
+    // branch back to the header); we don't want to copy that loop-back itself.
     let body_ops: Vec<Ptr<Operation>> = latch
         .deref(ctx)
         .iter(ctx)
         .filter(|&op| op != latch_term)
         .collect();
 
-    // Running carried value per header arg; starts at the preheader's init.
+    // Current value of each carried header argument; starts at the values the
+    // preheader passes in (the loop's initial values).
     let mut running: Vec<Value> = init_ops;
 
     for k in 0..trip {
+        // `mapper` records, for this body copy, what to substitute for each
+        // value the original body referred to.
         let mut mapper = IrMapping::new();
-        // The induction variable is the literal value at iteration k.
+        // The counter's value in copy k is the constant init + k*step.
         let iv_val = make_const(ctx, iv_type, iv_init + (k as i128) * iv_step, p_term);
         for a in 0..nargs {
             let mapped = if a == iv_idx { iv_val } else { running[a] };
@@ -199,7 +234,8 @@ fn full_unroll(
             let cloned = clone_operation(op, ctx, &mut mapper);
             cloned.insert_before(ctx, p_term);
         }
-        // Next iteration's carried values are this copy's recurrence results.
+        // What this copy produced for each carried value becomes the input to
+        // the next copy (these are the values the latch would have looped back).
         for a in 0..nargs {
             if a != iv_idx {
                 running[a] = mapper.lookup_value_or_default(recur_ops[a]);
@@ -207,14 +243,16 @@ fn full_unroll(
         }
     }
 
-    // If the exit consumes the final IV value, materialise it (init + T*step).
+    // If code after the loop reads the counter's final value, build it as the
+    // constant init + T*step (its value once the loop has finished).
     if exit_ops_raw.iter().any(|&v| v == header_args[iv_idx]) {
         running[iv_idx] = make_const(ctx, iv_type, iv_init + (trip as i128) * iv_step, p_term);
     }
 
-    // Redirect uses of the header args that live OUTSIDE the loop (e.g. the exit
-    // block's use of the final accumulator) to the unrolled running values. Uses
-    // inside the loop are left alone; those blocks become dead and are removed.
+    // Anything outside the loop that referred to a header argument (e.g. the
+    // exit block reading the final accumulator) should now use our final
+    // unrolled value instead. Uses inside the loop are left as they are: those
+    // blocks become dead and get deleted.
     for a in 0..nargs {
         let replacement = running[a];
         header_args[a].replace_some_uses_with(
@@ -227,7 +265,9 @@ fn full_unroll(
         );
     }
 
-    // Redirect the preheader's back-edge: `goto header(init...)` -> `goto exit`.
+    // Repoint the preheader's branch from the (now dead) header to the loop's
+    // exit: `goto header(init...)` becomes `goto exit(...)`, carrying whatever
+    // values the exit expects.
     let exit_ops: Vec<Value> = exit_ops_raw
         .iter()
         .map(|&v| match header_args.iter().position(|&h| h == v) {
@@ -247,8 +287,8 @@ fn full_unroll(
     Ok(true)
 }
 
-/// Create a `mir.constant` of integer type `ty` holding `value`, inserted just
-/// before `before`, and return its result value.
+/// Build an integer constant op (`mir.constant`) of type `ty` holding `value`,
+/// place it just before the op `before`, and hand back the value it produces.
 fn make_const(ctx: &mut Context, ty: TypeHandle, value: i128, before: Ptr<Operation>) -> Value {
     let typed = TypedHandle::<IntegerType>::from_handle(ty, ctx).expect("IV is an integer type");
     let width = typed.deref(ctx).width() as usize;
@@ -267,21 +307,30 @@ fn make_const(ctx: &mut Context, ty: TypeHandle, value: i128, before: Ptr<Operat
     op.deref(ctx).get_result(0)
 }
 
-/// Partially unroll a counted loop by `factor`, leaving a remainder loop.
+/// Partially unroll a loop: do `factor` iterations' worth of work per trip, and
+/// keep a small "remainder" loop for the iterations left over when the total
+/// doesn't divide evenly by `factor`.
 ///
-/// Keeps the original loop (`header`/`latch`) as the **remainder** that runs the
-/// `trip % factor` tail one iteration at a time, and prepends a **main loop**
-/// that does `factor` body copies per trip and steps the counter by
-/// `factor*step`. The main loop runs only while a full group of `factor`
-/// iterations remains; when fewer than that remain it falls into the original
-/// loop. Counting-up loops (`<`/`<=`, positive step) only; bails otherwise.
+/// Unlike full unroll, this works even when the iteration count is only known at
+/// runtime. The original loop (header + latch) is reused as the **remainder
+/// loop**, running the last `trip % factor` iterations one at a time. In front
+/// of it we build a new **main loop** that does `factor` copies of the body per
+/// trip and advances the counter by `factor*step` each time. The main loop keeps
+/// going only while a whole group of `factor` more iterations still fits; once
+/// fewer than that remain, control falls through into the remainder loop.
 ///
-/// Shape produced (entry was `preheader -> header`):
+/// Only counting-up loops (test `<` or `<=`, positive step) are handled for now;
+/// anything else returns `Ok(false)` and changes nothing.
+///
+/// What it produces (the loop was entered as `preheader -> header`):
 /// ```text
 ///   preheader -> main_h(init...)
-///   main_h(acc,i): if (i + (factor-1)*step) <pred> bound  -> main_l  else -> header
-///   main_l: <factor body copies, i+0,i+step,...>; goto main_h(acc', i + factor*step)
-///   header/latch: the original loop, now the remainder for the tail
+///   main_h(acc, i):                       (i = counter, acc = carried values)
+///       if (i + (factor-1)*step) <pred> bound  -> main_l   (a full group fits)
+///       else                                   -> header   (run the remainder)
+///   main_l: factor body copies at i, i+step, ...; then
+///           goto main_h(acc', i + factor*step)
+///   header/latch: the original loop, now just the leftover tail
 /// ```
 fn partial_unroll(
     ctx: &mut Context,
@@ -317,7 +366,7 @@ fn partial_unroll(
         ArgKind::BasicIv { init, step } => (*init, *step),
         _ => return Ok(false),
     };
-    // Counting-up loops only for now.
+    // Only loops that count upward (positive step, test `<` or `<=`) for now.
     if iv_step <= 0 || !matches!(rec.continue_pred, Some(CmpPred::Lt) | Some(CmpPred::Le)) {
         return Ok(false);
     }
@@ -332,7 +381,8 @@ fn partial_unroll(
     let iv_type = header_args[iv_idx].get_type(ctx);
     let arg_types: Vec<TypeHandle> = header_args.iter().map(|a| a.get_type(ctx)).collect();
 
-    // i1 type from the original guard's condition operand.
+    // Grab the boolean (i1) type from the original test's condition, so the new
+    // comparison we build below has the right result type.
     let h_term = match header.deref(ctx).get_terminator(ctx) {
         Some(t) => t,
         None => return Ok(false),
@@ -357,7 +407,8 @@ fn partial_unroll(
         None => return Ok(false),
     };
 
-    // Two new blocks: the main (unrolled) header and body.
+    // Two new blocks: the main loop's header (main_h) and its body (main_l).
+    // main_h takes the same arguments the original header did.
     let main_h = BasicBlock::new(ctx, None, arg_types);
     let main_l = BasicBlock::new(ctx, None, vec![]);
     main_h.insert_before(ctx, header);
@@ -365,10 +416,12 @@ fn partial_unroll(
     let mh_args: Vec<Value> = (0..nargs).map(|i| main_h.deref(ctx).get_argument(i)).collect();
     let mh_iv = mh_args[iv_idx];
 
-    // --- main_l: `factor` body copies, then step the counter by factor*step ---
+    // --- main_l: lay down `factor` body copies, then advance the counter by
+    //     factor*step for the next trip ---
     let mut running: Vec<Value> = mh_args.clone();
     for j in 0..factor {
         let mut mapper = IrMapping::new();
+        // Copy j uses counter value `i + j*step` (copy 0 is just `i`).
         let iv_j = if j == 0 {
             mh_iv
         } else {
@@ -401,16 +454,21 @@ fn partial_unroll(
     );
     back.insert_at_back(main_l, ctx);
 
-    // Step 5: the main-loop counter is a multiple of `factor*step` (it starts at
-    // `iv_init` and steps by `factor*step`), so `mh_iv ≡ iv_init (mod factor*step)`.
-    // Fold `(affine-in-IV) & mask` to the literal that congruence guarantees.
+    // The main-loop counter starts at iv_init and grows by factor*step each
+    // trip, so it is always iv_init plus a multiple of factor*step. That lets us
+    // replace `(counter +/- const) & mask` ops inside the body with constants
+    // (see `fold_iv_congruences`), which is the main payoff of unrolling.
     fold_iv_congruences(ctx, main_l, mh_iv, iv_init, n * iv_step);
 
-    // --- main_h: guard "a full group of `factor` fits", else fall to remainder ---
+    // --- main_h: the guard. Keep going in the main loop only while a whole group
+    //     of `factor` iterations still fits; otherwise hand off to the remainder.
+    //     The last copy in a group uses counter `i + (factor-1)*step`, so the
+    //     whole group fits exactly when that value still satisfies the test. ---
     let last_off = append_const(ctx, iv_type, (n - 1) * iv_step, main_h);
     let last = append_add(ctx, iv_type, mh_iv, last_off, main_h);
     let cont = append_cmp(ctx, pred, last, bound, i1_type, main_h);
-    // cond true (group fits) -> main_l (no args); false -> header (remainder), carrying mh_args.
+    // True (group fits): go to main_l (it needs no arguments). False: go to the
+    // original header (the remainder loop), passing the current carried values.
     let (flat, segs) =
         MirCondBranchOp::compute_segment_sizes(vec![vec![cont], vec![], mh_args.clone()]);
     let cbr = Operation::new(
@@ -426,13 +484,16 @@ fn partial_unroll(
         .set_operand_segment_sizes(ctx, segs);
     cbr.insert_at_back(main_h, ctx);
 
-    // Enter the main loop instead of the original header (same init operands).
+    // Finally, make the preheader branch into the new main loop instead of the
+    // original header, reusing the same initial values it already passed.
     Operation::replace_successor(p_term, ctx, 0, main_h);
     Ok(true)
 }
 
-/// The constant offset of `v` relative to `iv`, when `v` is `iv` plus/minus a
-/// chain of integer constants (`v == iv + offset`). `None` otherwise.
+/// If `v` is the counter `iv` plus or minus some constants (e.g. `iv`, `iv + 1`,
+/// `iv + 4 - 2`), return that net constant offset; `None` otherwise. So `iv + 1`
+/// gives `Some(1)` and `iv` gives `Some(0)`. The caller uses this to spot values
+/// that track the counter with a known fixed offset.
 fn affine_offset(ctx: &Context, v: Value, iv: Value) -> Option<i128> {
     if v == iv {
         return Some(0);
@@ -457,12 +518,35 @@ fn affine_offset(ctx: &Context, v: Value, iv: Value) -> Option<i128> {
     None
 }
 
-/// Fold `mir.bitand(v, mask)` in `block` to a literal where `v` is affine in the
-/// main-loop IV `iv` (which satisfies `iv ≡ init (mod modulus)`) and `mask + 1`
-/// is a power of two dividing `modulus`. Then the masked low bits of `v` are
-/// fully determined by the congruence, so `(iv + j) & (N-1)` folds to `j`. This
-/// is the guaranteed partial-unroll index fold; the now-dead `bitand` is left
-/// for DCE.
+/// Replace `x & MASK` with a constant inside the unrolled main loop, when the
+/// loop counter guarantees the result is the same on every iteration.
+///
+/// Why it's possible: after unrolling by N, the main loop's counter `iv` runs
+/// `0, N, 2N, ...`, so it is always a multiple of N. A multiple of N has its
+/// lowest bits all zero (with N = 4: `iv` is `0, 4, 8, 12, ...`, which in binary
+/// always ends in `00`). Copy `j` of the body uses `iv + j`, and `(iv + j) & 3`
+/// keeps only those low 2 bits, so it equals `j` -- a compile-time constant:
+///
+/// ```text
+///   copy 0:  (iv + 0) & 3 = 0
+///   copy 1:  (iv + 1) & 3 = 1
+///   copy 2:  (iv + 2) & 3 = 2
+///   copy 3:  (iv + 3) & 3 = 3
+/// ```
+///
+/// That `& 3` is exactly the "which pipeline stage am I on" index in the gemm
+/// kernel, and turning it into a constant is the main payoff of unrolling.
+///
+/// What this does: scan `block` for `x & MASK` where `x` is the counter plus a
+/// constant offset (so `x == iv + offset`) and `MASK` is a low-bit mask of the
+/// form `2^k - 1` (e.g. 1, 3, 7) small enough that the counter contributes only
+/// zeros to it. For each, replace every use of the result with the constant
+/// `(init + offset) & MASK`. The leftover `x & MASK` is now unused and removed
+/// later by dead-code elimination.
+///
+/// Parameters: `iv` is the counter; `init` its starting value; `modulus` the
+/// unrolled step (`N * original_step`). Together: `iv = init + modulus * t` for
+/// iteration `t`, which is why `iv`'s low bits match `init`'s.
 fn fold_iv_congruences(
     ctx: &mut Context,
     block: Ptr<BasicBlock>,
@@ -504,7 +588,9 @@ fn fold_iv_congruences(
     }
 }
 
-/// Append a `mir.constant` of integer type `ty` to the end of `block`.
+/// Build an integer constant `value` of type `ty`, add it as the last op of
+/// `block`, and return the value it produces. (Same as [`make_const`] but
+/// appends to a block instead of inserting before a given op.)
 fn append_const(ctx: &mut Context, ty: TypeHandle, value: i128, block: Ptr<BasicBlock>) -> Value {
     let typed = TypedHandle::<IntegerType>::from_handle(ty, ctx).expect("integer type");
     let width = typed.deref(ctx).width() as usize;
@@ -522,7 +608,8 @@ fn append_const(ctx: &mut Context, ty: TypeHandle, value: i128, block: Ptr<Basic
     op.deref(ctx).get_result(0)
 }
 
-/// Append a `mir.add` of integer type `ty` to the end of `block`.
+/// Build `a + b` (an integer `mir.add` of type `ty`), add it as the last op of
+/// `block`, and return its result value.
 fn append_add(ctx: &mut Context, ty: TypeHandle, a: Value, b: Value, block: Ptr<BasicBlock>) -> Value {
     let op = Operation::new(
         ctx,
@@ -536,7 +623,8 @@ fn append_add(ctx: &mut Context, ty: TypeHandle, a: Value, b: Value, block: Ptr<
     op.deref(ctx).get_result(0)
 }
 
-/// Append a comparison `a <pred> b` (result `i1_type`) to the end of `block`.
+/// Build the comparison `a <pred> b` (a boolean, of type `i1_type`), add it as
+/// the last op of `block`, and return its result value.
 fn append_cmp(
     ctx: &mut Context,
     pred: CmpPred,
@@ -556,7 +644,9 @@ fn append_cmp(
     op.deref(ctx).get_result(0)
 }
 
-/// Find function ops carrying an `UnrollAttr`, returning each with its factor.
+/// Scan the module for functions marked with `#[unroll]` (those carrying an
+/// `UnrollAttr`), returning each one paired with its requested factor (0 means
+/// full unroll).
 fn collect_annotated_functions(
     module: Ptr<Operation>,
     ctx: &Context,
@@ -579,7 +669,9 @@ fn collect_annotated_functions(
     out
 }
 
-/// Diagnostic dump of detected loops + IV analysis (gated on `CUDA_OXIDE_VERBOSE`).
+/// Print a human-readable summary of the loops found and what the counter
+/// analysis made of them. Only runs when `CUDA_OXIDE_VERBOSE` is set; purely a
+/// debugging aid, it changes nothing.
 fn log_loops(
     ctx: &Context,
     region: Ptr<Region>,

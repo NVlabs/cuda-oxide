@@ -3,25 +3,51 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Induction-variable analysis for a single natural loop.
+//! Works out how a loop's counters and accumulators change each iteration.
 //!
-//! After mem2reg a loop's carried values are the header's block arguments,
-//! threaded by the preheader edge (initial values) and the latch edge
-//! (next-iteration values). This analysis classifies each header argument and
-//! derives the loop's trip count:
+//! An **induction variable** (IV) is a value that changes by a fixed amount on
+//! every trip through the loop: the `i` in `for i in 0..n` (it goes `0, 1, 2,
+//! ...`), or one stepping by 4 to give `0, 4, 8, ...`. This analysis finds the
+//! IVs of one loop and, when it can, how many times the loop runs.
 //!
-//!   * **Basic induction variable** — the latch feeds back `arg + c` for a
-//!     constant `c`; with a constant initial value it has a recurrence
-//!     `{init, step}` and the congruence `arg ≡ init (mod step)`.
-//!   * **Reduction** — carried and updated by a non-constant recurrence
-//!     (e.g. `acc = acc + (i & 3)`); threaded through unrolled copies, not an IV.
-//!   * **Invariant** — fed back unchanged.
+//! How the values flow. After mem2reg, a loop's per-iteration values live as the
+//! header block's **block arguments** (mem2reg is the pass that turns memory
+//! slots into SSA values; "block arguments" are pliron's way of passing values
+//! into a block, the same role LLVM gives to phi nodes). Each predecessor branch
+//! supplies the values for those arguments. So a header argument gets its value
+//! from two edges: the **preheader edge** (the branch that enters the loop)
+//! gives the starting value, and the **latch edge** (the branch that loops back)
+//! gives the value to use next time round.
 //!
-//! The **trip count** comes from the header's exit guard `IV <pred> bound` with
-//! a constant `bound`. This is the reusable scalar-evolution-lite that the
-//! unroller (and later LICM / strength reduction) consume. It is intentionally
-//! conservative: anything not matching the recognised counted-loop shape yields
-//! `Unknown` / `None` rather than a guess.
+//! This analysis looks at those two values for each header argument and labels
+//! it one of:
+//!
+//!   * **Basic induction variable.** The latch feeds back `arg + c` for a
+//!     constant `c` (the per-iteration step). With a constant starting value we
+//!     describe it by a **recurrence** `{init, step}`, meaning value =
+//!     `init + step * iteration_number`. For example `{0, 4}` is the sequence
+//!     `0, 4, 8, 12, ...`. Such an IV is always a multiple of `step` away from
+//!     `init`; that fact ("`arg` is **congruent** to `init` modulo `step`",
+//!     i.e. `arg` and `init` leave the same remainder when divided by `step`) is
+//!     what the unroller exploits when it folds `& mask` operations to
+//!     constants.
+//!   * **Reduction** (a loop-carried accumulator). A value carried across
+//!     iterations and updated by something other than a constant step, e.g.
+//!     `acc = acc + (i & 3)`. It is not a counter, so we cannot replace it with
+//!     a formula; the unroller just threads it from one unrolled body copy to
+//!     the next.
+//!   * **Invariant.** Fed back unchanged, so it has the same value every
+//!     iteration.
+//!
+//! The **trip count** is how many times the loop body runs. We read it off the
+//! header's exit test `IV <pred> bound` (e.g. `i < 16`) when `init`, `step`, and
+//! a constant `bound` are all known. For `i = 0; i < 16; i += 4` the trip count
+//! is 4.
+//!
+//! This is a small, reusable stand-in for full scalar evolution that the
+//! unroller (and later loop passes) build on. It is deliberately cautious:
+//! anything that does not match the simple counted-loop shape it recognises is
+//! reported as `Unknown` / `None` rather than guessed at.
 
 use dialect_mir::ops::arithmetic::{MirAddOp, MirNotOp, MirSubOp};
 use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
@@ -35,7 +61,8 @@ use pliron::value::Value;
 
 use crate::analyses::loop_info::{LoopId, LoopInfo};
 
-/// A relational predicate as written `lhs <pred> rhs`.
+/// A comparison operator, the `<pred>` in a test written `lhs <pred> rhs`:
+/// less-than, less-or-equal, greater-than, greater-or-equal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpPred {
     Lt,
@@ -45,7 +72,8 @@ pub enum CmpPred {
 }
 
 impl CmpPred {
-    /// Logical negation: the predicate that holds exactly when this one doesn't.
+    /// The opposite test: the one that is true exactly when this one is false.
+    /// (`<` becomes `>=`, and so on.)
     fn negate(self) -> CmpPred {
         match self {
             CmpPred::Lt => CmpPred::Ge,
@@ -54,7 +82,8 @@ impl CmpPred {
             CmpPred::Ge => CmpPred::Lt,
         }
     }
-    /// The predicate with operands swapped: `a <pred> b` == `b <swapped> a`.
+    /// The test you get by swapping the two sides while keeping the same
+    /// meaning: `a < b` is the same fact as `b > a`, so `swap(<)` is `>`.
     fn swap(self) -> CmpPred {
         match self {
             CmpPred::Lt => CmpPred::Gt,
@@ -65,38 +94,48 @@ impl CmpPred {
     }
 }
 
-/// Classification of one header block argument.
+/// What one header block argument turned out to be: a counter, an accumulator,
+/// a constant-across-iterations value, or something we don't recognise.
 #[derive(Debug, Clone)]
 pub enum ArgKind {
-    /// Basic induction variable with recurrence `arg = init + step*iteration`.
+    /// A counter: its value is `init + step * iteration`, so it forms the
+    /// sequence `init, init+step, init+2*step, ...`.
     BasicIv { init: i128, step: i128 },
-    /// Carried value updated by a non-constant recurrence (e.g. an accumulator).
+    /// A value carried across iterations and updated by something other than a
+    /// fixed step, e.g. an accumulator `acc = acc + (i & 3)`.
     Reduction,
-    /// Fed back unchanged across iterations.
+    /// The same value on every iteration (fed back unchanged).
     Invariant,
-    /// Not recognised.
+    /// Did not match any of the patterns above.
     Unknown,
 }
 
-/// IV analysis result for one loop.
+/// Everything this analysis learned about one loop.
 #[derive(Debug, Clone)]
 pub struct LoopRecurrences {
-    /// Per header-argument classification (index == header arg index).
+    /// What each header argument is, in header-argument order: `args[i]`
+    /// describes header argument `i`.
     pub args: Vec<ArgKind>,
-    /// Header-arg index of the IV used in the exit guard, if found.
+    /// Which header argument is the counter the loop tests against to decide
+    /// whether to keep going (its index in `args`), if we found one.
     pub primary_iv: Option<usize>,
-    /// Constant bound from the guard `IV <pred> bound`.
+    /// The loop's limit as a plain number, from a test `IV <pred> bound`, when
+    /// `bound` is a compile-time constant.
     pub bound: Option<i128>,
-    /// The guard's bound operand as an SSA value (constant or runtime). Needed by
-    /// partial unroll, where the bound is typically a runtime value.
+    /// The same limit as an IR value rather than a number. The limit can be a
+    /// value only known at runtime (e.g. an array length), which is fine for
+    /// partial unrolling, so we keep the value here even when `bound` is `None`.
     pub bound_value: Option<Value>,
-    /// The loop-continue predicate: the body runs while `IV <pred> bound`.
+    /// The test that keeps the loop going: the body runs while
+    /// `IV <continue_pred> bound` holds (e.g. `<` for `while i < n`).
     pub continue_pred: Option<CmpPred>,
-    /// Constant trip count, when init/step/bound/pred are all known.
+    /// How many times the body runs, when `init`, `step`, `bound`, and the
+    /// predicate are all known constants; `None` otherwise.
     pub trip_count: Option<u64>,
 }
 
-/// Read the constant integer a value is defined by, if it is a `mir.constant`.
+/// If `v` is a compile-time integer constant (a `mir.constant` op), return its
+/// value; `None` if `v` is computed at runtime.
 pub(crate) fn const_i128(ctx: &Context, v: Value) -> Option<i128> {
     let def = v.defining_op()?;
     let c = Operation::get_op::<MirConstantOp>(def, ctx)?;
@@ -104,7 +143,10 @@ pub(crate) fn const_i128(ctx: &Context, v: Value) -> Option<i128> {
     Some(attr.value().to_i128())
 }
 
-/// The operands a predecessor's terminator passes to `header`'s block args.
+/// The values that the branch from `pred` to `header` supplies for `header`'s
+/// block arguments. (`pred`'s last instruction is its branch; we find the slot
+/// that targets `header` and read off the values passed along that edge.)
+/// Returns `None` if `pred` does not actually branch to `header`.
 pub(crate) fn edge_operands(
     ctx: &Context,
     pred: Ptr<BasicBlock>,
@@ -118,8 +160,10 @@ pub(crate) fn edge_operands(
     Some(br.successor_operands(ctx, idx))
 }
 
-/// Strip any chain of `mir.not` from a boolean value, returning the underlying
-/// value and whether an odd number of negations was removed.
+/// Peel off any run of `mir.not` (boolean negation) wrapping `v`. Returns the
+/// value underneath and whether the number peeled off was odd (so `!!x` reports
+/// "not negated" and `!x` reports "negated"). Used so a guard written `!(i < n)`
+/// is understood the same as `i >= n`.
 fn unwrap_not(ctx: &Context, mut v: Value) -> (Value, bool) {
     let mut negated = false;
     while let Some(def) = v.defining_op() {
@@ -133,7 +177,8 @@ fn unwrap_not(ctx: &Context, mut v: Value) -> (Value, bool) {
     (v, negated)
 }
 
-/// Match a comparison op, returning its predicate (as written) and operands.
+/// If `op` is a comparison (`<`, `<=`, `>`, `>=`), return which one it is and
+/// its two sides (left, right); `None` for any other op.
 fn match_cmp(ctx: &Context, op: Ptr<Operation>) -> Option<(CmpPred, Value, Value)> {
     let pred = if Operation::get_op::<MirLtOp>(op, ctx).is_some() {
         CmpPred::Lt
@@ -150,7 +195,12 @@ fn match_cmp(ctx: &Context, op: Ptr<Operation>) -> Option<(CmpPred, Value, Value
     Some((pred, o.get_operand(0), o.get_operand(1)))
 }
 
-/// Analyse the induction variables and trip count of loop `id`.
+/// Run the full analysis on loop `id`: classify every header argument, find the
+/// counter the loop tests, and compute the trip count when possible. `preheader`
+/// is the block that enters the loop (see [`LoopInfo::preheader`]); we read each
+/// counter's starting value off the branch from it.
+///
+/// [`LoopInfo::preheader`]: crate::analyses::loop_info::LoopInfo::preheader
 pub fn analyze(
     ctx: &Context,
     info: &LoopInfo,
@@ -162,8 +212,10 @@ pub fn analyze(
     let nargs = header.deref(ctx).get_num_arguments();
     let header_args: Vec<Value> = (0..nargs).map(|i| header.deref(ctx).get_argument(i)).collect();
 
+    // Starting values come in on the preheader edge; next-iteration values come
+    // in on the latch edge. A simple counted loop has exactly one latch; if it
+    // has more we leave `latch_ops` as None and classify everything as Unknown.
     let pre_ops = edge_operands(ctx, preheader, header);
-    // Canonical counted loops have a single latch; bail (Unknown) otherwise.
     let latch_ops = l
         .latches
         .first()
@@ -182,7 +234,8 @@ pub fn analyze(
         ));
     }
 
-    // Exit guard -> primary IV, bound, continue predicate.
+    // Read the header's exit test to find the counter it checks, the limit, and
+    // the keep-going predicate.
     let (primary_iv, bound, bound_value, continue_pred) =
         analyze_guard(ctx, info, id, &header_args, &args);
 
@@ -215,23 +268,28 @@ fn classify_arg(
         Some(v) => v,
         None => return ArgKind::Unknown,
     };
+    // Fed back unchanged -> same value every iteration.
     if latch_val == arg {
         return ArgKind::Invariant;
     }
-    // arg + c / c + arg / arg - c ?
+    // Is the fed-back value `arg + c`, `c + arg`, or `arg - c` for a constant c?
+    // If so, c is the per-iteration step and this is a counter.
     let step = step_of(ctx, latch_val, arg);
     if let Some(step) = step {
         if let Some(init) = pre_ops.and_then(|o| o.get(i).copied()).and_then(|v| const_i128(ctx, v))
         {
             return ArgKind::BasicIv { init, step };
         }
-        // IV-shaped but non-constant init: treat as carried.
+        // Steps like a counter, but its starting value isn't a constant, so we
+        // can't give it a numeric formula; treat it as a carried value instead.
         return ArgKind::Reduction;
     }
+    // Changes each iteration but not by a fixed step: an accumulator.
     ArgKind::Reduction
 }
 
-/// If `v` is `arg + c`, `c + arg`, or `arg - c` for a constant `c`, return the step.
+/// If `v` is `arg + c`, `c + arg`, or `arg - c` for a constant `c`, return the
+/// per-iteration step (`c`, or `-c` for the subtraction). `None` otherwise.
 fn step_of(ctx: &Context, v: Value, arg: Value) -> Option<i128> {
     let def = v.defining_op()?;
     if Operation::get_op::<MirAddOp>(def, ctx).is_some() {
@@ -253,8 +311,12 @@ fn step_of(ctx: &Context, v: Value, arg: Value) -> Option<i128> {
     None
 }
 
-/// From the header's `cond_br`, find the IV header-arg, the constant bound, and
-/// the predicate under which the body executes (`IV <pred> bound`).
+/// Read the header's conditional branch (its `i < n`-style exit test) and pull
+/// out three things: which header argument is the counter being tested, the
+/// limit it is compared against (as a constant when possible, always as a
+/// value), and the predicate under which the body keeps running (so the loop
+/// continues while `IV <pred> bound`). Returns all-`None` if the header doesn't
+/// have a recognisable counted-loop test.
 fn analyze_guard(
     ctx: &Context,
     info: &LoopInfo,
@@ -271,7 +333,8 @@ fn analyze_guard(
     if succs.len() != 2 {
         return (None, None, None, None);
     }
-    // Which successor stays in the loop (the body)?
+    // The header branches two ways: into the body, or out of the loop. Find
+    // which of the two successors is the body (the one still inside the loop).
     let body_idx = if l.blocks.contains(&succs[0]) {
         0
     } else if l.blocks.contains(&succs[1]) {
@@ -279,7 +342,10 @@ fn analyze_guard(
     } else {
         return (None, None, None, None);
     };
-    // cond_br operand 0 is the condition; the body is taken when cond == (body_idx == 0).
+    // The branch's first operand is the boolean condition; the body is the
+    // successor taken when that condition is true (successor 0 is the true side).
+    // Peel off any `!` so we compare against the real underlying test, and track
+    // whether peeling flipped the sense.
     let cond = term.deref(ctx).get_operand(0);
     let (cmp_val, negated) = unwrap_not(ctx, cond);
     let body_when_cmp_true = (body_idx == 0) ^ negated;
@@ -292,14 +358,18 @@ fn analyze_guard(
         Some(t) => t,
         None => return (None, None, None, None),
     };
-    // Continue predicate (as written) for "body runs": negate if body runs when cmp is false.
+    // We want the predicate that is true when the body runs. If the body runs
+    // when the comparison is true, that's the comparison itself; if it runs when
+    // the comparison is false, flip the comparison to its opposite.
     let mut pred = if body_when_cmp_true {
         pred_written
     } else {
         pred_written.negate()
     };
 
-    // Orient so the IV is on the left and the bound on the right.
+    // The test could be written `i < n` or `n > i`. Figure out which side is the
+    // counter (a header argument) and which is the limit, and if the counter is
+    // on the right, swap the predicate so we always end up with `IV <pred> bound`.
     let iv_is_lhs = header_args.iter().position(|&a| a == lhs);
     let iv_is_rhs = header_args.iter().position(|&a| a == rhs);
     let (iv_index, bound_val) = match (iv_is_lhs, iv_is_rhs) {
@@ -310,20 +380,25 @@ fn analyze_guard(
         }
         _ => return (None, None, None, None),
     };
+    // The thing being tested must actually be a counter for this to be a
+    // counted loop.
     if !matches!(args[iv_index], ArgKind::BasicIv { .. }) {
         return (None, None, None, None);
     }
     (Some(iv_index), const_i128(ctx, bound_val), Some(bound_val), Some(pred))
 }
 
-/// Trip count for a loop whose body runs while `IV <pred> bound`, given the
-/// IV's `init`/`step`. `None` when the direction/step don't form a finite count.
+/// How many times the body runs for a loop that continues while
+/// `IV <pred> bound`, given the counter's `init` and `step`. For example
+/// `i = 0; i < 16; i += 4` gives 4. Returns `None` when the step points the
+/// wrong way for the test (e.g. `i < n` while `i` decreases), which would be an
+/// infinite or zero loop we don't count.
 fn trip_count(init: i128, step: i128, bound: i128, pred: CmpPred) -> Option<u64> {
     let count = match pred {
-        // Counting up.
+        // Counting up toward an upper limit.
         CmpPred::Lt if step > 0 => div_ceil(bound - init, step),
         CmpPred::Le if step > 0 => div_ceil(bound - init + 1, step),
-        // Counting down.
+        // Counting down toward a lower limit.
         CmpPred::Gt if step < 0 => div_ceil(init - bound, -step),
         CmpPred::Ge if step < 0 => div_ceil(init - bound + 1, -step),
         _ => return None,
@@ -331,7 +406,8 @@ fn trip_count(init: i128, step: i128, bound: i128, pred: CmpPred) -> Option<u64>
     Some(count.max(0) as u64)
 }
 
-/// Ceiling division for non-negative results; clamps negatives to 0.
+/// Divide and round up (so 5/4 is 2). Returns 0 when the numerator is zero or
+/// negative, which corresponds to a loop that never runs.
 fn div_ceil(num: i128, den: i128) -> i128 {
     if num <= 0 {
         0

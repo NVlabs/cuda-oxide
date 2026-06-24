@@ -5,11 +5,11 @@
 
 //! Optimization passes over the `dialect-mir` IR.
 //!
-//! These run in cuda-oxide's middle-end, after `mem2reg` and before lowering to
-//! the LLVM dialect. The first is annotation-driven loop unrolling (driven by
-//! the `#[unroll]` / `#[unroll(N)]` attribute, carried as a `mir.unroll`
-//! attribute on the function op). Future passes (LICM, induction-variable
-//! simplification) will live here too.
+//! These run in the middle of cuda-oxide's pipeline: after `mem2reg` (the pass
+//! that promotes memory slots to plain SSA values) and before the IR is lowered
+//! to the LLVM dialect on its way to PTX. The first pass here is loop unrolling,
+//! switched on by the `#[unroll]` / `#[unroll(N)]` annotation (recorded as a
+//! `mir.unroll` attribute on the function). More loop passes can live here too.
 
 pub mod analyses;
 pub mod unroll;
