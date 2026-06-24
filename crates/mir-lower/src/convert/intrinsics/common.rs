@@ -26,8 +26,8 @@ use pliron::irbuild::dialect_conversion::DialectConversionRewriter;
 use pliron::irbuild::inserter::Inserter;
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::result::Result;
 use pliron::r#type::Typed;
+use pliron::result::Result;
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use std::num::NonZeroUsize;
@@ -161,6 +161,32 @@ pub fn inline_asm_convergent(
         asm_template,
         constraints,
         AsmKind::Convergent,
+    );
+    rewriter.insert_operation(ctx, inline_asm.get_operation());
+    inline_asm.get_operation()
+}
+
+/// Create an inline assembly operation with the sideeffect attribute (non-convergent).
+///
+/// Use this for operations that write to memory but are NOT warp-synchronous
+/// (e.g., `cp.async` copies). Unlike `inline_asm_convergent`, the emitted asm
+/// is marked `sideeffect` only, allowing LLVM to move or duplicate it across
+/// divergent control flow when legal.
+pub fn inline_asm_sideeffect(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    result_ty: pliron::r#type::TypeHandle,
+    inputs: Vec<Value>,
+    asm_template: &str,
+    constraints: &str,
+) -> Ptr<Operation> {
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        result_ty,
+        inputs,
+        asm_template,
+        constraints,
+        AsmKind::SideEffect,
     );
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     inline_asm.get_operation()

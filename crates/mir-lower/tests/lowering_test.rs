@@ -1794,6 +1794,7 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+
 // =============================================================================
 // Integer dot product (dp4a / dp2a) lowering tests
 // =============================================================================
@@ -1904,4 +1905,58 @@ fn test_dp2a_u32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     append_return(&mut ctx, entry);
 
     assert_inline_asm_lowering(&mut ctx, module_ptr, "dp2a.lo.u32.u32")
+}
+
+// =============================================================================
+// cp.async lowering tests
+// =============================================================================
+
+#[test]
+fn test_cp_async_ca_4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
+
+    let dst = entry.deref(&ctx).get_argument(0);
+    let src = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCa4Op::get_concrete_op_info(),
+        vec![],
+        vec![dst, src],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+}
+
+#[test]
+fn test_cp_async_ca_8_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
+
+    let dst = entry.deref(&ctx).get_argument(0);
+    let src = entry.deref(&ctx).get_argument(1);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCa8Op::get_concrete_op_info(),
+        vec![],
+        vec![dst, src],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
 }
