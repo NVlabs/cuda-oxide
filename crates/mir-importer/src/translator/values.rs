@@ -175,7 +175,7 @@ impl ValueMap {
 /// If `value` is a pointer whose type differs from `target_ty` (also a
 /// pointer), emit a `mir.cast <PtrToPtr>` that converts it. Returns the (new)
 /// value and the (new) anchor op. Otherwise this is a no-op.
-fn maybe_ptr_coerce(
+pub(crate) fn maybe_ptr_coerce(
     ctx: &mut Context,
     value: Value,
     target_ty: TypeHandle,

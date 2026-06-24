@@ -62,7 +62,7 @@ use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
-use crate::translator::values::ValueMap;
+use crate::translator::values::{ValueMap, maybe_ptr_coerce};
 use dialect_mir::ops::{
     MirAssertOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirGotoOp, MirNotOp, MirReturnOp,
 };
@@ -115,7 +115,9 @@ pub fn translate_terminator(
     let loc = span_to_location(ctx, term.span);
 
     match &term.kind {
-        mir::TerminatorKind::Return => translate_return(ctx, value_map, block_ptr, prev_op, loc),
+        mir::TerminatorKind::Return => {
+            translate_return(ctx, body, value_map, block_ptr, prev_op, loc)
+        }
 
         mir::TerminatorKind::Goto { target } => {
             translate_goto(ctx, *target, block_ptr, prev_op, block_map, loc)
@@ -211,6 +213,7 @@ pub fn translate_terminator(
 /// transfers control back to the caller with this value.
 fn translate_return(
     ctx: &mut Context,
+    body: &mir::Body,
     value_map: &mut ValueMap,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -221,24 +224,29 @@ fn translate_return(
     // pass it as the `mir.return` operand. ZSTs (including `()` kernel
     // returns) have no slot, so we simply emit a bare `return`.
     let return_local = mir::Local::from(0usize);
+    let return_decl = &body.locals()[return_local];
+    let return_type = types::translate_type(ctx, &return_decl.ty)?;
+    let is_unit_return = {
+        use dialect_mir::types::MirTupleType;
+        let return_type_obj = return_type.deref(ctx);
+        if let Some(tuple_ty) = return_type_obj.downcast_ref::<MirTupleType>() {
+            tuple_ty.get_types().is_empty()
+        } else {
+            false
+        }
+    };
     let loaded = value_map.load_local(ctx, return_local, block_ptr, prev_op);
 
     let (operands, terminator_prev_op) = match loaded {
         Some((load_op, val)) => {
-            use dialect_mir::types::MirTupleType;
-            let val_type = val.get_type(ctx);
-            let val_type_obj = val_type.deref(ctx);
-            if let Some(tuple_ty) = val_type_obj.downcast_ref::<MirTupleType>() {
-                if tuple_ty.get_types().is_empty() {
-                    // Unit return: the load we just emitted is dead, but
-                    // harmless; leave it as prev_op so the return chains
-                    // after it.
-                    (vec![], Some(load_op))
-                } else {
-                    (vec![val], Some(load_op))
-                }
+            if is_unit_return {
+                // Unit return: the load we just emitted is dead, but harmless;
+                // leave it as prev_op so the return chains after it.
+                (vec![], Some(load_op))
             } else {
-                (vec![val], Some(load_op))
+                let (val, prev_op) =
+                    maybe_ptr_coerce(ctx, val, return_type, block_ptr, Some(load_op));
+                (vec![val], prev_op)
             }
         }
         None => (vec![], prev_op),
