@@ -11,4 +11,5 @@
 //! attribute on the function op). Future passes (LICM, induction-variable
 //! simplification) will live here too.
 
+pub mod loop_info;
 pub mod unroll;

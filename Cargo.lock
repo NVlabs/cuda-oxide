@@ -732,6 +732,7 @@ dependencies = [
  "linkme",
  "llvm-export",
  "mir-lower",
+ "mir-transforms",
  "once_cell",
  "pliron",
  "pliron-derive",

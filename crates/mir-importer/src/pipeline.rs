@@ -363,6 +363,21 @@ pub fn run_pipeline(
             eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
         }
         verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
+
+        // Step 4.6: annotation-driven loop unrolling (#[unroll] / #[unroll(N)]).
+        // Runs on the SSA form mem2reg just produced; a no-op unless a function
+        // carries a `mir.unroll` attribute. Reuses the mem2reg AnalysisManager
+        // (dominator trees are cached there).
+        if config.verbose {
+            eprintln!("\n=== Running loop-unroll ===");
+        }
+        mir_transforms::unroll::unroll_annotated_loops(module_op_ptr, &mut ctx, &mut analyses)
+            .map_err(|e| PipelineError::Verification {
+                name: "loop-unroll".to_string(),
+                message: e.disp(&ctx).to_string(),
+                operation: None,
+            })?;
+        verify_operation(&ctx, module_op_ptr, "module post-unroll")?;
     }
 
     // Step 5: Lower dialect-mir → LLVM dialect.
