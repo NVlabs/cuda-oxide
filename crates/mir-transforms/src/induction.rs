@@ -102,7 +102,7 @@ fn const_i128(ctx: &Context, v: Value) -> Option<i128> {
 }
 
 /// The operands a predecessor's terminator passes to `header`'s block args.
-fn edge_operands(
+pub(crate) fn edge_operands(
     ctx: &Context,
     pred: Ptr<BasicBlock>,
     header: Ptr<BasicBlock>,
