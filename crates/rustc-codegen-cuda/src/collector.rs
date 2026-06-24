@@ -1138,54 +1138,29 @@ impl<'tcx> DeviceCollector<'tcx> {
             },
         };
 
-        // Special handling for closure trait method calls (FnOnce::call_once, etc.)
-        // When we see a call like `<Closure as FnOnce>::call_once`, we need to collect
-        // the closure body directly, because:
-        // 1. The trait method itself may not have MIR
-        // 2. The mir-importer transforms these calls to direct closure body calls
+        // Special handling for callable trait method calls (FnOnce::call_once, etc.).
+        // When we see a call like `<Closure as FnOnce>::call_once` or
+        // `<fn item as FnOnce>::call_once`, collect the receiver body directly:
+        // the trait method itself may not have MIR, and mir-importer rewrites
+        // these calls to the concrete callable body.
         let fn_name = self.tcx.def_path_str(*def_id);
         if fn_name.contains("call_once")
             || fn_name.contains("call_mut")
             || fn_name.ends_with("::call")
         {
-            // Check if any type arg is a closure
+            // Check if any type arg is a concrete callable receiver.
             for arg in args.iter() {
-                if let Some(ty) = arg.as_type()
-                    && let TyKind::Closure(closure_def_id, closure_substs) = ty.kind()
-                {
-                    // Found a closure - add its body to the collection
-                    let typing_env = TypingEnv::fully_monomorphized();
-                    if let Some(closure_instance) =
-                        Instance::try_resolve(self.tcx, typing_env, *closure_def_id, closure_substs)
-                            .ok()
-                            .flatten()
-                    {
-                        let mangled = self.tcx.symbol_name(closure_instance).name.to_string();
-                        if !self.seen.contains(&mangled) {
-                            let closure_name = self.fqdn(closure_instance);
-                            let export_name =
-                                self.compute_export_name(&closure_name, closure_instance);
-
-                            if self.verbose {
-                                eprintln!(
-                                    "[collector] Discovered closure body (via trait call): {} -> {}",
-                                    closure_name, export_name
-                                );
-                            }
-
-                            self.discovery.insert(mangled.clone(), callee_ctx.clone());
-                            self.seen.insert(mangled);
-                            self.worklist.push_back(CollectedFunction {
-                                instance: closure_instance,
-                                is_kernel: false,
-                                export_name,
-                            });
-                        }
-                    }
-                    // Don't return - continue to try resolving the trait method too
-                    // (even though it may fail, we still want to try)
+                if let Some(ty) = arg.as_type() {
+                    self.enqueue_callable_trait_receiver_body(
+                        ty,
+                        call_span,
+                        caller,
+                        &callee_ctx,
+                    );
                 }
             }
+            // Don't return - continue to try resolving the trait method too
+            // (even though it may fail, we still want to try).
         }
 
         // Try to resolve the instance with substitutions first, so we can
@@ -1308,6 +1283,74 @@ impl<'tcx> DeviceCollector<'tcx> {
         self.seen.insert(mangled);
         self.worklist.push_back(CollectedFunction {
             instance: resolved,
+            is_kernel: false,
+            export_name,
+        });
+    }
+
+    fn enqueue_callable_trait_receiver_body(
+        &mut self,
+        ty: Ty<'tcx>,
+        call_span: Span,
+        caller: &CollectedFunction<'tcx>,
+        ctx: &DiscoveryCtx,
+    ) {
+        let typing_env = TypingEnv::fully_monomorphized();
+        let (kind, instance) = match ty.kind() {
+            TyKind::Closure(closure_def_id, closure_substs) => {
+                let Some(instance) =
+                    Instance::try_resolve(self.tcx, typing_env, *closure_def_id, closure_substs)
+                        .ok()
+                        .flatten()
+                else {
+                    return;
+                };
+                ("closure", instance)
+            }
+            TyKind::FnDef(fn_def_id, fn_args) => {
+                let Some(instance) =
+                    Instance::try_resolve(self.tcx, typing_env, *fn_def_id, fn_args)
+                        .ok()
+                        .flatten()
+                else {
+                    return;
+                };
+                ("function item", instance)
+            }
+            _ => return,
+        };
+
+        let mangled = self.tcx.symbol_name(instance).name.to_string();
+        if self.seen.contains(&mangled) {
+            return;
+        }
+        if !is_fully_monomorphized(self.tcx, instance) {
+            return;
+        }
+        if !matches!(instance.def, InstanceKind::Item(_)) {
+            return;
+        }
+        if !self.tcx.is_mir_available(instance.def_id()) {
+            return;
+        }
+        if self.is_unreachable_body(instance.def_id()) {
+            self.check_unreachable_callee(instance, call_span, caller, ctx);
+            return;
+        }
+
+        let name = self.fqdn(instance);
+        let export_name = self.compute_export_name(&name, instance);
+
+        if self.verbose {
+            eprintln!(
+                "[collector] Discovered {kind} body (via trait call): {name} -> {export_name}"
+            );
+        }
+
+        self.discovery.insert(mangled.clone(), ctx.clone());
+        self.seen.insert(mangled);
+        self.worklist.push_back(CollectedFunction {
+            instance,
             is_kernel: false,
             export_name,
         });

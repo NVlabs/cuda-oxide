@@ -905,28 +905,46 @@ fn translate_call(
         }
     }
 
-    // Handle genuine closure trait method calls. The receiver test matters:
-    // wrapper ADTs can carry a closure in their generic substitutions while
-    // still expecting the rust-call tuple as one argument.
+    // Handle callable trait method calls whose receiver is a concrete callable.
+    // The receiver test matters: wrapper ADTs can carry a closure or function
+    // item in their generic substitutions while still expecting the rust-call
+    // tuple as one argument.
     if let Some(ref name) = pattern_name
         && (name.contains("call_once") || name.contains("call_mut") || name.ends_with("::call"))
         && !args.is_empty()
-        && receiver_is_closure(&args[0], body)
     {
-        return translate_closure_call(
-            ctx,
-            body,
-            &call_name,
-            args,
-            destination,
-            &target_usize,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-            legaliser,
-        );
+        if receiver_is_closure(&args[0], body) {
+            return translate_closure_call(
+                ctx,
+                body,
+                &call_name,
+                args,
+                destination,
+                &target_usize,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+                legaliser,
+            );
+        }
+        if let Some(function_item_name) = extract_function_item_body_name(&args[0], body) {
+            return translate_function_item_call(
+                ctx,
+                body,
+                &function_item_name,
+                args,
+                destination,
+                &target_usize,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+                legaliser,
+            );
+        }
     }
 
     // Handle prof_trigger specially to extract const generic N
@@ -1255,6 +1273,132 @@ fn translate_call(
     )
 }
 
+/// Handle `FnOnce::call_once`, `FnMut::call_mut`, or `Fn::call` when the
+/// receiver is a function item.
+///
+/// Rust-call ABI passes `(self, tuple_args)` to the trait shim, but the
+/// function item's real body expects only the tuple elements as ordinary
+/// arguments. Lowering the shim as an ordinary call leaves a dangling
+/// `<fn item as FnOnce>::call_once` symbol because no MIR body is collected
+/// for that shim.
+#[allow(clippy::too_many_arguments)]
+fn translate_function_item_call(
+    ctx: &mut Context,
+    body: &mir::Body,
+    function_item_name: &str,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    legaliser: &mut Legaliser,
+) -> TranslationResult<Ptr<Operation>> {
+    use dialect_mir::ops::{MirCallOp, MirExtractFieldOp};
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::identifier::Identifier;
+
+    let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
+    let callee = legaliser.legalise(function_item_name).to_string();
+
+    let mut unpacked_args = Vec::new();
+    let mut last_op = prev_op;
+
+    if let Some(tuple_arg) = args.get(1) {
+        let (tuple_value, tuple_last_op) = rvalue::translate_operand(
+            ctx,
+            body,
+            tuple_arg,
+            value_map,
+            block_ptr,
+            last_op,
+            loc.clone(),
+        )?;
+        last_op = tuple_last_op;
+
+        let tuple_ty = tuple_value.get_type(ctx);
+        let element_types: Option<Vec<_>> = {
+            let tuple_ty_obj = tuple_ty.deref(ctx);
+            tuple_ty_obj
+                .downcast_ref::<dialect_mir::types::MirTupleType>()
+                .map(|mir_tuple_ty| mir_tuple_ty.get_types().to_vec())
+        };
+
+        if let Some(element_types) = element_types {
+            for (i, elem_ty) in element_types.iter().enumerate() {
+                let extract_op = Operation::new(
+                    ctx,
+                    MirExtractFieldOp::get_concrete_op_info(),
+                    vec![*elem_ty],
+                    vec![tuple_value],
+                    vec![],
+                    0,
+                );
+                extract_op.deref_mut(ctx).set_loc(loc.clone());
+
+                let mir_extract = MirExtractFieldOp::new(extract_op);
+                mir_extract.set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(i as u32));
+
+                if let Some(prev) = last_op {
+                    extract_op.insert_after(ctx, prev);
+                } else {
+                    extract_op.insert_at_front(block_ptr, ctx);
+                }
+                last_op = Some(extract_op);
+                unpacked_args.push(extract_op.deref(ctx).get_result(0));
+            }
+        } else {
+            unpacked_args.push(tuple_value);
+        }
+    }
+
+    let call_op = Operation::new(
+        ctx,
+        MirCallOp::get_concrete_op_info(),
+        vec![return_type],
+        unpacked_args,
+        vec![],
+        0,
+    );
+    call_op.deref_mut(ctx).set_loc(loc.clone());
+
+    call_op.deref_mut(ctx).attributes.set(
+        Identifier::try_from("callee").unwrap(),
+        StringAttr::new(callee),
+    );
+
+    if let Some(prev) = last_op {
+        call_op.insert_after(ctx, prev);
+    } else {
+        call_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let result_value = call_op.deref(ctx).get_result(0);
+    let last_inserted = value_map
+        .store_local(
+            ctx,
+            destination.local,
+            result_value,
+            block_ptr,
+            Some(call_op),
+        )
+        .unwrap_or(call_op);
+
+    if let Some(target_idx) = target {
+        Ok(helpers::emit_goto(
+            ctx,
+            *target_idx,
+            last_inserted,
+            block_map,
+            loc,
+        ))
+    } else {
+        Ok(call_op)
+    }
+}
+
 /// Handle closure trait method calls (FnOnce::call_once, FnMut::call_mut, Fn::call).
 ///
 /// These calls pass arguments as a tuple, but the closure body expects unpacked args:
@@ -1503,17 +1647,8 @@ fn translate_closure_call(
 /// has a non-closure receiver type and is correctly left on the ordinary call
 /// path with its rust-call tuple intact.
 fn receiver_is_closure(receiver: &mir::Operand, body: &mir::Body) -> bool {
-    let ty = match receiver {
-        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            let local: usize = place.local;
-            let local_decls: Vec<_> = body.local_decls().collect();
-            match local_decls.get(local).map(|(_, decl)| decl.ty) {
-                Some(ty) => ty,
-                None => return false,
-            }
-        }
-        mir::Operand::Constant(const_op) => const_op.const_.ty(),
-        _ => return false,
+    let Some(ty) = operand_type(receiver, body) else {
+        return false;
     };
 
     let inner = match ty.kind() {
@@ -1525,6 +1660,44 @@ fn receiver_is_closure(receiver: &mir::Operand, body: &mir::Body) -> bool {
         inner.kind(),
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Closure(_, _))
     )
+}
+
+fn extract_function_item_body_name(receiver: &mir::Operand, body: &mir::Body) -> Option<String> {
+    let ty = operand_type(receiver, body)?;
+    let inner = match ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, inner, _)) => inner,
+        _ => ty,
+    };
+
+    let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, substs)) =
+        inner.kind()
+    else {
+        return None;
+    };
+
+    rustc_public::mir::mono::Instance::resolve(fn_def, &substs)
+        .ok()
+        .map(function_item_call_name)
+}
+
+fn function_item_call_name(instance: rustc_public::mir::mono::Instance) -> String {
+    if instance.is_foreign_item() || !instance.args().0.is_empty() {
+        instance.mangled_name()
+    } else {
+        instance.name().to_string()
+    }
+}
+
+fn operand_type(receiver: &mir::Operand, body: &mir::Body) -> Option<rustc_public::ty::Ty> {
+    match receiver {
+        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+            let local: usize = place.local;
+            let local_decls: Vec<_> = body.local_decls().collect();
+            local_decls.get(local).map(|(_, decl)| decl.ty)
+        }
+        mir::Operand::Constant(const_op) => Some(const_op.const_.ty()),
+        _ => None,
+    }
 }
 
 /// Extracts the closure body's mangled name from a closure operand.
