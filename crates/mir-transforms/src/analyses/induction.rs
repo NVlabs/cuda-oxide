@@ -87,6 +87,9 @@ pub struct LoopRecurrences {
     pub primary_iv: Option<usize>,
     /// Constant bound from the guard `IV <pred> bound`.
     pub bound: Option<i128>,
+    /// The guard's bound operand as an SSA value (constant or runtime). Needed by
+    /// partial unroll, where the bound is typically a runtime value.
+    pub bound_value: Option<Value>,
     /// The loop-continue predicate: the body runs while `IV <pred> bound`.
     pub continue_pred: Option<CmpPred>,
     /// Constant trip count, when init/step/bound/pred are all known.
@@ -180,7 +183,7 @@ pub fn analyze(
     }
 
     // Exit guard -> primary IV, bound, continue predicate.
-    let (primary_iv, bound, continue_pred) =
+    let (primary_iv, bound, bound_value, continue_pred) =
         analyze_guard(ctx, info, id, &header_args, &args);
 
     let trip_count = match (primary_iv, bound, continue_pred) {
@@ -195,6 +198,7 @@ pub fn analyze(
         args,
         primary_iv,
         bound,
+        bound_value,
         continue_pred,
         trip_count,
     }
@@ -257,15 +261,15 @@ fn analyze_guard(
     id: LoopId,
     header_args: &[Value],
     args: &[ArgKind],
-) -> (Option<usize>, Option<i128>, Option<CmpPred>) {
+) -> (Option<usize>, Option<i128>, Option<Value>, Option<CmpPred>) {
     let l = &info.loops()[id];
     let term = match l.header.deref(ctx).get_terminator(ctx) {
         Some(t) => t,
-        None => return (None, None, None),
+        None => return (None, None, None, None),
     };
     let succs: Vec<Ptr<BasicBlock>> = term.deref(ctx).successors().collect();
     if succs.len() != 2 {
-        return (None, None, None);
+        return (None, None, None, None);
     }
     // Which successor stays in the loop (the body)?
     let body_idx = if l.blocks.contains(&succs[0]) {
@@ -273,7 +277,7 @@ fn analyze_guard(
     } else if l.blocks.contains(&succs[1]) {
         1
     } else {
-        return (None, None, None);
+        return (None, None, None, None);
     };
     // cond_br operand 0 is the condition; the body is taken when cond == (body_idx == 0).
     let cond = term.deref(ctx).get_operand(0);
@@ -282,11 +286,11 @@ fn analyze_guard(
 
     let def = match cmp_val.defining_op() {
         Some(d) => d,
-        None => return (None, None, None),
+        None => return (None, None, None, None),
     };
     let (pred_written, lhs, rhs) = match match_cmp(ctx, def) {
         Some(t) => t,
-        None => return (None, None, None),
+        None => return (None, None, None, None),
     };
     // Continue predicate (as written) for "body runs": negate if body runs when cmp is false.
     let mut pred = if body_when_cmp_true {
@@ -304,12 +308,12 @@ fn analyze_guard(
             pred = pred.swap();
             (idx, lhs)
         }
-        _ => return (None, None, None),
+        _ => return (None, None, None, None),
     };
     if !matches!(args[iv_index], ArgKind::BasicIv { .. }) {
-        return (None, None, None);
+        return (None, None, None, None);
     }
-    (Some(iv_index), const_i128(ctx, bound_val), Some(pred))
+    (Some(iv_index), const_i128(ctx, bound_val), Some(bound_val), Some(pred))
 }
 
 /// Trip count for a loop whose body runs while `IV <pred> bound`, given the

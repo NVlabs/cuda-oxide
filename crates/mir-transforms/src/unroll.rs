@@ -12,10 +12,14 @@
 //! pliron's IR cloning (`pliron::irbuild::cloning`).
 
 use dialect_mir::attributes::UnrollAttr;
+use dialect_mir::ops::arithmetic::MirAddOp;
+use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
 use dialect_mir::ops::constants::MirConstantOp;
+use dialect_mir::ops::control_flow::{MirCondBranchOp, MirGotoOp};
 use dialect_mir::ops::function::MirFuncOp;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::IntegerAttr;
+use pliron::builtin::op_interfaces::OperandSegmentInterface;
 use pliron::builtin::types::IntegerType;
 use pliron::common_traits::Named;
 use pliron::context::{Context, Ptr};
@@ -36,7 +40,7 @@ use pliron::value::Value;
 use rustc_hash::FxHashSet;
 use std::num::NonZero;
 
-use crate::analyses::induction::{self, ArgKind};
+use crate::analyses::induction::{self, ArgKind, CmpPred};
 use crate::analyses::loop_info::LoopInfo;
 
 /// Attribute-dict key under which `#[unroll]` plumbing stores the `UnrollAttr`.
@@ -82,13 +86,14 @@ pub fn unroll_annotated_loops(
         }
 
         for (id, ph, rec) in &targets {
-            if factor == 0 {
+            let unrolled = if factor == 0 {
                 // Full unroll: needs a constant trip count.
-                if full_unroll(ctx, &info, region, *id, *ph, rec)? {
-                    changed = true;
-                }
-            }
-            // factor > 0 (partial unroll + remainder) is Step 4.
+                full_unroll(ctx, &info, region, *id, *ph, rec)?
+            } else {
+                // Partial unroll by `factor`, with a remainder loop for the tail.
+                partial_unroll(ctx, &info, region, *id, *ph, rec, factor)?
+            };
+            changed |= unrolled;
         }
     }
 
@@ -256,6 +261,217 @@ fn make_const(ctx: &mut Context, ty: TypeHandle, value: i128, before: Ptr<Operat
     );
     MirConstantOp::new(op).set_attr_value(ctx, attr);
     op.insert_before(ctx, before);
+    op.deref(ctx).get_result(0)
+}
+
+/// Partially unroll a counted loop by `factor`, leaving a remainder loop.
+///
+/// Keeps the original loop (`header`/`latch`) as the **remainder** that runs the
+/// `trip % factor` tail one iteration at a time, and prepends a **main loop**
+/// that does `factor` body copies per trip and steps the counter by
+/// `factor*step`. The main loop runs only while a full group of `factor`
+/// iterations remains; when fewer than that remain it falls into the original
+/// loop. Counting-up loops (`<`/`<=`, positive step) only; bails otherwise.
+///
+/// Shape produced (entry was `preheader -> header`):
+/// ```text
+///   preheader -> main_h(init...)
+///   main_h(acc,i): if (i + (factor-1)*step) <pred> bound  -> main_l  else -> header
+///   main_l: <factor body copies, i+0,i+step,...>; goto main_h(acc', i + factor*step)
+///   header/latch: the original loop, now the remainder for the tail
+/// ```
+fn partial_unroll(
+    ctx: &mut Context,
+    info: &LoopInfo,
+    region: Ptr<Region>,
+    id: usize,
+    _preheader: Ptr<BasicBlock>,
+    rec: &induction::LoopRecurrences,
+    factor: u32,
+) -> Result<bool> {
+    let n = factor as i128;
+    if n < 2 {
+        return Ok(false);
+    }
+    let l = &info.loops()[id];
+    if l.parent.is_some() || !l.children.is_empty() {
+        return Ok(false);
+    }
+    if l.latches.len() != 1 || l.blocks.len() != 2 {
+        return Ok(false);
+    }
+    let header = l.header;
+    let latch = l.latches[0];
+    if info.exit_blocks(ctx, region, id).len() != 1 {
+        return Ok(false);
+    }
+
+    let iv_idx = match rec.primary_iv {
+        Some(i) => i,
+        None => return Ok(false),
+    };
+    let (_, iv_step) = match &rec.args[iv_idx] {
+        ArgKind::BasicIv { init, step } => (*init, *step),
+        _ => return Ok(false),
+    };
+    // Counting-up loops only for now.
+    if iv_step <= 0 || !matches!(rec.continue_pred, Some(CmpPred::Lt) | Some(CmpPred::Le)) {
+        return Ok(false);
+    }
+    let pred = rec.continue_pred.unwrap();
+    let bound = match rec.bound_value {
+        Some(b) => b,
+        None => return Ok(false),
+    };
+
+    let nargs = header.deref(ctx).get_num_arguments();
+    let header_args: Vec<Value> = (0..nargs).map(|i| header.deref(ctx).get_argument(i)).collect();
+    let iv_type = header_args[iv_idx].get_type(ctx);
+    let arg_types: Vec<TypeHandle> = header_args.iter().map(|a| a.get_type(ctx)).collect();
+
+    // i1 type from the original guard's condition operand.
+    let h_term = match header.deref(ctx).get_terminator(ctx) {
+        Some(t) => t,
+        None => return Ok(false),
+    };
+    let i1_type = h_term.deref(ctx).get_operand(0).get_type(ctx);
+
+    let recur_ops = match induction::edge_operands(ctx, latch, header) {
+        Some(v) if v.len() == nargs => v,
+        _ => return Ok(false),
+    };
+    let latch_term = match latch.deref(ctx).get_terminator(ctx) {
+        Some(t) => t,
+        None => return Ok(false),
+    };
+    let body_ops: Vec<Ptr<Operation>> = latch
+        .deref(ctx)
+        .iter(ctx)
+        .filter(|&op| op != latch_term)
+        .collect();
+    let p_term = match _preheader.deref(ctx).get_terminator(ctx) {
+        Some(t) => t,
+        None => return Ok(false),
+    };
+
+    // Two new blocks: the main (unrolled) header and body.
+    let main_h = BasicBlock::new(ctx, None, arg_types);
+    let main_l = BasicBlock::new(ctx, None, vec![]);
+    main_h.insert_before(ctx, header);
+    main_l.insert_before(ctx, header);
+    let mh_args: Vec<Value> = (0..nargs).map(|i| main_h.deref(ctx).get_argument(i)).collect();
+    let mh_iv = mh_args[iv_idx];
+
+    // --- main_l: `factor` body copies, then step the counter by factor*step ---
+    let mut running: Vec<Value> = mh_args.clone();
+    for j in 0..factor {
+        let mut mapper = IrMapping::new();
+        let iv_j = if j == 0 {
+            mh_iv
+        } else {
+            let c = append_const(ctx, iv_type, (j as i128) * iv_step, main_l);
+            append_add(ctx, iv_type, mh_iv, c, main_l)
+        };
+        for a in 0..nargs {
+            let mapped = if a == iv_idx { iv_j } else { running[a] };
+            mapper.map_value(header_args[a], mapped);
+        }
+        for &op in &body_ops {
+            let cloned = clone_operation(op, ctx, &mut mapper);
+            cloned.insert_at_back(main_l, ctx);
+        }
+        for a in 0..nargs {
+            if a != iv_idx {
+                running[a] = mapper.lookup_value_or_default(recur_ops[a]);
+            }
+        }
+    }
+    let step_c = append_const(ctx, iv_type, n * iv_step, main_l);
+    running[iv_idx] = append_add(ctx, iv_type, mh_iv, step_c, main_l);
+    let back = Operation::new(
+        ctx,
+        MirGotoOp::get_concrete_op_info(),
+        vec![],
+        running,
+        vec![main_h],
+        0,
+    );
+    back.insert_at_back(main_l, ctx);
+
+    // --- main_h: guard "a full group of `factor` fits", else fall to remainder ---
+    let last_off = append_const(ctx, iv_type, (n - 1) * iv_step, main_h);
+    let last = append_add(ctx, iv_type, mh_iv, last_off, main_h);
+    let cont = append_cmp(ctx, pred, last, bound, i1_type, main_h);
+    // cond true (group fits) -> main_l (no args); false -> header (remainder), carrying mh_args.
+    let (flat, segs) =
+        MirCondBranchOp::compute_segment_sizes(vec![vec![cont], vec![], mh_args.clone()]);
+    let cbr = Operation::new(
+        ctx,
+        MirCondBranchOp::get_concrete_op_info(),
+        vec![],
+        flat,
+        vec![main_l, header],
+        0,
+    );
+    Operation::get_op::<MirCondBranchOp>(cbr, ctx)
+        .expect("MirCondBranchOp")
+        .set_operand_segment_sizes(ctx, segs);
+    cbr.insert_at_back(main_h, ctx);
+
+    // Enter the main loop instead of the original header (same init operands).
+    Operation::replace_successor(p_term, ctx, 0, main_h);
+    Ok(true)
+}
+
+/// Append a `mir.constant` of integer type `ty` to the end of `block`.
+fn append_const(ctx: &mut Context, ty: TypeHandle, value: i128, block: Ptr<BasicBlock>) -> Value {
+    let typed = TypedHandle::<IntegerType>::from_handle(ty, ctx).expect("integer type");
+    let width = typed.deref(ctx).width() as usize;
+    let apint = APInt::from_i64(value as i64, NonZero::new(width).expect("non-zero width"));
+    let op = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![ty],
+        vec![],
+        vec![],
+        0,
+    );
+    MirConstantOp::new(op).set_attr_value(ctx, IntegerAttr::new(typed, apint));
+    op.insert_at_back(block, ctx);
+    op.deref(ctx).get_result(0)
+}
+
+/// Append a `mir.add` of integer type `ty` to the end of `block`.
+fn append_add(ctx: &mut Context, ty: TypeHandle, a: Value, b: Value, block: Ptr<BasicBlock>) -> Value {
+    let op = Operation::new(
+        ctx,
+        MirAddOp::get_concrete_op_info(),
+        vec![ty],
+        vec![a, b],
+        vec![],
+        0,
+    );
+    op.insert_at_back(block, ctx);
+    op.deref(ctx).get_result(0)
+}
+
+/// Append a comparison `a <pred> b` (result `i1_type`) to the end of `block`.
+fn append_cmp(
+    ctx: &mut Context,
+    pred: CmpPred,
+    a: Value,
+    b: Value,
+    i1_type: TypeHandle,
+    block: Ptr<BasicBlock>,
+) -> Value {
+    let info = match pred {
+        CmpPred::Lt => MirLtOp::get_concrete_op_info(),
+        CmpPred::Le => MirLeOp::get_concrete_op_info(),
+        CmpPred::Gt => MirGtOp::get_concrete_op_info(),
+        CmpPred::Ge => MirGeOp::get_concrete_op_info(),
+    };
+    let op = Operation::new(ctx, info, vec![i1_type], vec![a, b], vec![], 0);
+    op.insert_at_back(block, ctx);
     op.deref(ctx).get_result(0)
 }
 
