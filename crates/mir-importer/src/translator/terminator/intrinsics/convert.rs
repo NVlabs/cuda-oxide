@@ -155,7 +155,7 @@ pub fn emit_cvt_rz_f16x2_f32(
     let cvt_op = Operation::new(
         ctx,
         CvtRzF16x2F32Op::get_concrete_op_info(),
-        vec![i32_type.to_ptr()],
+        vec![i32_type.to_handle()],
         vec![lo_val, hi_val],
         vec![],
         0,
@@ -230,7 +230,7 @@ pub fn emit_cvt_rn_relu_f16x2_f32(
     let cvt_op = Operation::new(
         ctx,
         CvtRnReluF16x2F32Op::get_concrete_op_info(),
-        vec![i32_type.to_ptr()],
+        vec![i32_type.to_handle()],
         vec![lo_val, hi_val],
         vec![],
         0,
@@ -305,7 +305,7 @@ pub fn emit_cvt_rn_relu_bf16x2_f32(
     let cvt_op = Operation::new(
         ctx,
         CvtRnReluBf16x2F32Op::get_concrete_op_info(),
-        vec![i32_type.to_ptr()],
+        vec![i32_type.to_handle()],
         vec![lo_val, hi_val],
         vec![],
         0,
@@ -380,7 +380,7 @@ pub fn emit_cvt_rz_bf16x2_f32(
     let cvt_op = Operation::new(
         ctx,
         CvtRzBf16x2F32Op::get_concrete_op_info(),
-        vec![i32_type.to_ptr()],
+        vec![i32_type.to_handle()],
         vec![lo_val, hi_val],
         vec![],
         0,
