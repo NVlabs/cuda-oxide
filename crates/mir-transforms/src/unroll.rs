@@ -145,5 +145,15 @@ fn log_loops(
             body,
             l.parent,
         );
+        if let Some(ph) = info.preheader(ctx, region, i) {
+            let rec = crate::induction::analyze(ctx, info, i, ph);
+            eprintln!(
+                "    iv: primary_arg={:?} bound={:?} continue_pred={:?} trip_count={:?}",
+                rec.primary_iv, rec.bound, rec.continue_pred, rec.trip_count,
+            );
+            for (ai, kind) in rec.args.iter().enumerate() {
+                eprintln!("      header arg#{ai}: {kind:?}");
+            }
+        }
     }
 }
