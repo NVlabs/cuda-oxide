@@ -43,6 +43,7 @@ pub mod bitops;
 pub mod clc;
 pub mod cluster;
 pub mod convert;
+pub mod cp_async;
 pub mod debug;
 pub mod dotprod;
 pub mod float_math;
