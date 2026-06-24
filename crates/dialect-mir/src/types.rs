@@ -847,13 +847,10 @@ impl MirEnumType {
 
 impl Verify for MirEnumType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
-        // Enum types must have at least one variant
-        if self.variant_names.is_empty() {
-            return verify_err!(
-                Location::Unknown,
-                "MirEnumType must have at least one variant"
-            );
-        }
+        // Zero-variant enums are valid Rust types. They show up in dead
+        // core-library paths such as `Result<T, Infallible>` residual arms.
+        // Constructing or extracting an actual value remains invalid through
+        // the operation-level variant bounds below.
         if self.variant_names.len() != self.variant_discriminants.len() {
             return verify_err!(
                 Location::Unknown,
