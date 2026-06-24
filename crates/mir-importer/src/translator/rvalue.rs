@@ -1774,62 +1774,15 @@ pub fn translate_operand(
             if let Some(static_def) = static_def_from_constant(constant)?
                 && let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
             {
-                // All device-side statics — `#[constant]` and ordinary — must
-                // currently be zero-initialized. Lowering honored initializers
-                // into PTX `.const` (or `.global`) bytes is on the roadmap;
-                // for now use `ConstantMemory::UNINIT` and populate from host.
-                ensure_zero_initializer(&static_def, loc.clone())?;
-                let is_constant = is_constant_wrapper_type(&pointee_ty);
-
-                // Constants need the linker-visible mangled name (honors
-                // `#[export_name]`) so mir-lower can emit a matching LLVM
-                // symbol that the host resolves via `cuModuleGetGlobal`.
-                // Ordinary statics only need a unique key for in-pass
-                // deduplication, so we take the cheaper definition-path name.
-                let global_key: String = if is_constant {
-                    rustc_public::mir::mono::Instance::from(static_def)
-                        .mangled_name()
-                        .to_string()
-                } else {
-                    static_def.name()
-                };
-
-                let global_ty = types::translate_type(ctx, &pointee_ty)?;
-                let ptr_ty = if is_constant {
-                    dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
-                } else {
-                    dialect_mir::types::MirPtrType::get_global(ctx, global_ty, is_mutable).into()
-                };
-
-                let op = Operation::new(
+                return translate_static_global_pointer(
                     ctx,
-                    MirGlobalAllocOp::get_concrete_op_info(),
-                    vec![ptr_ty],
-                    vec![],
-                    vec![],
-                    0,
+                    &static_def,
+                    &pointee_ty,
+                    is_mutable,
+                    block_ptr,
+                    prev_op,
+                    loc.clone(),
                 );
-                op.deref_mut(ctx).set_loc(loc);
-
-                let global_alloc = MirGlobalAllocOp::new(op);
-
-                use pliron::builtin::attributes::{StringAttr, TypeAttr};
-                global_alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
-                global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
-
-                if let Some(alignment) = static_alignment(&static_def)? {
-                    global_alloc.set_alignment_value(ctx, alignment);
-                }
-
-                if let Some(prev) = prev_op {
-                    global_alloc.get_operation().insert_after(ctx, prev);
-                } else {
-                    global_alloc.get_operation().insert_at_front(block_ptr, ctx);
-                }
-
-                let val = global_alloc.get_operation().deref(ctx).get_result(0);
-
-                return Ok((val, Some(global_alloc.get_operation())));
             }
 
             let const_ty_ptr = types::translate_type(ctx, &rust_ty)?;
@@ -4777,9 +4730,10 @@ fn translate_ptr_to_array_constant(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    // Extract array type from the pointer type, then delegate to the shared
-    // value-producing helper. We wrap the resulting value with `MirRefOp` to
-    // recover the pointer.
+    // Extract array type from the pointer type. A pointer-to-array constant can
+    // outlive this function, so lowering it as `array value + mir.ref` would
+    // return a pointer to function-local stack storage. Materialize it as an
+    // immutable device global instead.
     let array_ty = {
         let ty_obj = const_ty_ptr.deref(ctx);
         let ptr_ty = ty_obj
@@ -4805,41 +4759,45 @@ fn translate_ptr_to_array_constant(
         ptr_ty.pointee
     };
 
-    let (array_val, last_op) = translate_array_value_constant_inner(
-        ctx,
-        constant,
-        array_ty,
-        block_ptr,
-        prev_op,
-        loc.clone(),
-    )?;
-
-    use dialect_mir::ops::MirRefOp;
     use dialect_mir::types::MirPtrType;
+    use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let generic_ptr_ty = MirPtrType::get_generic(ctx, array_ty, false);
+    let bytes = constant_bytes(constant, "array", loc.clone())?;
+    let initializer_hex = bytes_to_hex(&bytes);
+    let global_key = promoted_constant_global_key(ctx, array_ty, &bytes);
+    let global_ptr_ty = MirPtrType::get_global(ctx, array_ty, false);
 
-    let ref_op = Operation::new(
+    let global_op = Operation::new(
         ctx,
-        MirRefOp::get_concrete_op_info(),
-        vec![generic_ptr_ty.into()],
-        vec![array_val],
+        MirGlobalAllocOp::get_concrete_op_info(),
+        vec![global_ptr_ty.into()],
+        vec![],
         vec![],
         0,
     );
-    ref_op.deref_mut(ctx).set_loc(loc);
+    global_op.deref_mut(ctx).set_loc(loc.clone());
 
-    let ref_op_wrapper = MirRefOp::new(ref_op);
-    ref_op_wrapper.set_mutable(ctx, false);
+    let global_alloc = MirGlobalAllocOp::new(global_op);
+    global_alloc.set_attr_global_type(ctx, TypeAttr::new(array_ty));
+    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
+    set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
 
-    if let Some(prev) = last_op {
-        ref_op.insert_after(ctx, prev);
+    if let Some(prev) = prev_op {
+        global_alloc.get_operation().insert_after(ctx, prev);
     } else {
-        ref_op.insert_at_front(block_ptr, ctx);
+        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
     }
 
-    let ptr_val = ref_op.deref(ctx).get_result(0);
-    Ok((ptr_val, Some(ref_op)))
+    let global_ptr = global_alloc.get_operation().deref(ctx).get_result(0);
+    let (ptr_val, last_op) = cast_to_generic_addrspace_if_needed(
+        ctx,
+        global_ptr,
+        const_ty_ptr,
+        block_ptr,
+        Some(global_alloc.get_operation()),
+        loc,
+    );
+    Ok((ptr_val, last_op))
 }
 
 /// Lower a bare `MirArrayType` value constant (e.g. `const TABLE: [f32; N] =
@@ -7182,12 +7140,11 @@ fn static_def_from_constant(
     }
 }
 
-/// Ordinary device globals are currently emitted as `zeroinitializer`.
-/// Reject non-zero initializers until constant-data export is implemented.
-fn ensure_zero_initializer(
+/// Return rustc's evaluated static initializer bytes as lowercase hex.
+fn static_initializer_hex(
     static_def: &rustc_public::mir::mono::StaticDef,
-    loc: Location,
-) -> TranslationResult<()> {
+    _loc: Location,
+) -> TranslationResult<String> {
     let alloc = static_def.eval_initializer().map_err(|e| {
         input_error_noloc!(TranslationErr::unsupported(format!(
             "Failed to evaluate initializer for device static {}: {:?}",
@@ -7202,18 +7159,99 @@ fn ensure_zero_initializer(
             e
         )))
     })?;
+    Ok(bytes_to_hex(&bytes))
+}
 
-    if bytes.iter().all(|byte| *byte == 0) {
-        Ok(())
-    } else {
-        input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Device static {} has a non-zero initializer; cuda-oxide currently supports zero-initialized device statics",
-                static_def.name()
-            ))
-        )
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
     }
+    hex
+}
+
+fn promoted_constant_global_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> String {
+    fn update_hash(mut hash: u64, bytes: &[u8]) -> u64 {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    hash = update_hash(hash, ty.deref(ctx).disp(ctx).to_string().as_bytes());
+    hash = update_hash(hash, bytes);
+    format!("__cuda_oxide_promoted_{hash:016x}_{}b", bytes.len())
+}
+
+fn translate_static_global_pointer(
+    ctx: &mut Context,
+    static_def: &rustc_public::mir::mono::StaticDef,
+    pointee_ty: &rustc_public::ty::Ty,
+    is_mutable: bool,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let initializer_hex = static_initializer_hex(static_def, loc.clone())?;
+    let is_constant = is_constant_wrapper_type(pointee_ty);
+
+    let global_key: String = if is_constant {
+        rustc_public::mir::mono::Instance::from(*static_def)
+            .mangled_name()
+            .to_string()
+    } else {
+        static_def.name()
+    };
+
+    let global_ty = types::translate_type(ctx, pointee_ty)?;
+    let ptr_ty = if is_constant {
+        dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
+    } else {
+        dialect_mir::types::MirPtrType::get_global(ctx, global_ty, is_mutable).into()
+    };
+
+    let op = Operation::new(
+        ctx,
+        MirGlobalAllocOp::get_concrete_op_info(),
+        vec![ptr_ty],
+        vec![],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+
+    let global_alloc = MirGlobalAllocOp::new(op);
+
+    use pliron::builtin::attributes::{StringAttr, TypeAttr};
+    global_alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
+    global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
+    set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
+
+    if let Some(alignment) = static_alignment(static_def)? {
+        global_alloc.set_alignment_value(ctx, alignment);
+    }
+
+    if let Some(prev) = prev_op {
+        global_alloc.get_operation().insert_after(ctx, prev);
+    } else {
+        global_alloc.get_operation().insert_at_front(block_ptr, ctx);
+    }
+
+    let val = global_alloc.get_operation().deref(ctx).get_result(0);
+    Ok((val, Some(global_alloc.get_operation())))
+}
+
+fn set_global_initializer_hex_attr(ctx: &mut Context, op: Ptr<Operation>, initializer_hex: &str) {
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::identifier::Identifier;
+
+    let key = Identifier::try_new("global_initializer_hex".to_string()).expect("valid identifier");
+    op.deref_mut(ctx)
+        .attributes
+        .set(key, StringAttr::new(initializer_hex.to_string()));
 }
 
 fn static_alignment(
