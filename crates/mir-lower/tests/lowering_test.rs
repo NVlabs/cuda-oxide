@@ -2219,3 +2219,86 @@ fn assert_cp_async_zfill_inline_asm_lowering(
     );
     Ok(())
 }
+
+// =============================================================================
+// Packed bf16x2 arithmetic lowering tests
+// =============================================================================
+
+#[test]
+fn test_fma_relu_bf16x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
+
+    let a_val = entry.deref(&ctx).get_argument(0);
+    let b_val = entry.deref(&ctx).get_argument(1);
+    let c_val = entry.deref(&ctx).get_argument(2);
+
+    // FmaReluBf16x2Op: 3 i32 operands, 1 i32 result
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::FmaReluBf16x2Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![a_val, b_val, c_val],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "fma.rn.relu.bf16x2")
+}
+
+#[test]
+fn test_add_bf16x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into()]);
+
+    let a_val = entry.deref(&ctx).get_argument(0);
+    let b_val = entry.deref(&ctx).get_argument(1);
+
+    // AddBf16x2Op: 2 i32 operands, 1 i32 result
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::AddBf16x2Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![a_val, b_val],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "add.rn.bf16x2")
+}
+
+#[test]
+fn test_neg_bf16x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+
+    let a_val = entry.deref(&ctx).get_argument(0);
+
+    // NegBf16x2Op: 1 i32 operand, 1 i32 result
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::NegBf16x2Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![a_val],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "neg.bf16x2")
+}
