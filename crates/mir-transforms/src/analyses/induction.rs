@@ -33,7 +33,7 @@ use pliron::op::op_cast;
 use pliron::operation::Operation;
 use pliron::value::Value;
 
-use crate::loop_info::{LoopId, LoopInfo};
+use crate::analyses::loop_info::{LoopId, LoopInfo};
 
 /// A relational predicate as written `lhs <pred> rhs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

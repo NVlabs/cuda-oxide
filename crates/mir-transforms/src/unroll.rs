@@ -36,8 +36,8 @@ use pliron::value::Value;
 use rustc_hash::FxHashSet;
 use std::num::NonZero;
 
-use crate::induction::{self, ArgKind};
-use crate::loop_info::LoopInfo;
+use crate::analyses::induction::{self, ArgKind};
+use crate::analyses::loop_info::LoopInfo;
 
 /// Attribute-dict key under which `#[unroll]` plumbing stores the `UnrollAttr`.
 const UNROLL_ATTR_KEY: &str = "unroll";
