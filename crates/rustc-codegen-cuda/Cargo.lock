@@ -326,6 +326,7 @@ dependencies = [
  "linkme",
  "llvm-export",
  "mir-lower",
+ "mir-transforms",
  "once_cell",
  "pliron",
  "pliron-derive",
@@ -344,6 +345,16 @@ dependencies = [
  "pliron",
  "pliron-derive",
  "reserved-oxide-symbols",
+ "rustc-hash",
+ "thiserror",
+]
+
+[[package]]
+name = "mir-transforms"
+version = "0.2.1"
+dependencies = [
+ "dialect-mir",
+ "pliron",
  "rustc-hash",
  "thiserror",
 ]

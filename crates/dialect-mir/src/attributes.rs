@@ -61,18 +61,19 @@ pub struct FieldIndexAttr(pub u32);
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct VariantIndexAttr(pub u32);
 
-/// Loop-unroll request for the loops in a function, attached to the function op
-/// when the author wrote `#[unroll]` / `#[unroll(N)]`.
+/// The unroll factor carried by a [`MirUnrollHintOp`](crate::ops::MirUnrollHintOp).
 ///
-/// * `0` -- **full unroll**: unroll every compile-time-constant-trip-count loop
-///   in the function completely, so the induction variable becomes a literal in
-///   each copy (this is what lets index arithmetic such as `i & 3` fold to a
+/// `#[unroll]` / `#[unroll(N)]` written on a loop makes the frontend plant a
+/// `mir.unroll_hint` op inside that loop's body; this attribute is the factor it
+/// carries, and the loop-unroll pass reads it to decide how to unroll that one
+/// loop:
+///
+/// * `0` -- **full unroll**: if the loop's trip count is a compile-time
+///   constant, unroll it completely, so the induction variable becomes a literal
+///   in each copy (this is what lets index arithmetic such as `i & 3` fold to a
 ///   constant).
-/// * `n > 0` -- **unroll by `n`**: unroll every loop in the function by a factor
-///   of `n`, leaving a remainder loop when `n` does not divide the trip count.
-///
-/// Function-level for now (it applies to all loops in the function); per-loop
-/// targeting can refine this later without changing the transform.
+/// * `n > 0` -- **unroll by `n`**: do `n` copies of the body per trip, leaving a
+///   remainder loop when `n` does not divide the trip count.
 #[pliron_attr(name = "mir.unroll", format = "$0", verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct UnrollAttr(pub u32);

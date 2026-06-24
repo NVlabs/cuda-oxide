@@ -65,6 +65,7 @@ use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::{
     MirAssertOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirGotoOp, MirNotOp, MirReturnOp,
+    MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
     ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
@@ -964,6 +965,35 @@ fn translate_call(
         }
     }
 
+    // Per-loop unroll marker from `#[unroll]` / `#[unroll(N)]`. The `#[kernel]`
+    // macro injects this call as the first statement of the annotated loop's
+    // body, so we plant a `mir.unroll_hint` op right here, inside that loop
+    // body. The loop-unroll pass later maps the hint back to its enclosing loop
+    // (via LoopInfo) and consumes it, so it never reaches lowering. The factor
+    // is the call's const generic (`0` = full unroll). Then branch to the
+    // target as usual.
+    // Match both the full path (`cuda_device::thread::__unroll_config`) and the
+    // re-exported short path (`cuda_device::__unroll_config`), mirroring the
+    // robust suffix match in `body::detect_unroll_config`.
+    if let Some(ref name) = pattern_name
+        && (name == "__unroll_config" || name.ends_with("::__unroll_config"))
+    {
+        let factor = extract_unroll_factor(func);
+        let hint = MirUnrollHintOp::new(ctx, factor).get_operation();
+        hint.deref_mut(ctx).set_loc(loc.clone());
+        match prev_op {
+            Some(prev) => hint.insert_after(ctx, prev),
+            None => hint.insert_at_front(block_ptr, ctx),
+        }
+        return Ok(helpers::emit_goto(
+            ctx,
+            target_usize.expect("__unroll_config must have target"),
+            hint,
+            block_map,
+            loc,
+        ));
+    }
+
     // Handle DynamicSharedArray specially to extract the ALIGN const generic
     if let Some(ref name) = pattern_name
         && name.contains("DynamicSharedArray")
@@ -1594,6 +1624,28 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
 /// link symbol. `call_name` for those is `Instance::mangled_name`, which is
 /// the link symbol (it honours `#[link_name]`).
 ///
+/// Read the const-generic `FACTOR` from a `__unroll_config::<FACTOR>()` callee
+/// (`0` = full unroll). Returns 0 if it cannot be read, matching bare `#[unroll]`.
+fn extract_unroll_factor(func: &mir::Operand) -> u32 {
+    use rustc_public::ty::{RigidTy, TyConstKind, TyKind};
+    let mir::Operand::Constant(constant) = func else {
+        return 0;
+    };
+    let TyKind::RigidTy(RigidTy::FnDef(_, args)) = constant.const_.ty().kind() else {
+        return 0;
+    };
+    if let Some(arg) = args.0.first()
+        && let rustc_public::ty::GenericArgKind::Const(c) = arg
+    {
+        return match c.kind() {
+            TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|v| v as u32),
+            _ => c.eval_target_usize().ok().map(|v| v as u32),
+        }
+        .unwrap_or(0);
+    }
+    0
+}
+
 fn extract_func_info(func: &mir::Operand) -> (Option<String>, Option<String>, Option<String>) {
     match func {
         mir::Operand::Constant(const_op) => match const_op.const_.kind() {
@@ -2718,47 +2770,6 @@ fn try_dispatch_intrinsic(
                 loc,
             )))
         }
-        "cuda_device::thread::__unroll_config" => {
-            // Compile-time loop-unroll marker from #[unroll] / #[unroll(N)].
-            // The unroll factor is extracted in body.rs during MIR scanning and
-            // attached to the function op as a `mir.unroll` attribute. This call
-            // generates no runtime code - just emit a goto to the target block.
-            //
-            // We need a prev_op to insert after. If none exists, create a dummy
-            // constant (mirrors the launch_bounds / cluster marker arms).
-            let actual_prev_op = match prev_op {
-                Some(op) => op,
-                None => {
-                    let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-                    let dummy = Operation::new(
-                        ctx,
-                        MirConstantOp::get_concrete_op_info(),
-                        vec![bool_ty.into()],
-                        vec![],
-                        vec![],
-                        0,
-                    );
-                    dummy.deref_mut(ctx).set_loc(loc.clone());
-                    let const_op = MirConstantOp::new(dummy);
-                    use pliron::builtin::attributes::IntegerAttr;
-                    use pliron::utils::apint::APInt;
-                    use std::num::NonZeroUsize;
-                    let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
-                    const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
-                    let dummy = const_op.get_operation();
-                    dummy.insert_at_front(block_ptr, ctx);
-                    dummy
-                }
-            };
-            Ok(Some(helpers::emit_goto(
-                ctx,
-                target.expect("__unroll_config must have target"),
-                actual_prev_op,
-                block_map,
-                loc,
-            )))
-        }
-
         // =================================================================
         // Warp Primitives (from intrinsics::warp)
         // =================================================================

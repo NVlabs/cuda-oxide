@@ -1458,10 +1458,24 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 #[proc_macro_attribute]
 pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as KernelArgs);
-    let input = parse_macro_input!(item as ItemFn);
+    let mut input = parse_macro_input!(item as ItemFn);
 
     if let Some(err) = reject_reserved_name(&input.sig.ident) {
         return err;
+    }
+
+    // Consume any `#[unroll]` / `#[unroll(N)]` attributes written directly on
+    // loops inside the kernel body. We strip the attribute from the loop
+    // expression (so rustc never sees an expression attribute, keeping us off
+    // nightly `stmt_expr_attributes`) and inject the same
+    // `__unroll_config::<FACTOR>()` marker that the standalone `#[unroll]`
+    // function attribute uses, but into the loop body instead of the function
+    // body. If the visitor hits a malformed attribute it records the error so
+    // we can surface it as a compile error below.
+    let mut unroll_visitor = LoopUnrollAttrVisitor::default();
+    unroll_visitor.visit_block_mut(&mut input.block);
+    if let Some(err) = unroll_visitor.error {
+        return err.to_compile_error().into();
     }
 
     // Check if function has type parameters
@@ -2429,60 +2443,6 @@ impl Parse for LaunchBoundsArgs {
     }
 }
 
-/// Requests loop unrolling for every loop in the annotated function.
-///
-/// `#[unroll]` requests a *full* unroll (factor `0`): every loop with a
-/// compile-time-constant trip count is unrolled completely, so the induction
-/// variable becomes a literal in each copy (this is what lets index arithmetic
-/// such as `i & 3` fold to a constant). `#[unroll(N)]` requests unrolling every
-/// loop in the function by a factor of `N`, leaving a remainder loop when `N`
-/// does not divide the trip count.
-///
-/// # Usage
-///
-/// ```ignore
-/// use cuda_device::{kernel, unroll, DisjointSlice};
-///
-/// #[kernel]
-/// #[unroll]                      // full unroll
-/// pub fn full(output: DisjointSlice<f32>) { ... }
-///
-/// #[kernel]
-/// #[unroll(4)]                   // unroll every loop by a factor of 4
-/// pub fn by_four(output: DisjointSlice<f32>) { ... }
-/// ```
-///
-/// # Requirements
-///
-/// - The `#[unroll]` attribute must come AFTER `#[kernel]` (or `#[device]`)
-///
-/// # How It Works
-///
-/// The macro injects `cuda_device::thread::__unroll_config::<FACTOR>()` at the
-/// start of the function body. The MIR importer detects this marker, attaches a
-/// `mir.unroll(FACTOR)` attribute to the function op, and drops the marker call.
-/// The loop-unroll pass reads that attribute.
-#[proc_macro_attribute]
-pub fn unroll(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args: UnrollArgs = parse_macro_input!(attr as UnrollArgs);
-    let mut input = parse_macro_input!(item as ItemFn);
-
-    let factor = args.factor;
-
-    // Inject the unroll config marker at the start of the function body.
-    let marker_call: syn::Stmt = syn::parse_quote! {
-        cuda_device::thread::__unroll_config::<#factor>();
-    };
-
-    // Prepend the marker to the function body.
-    input.block.stmts.insert(0, marker_call);
-
-    quote! {
-        #input
-    }
-    .into()
-}
-
 /// Arguments for the `#[unroll]` / `#[unroll(N)]` attribute.
 ///
 /// Bare `#[unroll]` parses to factor `0` (full unroll); `#[unroll(N)]` parses to
@@ -2511,6 +2471,112 @@ impl Parse for UnrollArgs {
                 "unroll expects no argument (full unroll) or one factor: #[unroll] or #[unroll(N)]",
             )),
         }
+    }
+}
+
+/// `VisitMut` pass that consumes `#[unroll]` / `#[unroll(N)]` attributes written
+/// directly on loops inside a `#[kernel]` (or `#[device]`) function body.
+///
+/// This mirrors how CubeCL's `#[cube]` macro handles per-loop `#[unroll]`: the
+/// enclosing function macro owns the whole body AST, so it can strip the inner
+/// attribute and lower it into a marker BEFORE rustc ever sees it. That keeps us
+/// off the nightly `stmt_expr_attributes` feature (rustc otherwise rejects
+/// attributes on expressions).
+///
+/// For every `for` / `while` / `loop` expression carrying an outer `#[unroll]`
+/// attribute, the visitor:
+///
+/// 1. removes the `unroll` attribute from the loop expr's `attrs`, and
+/// 2. inserts `cuda_device::thread::__unroll_config::<FACTOR>();` as the FIRST
+///    statement of that loop's body block.
+///
+/// `FACTOR` follows [`UnrollArgs`]: bare `#[unroll]` => `0` (full unroll),
+/// `#[unroll(N)]` => `N`. The marker is byte-for-byte the same form the
+/// standalone `#[unroll]` function attribute injects, so the MIR importer's
+/// existing detection path handles both uniformly. (The importer reads the
+/// marker off whichever block it lands in; the per-loop placement lets the
+/// unroll request be scoped to a single loop instead of the whole function.)
+///
+/// The visitor recurses through nested blocks/loops/ifs via the default
+/// `visit_mut` traversal, so an annotated loop anywhere in the function is
+/// handled. Loops without an `#[unroll]` attribute are left untouched, so a
+/// kernel with no per-loop annotations expands byte-identically to before.
+#[derive(Default)]
+struct LoopUnrollAttrVisitor {
+    /// First parse error encountered (e.g. a malformed `#[unroll(...)]`). The
+    /// caller surfaces this as a compile error.
+    error: Option<syn::Error>,
+}
+
+impl LoopUnrollAttrVisitor {
+    /// If `attrs` contains an outer `#[unroll]` / `#[unroll(N)]`, remove it and
+    /// return the parsed factor. Returns `None` when no `unroll` attribute is
+    /// present (leaving `attrs` untouched). Records a parse error and returns
+    /// `None` if the attribute is malformed.
+    fn take_unroll_factor(&mut self, attrs: &mut Vec<syn::Attribute>) -> Option<u32> {
+        let idx = attrs.iter().position(|attr| attr.path().is_ident("unroll"))?;
+        let attr = attrs.remove(idx);
+
+        // `#[unroll]` (bare) is `Meta::Path`; `#[unroll(N)]` is `Meta::List`.
+        let factor = match &attr.meta {
+            syn::Meta::Path(_) => 0u32,
+            syn::Meta::List(list) => match list.parse_args::<UnrollArgs>() {
+                Ok(parsed) => parsed.factor,
+                Err(err) => {
+                    if self.error.is_none() {
+                        self.error = Some(err);
+                    }
+                    return None;
+                }
+            },
+            syn::Meta::NameValue(_) => {
+                if self.error.is_none() {
+                    self.error = Some(syn::Error::new_spanned(
+                        &attr,
+                        "unroll expects no argument (full unroll) or one factor: #[unroll] or #[unroll(N)]",
+                    ));
+                }
+                return None;
+            }
+        };
+        Some(factor)
+    }
+
+    /// Build the `__unroll_config::<FACTOR>()` marker statement.
+    fn marker_stmt(factor: u32) -> Stmt {
+        parse_quote! {
+            cuda_device::thread::__unroll_config::<#factor>();
+        }
+    }
+}
+
+impl VisitMut for LoopUnrollAttrVisitor {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        // Pull the unroll factor (if any) off this loop expr and inject the
+        // marker into its body. We act only on loop expressions; everything
+        // else falls through to the default recursion below.
+        match expr {
+            Expr::ForLoop(for_loop) => {
+                if let Some(factor) = self.take_unroll_factor(&mut for_loop.attrs) {
+                    for_loop.body.stmts.insert(0, Self::marker_stmt(factor));
+                }
+            }
+            Expr::While(while_loop) => {
+                if let Some(factor) = self.take_unroll_factor(&mut while_loop.attrs) {
+                    while_loop.body.stmts.insert(0, Self::marker_stmt(factor));
+                }
+            }
+            Expr::Loop(loop_expr) => {
+                if let Some(factor) = self.take_unroll_factor(&mut loop_expr.attrs) {
+                    loop_expr.body.stmts.insert(0, Self::marker_stmt(factor));
+                }
+            }
+            _ => {}
+        }
+
+        // Recurse into nested expressions/blocks so annotated loops nested
+        // inside other loops, `if`s, or blocks are also handled.
+        visit_mut::visit_expr_mut(self, expr);
     }
 }
 
@@ -4002,6 +4068,134 @@ mod tests {
                 .to_string()
                 .contains("cooperative_launch takes no arguments"),
             "unexpected error message: {error}"
+        );
+    }
+
+    /// Runs the per-loop `#[unroll]` visitor over `func`'s body and returns the
+    /// rewritten function as a whitespace-free string, panicking on any
+    /// recorded parse error.
+    fn run_loop_unroll_visitor(mut func: ItemFn) -> String {
+        let mut visitor = LoopUnrollAttrVisitor::default();
+        visitor.visit_block_mut(&mut func.block);
+        assert!(
+            visitor.error.is_none(),
+            "unexpected unroll-attr error: {:?}",
+            visitor.error.map(|e| e.to_string())
+        );
+        quote!(#func).to_string().replace(' ', "")
+    }
+
+    #[test]
+    fn bare_unroll_on_while_injects_factor_zero_marker() {
+        let func: ItemFn = parse_quote! {
+            fn k() {
+                let mut i = 0u32;
+                #[unroll]
+                while i < 4 { i += 1; }
+            }
+        };
+        let out = run_loop_unroll_visitor(func);
+        // Bare #[unroll] => full unroll (factor 0), and it must match the
+        // standalone macro's __unroll_config::<N>() form.
+        assert!(
+            out.contains("cuda_device::thread::__unroll_config::<0u32>()"),
+            "expected factor-0 marker:\n{out}"
+        );
+        // The expression attribute must be stripped so rustc never sees it.
+        assert!(
+            !out.contains("#[unroll]"),
+            "the #[unroll] attribute should be removed:\n{out}"
+        );
+    }
+
+    #[test]
+    fn unroll_n_on_for_loop_injects_factor_n_marker() {
+        let func: ItemFn = parse_quote! {
+            fn k() {
+                #[unroll(4)]
+                for i in 0..8 { let _ = i; }
+            }
+        };
+        let out = run_loop_unroll_visitor(func);
+        assert!(
+            out.contains("cuda_device::thread::__unroll_config::<4u32>()"),
+            "expected factor-4 marker:\n{out}"
+        );
+        assert!(!out.contains("#[unroll"), "attribute should be removed:\n{out}");
+    }
+
+    #[test]
+    fn unroll_on_bare_loop_injects_marker() {
+        let func: ItemFn = parse_quote! {
+            fn k() {
+                #[unroll(2)]
+                loop { break; }
+            }
+        };
+        let out = run_loop_unroll_visitor(func);
+        assert!(
+            out.contains("cuda_device::thread::__unroll_config::<2u32>()"),
+            "expected factor-2 marker on `loop`:\n{out}"
+        );
+    }
+
+    #[test]
+    fn nested_annotated_loop_is_handled() {
+        let func: ItemFn = parse_quote! {
+            fn k() {
+                for outer in 0..2 {
+                    if outer == 0 {
+                        #[unroll(3)]
+                        for inner in 0..4 { let _ = inner; }
+                    }
+                }
+            }
+        };
+        let out = run_loop_unroll_visitor(func);
+        assert!(
+            out.contains("cuda_device::thread::__unroll_config::<3u32>()"),
+            "expected marker injected into nested loop:\n{out}"
+        );
+    }
+
+    #[test]
+    fn loop_without_unroll_attr_is_unchanged() {
+        // A function whose loops carry no #[unroll] must be byte-identical
+        // before and after the visitor runs (no marker, no edits).
+        let src: ItemFn = parse_quote! {
+            fn k() {
+                let mut i = 0u32;
+                while i < 4 { i += 1; }
+                for j in 0..2 { let _ = j; }
+            }
+        };
+        let before = quote!(#src).to_string();
+        let after = run_loop_unroll_visitor(src);
+        assert_eq!(
+            before.replace(' ', ""),
+            after,
+            "loops without #[unroll] must not be modified"
+        );
+        assert!(
+            !after.contains("__unroll_config"),
+            "no marker should be injected without #[unroll]:\n{after}"
+        );
+    }
+
+    #[test]
+    fn malformed_unroll_attr_records_error() {
+        // `#[unroll(1, 2)]` has too many args; the visitor must record an error.
+        let mut func: ItemFn = parse_quote! {
+            fn k() {
+                #[unroll(1, 2)]
+                for i in 0..4 { let _ = i; }
+            }
+        };
+        let mut visitor = LoopUnrollAttrVisitor::default();
+        visitor.visit_block_mut(&mut func.block);
+        assert!(
+            visitor.error.is_some(),
+            "malformed #[unroll(1, 2)] should record a parse error"
         );
     }
 }

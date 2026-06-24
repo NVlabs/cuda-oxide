@@ -27,20 +27,17 @@
 //! each loop runs), and on pliron's IR cloning (`pliron::irbuild::cloning`) to
 //! duplicate the body.
 
-use dialect_mir::attributes::UnrollAttr;
 use dialect_mir::ops::arithmetic::{MirAddOp, MirBitAndOp, MirSubOp};
 use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
 use dialect_mir::ops::constants::MirConstantOp;
-use dialect_mir::ops::control_flow::{MirCondBranchOp, MirGotoOp};
+use dialect_mir::ops::control_flow::{MirCondBranchOp, MirGotoOp, MirUnrollHintOp};
 use dialect_mir::ops::function::MirFuncOp;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
 use pliron::builtin::types::IntegerType;
-use pliron::common_traits::Named;
 use pliron::context::{Context, Ptr};
 use pliron::graph::dominance::DomInfo;
-use pliron::identifier::Identifier;
 use pliron::irbuild::cloning::{IrMapping, clone_operation};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
@@ -48,86 +45,111 @@ use pliron::operation::Operation;
 use pliron::opts::dce::dce;
 use pliron::opts::simplify_cfg::simplify_cfg;
 use pliron::pass_manager::AnalysisManager;
-use pliron::printable::Printable;
 use pliron::r#type::{TypeHandle, Typed, TypedHandle};
 use pliron::region::Region;
 use pliron::result::Result;
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::num::NonZero;
 
 use crate::analyses::induction::{self, ArgKind, CmpPred};
 use crate::analyses::loop_info::LoopInfo;
 
-/// The name `#[unroll]` uses to store its `UnrollAttr` in a function's
-/// attribute dictionary; we look it up by this key.
-const UNROLL_ATTR_KEY: &str = "unroll";
-
 fn verbose() -> bool {
     std::env::var("CUDA_OXIDE_VERBOSE").is_ok()
 }
 
-/// The pass entry point. Unrolls the loops of every function in `module` that
-/// carries a `#[unroll]` annotation, and leaves all other functions untouched.
+/// The pass entry point. Unrolls each loop that carries an in-body
+/// `mir.unroll_hint` (planted by `#[unroll]` / `#[unroll(N)]` written on that
+/// loop), and leaves every other loop and function untouched.
 ///
-/// For each annotated function it finds the loops, analyses each loop's counter,
-/// then full- or partial-unrolls per the requested factor. Afterwards it runs
-/// two cleanup passes so the leftover dead code and now-unreachable original
-/// loop blocks are removed.
+/// Per function: find the loops (`LoopInfo`), map each hint to the loop whose
+/// body it sits in, remove the hint, analyse that loop's counter, and full- or
+/// partial-unroll by the hint's factor. Afterwards two stock pliron passes clean
+/// up: `dce` drops what unrolling makes unused (the `& mask` ops we folded to
+/// constants, full unroll's now-dead counter increments), and `simplify_cfg`
+/// deletes the original loop blocks once they are unreachable.
 pub fn unroll_annotated_loops(
     module: Ptr<Operation>,
     ctx: &mut Context,
-    analyses: &mut AnalysisManager,
+    // The caller threads in the manager mem2reg used. We deliberately do not use
+    // it: the CFG-normalization step below changes block structure, which would
+    // stale that manager's cached dominator trees. We build a fresh manager
+    // afterwards instead. (Kept in the signature to match pliron's pass shape.)
+    _analyses: &mut AnalysisManager,
 ) -> Result<()> {
-    let key: Identifier = UNROLL_ATTR_KEY.try_into().expect("valid identifier");
-    let annotated = collect_annotated_functions(module, ctx, &key);
-    if annotated.is_empty() {
+    // Nothing annotated => leave every function byte-for-byte untouched.
+    let has_hints = collect_functions(module, ctx)
+        .iter()
+        .any(|&f| !collect_hints(ctx, f.deref(ctx).get_region(0)).is_empty());
+    if !has_hints {
         return Ok(());
     }
 
+    // Normalize the CFG first. `#[unroll]` is carried into the IR as a marker
+    // call planted at the top of the loop body; Rust MIR turns that call into
+    // its own basic block, so a plain counted loop arrives here looking like
+    // three blocks (header, a one-line marker block, body) instead of the two
+    // the transform handles. `simplify_cfg` merges that marker block back into
+    // the body (a block whose only successor has it as the only predecessor),
+    // restoring the simple shape. The `mir.unroll_hint` op rides along into the
+    // merged block; we remove it below, before cloning the body.
+    simplify_cfg(module, ctx)?;
+
+    // `simplify_cfg` rewrote the CFG, so dominator info cached by an earlier
+    // pass is no longer valid. Compute the loop analyses from a clean manager.
+    let mut analyses = AnalysisManager::default();
+
     let mut changed = false;
-    for (func_op, factor) in annotated {
+    for func_op in collect_functions(module, ctx) {
         let region = func_op.deref(ctx).get_region(0);
+
+        // What loops did the author annotate? (op, containing block, factor)
+        let hints = collect_hints(ctx, region);
+        if hints.is_empty() {
+            continue;
+        }
+
         let info = {
             let mut dom_info = analyses.get_analysis_mut::<DomInfo>(module, ctx)?;
             let dom = dom_info.get_dom_tree(ctx, region);
             LoopInfo::compute(ctx, region, dom)
         };
 
-        // For each loop, grab its preheader (the entry block) and run the
-        // counter analysis once, up front, before we start changing anything.
-        let mut targets = Vec::new();
-        for id in 0..info.loops().len() {
-            if let Some(ph) = info.preheader(ctx, region, id) {
-                let rec = induction::analyze(ctx, &info, id, ph);
-                targets.push((id, ph, rec));
+        // Map each hint to the loop whose body it sits in, then remove the hint
+        // so it is not copied when we clone the body and never reaches lowering.
+        let mut loop_factor: FxHashMap<usize, u32> = FxHashMap::default();
+        for (hint_op, block, factor) in &hints {
+            if let Some(loop_id) = info.innermost_loop(*block) {
+                loop_factor.entry(loop_id).or_insert(*factor);
             }
+            hint_op.unlink(ctx);
         }
 
-        if verbose() {
-            log_loops(ctx, region, &info, func_op, factor, &targets);
-        }
-
-        for (id, ph, rec) in &targets {
+        for (loop_id, factor) in loop_factor {
+            let Some(ph) = info.preheader(ctx, region, loop_id) else {
+                continue;
+            };
+            let rec = induction::analyze(ctx, &info, loop_id, ph);
+            if verbose() {
+                eprintln!(
+                    "loop-unroll: loop#{loop_id} factor={factor} trip={:?} primary_iv={:?}",
+                    rec.trip_count, rec.primary_iv,
+                );
+            }
             let unrolled = if factor == 0 {
                 // Full unroll: only works when the trip count is a constant.
-                full_unroll(ctx, &info, region, *id, *ph, rec)?
+                full_unroll(ctx, &info, region, loop_id, ph, &rec)?
             } else {
-                // Partial unroll by `factor`, keeping a small remainder loop for
-                // the iterations that don't divide evenly by `factor`.
-                partial_unroll(ctx, &info, region, *id, *ph, rec, factor)?
+                // Partial unroll by `factor`, with a remainder loop for the tail.
+                partial_unroll(ctx, &info, region, loop_id, ph, &rec, factor)?
             };
             changed |= unrolled;
         }
     }
 
     if changed {
-        // Clean up after ourselves with two stock pliron passes. Dead-code
-        // elimination (dce) drops the leftovers unrolling makes unused: the
-        // `& mask` ops we replaced with constants, and full unroll's now-unused
-        // counter increments. simplify_cfg then deletes the original loop blocks,
-        // which are no longer reachable once the loop is gone.
         dce(module, ctx)?;
         simplify_cfg(module, ctx)?;
     }
@@ -644,64 +666,32 @@ fn append_cmp(
     op.deref(ctx).get_result(0)
 }
 
-/// Scan the module for functions marked with `#[unroll]` (those carrying an
-/// `UnrollAttr`), returning each one paired with its requested factor (0 means
-/// full unroll).
-fn collect_annotated_functions(
-    module: Ptr<Operation>,
-    ctx: &Context,
-    key: &Identifier,
-) -> Vec<(Ptr<Operation>, u32)> {
+/// All function ops in the module (each `mir.func`).
+fn collect_functions(module: Ptr<Operation>, ctx: &Context) -> Vec<Ptr<Operation>> {
     let mut out = Vec::new();
     let module_region = module.deref(ctx).get_region(0);
     let blocks: Vec<Ptr<BasicBlock>> = module_region.deref(ctx).iter(ctx).collect();
     for block in blocks {
-        let ops: Vec<Ptr<Operation>> = block.deref(ctx).iter(ctx).collect();
-        for op in ops {
-            if Operation::get_op::<MirFuncOp>(op, ctx).is_none() {
-                continue;
-            }
-            if let Some(factor) = op.deref(ctx).attributes.get::<UnrollAttr>(key).map(|a| a.0) {
-                out.push((op, factor));
+        for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+            if Operation::get_op::<MirFuncOp>(op, ctx).is_some() {
+                out.push(op);
             }
         }
     }
     out
 }
 
-/// Print a human-readable summary of the loops found and what the counter
-/// analysis made of them. Only runs when `CUDA_OXIDE_VERBOSE` is set; purely a
-/// debugging aid, it changes nothing.
-fn log_loops(
-    ctx: &Context,
-    region: Ptr<Region>,
-    info: &LoopInfo,
-    func_op: Ptr<Operation>,
-    factor: u32,
-    targets: &[(usize, Ptr<BasicBlock>, induction::LoopRecurrences)],
-) {
-    let kind = if factor == 0 {
-        "full".to_string()
-    } else {
-        format!("by {factor}")
-    };
-    eprintln!(
-        "\n=== loop-unroll: {} loop(s) in a #[unroll({kind})] function, op {} ===",
-        info.loops().len(),
-        Operation::get_opid(func_op, ctx).disp(ctx),
-    );
-    for (id, _ph, rec) in targets {
-        let l = &info.loops()[*id];
-        eprintln!(
-            "  loop#{id}: header={} latch={:?} exit={:?} trip_count={:?} primary_iv={:?}",
-            l.header.unique_name(ctx),
-            l.latches.iter().map(|b| b.unique_name(ctx)).collect::<Vec<_>>(),
-            info.exit_blocks(ctx, region, *id)
-                .iter()
-                .map(|b| b.unique_name(ctx))
-                .collect::<Vec<_>>(),
-            rec.trip_count,
-            rec.primary_iv,
-        );
+/// Find the `mir.unroll_hint` ops in `region`, each with the block it sits in
+/// (used to locate the enclosing loop) and its requested factor (0 = full).
+fn collect_hints(ctx: &Context, region: Ptr<Region>) -> Vec<(Ptr<Operation>, Ptr<BasicBlock>, u32)> {
+    let mut out = Vec::new();
+    let blocks: Vec<Ptr<BasicBlock>> = region.deref(ctx).iter(ctx).collect();
+    for block in blocks {
+        for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+            if let Some(hint) = Operation::get_op::<MirUnrollHintOp>(op, ctx) {
+                out.push((op, block, hint.factor(ctx)));
+            }
+        }
     }
+    out
 }

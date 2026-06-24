@@ -476,6 +476,18 @@ fn is_ptx_asm_marker_path(fn_path: &str) -> bool {
         || has_arity_suffix(fn_path, "cuda_device::ptx::__ptx_asm_void_")
 }
 
+/// Returns true for the hidden `__unroll_config::<FACTOR>` marker function.
+///
+/// `#[unroll]` / `#[unroll(N)]` on a loop makes the `#[kernel]` macro plant a
+/// call to this marker at the top of the loop body; the MIR importer rewrites
+/// that call to a `mir.unroll_hint` op (consumed by the loop-unroll pass) and
+/// never emits a real call. So the marker's (empty) body must not be collected,
+/// or it would show up as a dead `.func` in the generated PTX. Matches both the
+/// re-exported path (`cuda_device::__unroll_config`) and the full path.
+fn is_unroll_marker_path(fn_path: &str) -> bool {
+    fn_path.contains("::__unroll_config")
+}
+
 /// Marker substring of the panic message used by the public
 /// `cuda_device::thread::index_*` stubs (see `cuda-device/src/thread.rs`).
 ///
@@ -1238,6 +1250,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         if is_ptx_asm_marker_path(&raw_name) {
             if self.verbose {
                 eprintln!("[collector] Skipping inline PTX marker: {raw_name}");
+            }
+            return;
+        }
+
+        if is_unroll_marker_path(&raw_name) {
+            if self.verbose {
+                eprintln!("[collector] Skipping unroll marker: {raw_name}");
             }
             return;
         }

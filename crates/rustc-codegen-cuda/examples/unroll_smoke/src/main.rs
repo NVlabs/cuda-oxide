@@ -5,6 +5,10 @@
 
 //! Smoke test for the `#[unroll]` / `#[unroll(N)]` loop-unroll transform.
 //!
+//! The attribute goes directly on the loop it should unroll (the `#[kernel]`
+//! macro reads it and tags that loop): a function can unroll one loop and leave
+//! its neighbours alone.
+//!
 //! `full_unroll` has a compile-time-constant trip count, so `#[unroll]` should
 //! unroll it completely and the per-iteration `i & 3` should fold to literals.
 //! `partial_unroll` has a runtime trip count, so `#[unroll(4)]` unrolls the body
@@ -14,7 +18,7 @@
 //! Run: cargo oxide run unroll_smoke
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{DisjointSlice, kernel, thread, unroll};
+use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
 #[cuda_module]
@@ -25,13 +29,13 @@ mod kernels {
     /// index and adds `i & 3` for `i` in `0..8` (= 0+1+2+3+0+1+2+3 = 12), so
     /// `out[tid] == tid + 12`.
     #[kernel]
-    #[unroll]
     pub fn full_unroll(mut out: DisjointSlice<u32>) {
         let tid = thread::index_1d();
         let base = tid.get() as u32;
         if let Some(out_elem) = out.get_mut(tid) {
             let mut acc: u32 = base;
             let mut i: u32 = 0;
+            #[unroll]
             while i < 8 {
                 acc = acc.wrapping_add(i & 3);
                 i += 1;
@@ -43,12 +47,12 @@ mod kernels {
     /// Partial unroll (by 4) of a runtime-trip-count loop: `out[tid]` is the
     /// sum `0 + 1 + ... + (n-1) == n*(n-1)/2`.
     #[kernel]
-    #[unroll(4)]
     pub fn partial_unroll(mut out: DisjointSlice<u32>, n: u32) {
         let tid = thread::index_1d();
         if let Some(out_elem) = out.get_mut(tid) {
             let mut acc: u32 = 0;
             let mut i: u32 = 0;
+            #[unroll(4)]
             while i < n {
                 acc = acc.wrapping_add(i);
                 i += 1;
@@ -62,12 +66,12 @@ mod kernels {
     /// multiple of 4, so `(i+j) & 3` should fold to the constants `0,1,2,3`.
     /// `out[tid]` is the sum of `i & 3` for `i` in `0..n`.
     #[kernel]
-    #[unroll(4)]
     pub fn partial_fold(mut out: DisjointSlice<u32>, n: u32) {
         let tid = thread::index_1d();
         if let Some(out_elem) = out.get_mut(tid) {
             let mut acc: u32 = 0;
             let mut i: u32 = 0;
+            #[unroll(4)]
             while i < n {
                 acc = acc.wrapping_add(i & 3);
                 i += 1;
