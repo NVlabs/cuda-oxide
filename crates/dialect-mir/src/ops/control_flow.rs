@@ -29,6 +29,7 @@ use pliron::{
 use pliron_derive::pliron_op;
 
 use super::function::MirFuncOp;
+use crate::attributes::UnrollAttr;
 
 // ============================================================================
 // MirReturnOp
@@ -477,6 +478,48 @@ impl Verify for MirUnreachableOp {
     }
 }
 
+/// A per-loop unroll request, planted inside a loop body by the `#[unroll]`
+/// frontend and read by the loop-unroll pass.
+///
+/// The author writes `#[unroll]` / `#[unroll(N)]` on a loop; the `#[kernel]`
+/// macro turns that into one of these ops at the start of the loop body. Because
+/// the op physically sits inside the loop, the unroll pass can map it back to the
+/// exact loop it belongs to (no fragile source-location matching). The pass reads
+/// the factor, unrolls that loop, and deletes the hint, so it never reaches
+/// lowering. It has no operands or results: it carries only the `factor`
+/// attribute (`0` = full unroll, `n` = unroll by `n`).
+#[pliron_op(
+    name = "mir.unroll_hint",
+    format,
+    interfaces = [
+        pliron::builtin::op_interfaces::NOpdsInterface<0>,
+        pliron::builtin::op_interfaces::NResultsInterface<0>,
+    ],
+    attributes = (factor: UnrollAttr)
+)]
+pub struct MirUnrollHintOp;
+
+impl MirUnrollHintOp {
+    /// Create a hint requesting unroll `factor` (`0` = full).
+    pub fn new(ctx: &mut Context, factor: u32) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
+        let hint = MirUnrollHintOp { op };
+        hint.set_attr_factor(ctx, UnrollAttr(factor));
+        hint
+    }
+
+    /// The requested unroll factor (`0` = full unroll).
+    pub fn factor(&self, ctx: &Context) -> u32 {
+        self.get_attr_factor(ctx).map(|a| a.0).unwrap_or(0)
+    }
+}
+
+impl Verify for MirUnrollHintOp {
+    fn verify(&self, _ctx: &Context) -> pliron::result::Result<()> {
+        Ok(())
+    }
+}
+
 /// Register control flow operations into the given context.
 pub fn register(ctx: &mut Context) {
     MirReturnOp::register(ctx);
@@ -484,4 +527,5 @@ pub fn register(ctx: &mut Context) {
     MirCondBranchOp::register(ctx);
     MirAssertOp::register(ctx);
     MirUnreachableOp::register(ctx);
+    MirUnrollHintOp::register(ctx);
 }
