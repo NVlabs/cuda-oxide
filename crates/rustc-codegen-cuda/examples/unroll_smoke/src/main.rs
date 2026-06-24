@@ -79,6 +79,75 @@ mod kernels {
             *out_elem = acc;
         }
     }
+
+    /// Full unroll of a loop whose body has **internal control flow** (an
+    /// `if`/`else`), so the body is several basic blocks, not one. This is the
+    /// case the earlier single-block unroller could not handle. For `i` in
+    /// `0..8`: even `i` adds `i` (0+2+4+6 = 12), odd `i` adds 10 (4 * 10 = 40),
+    /// so `out[tid] == tid + 52`.
+    #[kernel]
+    pub fn full_mb(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let base = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = base;
+            let mut i: u32 = 0;
+            #[unroll]
+            while i < 8 {
+                if i & 1 == 0 {
+                    acc = acc.wrapping_add(i);
+                } else {
+                    acc = acc.wrapping_add(10);
+                }
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Partial unroll (by 4) of a runtime loop whose body has internal control
+    /// flow. For `i` in `0..n`: even `i` adds `i`, odd `i` adds 100. With n=10:
+    /// even (0+2+4+6+8 = 20) + odd (5 * 100 = 500) = 520.
+    #[kernel]
+    pub fn partial_mb(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut i: u32 = 0;
+            #[unroll(4)]
+            while i < n {
+                if i & 1 == 0 {
+                    acc = acc.wrapping_add(i);
+                } else {
+                    acc = acc.wrapping_add(100);
+                }
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Regression guard: the loop bound `hi` is **loop-carried** (it changes each
+    /// iteration), so partial unroll's "does a group of 4 still fit" guard would
+    /// be unsound. The pass must refuse this loop (a loud warning) and leave it as
+    /// an ordinary loop, NOT miscompile or crash. For n=10 it runs 5 iterations
+    /// (i=0..4 before i meets the shrinking hi), so `out[tid] == 0+1+2+3+4 = 10`.
+    #[kernel]
+    pub fn carried_bound(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut i: u32 = 0;
+            let mut hi: u32 = n;
+            #[unroll(4)]
+            while i < hi {
+                acc = acc.wrapping_add(i);
+                i += 1;
+                hi = hi.wrapping_sub(1);
+            }
+            *out_elem = acc;
+        }
+    }
 }
 
 fn main() {
@@ -120,11 +189,40 @@ fn main() {
         .expect("launch partial_fold");
     let got_fold = d_fold.to_host_vec(&stream).unwrap();
 
+    let mut d_fullmb = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .full_mb(stream.as_ref(), cfg, &mut d_fullmb)
+        .expect("launch full_mb");
+    let got_fullmb = d_fullmb.to_host_vec(&stream).unwrap();
+
+    let mut d_partmb = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .partial_mb(stream.as_ref(), cfg, &mut d_partmb, trip)
+        .expect("launch partial_mb");
+    let got_partmb = d_partmb.to_host_vec(&stream).unwrap();
+
+    let mut d_carried = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .carried_bound(stream.as_ref(), cfg, &mut d_carried, trip)
+        .expect("launch carried_bound");
+    let got_carried = d_carried.to_host_vec(&stream).unwrap();
+
     let mut failures = 0usize;
     let want_part = trip * (trip - 1) / 2;
     let want_fold: u32 = (0..trip).map(|i| i & 3).sum();
+    let want_partmb: u32 = (0..trip).map(|i| if i & 1 == 0 { i } else { 100 }).sum();
+    let want_carried: u32 = {
+        let (mut a, mut i, mut hi) = (0u32, 0u32, trip);
+        while i < hi {
+            a = a.wrapping_add(i);
+            i += 1;
+            hi = hi.wrapping_sub(1);
+        }
+        a
+    };
     for tid in 0..N {
         let want_full = tid as u32 + 12;
+        let want_fullmb = tid as u32 + 52;
         if got_full[tid] != want_full {
             println!("FAIL tid={tid}: full_unroll={} expected={want_full}", got_full[tid]);
             failures += 1;
@@ -135,6 +233,18 @@ fn main() {
         }
         if got_fold[tid] != want_fold {
             println!("FAIL tid={tid}: partial_fold={} expected={want_fold}", got_fold[tid]);
+            failures += 1;
+        }
+        if got_fullmb[tid] != want_fullmb {
+            println!("FAIL tid={tid}: full_mb={} expected={want_fullmb}", got_fullmb[tid]);
+            failures += 1;
+        }
+        if got_partmb[tid] != want_partmb {
+            println!("FAIL tid={tid}: partial_mb={} expected={want_partmb}", got_partmb[tid]);
+            failures += 1;
+        }
+        if got_carried[tid] != want_carried {
+            println!("FAIL tid={tid}: carried_bound={} expected={want_carried}", got_carried[tid]);
             failures += 1;
         }
     }
