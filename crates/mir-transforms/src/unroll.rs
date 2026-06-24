@@ -12,7 +12,7 @@
 //! pliron's IR cloning (`pliron::irbuild::cloning`).
 
 use dialect_mir::attributes::UnrollAttr;
-use dialect_mir::ops::arithmetic::MirAddOp;
+use dialect_mir::ops::arithmetic::{MirAddOp, MirBitAndOp, MirSubOp};
 use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
 use dialect_mir::ops::constants::MirConstantOp;
 use dialect_mir::ops::control_flow::{MirCondBranchOp, MirGotoOp};
@@ -29,6 +29,7 @@ use pliron::irbuild::cloning::{IrMapping, clone_operation};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::opts::dce::dce;
 use pliron::opts::simplify_cfg::simplify_cfg;
 use pliron::pass_manager::AnalysisManager;
 use pliron::printable::Printable;
@@ -98,8 +99,10 @@ pub fn unroll_annotated_loops(
     }
 
     if changed {
-        // Delete the now-unreachable original loop blocks and fold any
-        // guards left constant. Reusable pliron CFG cleanup.
+        // Clean up: DCE removes the now-dead index `bitand`s (replaced by the
+        // congruence fold) and full-unroll's dead IV increments; simplify_cfg
+        // deletes the unreachable original loop blocks. Both reusable pliron passes.
+        dce(module, ctx)?;
         simplify_cfg(module, ctx)?;
     }
     Ok(())
@@ -310,7 +313,7 @@ fn partial_unroll(
         Some(i) => i,
         None => return Ok(false),
     };
-    let (_, iv_step) = match &rec.args[iv_idx] {
+    let (iv_init, iv_step) = match &rec.args[iv_idx] {
         ArgKind::BasicIv { init, step } => (*init, *step),
         _ => return Ok(false),
     };
@@ -398,6 +401,11 @@ fn partial_unroll(
     );
     back.insert_at_back(main_l, ctx);
 
+    // Step 5: the main-loop counter is a multiple of `factor*step` (it starts at
+    // `iv_init` and steps by `factor*step`), so `mh_iv ≡ iv_init (mod factor*step)`.
+    // Fold `(affine-in-IV) & mask` to the literal that congruence guarantees.
+    fold_iv_congruences(ctx, main_l, mh_iv, iv_init, n * iv_step);
+
     // --- main_h: guard "a full group of `factor` fits", else fall to remainder ---
     let last_off = append_const(ctx, iv_type, (n - 1) * iv_step, main_h);
     let last = append_add(ctx, iv_type, mh_iv, last_off, main_h);
@@ -421,6 +429,79 @@ fn partial_unroll(
     // Enter the main loop instead of the original header (same init operands).
     Operation::replace_successor(p_term, ctx, 0, main_h);
     Ok(true)
+}
+
+/// The constant offset of `v` relative to `iv`, when `v` is `iv` plus/minus a
+/// chain of integer constants (`v == iv + offset`). `None` otherwise.
+fn affine_offset(ctx: &Context, v: Value, iv: Value) -> Option<i128> {
+    if v == iv {
+        return Some(0);
+    }
+    let def = v.defining_op()?;
+    if Operation::get_op::<MirAddOp>(def, ctx).is_some() {
+        let a = def.deref(ctx).get_operand(0);
+        let b = def.deref(ctx).get_operand(1);
+        if let (Some(o), Some(c)) = (affine_offset(ctx, a, iv), induction::const_i128(ctx, b)) {
+            return Some(o + c);
+        }
+        if let (Some(o), Some(c)) = (affine_offset(ctx, b, iv), induction::const_i128(ctx, a)) {
+            return Some(o + c);
+        }
+    } else if Operation::get_op::<MirSubOp>(def, ctx).is_some() {
+        let a = def.deref(ctx).get_operand(0);
+        let b = def.deref(ctx).get_operand(1);
+        if let (Some(o), Some(c)) = (affine_offset(ctx, a, iv), induction::const_i128(ctx, b)) {
+            return Some(o - c);
+        }
+    }
+    None
+}
+
+/// Fold `mir.bitand(v, mask)` in `block` to a literal where `v` is affine in the
+/// main-loop IV `iv` (which satisfies `iv ≡ init (mod modulus)`) and `mask + 1`
+/// is a power of two dividing `modulus`. Then the masked low bits of `v` are
+/// fully determined by the congruence, so `(iv + j) & (N-1)` folds to `j`. This
+/// is the guaranteed partial-unroll index fold; the now-dead `bitand` is left
+/// for DCE.
+fn fold_iv_congruences(
+    ctx: &mut Context,
+    block: Ptr<BasicBlock>,
+    iv: Value,
+    init: i128,
+    modulus: i128,
+) {
+    if modulus <= 0 {
+        return;
+    }
+    let ops: Vec<Ptr<Operation>> = block.deref(ctx).iter(ctx).collect();
+    for op in ops {
+        if Operation::get_op::<MirBitAndOp>(op, ctx).is_none() {
+            continue;
+        }
+        let a = op.deref(ctx).get_operand(0);
+        let b = op.deref(ctx).get_operand(1);
+        // One operand affine in the IV, the other a constant mask.
+        let (offset, mask) =
+            if let (Some(o), Some(m)) = (affine_offset(ctx, a, iv), induction::const_i128(ctx, b)) {
+                (o, m)
+            } else if let (Some(o), Some(m)) =
+                (affine_offset(ctx, b, iv), induction::const_i128(ctx, a))
+            {
+                (o, m)
+            } else {
+                continue;
+            };
+        // `mask` must be a low-bit mask (2^k - 1) whose `mask+1` divides `modulus`.
+        let m1 = mask + 1;
+        if mask < 0 || m1 == 0 || (m1 & mask) != 0 || modulus % m1 != 0 {
+            continue;
+        }
+        let folded = (init + offset) & mask;
+        let result = op.deref(ctx).get_result(0);
+        let ty = result.get_type(ctx);
+        let lit = make_const(ctx, ty, folded, op);
+        result.replace_all_uses_with(ctx, &lit);
+    }
 }
 
 /// Append a `mir.constant` of integer type `ty` to the end of `block`.

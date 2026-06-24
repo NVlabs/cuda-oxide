@@ -97,7 +97,7 @@ pub struct LoopRecurrences {
 }
 
 /// Read the constant integer a value is defined by, if it is a `mir.constant`.
-fn const_i128(ctx: &Context, v: Value) -> Option<i128> {
+pub(crate) fn const_i128(ctx: &Context, v: Value) -> Option<i128> {
     let def = v.defining_op()?;
     let c = Operation::get_op::<MirConstantOp>(def, ctx)?;
     let attr = c.get_attr_value(ctx)?;

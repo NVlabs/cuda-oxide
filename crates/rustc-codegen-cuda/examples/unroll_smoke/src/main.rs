@@ -56,6 +56,25 @@ mod kernels {
             *out_elem = acc;
         }
     }
+
+    /// Partial unroll (by 4) of a runtime loop whose body uses `i & 3` (the
+    /// gemm "stage" pattern). After unrolling, the main loop's counter is a
+    /// multiple of 4, so `(i+j) & 3` should fold to the constants `0,1,2,3`.
+    /// `out[tid]` is the sum of `i & 3` for `i` in `0..n`.
+    #[kernel]
+    #[unroll(4)]
+    pub fn partial_fold(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut i: u32 = 0;
+            while i < n {
+                acc = acc.wrapping_add(i & 3);
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
 }
 
 fn main() {
@@ -91,8 +110,15 @@ fn main() {
         .expect("launch partial_unroll");
     let got_part = d_part.to_host_vec(&stream).unwrap();
 
+    let mut d_fold = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .partial_fold(stream.as_ref(), cfg, &mut d_fold, trip)
+        .expect("launch partial_fold");
+    let got_fold = d_fold.to_host_vec(&stream).unwrap();
+
     let mut failures = 0usize;
     let want_part = trip * (trip - 1) / 2;
+    let want_fold: u32 = (0..trip).map(|i| i & 3).sum();
     for tid in 0..N {
         let want_full = tid as u32 + 12;
         if got_full[tid] != want_full {
@@ -101,6 +127,10 @@ fn main() {
         }
         if got_part[tid] != want_part {
             println!("FAIL tid={tid}: partial_unroll={} expected={want_part}", got_part[tid]);
+            failures += 1;
+        }
+        if got_fold[tid] != want_fold {
+            println!("FAIL tid={tid}: partial_fold={} expected={want_fold}", got_fold[tid]);
             failures += 1;
         }
     }
