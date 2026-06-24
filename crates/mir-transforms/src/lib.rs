@@ -13,3 +13,6 @@
 
 pub mod analyses;
 pub mod unroll;
+
+#[cfg(test)]
+pub(crate) mod test_support;

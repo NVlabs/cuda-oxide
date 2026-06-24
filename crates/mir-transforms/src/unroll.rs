@@ -46,9 +46,9 @@ use pliron::operation::Operation;
 use pliron::opts::dce::dce;
 use pliron::opts::simplify_cfg::simplify_cfg;
 use pliron::pass_manager::AnalysisManager;
-use pliron::r#type::{TypeHandle, Typed, TypedHandle};
 use pliron::region::Region;
 use pliron::result::Result;
+use pliron::r#type::{TypeHandle, Typed, TypedHandle};
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -150,7 +150,9 @@ pub fn unroll_annotated_loops(
             };
             let Some(ph) = info.preheader(ctx, region, loop_id) else {
                 // The author asked for unrolling; never silently do nothing.
-                eprintln!("warning: {kind} requested but the loop was not unrolled: it has no single preheader (it is entered from more than one place)");
+                eprintln!(
+                    "warning: {kind} requested but the loop was not unrolled: it has no single preheader (it is entered from more than one place)"
+                );
                 continue;
             };
             let rec = induction::analyze(ctx, &info, loop_id, ph);
@@ -382,7 +384,9 @@ fn analyze_shape(
     }
 
     let nargs = header.deref(ctx).get_num_arguments();
-    let header_args: Vec<Value> = (0..nargs).map(|i| header.deref(ctx).get_argument(i)).collect();
+    let header_args: Vec<Value> = (0..nargs)
+        .map(|i| header.deref(ctx).get_argument(i))
+        .collect();
     let iv_type = header_args[iv_idx].get_type(ctx);
     let i1_type = header_term.deref(ctx).get_operand(0).get_type(ctx);
 
@@ -523,7 +527,12 @@ fn clone_one_copy(
 
 /// Repoint a single-successor branch (`goto`) at `new_succ`, replacing all its
 /// edge operands with `operands`.
-fn rewire_goto(ctx: &mut Context, term: Ptr<Operation>, new_succ: Ptr<BasicBlock>, operands: &[Value]) {
+fn rewire_goto(
+    ctx: &mut Context,
+    term: Ptr<Operation>,
+    new_succ: Ptr<BasicBlock>,
+    operands: &[Value],
+) {
     Operation::replace_successor(term, ctx, 0, new_succ);
     let n = term.deref(ctx).get_num_operands();
     for _ in 0..n {
@@ -708,7 +717,9 @@ fn partial_unroll(
     // would make the guard admit too many iterations (a miscompile), and would
     // not dominate the new main header either. Bail loudly on those.
     let bound_is_const = induction::const_i128(ctx, bound).is_some();
-    if !bound_is_const && (s.header_args.contains(&bound) || defined_in_loop(ctx, bound, &s.loop_blocks)) {
+    if !bound_is_const
+        && (s.header_args.contains(&bound) || defined_in_loop(ctx, bound, &s.loop_blocks))
+    {
         return Ok(UnrollOutcome::Skipped(
             "partial #[unroll(N)] needs a loop-invariant bound (the loop's limit must be the same on every iteration); this loop's limit changes inside the loop".into(),
         ));
@@ -718,7 +729,9 @@ fn partial_unroll(
     // The new main-loop header, taking the same carried values as the original.
     let main_h = BasicBlock::new(ctx, None, arg_types);
     main_h.insert_before(ctx, s.header);
-    let mh_args: Vec<Value> = (0..s.nargs).map(|i| main_h.deref(ctx).get_argument(i)).collect();
+    let mh_args: Vec<Value> = (0..s.nargs)
+        .map(|i| main_h.deref(ctx).get_argument(i))
+        .collect();
     let mh_iv = mh_args[s.iv_idx];
 
     // Lay down `factor` copies of the body, threading carried values copy to
@@ -747,8 +760,10 @@ fn partial_unroll(
     // init plus a multiple of factor*step. That lets us replace `(counter +/-
     // const) & mask` ops in the copies with literals (`fold_iv_congruences`),
     // the main payoff of unrolling. Scan every cloned copy block.
-    let copy_blocks: Vec<Ptr<BasicBlock>> =
-        copies.iter().flat_map(|c| c.blocks.iter().copied()).collect();
+    let copy_blocks: Vec<Ptr<BasicBlock>> = copies
+        .iter()
+        .flat_map(|c| c.blocks.iter().copied())
+        .collect();
     fold_iv_congruences(ctx, &copy_blocks, mh_iv, s.iv_init, n * s.iv_step);
 
     // main_h guard: stay in the main loop only while a whole group of `factor`
@@ -914,7 +929,13 @@ fn append_const(ctx: &mut Context, ty: TypeHandle, value: i128, block: Ptr<Basic
 
 /// Build `a + b` (an integer `mir.add` of type `ty`), add it as the last op of
 /// `block`, and return its result value.
-fn append_add(ctx: &mut Context, ty: TypeHandle, a: Value, b: Value, block: Ptr<BasicBlock>) -> Value {
+fn append_add(
+    ctx: &mut Context,
+    ty: TypeHandle,
+    a: Value,
+    b: Value,
+    block: Ptr<BasicBlock>,
+) -> Value {
     let op = Operation::new(
         ctx,
         MirAddOp::get_concrete_op_info(),
@@ -965,7 +986,10 @@ fn collect_functions(module: Ptr<Operation>, ctx: &Context) -> Vec<Ptr<Operation
 
 /// Find the `mir.unroll_hint` ops in `region`, each with the block it sits in
 /// (used to locate the enclosing loop) and its requested factor (0 = full).
-fn collect_hints(ctx: &Context, region: Ptr<Region>) -> Vec<(Ptr<Operation>, Ptr<BasicBlock>, u32)> {
+fn collect_hints(
+    ctx: &Context,
+    region: Ptr<Region>,
+) -> Vec<(Ptr<Operation>, Ptr<BasicBlock>, u32)> {
     let mut out = Vec::new();
     let blocks: Vec<Ptr<BasicBlock>> = region.deref(ctx).iter(ctx).collect();
     for block in blocks {
@@ -976,4 +1000,43 @@ fn collect_hints(ctx: &Context, region: Ptr<Region>) -> Vec<(Ptr<Operation>, Ptr
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{counted_loop, mir_ctx};
+    use pliron::graph::dominance::DomInfo;
+
+    /// `analyze_shape` accepts the canonical counted loop and reports the right
+    /// facts (the supported shape: single latch, single header-test exit,
+    /// recognized counter, single-block body).
+    #[test]
+    fn analyze_shape_accepts_canonical_counted_loop() {
+        let mut ctx = mir_ctx();
+        let lp = counted_loop(&mut ctx, 8);
+
+        let mut dom = DomInfo::default();
+        let info = {
+            let dt = dom.get_dom_tree(&ctx, lp.region);
+            LoopInfo::compute(&ctx, lp.region, dt)
+        };
+        let id = info.innermost_loop(lp.header).unwrap();
+        let ph = info.preheader(&ctx, lp.region, id).unwrap();
+        let rec = induction::analyze(&ctx, &info, id, ph);
+
+        let shape = analyze_shape(&ctx, &info, lp.region, id, ph, &rec)
+            .expect("canonical counted loop is a supported shape");
+
+        assert_eq!(shape.header, lp.header);
+        assert_eq!(shape.latch, lp.latch);
+        assert_eq!(shape.exit, lp.exit);
+        assert_eq!(shape.nargs, 2); // (acc, i)
+        assert_eq!(shape.iv_idx, 1); // i
+        assert_eq!(shape.iv_init, 0);
+        assert_eq!(shape.iv_step, 1);
+        // The body is the single latch block; its entry is the latch itself.
+        assert_eq!(shape.body_entry, lp.latch);
+        assert_eq!(shape.body_rpo, vec![lp.latch]);
+    }
 }

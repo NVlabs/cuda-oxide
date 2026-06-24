@@ -210,7 +210,9 @@ pub fn analyze(
     let l = &info.loops()[id];
     let header = l.header;
     let nargs = header.deref(ctx).get_num_arguments();
-    let header_args: Vec<Value> = (0..nargs).map(|i| header.deref(ctx).get_argument(i)).collect();
+    let header_args: Vec<Value> = (0..nargs)
+        .map(|i| header.deref(ctx).get_argument(i))
+        .collect();
 
     // Starting values come in on the preheader edge; next-iteration values come
     // in on the latch edge. A simple counted loop has exactly one latch; if it
@@ -276,7 +278,9 @@ fn classify_arg(
     // If so, c is the per-iteration step and this is a counter.
     let step = step_of(ctx, latch_val, arg);
     if let Some(step) = step {
-        if let Some(init) = pre_ops.and_then(|o| o.get(i).copied()).and_then(|v| const_i128(ctx, v))
+        if let Some(init) = pre_ops
+            .and_then(|o| o.get(i).copied())
+            .and_then(|v| const_i128(ctx, v))
         {
             return ArgKind::BasicIv { init, step };
         }
@@ -385,7 +389,12 @@ fn analyze_guard(
     if !matches!(args[iv_index], ArgKind::BasicIv { .. }) {
         return (None, None, None, None);
     }
-    (Some(iv_index), const_i128(ctx, bound_val), Some(bound_val), Some(pred))
+    (
+        Some(iv_index),
+        const_i128(ctx, bound_val),
+        Some(bound_val),
+        Some(pred),
+    )
 }
 
 /// How many times the body runs for a loop that continues while
@@ -409,9 +418,52 @@ fn trip_count(init: i128, step: i128, bound: i128, pred: CmpPred) -> Option<u64>
 /// Divide and round up (so 5/4 is 2). Returns 0 when the numerator is zero or
 /// negative, which corresponds to a loop that never runs.
 fn div_ceil(num: i128, den: i128) -> i128 {
-    if num <= 0 {
-        0
-    } else {
-        (num + den - 1) / den
+    if num <= 0 { 0 } else { (num + den - 1) / den }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyses::loop_info::LoopInfo;
+    use crate::test_support::{counted_loop, mir_ctx};
+    use pliron::graph::dominance::DomInfo;
+
+    #[test]
+    fn analyzes_counted_loop_recurrence() {
+        let mut ctx = mir_ctx();
+        // while i < 8 { acc += i; i += 1 }  =>  header args are (acc, i).
+        let lp = counted_loop(&mut ctx, 8);
+
+        let mut dom = DomInfo::default();
+        let info = {
+            let dt = dom.get_dom_tree(&ctx, lp.region);
+            LoopInfo::compute(&ctx, lp.region, dt)
+        };
+        let id = info.innermost_loop(lp.header).unwrap();
+        let ph = info.preheader(&ctx, lp.region, id).unwrap();
+
+        let rec = analyze(&ctx, &info, id, ph);
+
+        // `i` (header arg 1) is the counter: starts at 0, steps by 1.
+        assert_eq!(rec.primary_iv, Some(1));
+        match rec.args[1] {
+            ArgKind::BasicIv { init, step } => {
+                assert_eq!(init, 0);
+                assert_eq!(step, 1);
+            }
+            ref other => panic!("i should be a BasicIv, got {other:?}"),
+        }
+
+        // The loop continues while `i < 8`, so 8 iterations.
+        assert_eq!(rec.continue_pred, Some(CmpPred::Lt));
+        assert_eq!(rec.trip_count, Some(8));
+
+        // `acc` (header arg 0) is carried but updated by `acc + i`, so it is a
+        // reduction, not the counter.
+        assert!(
+            matches!(rec.args[0], ArgKind::Reduction),
+            "acc should be a reduction, got {:?}",
+            rec.args[0]
+        );
     }
 }
