@@ -97,6 +97,39 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Cargo target directory for passthrough mode
+        #[arg(long)]
+        cargo_target_dir: Option<PathBuf>,
+        /// Optional cuda-oxide owner filter for passthrough device codegen
+        #[arg(long)]
+        device_codegen_crate: Option<String>,
+        /// Repeatable cfg appended as `--cfg NAME` for passthrough device codegen
+        #[arg(long = "device-cfg")]
+        device_cfgs: Vec<String>,
+        /// Cargo build arguments for passthrough mode. Use after `--`.
+        #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
+        cargo_args: Vec<String>,
+    },
+    /// Run Cargo tests through the cuda-oxide backend
+    Test {
+        /// Target architecture (e.g., sm_90, sm_100, sm_120)
+        #[arg(long)]
+        arch: Option<String>,
+        /// Cargo target directory
+        #[arg(long)]
+        cargo_target_dir: Option<PathBuf>,
+        /// Optional cuda-oxide owner filter for device codegen
+        #[arg(long)]
+        device_codegen_crate: Option<String>,
+        /// Repeatable cfg appended as `--cfg NAME` for device codegen
+        #[arg(long = "device-cfg")]
+        device_cfgs: Vec<String>,
+        /// Show verbose compilation output
+        #[arg(short, long)]
+        verbose: bool,
+        /// Cargo test arguments. Use after `--`.
+        #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
+        cargo_args: Vec<String>,
     },
     /// Compile a crate's device code to a binary LTOIR artifact in one step.
     ///
@@ -199,7 +232,7 @@ fn main() {
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "run");
-            validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
+            validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
             commands::codegen_run(
                 &ctx,
                 &example,
@@ -218,18 +251,70 @@ fn main() {
             features,
             verbose,
             no_fmad,
+            cargo_target_dir,
+            device_codegen_crate,
+            device_cfgs,
+            cargo_args,
         } => {
             let ctx = commands::resolve_context();
-            let example = resolve_example_name(example, &ctx, "build");
-            validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
-            commands::codegen_build(
+            if cargo_args.is_empty() {
+                let example = resolve_example_name(example, &ctx, "build");
+                validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
+                commands::codegen_build(
+                    &ctx,
+                    &example,
+                    verbose,
+                    emit_nvvm_ir,
+                    arch.as_deref(),
+                    features.as_deref(),
+                    no_fmad,
+                );
+            } else {
+                if example.is_some() {
+                    eprintln!(
+                        "Error: `cargo oxide build` accepts either an example name or passthrough args after `--`, not both"
+                    );
+                    std::process::exit(2);
+                }
+                validate_nvvm_ir_arch(&ctx, "cargo build", emit_nvvm_ir, arch.as_deref());
+                commands::codegen_cargo_passthrough(
+                    &ctx,
+                    "build",
+                    commands::CargoPassthroughOptions {
+                        verbose,
+                        emit_nvvm_ir,
+                        arch: arch.as_deref(),
+                        cargo_target_dir: cargo_target_dir.as_deref(),
+                        device_codegen_crate: device_codegen_crate.as_deref(),
+                        device_cfgs: &device_cfgs,
+                        no_fmad,
+                    },
+                    &cargo_args,
+                );
+            }
+        }
+        Commands::Test {
+            arch,
+            cargo_target_dir,
+            device_codegen_crate,
+            device_cfgs,
+            verbose,
+            cargo_args,
+        } => {
+            let ctx = commands::resolve_context();
+            commands::codegen_cargo_passthrough(
                 &ctx,
-                &example,
-                verbose,
-                emit_nvvm_ir,
-                arch.as_deref(),
-                features.as_deref(),
-                no_fmad,
+                "test",
+                commands::CargoPassthroughOptions {
+                    verbose,
+                    emit_nvvm_ir: false,
+                    arch: arch.as_deref(),
+                    cargo_target_dir: cargo_target_dir.as_deref(),
+                    device_codegen_crate: device_codegen_crate.as_deref(),
+                    device_cfgs: &device_cfgs,
+                    no_fmad: false,
+                },
+                &cargo_args,
             );
             println!();
             println!("✓ Build succeeded");
@@ -260,7 +345,7 @@ fn main() {
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "pipeline");
-            validate_nvvm_ir_arch(&example, emit_nvvm_ir, &arch);
+            validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
             commands::codegen_show_pipeline(&ctx, &example, emit_nvvm_ir, arch.as_deref(), no_fmad);
         }
         Commands::Debug {
@@ -323,8 +408,13 @@ fn resolve_example_name(name: Option<String>, ctx: &commands::Context, subcomman
 ///
 /// NVVM IR output is architecture-specific, so omitting `--arch` would produce
 /// an unusable artifact. Exits with a descriptive error and usage example.
-fn validate_nvvm_ir_arch(example: &str, emit_nvvm_ir: bool, arch: &Option<String>) {
-    if emit_nvvm_ir && arch.is_none() {
+fn validate_nvvm_ir_arch(
+    ctx: &commands::Context,
+    example: &str,
+    emit_nvvm_ir: bool,
+    arch: Option<&str>,
+) {
+    if emit_nvvm_ir && !commands::has_configured_arch(ctx, arch) {
         eprintln!("Error: --emit-nvvm-ir requires --arch=sm_XXX");
         eprintln!();
         eprintln!("NVVM IR output is architecture-specific. Please specify the target:");

@@ -8,10 +8,11 @@
 //! Finds or builds `librustc_codegen_cuda.so` using this priority:
 //!
 //! 1. `CUDA_OXIDE_BACKEND` env var (explicit override)
-//! 2. Local repo (detected by presence of `crates/rustc-codegen-cuda`)
-//! 3. Cached `.so` at `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`,
+//! 2. Project config (`.cargo/cuda-oxide.toml`)
+//! 3. Local repo (detected by presence of `crates/rustc-codegen-cuda`)
+//! 4. Cached `.so` at `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`,
 //!    but only when it isn't older than the running `cargo-oxide` binary
-//! 4. Auto-fetch from git and build (one-time, or after a stale-cache miss)
+//! 5. Auto-fetch from git and build (one-time, or after a stale-cache miss)
 //!
 //! ## Cache staleness (issue #49)
 //!
@@ -81,10 +82,11 @@ pub fn find_workspace_root() -> Option<PathBuf> {
 ///
 /// Discovery order:
 /// 1. `CUDA_OXIDE_BACKEND` env var
-/// 2. Local repo build (crates/rustc-codegen-cuda)
-/// 3. Cached build at ~/.cargo/cuda-oxide/
-/// 4. Auto-fetch + build from git
-pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
+/// 2. Project config (`.cargo/cuda-oxide.toml`)
+/// 3. Local repo build (crates/rustc-codegen-cuda)
+/// 4. Cached build at ~/.cargo/cuda-oxide/
+/// 5. Auto-fetch + build from git
+pub fn find_or_build_backend(workspace_root: &Path, configured_backend: Option<&Path>) -> PathBuf {
     // 1. Explicit override
     if let Ok(path) = std::env::var("CUDA_OXIDE_BACKEND") {
         let p = PathBuf::from(&path);
@@ -97,7 +99,20 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
         );
     }
 
-    // 2. Local repo
+    // 2. Project config
+    if let Some(path) = configured_backend {
+        if path.exists() {
+            return path.to_path_buf();
+        }
+        eprintln!(
+            "Error: configured cuda-oxide backend does not exist: {}",
+            path.display()
+        );
+        eprintln!("Build it or update `.cargo/cuda-oxide.toml`.");
+        std::process::exit(1);
+    }
+
+    // 3. Local repo
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
         let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
@@ -105,7 +120,7 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
         return so_path;
     }
 
-    // 3. Cached .so. Only honored when it isn't older than the running
+    // 4. Cached .so. Only honored when it isn't older than the running
     //    cargo-oxide binary; see the module-level comment about issue #49.
     if let Some(cache_dir) = cache_directory() {
         let cached_so = cache_dir.join("librustc_codegen_cuda.so");
@@ -137,7 +152,7 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
         }
     }
 
-    // 4. Auto-fetch from git
+    // 5. Auto-fetch from git
     auto_fetch_and_build()
 }
 
@@ -149,14 +164,20 @@ pub fn find_or_build_backend(workspace_root: &Path) -> PathBuf {
 ///
 /// 1. `CUDA_OXIDE_BACKEND` env var, returned even when the file is missing
 ///    so the caller can report the configured-but-absent path.
-/// 2. Local repo build path (`crates/rustc-codegen-cuda/target/debug/...`).
-/// 3. Cache path at `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`.
+/// 2. Project config (`.cargo/cuda-oxide.toml`), returned even when missing
+///    so the caller can report the configured-but-absent path.
+/// 3. Local repo build path (`crates/rustc-codegen-cuda/target/debug/...`).
+/// 4. Cache path at `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`.
 ///
 /// `cargo oxide doctor` uses this so that a diagnostic run never triggers a
 /// multi-minute backend build or a git clone before it can print anything.
-pub fn backend_so_candidate(workspace_root: &Path) -> PathBuf {
+pub fn backend_so_candidate(workspace_root: &Path, configured_backend: Option<&Path>) -> PathBuf {
     if let Ok(path) = std::env::var("CUDA_OXIDE_BACKEND") {
         return PathBuf::from(path);
+    }
+
+    if let Some(path) = configured_backend {
+        return path.to_path_buf();
     }
 
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
