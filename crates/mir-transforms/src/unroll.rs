@@ -127,7 +127,20 @@ pub fn unroll_annotated_loops(
             }
             hint_op.unlink(ctx);
         }
+        // Process loops in a stable order (by id) so diagnostics are deterministic.
+        let mut loop_factor: Vec<(usize, u32)> = loop_factor.into_iter().collect();
+        loop_factor.sort_by_key(|&(loop_id, _)| loop_id);
 
+        // We computed `info` once, above, and reuse it while unrolling each loop
+        // below even though each unroll mutates the CFG. That is sound here: a
+        // full/partial unroll only rewires its own loop's preheader and clones
+        // its own (disjoint) blocks onto the end of the region; the original
+        // blocks are not deleted until the `dce` + `simplify_cfg` after this
+        // whole loop. So another hinted loop's `Loop` snapshot stays valid, and
+        // the per-loop queries (`preheader`, `exiting_blocks`, `exit_blocks`)
+        // re-read the live CFG. A loop that contains another is never unrolled
+        // (the `!children.is_empty()` bail in `analyze_shape`), so an outer and
+        // its inner are never both transformed against the same stale `info`.
         for (loop_id, factor) in loop_factor {
             // How the user spelled the request, for diagnostics.
             let kind = if factor == 0 {
@@ -291,8 +304,16 @@ fn analyze_shape(
     rec: &induction::LoopRecurrences,
 ) -> std::result::Result<LoopShape, String> {
     let l = &info.loops()[id];
-    if l.parent.is_some() || !l.children.is_empty() {
-        return Err("the loop is nested (it is inside, or contains, another loop); nested-loop unrolling is a follow-up".into());
+    // An inner loop (one with a parent) is fine to unroll: its body reads the
+    // outer loop's values by dominance, and cloning leaves those untouched, so
+    // the copies still see them. But unrolling a loop that itself *contains*
+    // another loop would have to duplicate that inner loop too; leave that case
+    // to a follow-up and tell the author to annotate the inner loop instead.
+    // (This `children` test is load-bearing for nested correctness: it relies on
+    // `LoopInfo` recording a true container as a parent, which holds because in a
+    // reducible CFG a parent loop's block set is a strict superset of each child's.)
+    if !l.children.is_empty() {
+        return Err("this loop contains an inner loop; unrolling a loop that contains loops is a follow-up (annotate the inner loop instead)".into());
     }
     if l.latches.len() != 1 {
         return Err(format!(
@@ -680,12 +701,14 @@ fn partial_unroll(
         }
     };
     // The guard we build below, `i + (N-1)*step <pred> bound`, is only correct if
-    // `bound` is the same on every iteration. A bound that is a loop-carried
-    // header argument or is computed inside the loop can change within a group of
-    // N iterations, which would make the guard admit too many iterations (a
-    // miscompile). It also would not dominate the new main header. Require a
-    // loop-invariant bound (defined outside the loop) and bail loudly otherwise.
-    if s.header_args.contains(&bound) || defined_in_loop(ctx, bound, &s.loop_blocks) {
+    // `bound` is the same on every iteration. A constant bound is always fine (we
+    // re-materialize it in the main header below, so where its op sits does not
+    // matter). A non-constant bound that is a loop-carried header argument or is
+    // computed inside the loop can change within a group of N iterations, which
+    // would make the guard admit too many iterations (a miscompile), and would
+    // not dominate the new main header either. Bail loudly on those.
+    let bound_is_const = induction::const_i128(ctx, bound).is_some();
+    if !bound_is_const && (s.header_args.contains(&bound) || defined_in_loop(ctx, bound, &s.loop_blocks)) {
         return Ok(UnrollOutcome::Skipped(
             "partial #[unroll(N)] needs a loop-invariant bound (the loop's limit must be the same on every iteration); this loop's limit changes inside the loop".into(),
         ));
@@ -733,9 +756,16 @@ fn partial_unroll(
     // mh_iv + (factor-1)*step, so the group fits exactly when that still passes
     // the test. True -> copy 0 (enter the main body); False -> the original
     // header (the remainder loop), passing the current carried values.
+    // A constant bound may be defined inside the (original) loop, which does not
+    // dominate `main_h`; re-materialize it here. A non-constant bound was already
+    // checked to be defined outside the loop, so it dominates `main_h` as-is.
+    let guard_bound = match induction::const_i128(ctx, bound) {
+        Some(c) => append_const(ctx, bound.get_type(ctx), c, main_h),
+        None => bound,
+    };
     let last_off = append_const(ctx, s.iv_type, (n - 1) * s.iv_step, main_h);
     let last_iv = append_add(ctx, s.iv_type, mh_iv, last_off, main_h);
-    let cont = append_cmp(ctx, pred, last_iv, bound, s.i1_type, main_h);
+    let cont = append_cmp(ctx, pred, last_iv, guard_bound, s.i1_type, main_h);
     let entry0 = copies[0].entry;
     let entry0_args = copies[0].entry_args.clone();
     let (flat, segs) =

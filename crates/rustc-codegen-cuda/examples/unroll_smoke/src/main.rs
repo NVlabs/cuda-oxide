@@ -148,6 +148,77 @@ mod kernels {
             *out_elem = acc;
         }
     }
+
+    /// Nested loops, inner FULLY unrolled. The outer loop (runtime trip `n`) is
+    /// left alone; its inner `while j < 4` carries `#[unroll]`. The inner body
+    /// reads the OUTER counter `k` by dominance, which the clone must preserve.
+    /// Each outer iteration adds `0*k + 1*k + 2*k + 3*k = 6k`; summed over `k` in
+    /// `0..n`. For n=10: `6 * (0+1+...+9) = 6 * 45 = 270`.
+    #[kernel]
+    pub fn nested_full(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut k: u32 = 0;
+            while k < n {
+                let mut j: u32 = 0;
+                #[unroll]
+                while j < 4 {
+                    acc = acc.wrapping_add(j.wrapping_mul(k));
+                    j += 1;
+                }
+                k += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Nested loops, inner PARTIALLY unrolled (by 2) with a CONSTANT bound. Same
+    /// outer-counter capture; exercises the partial path nested plus constant-bound
+    /// re-materialization. Each outer iteration adds `(0+k)+(1+k)+(2+k)+(3+k) =
+    /// 6 + 4k`; summed over `k` in `0..n`. For n=10: `10*6 + 4*45 = 240`.
+    #[kernel]
+    pub fn nested_partial(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut k: u32 = 0;
+            while k < n {
+                let mut j: u32 = 0;
+                #[unroll(2)]
+                while j < 4 {
+                    acc = acc.wrapping_add(j.wrapping_add(k));
+                    j += 1;
+                }
+                k += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Nested loops, inner partially unrolled with a NON-constant bound that is the
+    /// OUTER counter `k`. `k` is invariant within the inner loop (it changes only
+    /// in the outer loop), so partial unroll is sound and `k` dominates the new
+    /// main header. Inner runs `j` in `0..k`, summing `j` = `k*(k-1)/2`; summed
+    /// over `k` in `0..n`. For n=10 that is `0+0+1+3+6+10+15+21+28+36 = 120`.
+    #[kernel]
+    pub fn nested_var_bound(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut k: u32 = 0;
+            while k < n {
+                let mut j: u32 = 0;
+                #[unroll(2)]
+                while j < k {
+                    acc = acc.wrapping_add(j);
+                    j += 1;
+                }
+                k += 1;
+            }
+            *out_elem = acc;
+        }
+    }
 }
 
 fn main() {
@@ -207,6 +278,24 @@ fn main() {
         .expect("launch carried_bound");
     let got_carried = d_carried.to_host_vec(&stream).unwrap();
 
+    let mut d_nfull = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .nested_full(stream.as_ref(), cfg, &mut d_nfull, trip)
+        .expect("launch nested_full");
+    let got_nfull = d_nfull.to_host_vec(&stream).unwrap();
+
+    let mut d_npart = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .nested_partial(stream.as_ref(), cfg, &mut d_npart, trip)
+        .expect("launch nested_partial");
+    let got_npart = d_npart.to_host_vec(&stream).unwrap();
+
+    let mut d_nvar = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .nested_var_bound(stream.as_ref(), cfg, &mut d_nvar, trip)
+        .expect("launch nested_var_bound");
+    let got_nvar = d_nvar.to_host_vec(&stream).unwrap();
+
     let mut failures = 0usize;
     let want_part = trip * (trip - 1) / 2;
     let want_fold: u32 = (0..trip).map(|i| i & 3).sum();
@@ -220,6 +309,15 @@ fn main() {
         }
         a
     };
+    let want_nfull: u32 = (0..trip)
+        .flat_map(|k| (0..4u32).map(move |j| j.wrapping_mul(k)))
+        .fold(0u32, |a, x| a.wrapping_add(x));
+    let want_npart: u32 = (0..trip)
+        .flat_map(|k| (0..4u32).map(move |j| j.wrapping_add(k)))
+        .fold(0u32, |a, x| a.wrapping_add(x));
+    let want_nvar: u32 = (0..trip)
+        .flat_map(|k| (0..k).map(|j| j))
+        .fold(0u32, |a, x| a.wrapping_add(x));
     for tid in 0..N {
         let want_full = tid as u32 + 12;
         let want_fullmb = tid as u32 + 52;
@@ -245,6 +343,18 @@ fn main() {
         }
         if got_carried[tid] != want_carried {
             println!("FAIL tid={tid}: carried_bound={} expected={want_carried}", got_carried[tid]);
+            failures += 1;
+        }
+        if got_nfull[tid] != want_nfull {
+            println!("FAIL tid={tid}: nested_full={} expected={want_nfull}", got_nfull[tid]);
+            failures += 1;
+        }
+        if got_npart[tid] != want_npart {
+            println!("FAIL tid={tid}: nested_partial={} expected={want_npart}", got_npart[tid]);
+            failures += 1;
+        }
+        if got_nvar[tid] != want_nvar {
+            println!("FAIL tid={tid}: nested_var_bound={} expected={want_nvar}", got_nvar[tid]);
             failures += 1;
         }
     }
