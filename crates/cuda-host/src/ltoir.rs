@@ -85,8 +85,8 @@ pub enum LtoirError {
     },
 
     /// Reading or writing one of the pipeline artifacts (`.ll`,
-    /// `libdevice.10.bc`, `.ltoir`, `.cubin`) failed.
-    #[error("Failed reading {path}: {source}")]
+    /// `libdevice.10.bc`, `.ltoir`, `.cubin`, cache metadata) failed.
+    #[error("Failed accessing {path}: {source}")]
     Io {
         /// Path of the file that could not be read or written.
         path: PathBuf,
@@ -136,9 +136,10 @@ pub enum LtoirError {
 ///
 /// # Caching
 ///
-/// If `<stem>.cubin` already exists and is newer than `ll_path`, the
-/// existing cubin path is returned and no work is done. Touch the `.ll`
-/// (or delete the `.cubin`) to force a rebuild.
+/// If `<stem>.cubin` already exists and its cache metadata exactly matches
+/// the current NVVM IR, target arch, libdevice content, and compiler/linker
+/// versions, the existing cubin path is returned and no work is done.
+/// Missing or stale metadata forces a rebuild.
 pub fn build_cubin_from_ll(ll_path: &Path, arch: &str) -> Result<PathBuf, LtoirError> {
     let stem = ll_path
         .file_stem()
@@ -147,18 +148,26 @@ pub fn build_cubin_from_ll(ll_path: &Path, arch: &str) -> Result<PathBuf, LtoirE
     let dir = ll_path.parent().unwrap_or_else(|| Path::new("."));
     let ltoir_path = dir.join(format!("{stem}.ltoir"));
     let cubin_path = dir.join(format!("{stem}.cubin"));
-
-    // Cache: skip work if cubin is fresher than the .ll input.
-    if !needs_rebuild(&cubin_path, &[ll_path]) {
-        return Ok(cubin_path);
-    }
+    let cache_path = cubin_cache_path(&cubin_path);
 
     let ll_bytes = std::fs::read(ll_path).map_err(|source| LtoirError::Io {
         path: ll_path.to_path_buf(),
         source,
     })?;
 
-    let ltoir = compile_nvvm_ir_to_ltoir(&ll_bytes, &ll_path.display().to_string(), arch)?;
+    let inputs = LinkInputs::load(arch, &ll_bytes)?;
+    let expected_cache = inputs.cache_record();
+
+    if cubin_cache_matches(&cubin_path, &cache_path, &expected_cache) {
+        return Ok(cubin_path);
+    }
+
+    let ltoir = compile_nvvm_ir_to_ltoir_with_libdevice(
+        &ll_bytes,
+        &ll_path.display().to_string(),
+        arch,
+        &inputs.libdevice_bytes,
+    )?;
 
     std::fs::write(&ltoir_path, &ltoir).map_err(|source| LtoirError::Io {
         path: ltoir_path.clone(),
@@ -170,6 +179,11 @@ pub fn build_cubin_from_ll(ll_path: &Path, arch: &str) -> Result<PathBuf, LtoirE
 
     std::fs::write(&cubin_path, &cubin).map_err(|source| LtoirError::Io {
         path: cubin_path.clone(),
+        source,
+    })?;
+
+    std::fs::write(&cache_path, expected_cache).map_err(|source| LtoirError::Io {
+        path: cache_path,
         source,
     })?;
 
@@ -215,6 +229,15 @@ fn compile_nvvm_ir_to_ltoir(
         source,
     })?;
 
+    compile_nvvm_ir_to_ltoir_with_libdevice(nvvm_ir, module_name, arch, &libdevice_bytes)
+}
+
+fn compile_nvvm_ir_to_ltoir_with_libdevice(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    arch: &str,
+    libdevice_bytes: &[u8],
+) -> Result<Vec<u8>, LtoirError> {
     let arch_compute = sm_to_compute(arch);
 
     // ---- libNVVM: NVVM IR + libdevice -> LTOIR --------------------------
@@ -224,7 +247,7 @@ fn compile_nvvm_ir_to_ltoir(
     // resolved at compile time. Order doesn't strictly matter -- libNVVM
     // does its own symbol resolution -- but this matches the pattern used
     // by NVCC and the device_ffi_test C tools.
-    prog.add_module(&libdevice_bytes, "libdevice.10.bc")?;
+    prog.add_module(libdevice_bytes, "libdevice.10.bc")?;
     prog.add_module(nvvm_ir, module_name)?;
 
     let arch_opt = format!("-arch={arch_compute}");
@@ -260,13 +283,13 @@ pub fn load_kernel_module(
     let ptx = dir.join(format!("{name}.ptx"));
     let ll = dir.join(format!("{name}.ll"));
 
-    let to_load = if cubin.exists() {
+    let to_load = if ll.exists() {
+        let arch = target_arch();
+        build_cubin_from_ll(&ll, &arch)?
+    } else if cubin.exists() {
         cubin
     } else if ptx.exists() {
         ptx
-    } else if ll.exists() {
-        let arch = target_arch();
-        build_cubin_from_ll(&ll, &arch)?
     } else {
         return Err(LtoirError::NoArtifact {
             name: name.to_string(),
@@ -350,21 +373,132 @@ fn sm_to_compute(arch: &str) -> String {
     }
 }
 
-/// `true` if `target` is missing or older than any source in `sources`.
-fn needs_rebuild(target: &Path, sources: &[&Path]) -> bool {
-    let Ok(target_meta) = target.metadata() else {
-        return true;
-    };
-    let Ok(target_time) = target_meta.modified() else {
-        return true;
-    };
-    for src in sources {
-        if let Ok(src_meta) = src.metadata()
-            && let Ok(src_time) = src_meta.modified()
-            && src_time > target_time
-        {
-            return true;
-        }
+struct LinkInputs {
+    arch: String,
+    nvvm_ir_hash: u64,
+    libdevice_path: PathBuf,
+    libdevice_bytes: Vec<u8>,
+    nvvm_version: String,
+    nvjitlink_version: String,
+}
+
+impl LinkInputs {
+    fn load(arch: &str, nvvm_ir: &[u8]) -> Result<Self, LtoirError> {
+        let libdevice_path = find_libdevice()?;
+        let libdevice_bytes = std::fs::read(&libdevice_path).map_err(|source| LtoirError::Io {
+            path: libdevice_path.clone(),
+            source,
+        })?;
+
+        let nvvm = LibNvvm::load()?;
+        let nvvm_version = match nvvm.version() {
+            Ok((major, minor)) => format!("{major}.{minor}"),
+            Err(error) => format!("unavailable:{error}"),
+        };
+
+        let nvj = LibNvJitLink::load()?;
+        let nvjitlink_version = nvj
+            .version()
+            .map(|(major, minor)| format!("{major}.{minor}"))
+            .unwrap_or_else(|| "unavailable".to_string());
+
+        let inputs = Self {
+            arch: arch.to_string(),
+            nvvm_ir_hash: stable_hash(nvvm_ir),
+            libdevice_path,
+            libdevice_bytes,
+            nvvm_version,
+            nvjitlink_version,
+        };
+        Ok(inputs)
     }
-    false
+
+    fn cache_record(&self) -> String {
+        let arch_compute = sm_to_compute(&self.arch);
+        let libdevice_hash = stable_hash(&self.libdevice_bytes);
+        format!(
+            concat!(
+                "cuda-oxide-ltoir-cache-v1\n",
+                "arch={}\n",
+                "nvvm_arch={}\n",
+                "nvvm_ir_hash={:016x}\n",
+                "libdevice_path={}\n",
+                "libdevice_hash={:016x}\n",
+                "nvvm_version={}\n",
+                "nvjitlink_version={}\n",
+                "nvvm_options=-arch={},-gen-lto\n",
+                "nvjitlink_options=-arch={},-lto\n",
+            ),
+            self.arch,
+            arch_compute,
+            self.nvvm_ir_hash,
+            self.libdevice_path.display(),
+            libdevice_hash,
+            self.nvvm_version,
+            self.nvjitlink_version,
+            arch_compute,
+            self.arch,
+        )
+    }
+}
+
+fn cubin_cache_path(cubin_path: &Path) -> PathBuf {
+    let mut path = cubin_path.as_os_str().to_owned();
+    path.push(".cuda-oxide-link");
+    PathBuf::from(path)
+}
+
+fn cubin_cache_matches(cubin_path: &Path, cache_path: &Path, expected_cache: &str) -> bool {
+    if !cubin_path.is_file() {
+        return false;
+    }
+    std::fs::read_to_string(cache_path).is_ok_and(|actual| actual == expected_cache)
+}
+
+fn stable_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn cubin_cache_path_appends_link_metadata_suffix() {
+        assert_eq!(
+            cubin_cache_path(Path::new("demo.cubin")),
+            PathBuf::from("demo.cubin.cuda-oxide-link")
+        );
+    }
+
+    #[test]
+    fn stable_hash_changes_when_bytes_change() {
+        assert_ne!(stable_hash(b"nvvm ir"), stable_hash(b"nvvm ir changed"));
+    }
+
+    #[test]
+    fn cache_record_includes_arch_libdevice_hash_and_tool_versions() {
+        let inputs = LinkInputs {
+            arch: "sm_90".to_string(),
+            nvvm_ir_hash: stable_hash(b"nvvm ir"),
+            libdevice_path: PathBuf::from("/cuda/nvvm/libdevice/libdevice.10.bc"),
+            libdevice_bytes: b"libdevice".to_vec(),
+            nvvm_version: "2.0".to_string(),
+            nvjitlink_version: "13.0".to_string(),
+        };
+
+        let record = inputs.cache_record();
+        assert!(record.contains("arch=sm_90"));
+        assert!(record.contains("nvvm_arch=compute_90"));
+        assert!(record.contains("nvvm_ir_hash="));
+        assert!(record.contains("libdevice_path=/cuda/nvvm/libdevice/libdevice.10.bc"));
+        assert!(record.contains("nvvm_version=2.0"));
+        assert!(record.contains("nvjitlink_version=13.0"));
+        assert!(record.contains("nvjitlink_options=-arch=sm_90,-lto"));
+    }
 }
