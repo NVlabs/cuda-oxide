@@ -3282,6 +3282,10 @@ mod kernels {
             // memory barrier address, redirecting TMA completions to the leader CTA's
             // barrier.
             const PEER_BIT_MASK: u32 = 0xFEFFFFF8;
+            // L2 cache-blocking: visit tiles in vertical N-bands SWIZZLE_G wide so
+            // tiles done near-in-time share A-rows + a small set of B-cols in L2.
+            // This is the dominant data-movement lever at large sizes (~+88% @16384).
+            const SWIZZLE_G: u32 = 8;
 
             let n = n as u32;
             let k = k as u32;
@@ -3349,8 +3353,25 @@ mod kernels {
                 // correct (each CTA computed its own rank's 128 rows at the wrong tile).
                 let cluster_base_id = thread::blockIdx_x() - my_rank;
                 let tile_idx = cluster_base_id / 2;
-                let first_tile_m = tile_idx % tiles_m;
-                let first_tile_n = tile_idx / tiles_m;
+                // CACHE-BLOCKING SWIZZLE (CUTLASS-style threadblock rasterization).
+                // Group tile_n columns into bands of width SWIZZLE_G; within a band,
+                // consecutive linear indices sweep the band's columns for each tile_m
+                // before advancing tile_m, so near-in-time tiles reuse 1 A-block + G
+                // adjacent B-blocks -> higher L2 hit rate. Pure index->(m,n) bijection;
+                // the epilogue addresses C from TILE_INFO, so every tile is still
+                // computed exactly once and the result is bit-identical.
+                let tiles_n = _tiles_n;
+                let group_tiles = SWIZZLE_G * tiles_m;
+                let group = tile_idx / group_tiles;
+                let in_group = tile_idx % group_tiles;
+                let n_start = group * SWIZZLE_G;
+                let band_w = if SWIZZLE_G < tiles_n - n_start {
+                    SWIZZLE_G
+                } else {
+                    tiles_n - n_start
+                };
+                let first_tile_m = in_group / band_w;
+                let first_tile_n = n_start + in_group % band_w;
 
                 if is_lane0 {
                     *(&raw mut TILE_INFO as *mut u32).add(0) = first_tile_m;
@@ -3477,8 +3498,19 @@ mod kernels {
                     // pair. Divide by 2 to get the tile index.
                     let first_stolen = clc_query_get_first_ctaid_x(resp_lo, resp_hi);
                     let tile_idx = first_stolen / 2;
-                    let tile_m = tile_idx % tiles_m;
-                    let tile_n = tile_idx / tiles_m;
+                    // Same cache-blocking swizzle as the initial tile (see above).
+                    let tiles_n = _tiles_n;
+                    let group_tiles = SWIZZLE_G * tiles_m;
+                    let group = tile_idx / group_tiles;
+                    let in_group = tile_idx % group_tiles;
+                    let n_start = group * SWIZZLE_G;
+                    let band_w = if SWIZZLE_G < tiles_n - n_start {
+                        SWIZZLE_G
+                    } else {
+                        tiles_n - n_start
+                    };
+                    let tile_m = in_group / band_w;
+                    let tile_n = n_start + in_group % band_w;
 
                     if is_lane0 {
                         *(&raw mut TILE_INFO as *mut u32).add(0) = tile_m;
@@ -3602,9 +3634,19 @@ mod kernels {
 
                     let tile_k_base = tile_iter * k_iters;
                     let mut k_idx: u32 = 0;
+                    // Unroll the K-loop by one full pipeline cycle. The compiler
+                    // clones the body (barrier waits + the j<4 MMA loop) 4x and
+                    // folds the stage index to the literals 0,1,2,3, so the 4-way
+                    // buffer/barrier select collapses and the MMAs issue
+                    // back-to-back (the Phase-4D single biggest win).
+                    #[unroll(4)]
                     while k_idx < k_iters {
                         let global_k = tile_k_base + k_idx;
-                        let stage = global_k & 3;
+                        // stage is loop-local so #[unroll(4)] folds it to 0..3
+                        // (sound: k_iters is a multiple of 4, so k_idx & 3 ==
+                        // global_k & 3). Parity stays global: it must continue the
+                        // pipeline phase across tile boundaries.
+                        let stage = k_idx & 3;
                         let tma_parity = (global_k >> 2) & 1;
 
                         let (smem_a_base, smem_b_base, tma_bar_const, mma_bar_mut): (
