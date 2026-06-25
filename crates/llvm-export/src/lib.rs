@@ -261,6 +261,9 @@ pub mod ops {
 
     /// Op-attribute key for a `GlobalOp`'s explicit alignment.
     const GLOBAL_ALIGNMENT_KEY: &str = "cuda_oxide_global_alignment";
+    /// Op-attribute key for a `GlobalOp`'s Rust static initializer bytes,
+    /// encoded as lowercase hex.
+    const GLOBAL_INITIALIZER_HEX_KEY: &str = "cuda_oxide_global_initializer_hex";
 
     /// Op-attribute key under which a memory op's (`load` / `store` / `alloca`)
     /// explicit ABI alignment is stashed. Stamped by the mir-lower alignment
@@ -973,6 +976,10 @@ pub mod ops {
         ) -> Self;
         /// Read the explicit alignment (bytes), if one was set.
         fn get_alignment(&self, ctx: &Context) -> Option<u64>;
+        /// Attach lowered Rust static initializer bytes to this global.
+        fn set_initializer_hex(&self, ctx: &mut Context, hex: &str);
+        /// Read lowered Rust static initializer bytes, encoded as hex.
+        fn initializer_hex(&self, ctx: &Context) -> Option<String>;
     }
 
     impl GlobalOpExt for GlobalOp {
@@ -1000,6 +1007,25 @@ pub mod ops {
                 .attributes
                 .get::<AlignmentAttr>(&key)
                 .map(|a| a.0 as u64)
+        }
+
+        fn set_initializer_hex(&self, ctx: &mut Context, hex: &str) {
+            let key = Identifier::try_new(GLOBAL_INITIALIZER_HEX_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(hex.to_string()));
+        }
+
+        fn initializer_hex(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_INITIALIZER_HEX_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
         }
     }
 

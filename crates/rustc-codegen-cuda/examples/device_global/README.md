@@ -1,6 +1,7 @@
 # device_global
 
-Tests ordinary Rust `static mut` values in CUDA global memory.
+Tests ordinary Rust `static mut` values in CUDA global memory and non-zero
+immutable Rust static tables.
 
 Run with:
 
@@ -8,11 +9,21 @@ Run with:
 cargo oxide run device_global
 ```
 
-The kernel updates two ordinary device statics:
+The first kernel updates two ordinary device statics:
 
 ```rust
 static mut DEVICE_COUNTER: u64 = 0;
 static mut DEVICE_MARKER: u32 = 0;
+```
+
+The second kernel reads a non-zero immutable static table through a flattened
+pointer, matching generated coefficient-table access patterns:
+
+```rust
+static STATIC_WEIGHTS: [[f32; 2]; 4] = [[0.25, 0.5], ...];
+fn get_static_weights() -> &'static [[f32; 2]; 4] { &STATIC_WEIGHTS }
+let weights = get_static_weights();
+let pair = load_pair(&weights[0][0], 2);
 ```
 
 Expected behavior:
@@ -26,6 +37,5 @@ Expected behavior:
 The example launches the kernel twice. `DEVICE_COUNTER` should persist across
 launches, proving it is global device storage and not per-block shared memory.
 
-Current limitation: ordinary device statics must start at zero. Non-zero initial
-values are rejected until the LLVM dialect exporter supports global initializer
-data.
+Non-zero immutable static initializers are emitted into the generated LLVM/PTX
+global so device code can read compile-time coefficient tables directly.

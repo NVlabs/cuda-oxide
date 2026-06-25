@@ -600,7 +600,7 @@ pub fn convert_global_alloc_dc(
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let (global_key, mir_global_type, alignment, addr_space) = {
+    let (global_key, mir_global_type, alignment, addr_space, initializer_hex) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
@@ -625,6 +625,10 @@ pub fn convert_global_alloc_dc(
         let mir_global_type = global_type_attr.get_type(ctx);
 
         let alignment = global_op.get_alignment_value(ctx).unwrap_or(0);
+        let initializer_hex = op_ref
+            .attributes
+            .get::<StringAttr>(&"global_initializer_hex".try_into().unwrap())
+            .map(|attr| String::from((*attr).clone()));
 
         // Read the address space the op's result already carries — set by
         // mir-importer based on the static's type (`ConstantMemory<T>` → 4,
@@ -646,7 +650,13 @@ pub fn convert_global_alloc_dc(
                 ))
             })?;
 
-        (global_key, mir_global_type, alignment, addr_space)
+        (
+            global_key,
+            mir_global_type,
+            alignment,
+            addr_space,
+            initializer_hex,
+        )
     };
 
     let global_name = if let Some(existing_name) = device_globals.get(&global_key) {
@@ -660,6 +670,7 @@ pub fn convert_global_alloc_dc(
             mir_global_type,
             alignment,
             addr_space,
+            initializer_hex.as_deref(),
         )?
     };
 
@@ -678,6 +689,7 @@ fn create_device_global(
     mir_global_type: TypeHandle,
     alignment: u64,
     addr_space: u32,
+    initializer_hex: Option<&str>,
 ) -> Result<pliron::identifier::Identifier> {
     let llvm_global_type = convert_type(ctx, mir_global_type).map_err(anyhow_to_pliron)?;
 
@@ -704,6 +716,9 @@ fn create_device_global(
         llvm::GlobalOp::new(ctx, name.clone(), llvm_global_type)
     };
     global_op.set_address_space(ctx, addr_space);
+    if let Some(initializer_hex) = initializer_hex {
+        global_op.set_initializer_hex(ctx, initializer_hex);
+    }
 
     let parent_block = op
         .deref(ctx)

@@ -18,13 +18,14 @@ use pliron::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr},
         op_interfaces::SymbolOpInterface,
         type_interfaces::FunctionTypeInterface,
+        types::{FP32Type, FP64Type, IntegerType},
     },
     context::Ptr,
     linked_list::ContainsLinkedList,
     location::Located,
     op::Op,
     operation::Operation,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
     value::Value,
 };
 
@@ -97,10 +98,159 @@ impl<'a> ModuleExportState<'a> {
             // Internal linkage: static storage in the global's address space.
             write!(output, "@{name} = addrspace({address_space}) global ").unwrap();
             self.export_type(ty, output)?;
-            writeln!(output, " zeroinitializer, align {alignment}").unwrap();
+            if let Some(hex) = global.initializer_hex(self.ctx) {
+                let bytes = decode_hex_initializer(&hex)?;
+                write!(output, " ").unwrap();
+                self.export_initializer_value(ty, &bytes, output)?;
+                writeln!(output, ", align {alignment}").unwrap();
+            } else {
+                writeln!(output, " zeroinitializer, align {alignment}").unwrap();
+            }
         }
 
         Ok(())
+    }
+
+    fn export_typed_initializer(
+        &self,
+        ty: TypeHandle,
+        bytes: &[u8],
+        output: &mut String,
+    ) -> Result<(), String> {
+        self.export_type(ty, output)?;
+        write!(output, " ").unwrap();
+        self.export_initializer_value(ty, bytes, output)
+    }
+
+    fn export_initializer_value(
+        &self,
+        ty: TypeHandle,
+        bytes: &[u8],
+        output: &mut String,
+    ) -> Result<(), String> {
+        let ty_ref = ty.deref(self.ctx);
+        if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+            let byte_len = int_ty.width().div_ceil(8) as usize;
+            let raw = read_le_u128(bytes, byte_len)?;
+            let mask = if int_ty.width() >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << int_ty.width()) - 1
+            };
+            write!(output, "{}", raw & mask).unwrap();
+        } else if ty_ref.is::<FP32Type>() {
+            let arr: [u8; 4] = bytes
+                .get(..4)
+                .ok_or_else(|| "f32 initializer is shorter than 4 bytes".to_string())?
+                .try_into()
+                .map_err(|_| "failed to read f32 initializer".to_string())?;
+            write!(
+                output,
+                "{}",
+                format_float_literal(f32::from_le_bytes(arr) as f64)
+            )
+            .unwrap();
+        } else if ty_ref.is::<FP64Type>() {
+            let arr: [u8; 8] = bytes
+                .get(..8)
+                .ok_or_else(|| "f64 initializer is shorter than 8 bytes".to_string())?
+                .try_into()
+                .map_err(|_| "failed to read f64 initializer".to_string())?;
+            write!(output, "{}", format_float_literal(f64::from_le_bytes(arr))).unwrap();
+        } else if ty_ref.is::<crate::types::HalfType>() {
+            let arr: [u8; 2] = bytes
+                .get(..2)
+                .ok_or_else(|| "half initializer is shorter than 2 bytes".to_string())?
+                .try_into()
+                .map_err(|_| "failed to read half initializer".to_string())?;
+            write!(output, "{}", format_half_literal(u16::from_le_bytes(arr))).unwrap();
+        } else if ty_ref.is::<crate::types::PointerType>() {
+            let raw = read_le_u128(bytes, 8)?;
+            if raw == 0 {
+                write!(output, "null").unwrap();
+            } else {
+                return Err("non-null pointer global initializers are not supported".to_string());
+            }
+        } else if let Some(array_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
+            let elem_ty = array_ty.elem_type();
+            let elem_size = self.initializer_type_size(elem_ty)?;
+            write!(output, "[").unwrap();
+            for idx in 0..array_ty.size() as usize {
+                if idx > 0 {
+                    write!(output, ", ").unwrap();
+                }
+                let start = idx * elem_size;
+                let end = start + elem_size;
+                let elem_bytes = bytes.get(start..end).ok_or_else(|| {
+                    format!(
+                        "array initializer is shorter than {} bytes for element {}",
+                        end, idx
+                    )
+                })?;
+                self.export_typed_initializer(elem_ty, elem_bytes, output)?;
+            }
+            write!(output, "]").unwrap();
+        } else if let Some(struct_ty) = ty_ref.downcast_ref::<crate::types::StructType>() {
+            let fields: Vec<_> = struct_ty.fields().collect();
+            let mut offset = 0usize;
+            write!(output, "{{ ").unwrap();
+            for (idx, field_ty) in fields.iter().enumerate() {
+                if idx > 0 {
+                    write!(output, ", ").unwrap();
+                }
+                let field_align = self.natural_alignment(*field_ty).max(1) as usize;
+                offset = offset.div_ceil(field_align) * field_align;
+                let field_size = self.initializer_type_size(*field_ty)?;
+                let end = offset + field_size;
+                let field_bytes = bytes.get(offset..end).ok_or_else(|| {
+                    format!(
+                        "struct initializer is shorter than {} bytes for field {}",
+                        end, idx
+                    )
+                })?;
+                self.export_typed_initializer(*field_ty, field_bytes, output)?;
+                offset = end;
+            }
+            write!(output, " }}").unwrap();
+        } else {
+            return Err(format!(
+                "global initializer for unsupported LLVM type {}",
+                ty.deref(self.ctx).disp(self.ctx)
+            ));
+        }
+        Ok(())
+    }
+
+    fn initializer_type_size(&self, ty: TypeHandle) -> Result<usize, String> {
+        let ty_ref = ty.deref(self.ctx);
+        if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+            Ok(int_ty.width().div_ceil(8) as usize)
+        } else if ty_ref.is::<FP32Type>() {
+            Ok(4)
+        } else if ty_ref.is::<FP64Type>() {
+            Ok(8)
+        } else if ty_ref.is::<crate::types::HalfType>() {
+            Ok(2)
+        } else if ty_ref.is::<crate::types::PointerType>() {
+            Ok(8)
+        } else if let Some(array_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
+            Ok(self.initializer_type_size(array_ty.elem_type())? * array_ty.size() as usize)
+        } else if let Some(struct_ty) = ty_ref.downcast_ref::<crate::types::StructType>() {
+            let mut offset = 0usize;
+            let mut align = 1usize;
+            for field_ty in struct_ty.fields() {
+                let field_align = self.natural_alignment(field_ty).max(1) as usize;
+                offset = offset.div_ceil(field_align) * field_align;
+                offset += self.initializer_type_size(field_ty)?;
+                align = align.max(field_align);
+            }
+            Ok(offset.div_ceil(align) * align)
+        } else {
+            Err(format!(
+                "cannot compute initializer size for LLVM type {}",
+                ty.deref(self.ctx).disp(self.ctx)
+            ))
+        }
     }
 
     pub(super) fn export_function(
@@ -569,4 +719,41 @@ impl<'a> ModuleExportState<'a> {
         }
         Ok(())
     }
+}
+
+fn decode_hex_initializer(hex: &str) -> Result<Vec<u8>, String> {
+    if !hex.len().is_multiple_of(2) {
+        return Err("global initializer hex string has odd length".to_string());
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks_exact(2) {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        bytes.push((hi << 4) | lo);
+    }
+    Ok(bytes)
+}
+
+fn hex_nibble(byte: u8) -> Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(format!("invalid hex digit {:?}", byte as char)),
+    }
+}
+
+fn read_le_u128(bytes: &[u8], byte_len: usize) -> Result<u128, String> {
+    if byte_len > 16 {
+        return Err(format!(
+            "integer initializer width {} exceeds i128",
+            byte_len
+        ));
+    }
+    let slice = bytes
+        .get(..byte_len)
+        .ok_or_else(|| format!("integer initializer is shorter than {} bytes", byte_len))?;
+    let mut arr = [0u8; 16];
+    arr[..byte_len].copy_from_slice(slice);
+    Ok(u128::from_le_bytes(arr))
 }
