@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{counted_loop, mir_ctx};
+use common::{counted_loop, mir_ctx, nested_counted_loop};
 use dialect_mir::ops::MirUnrollHintOp;
 use mir_transforms::unroll::unroll_annotated_loops;
 use pliron::graph::dominance::DomInfo;
@@ -68,5 +68,72 @@ fn no_hint_leaves_the_loop_intact() {
         loop_count(&ctx, lp.region),
         1,
         "no hint => the loop is untouched"
+    );
+}
+
+/// Fully unrolling an OUTER loop that *contains* an inner loop clones the inner
+/// loop wholesale once per outer iteration: the outer loop disappears, the inner
+/// loop stays a loop, and there is one inner-loop copy per outer iteration. This
+/// is the capability the `!children` bail used to forbid.
+#[test]
+fn nested_outer_full_unroll_clones_the_inner_loop() {
+    let mut ctx = mir_ctx();
+    let lp = nested_counted_loop(&mut ctx, 3, 2); // outer trip 3, inner trip 2
+
+    assert_eq!(
+        loop_count(&ctx, lp.region),
+        2,
+        "starts with outer + inner loop"
+    );
+
+    // Full-unroll marker on the OUTER loop (its body block dominating the inner).
+    let hint = MirUnrollHintOp::new(&mut ctx, 0);
+    hint.get_operation().insert_at_front(lp.outer_body, &ctx);
+
+    let mut analyses = AnalysisManager::default();
+    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses).expect("nested outer unroll");
+
+    // The transform must leave valid IR (it clones inner-loop blocks + back-edges
+    // and recomputes loop structure; a bug here would corrupt the CFG).
+    pliron::operation::verify_operation(lp.module, &ctx).expect("valid IR after nested unroll");
+
+    let info = {
+        let mut dom = DomInfo::default();
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    assert!(
+        !info.loops().iter().any(|l| l.header == lp.outer_header),
+        "the outer loop is gone (fully unrolled)"
+    );
+    assert_eq!(
+        info.loops().len(),
+        3,
+        "the inner loop is cloned once per outer iteration (3 inner loops, 0 outer)"
+    );
+}
+
+/// Partially unrolling an outer loop that contains an inner loop is valid: the
+/// outer loop becomes a main loop (stepping by N) plus a remainder, and each
+/// copy carries its own clone of the inner loop. We assert the IR verifies and
+/// that loops survive the transform (the gemm K-loop shape, minus the fold which
+/// `unroll_smoke` checks numerically).
+#[test]
+fn nested_outer_partial_unroll_is_valid() {
+    let mut ctx = mir_ctx();
+    let lp = nested_counted_loop(&mut ctx, 8, 2);
+
+    assert_eq!(loop_count(&ctx, lp.region), 2);
+
+    let hint = MirUnrollHintOp::new(&mut ctx, 4); // partial unroll by 4
+    hint.get_operation().insert_at_front(lp.outer_body, &ctx);
+
+    let mut analyses = AnalysisManager::default();
+    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses).expect("nested outer partial unroll");
+
+    pliron::operation::verify_operation(lp.module, &ctx).expect("valid IR after nested partial unroll");
+    assert!(
+        loop_count(&ctx, lp.region) >= 2,
+        "inner loops are cloned into the unrolled copies (loops survive)"
     );
 }

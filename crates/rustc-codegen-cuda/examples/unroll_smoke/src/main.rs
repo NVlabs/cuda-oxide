@@ -239,6 +239,60 @@ mod kernels {
             *out_elem = acc;
         }
     }
+
+    /// Unroll a loop that *contains* a loop, FULL path. The OUTER loop (constant
+    /// trip 4) carries `#[unroll]`; its body holds an inner `while j < 3` that is
+    /// left alone and cloned wholesale into each of the 4 copies (it stays a
+    /// loop). The outer `i & 3` folds to 0,1,2,3. Each outer iteration adds
+    /// `(i & 3) + (0+1+2)`; summed over i in 0..4: (0+1+2+3) + 4*3 = 6 + 12 = 18,
+    /// so `out[tid] == tid + 18`.
+    #[kernel]
+    pub fn outer_full(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let base = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = base;
+            let mut i: u32 = 0;
+            #[unroll]
+            while i < 4 {
+                acc = acc.wrapping_add(i & 3);
+                let mut j: u32 = 0;
+                while j < 3 {
+                    acc = acc.wrapping_add(j);
+                    j += 1;
+                }
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Unroll a loop that *contains* a loop, PARTIAL path -- the gemm K-loop
+    /// shape. The OUTER loop (runtime trip `n`) carries `#[unroll(4)]`; its body
+    /// holds the stage index `i & 3` (which folds to the constants 0,1,2,3 across
+    /// the 4 copies because the main counter steps by 4) plus an inner
+    /// `while j < 3` that is cloned wholesale into each copy and stays a loop.
+    /// Each outer iteration adds `(i & 3) + (0+1+2)`; `out[tid]` is
+    /// `sum_{i<n}(i & 3) + n*3`.
+    #[kernel]
+    pub fn outer_partial(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut i: u32 = 0;
+            #[unroll(4)]
+            while i < n {
+                acc = acc.wrapping_add(i & 3);
+                let mut j: u32 = 0;
+                while j < 3 {
+                    acc = acc.wrapping_add(j);
+                    j += 1;
+                }
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
 }
 
 fn main() {
@@ -322,6 +376,18 @@ fn main() {
         .expect("launch nested_var_bound");
     let got_nvar = d_nvar.to_host_vec(&stream).unwrap();
 
+    let mut d_ofull = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .outer_full(stream.as_ref(), cfg, &mut d_ofull)
+        .expect("launch outer_full");
+    let got_ofull = d_ofull.to_host_vec(&stream).unwrap();
+
+    let mut d_opart = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .outer_partial(stream.as_ref(), cfg, &mut d_opart, trip)
+        .expect("launch outer_partial");
+    let got_opart = d_opart.to_host_vec(&stream).unwrap();
+
     let mut failures = 0usize;
     let want_part = trip * (trip - 1) / 2;
     let want_fold: u32 = (0..trip).map(|i| i & 3).sum();
@@ -345,9 +411,13 @@ fn main() {
     let want_nvar: u32 = (0..trip)
         .flat_map(|k| 0..k)
         .fold(0u32, |a, x| a.wrapping_add(x));
+    // outer_partial: sum_{i<n}(i & 3) + n*(0+1+2), the same `i & 3` sum as
+    // `want_fold` plus the inner-loop contribution.
+    let want_opart: u32 = want_fold + trip * 3;
     for tid in 0..N {
         let want_full = tid as u32 + 12;
         let want_fullmb = tid as u32 + 52;
+        let want_ofull = tid as u32 + 18;
         if got_full[tid] != want_full {
             println!(
                 "FAIL tid={tid}: full_unroll={} expected={want_full}",
@@ -415,6 +485,20 @@ fn main() {
             println!(
                 "FAIL tid={tid}: nested_var_bound={} expected={want_nvar}",
                 got_nvar[tid]
+            );
+            failures += 1;
+        }
+        if got_ofull[tid] != want_ofull {
+            println!(
+                "FAIL tid={tid}: outer_full={} expected={want_ofull}",
+                got_ofull[tid]
+            );
+            failures += 1;
+        }
+        if got_opart[tid] != want_opart {
+            println!(
+                "FAIL tid={tid}: outer_partial={} expected={want_opart}",
+                got_opart[tid]
             );
             failures += 1;
         }

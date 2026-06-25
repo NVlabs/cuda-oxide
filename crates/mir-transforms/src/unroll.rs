@@ -56,7 +56,7 @@ use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed, TypedHandle};
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use std::num::NonZero;
 
 use crate::analyses::induction::{self, ArgKind, CmpPred};
@@ -76,6 +76,16 @@ fn verbose() -> bool {
 /// up: `dce` drops what unrolling makes unused (the `& mask` ops we folded to
 /// constants, full unroll's now-dead counter increments), and `simplify_cfg`
 /// deletes the original loop blocks once they are unreachable.
+/// How the author spelled the request, for diagnostics: `#[unroll]` (full) or
+/// `#[unroll(N)]` (partial by N).
+fn unroll_kind(factor: u32) -> String {
+    if factor == 0 {
+        "#[unroll]".to_string()
+    } else {
+        format!("#[unroll({factor})]")
+    }
+}
+
 pub fn unroll_annotated_loops(
     module: Ptr<Operation>,
     ctx: &mut Context,
@@ -103,56 +113,75 @@ pub fn unroll_annotated_loops(
     // merged block; we remove it below, before cloning the body.
     simplify_cfg(module, ctx)?;
 
-    // `simplify_cfg` rewrote the CFG, so dominator info cached by an earlier
-    // pass is no longer valid. Compute the loop analyses from a clean manager.
-    let mut analyses = AnalysisManager::default();
-
     let mut changed = false;
     for func_op in collect_functions(module, ctx) {
         let region = func_op.deref(ctx).get_region(0);
-
-        // What loops did the author annotate? (op, containing block, factor)
-        let hints = collect_hints(ctx, region);
-        if hints.is_empty() {
+        if collect_hints(ctx, region).is_empty() {
             continue;
         }
 
-        let info = {
-            let mut dom_info = analyses.get_analysis_mut::<DomInfo>(module, ctx)?;
-            let dom = dom_info.get_dom_tree(ctx, region);
-            LoopInfo::compute(ctx, region, dom)
-        };
+        // Unroll one annotated loop per round, innermost-first, recomputing the
+        // loop analyses each round. Each unroll rewrites the CFG -- and for a loop
+        // that *contains* inner loops it clones those inner loops into every copy
+        // -- so a single shared `LoopInfo` snapshot would go stale. A fresh
+        // dominator tree + `LoopInfo` per round keeps every query correct; we run
+        // `simplify_cfg` first so the recompute sees only live blocks (a full
+        // unroll leaves the original loop unreachable, and we must not let those
+        // dead blocks confuse dominance). Innermost-first means an annotated inner
+        // loop is unrolled, and its hint consumed, before its enclosing loop is
+        // cloned, so inner hints are never duplicated into the copies. (`dce` is
+        // deliberately NOT run here: it would delete the side-effect-free
+        // `mir.unroll_hint` markers before we get to collect them.)
+        loop {
+            // Drop blocks the previous round made unreachable before recomputing.
+            simplify_cfg(module, ctx)?;
 
-        // Map each hint to the loop whose body it sits in, then remove the hint
-        // so it is not copied when we clone the body and never reaches lowering.
-        let mut loop_factor: FxHashMap<usize, u32> = FxHashMap::default();
-        for (hint_op, block, factor) in &hints {
-            if let Some(loop_id) = info.innermost_loop(*block) {
-                loop_factor.entry(loop_id).or_insert(*factor);
+            let hints = collect_hints(ctx, region);
+            if hints.is_empty() {
+                break;
             }
-            hint_op.unlink(ctx);
-        }
-        // Process loops in a stable order (by id) so diagnostics are deterministic.
-        let mut loop_factor: Vec<(usize, u32)> = loop_factor.into_iter().collect();
-        loop_factor.sort_by_key(|&(loop_id, _)| loop_id);
 
-        // We computed `info` once, above, and reuse it while unrolling each loop
-        // below even though each unroll mutates the CFG. That is sound here: a
-        // full/partial unroll only rewires its own loop's preheader and clones
-        // its own (disjoint) blocks onto the end of the region; the original
-        // blocks are not deleted until the `dce` + `simplify_cfg` after this
-        // whole loop. So another hinted loop's `Loop` snapshot stays valid, and
-        // the per-loop queries (`preheader`, `exiting_blocks`, `exit_blocks`)
-        // re-read the live CFG. A loop that contains another is never unrolled
-        // (the `!children.is_empty()` bail in `analyze_shape`), so an outer and
-        // its inner are never both transformed against the same stale `info`.
-        for (loop_id, factor) in loop_factor {
-            // How the user spelled the request, for diagnostics.
-            let kind = if factor == 0 {
-                "#[unroll]".to_string()
-            } else {
-                format!("#[unroll({factor})]")
+            let info = {
+                let mut analyses = AnalysisManager::default();
+                let mut dom_info = analyses.get_analysis_mut::<DomInfo>(module, ctx)?;
+                let dom = dom_info.get_dom_tree(ctx, region);
+                LoopInfo::compute(ctx, region, dom)
             };
+
+            // Pick the innermost annotated loop still to do (smallest body wins;
+            // in a reducible CFG a container's body is a strict superset of its
+            // child's, so "smallest body" is exactly "innermost").
+            let mut best: Option<(usize, usize, u32)> = None; // (loop_id, body_size, factor)
+            for (_op, block, factor) in &hints {
+                if let Some(loop_id) = info.innermost_loop(*block) {
+                    let size = info.loops()[loop_id].blocks.len();
+                    if best.is_none_or(|(_, bs, _)| size < bs) {
+                        best = Some((loop_id, size, *factor));
+                    }
+                }
+            }
+            let Some((loop_id, _size, factor)) = best else {
+                // No remaining hint sits in a recognizable loop. The author asked
+                // for unrolling, so say so loudly, then drop the markers and stop.
+                for (op, _block, factor) in &hints {
+                    eprintln!(
+                        "warning: {} requested but the loop was not unrolled: the annotation is not inside a recognizable loop",
+                        unroll_kind(*factor)
+                    );
+                    op.unlink(ctx);
+                }
+                break;
+            };
+            let kind = unroll_kind(factor);
+
+            // Consume this loop's hint(s) before any cloning so the markers are
+            // never copied into the unrolled bodies.
+            for (op, block, _f) in &hints {
+                if info.innermost_loop(*block) == Some(loop_id) {
+                    op.unlink(ctx);
+                }
+            }
+
             let Some(ph) = info.preheader(ctx, region, loop_id) else {
                 // The author asked for unrolling; never silently do nothing.
                 eprintln!(
@@ -325,17 +354,16 @@ fn analyze_shape(
     rec: &induction::LoopRecurrences,
 ) -> std::result::Result<LoopShape, String> {
     let l = &info.loops()[id];
-    // An inner loop (one with a parent) is fine to unroll: its body reads the
-    // outer loop's values by dominance, and cloning leaves those untouched, so
-    // the copies still see them. But unrolling a loop that itself *contains*
-    // another loop would have to duplicate that inner loop too; leave that case
-    // to a follow-up and tell the author to annotate the inner loop instead.
-    // (This `children` test is load-bearing for nested correctness: it relies on
-    // `LoopInfo` recording a true container as a parent, which holds because in a
-    // reducible CFG a parent loop's block set is a strict superset of each child's.)
-    if !l.children.is_empty() {
-        return Err("this loop contains an inner loop; unrolling a loop that contains loops is a follow-up (annotate the inner loop instead)".into());
-    }
+    // A loop that *contains* an inner loop can be unrolled: the inner loop's
+    // blocks are part of this loop's body (`l.blocks`), so cloning the body
+    // clones the inner loop wholesale and it stays a loop in each copy -- we do
+    // not recurse into it or unroll it. Unrolling the inner loop too is a
+    // separate `#[unroll]` on the inner loop, which the driver processes
+    // innermost-first; and the driver recomputes `LoopInfo` after each unroll so
+    // the cloned inner loops are re-registered cleanly. So `l.children` is no
+    // longer a bail. (Single-latch / single-exit are still required of *this*
+    // loop below; the inner loops may be any shape since they are opaque body
+    // blocks to the clone.)
     if l.latches.len() != 1 {
         return Err(format!(
             "the loop has {} back-edges; only single-latch loops are supported for now",

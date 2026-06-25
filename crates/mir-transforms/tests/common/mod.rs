@@ -253,3 +253,136 @@ pub fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
         exit,
     }
 }
+
+/// A built nested counted loop (outer `while i < n` containing inner
+/// `while j < m`) and the blocks worth asserting on.
+pub struct NestedLoop {
+    pub module: Ptr<Operation>,
+    pub region: Ptr<Region>,
+    pub preheader: Ptr<BasicBlock>,
+    pub outer_header: Ptr<BasicBlock>,
+    pub outer_body: Ptr<BasicBlock>,
+    pub inner_header: Ptr<BasicBlock>,
+    pub inner_body: Ptr<BasicBlock>,
+    pub outer_latch: Ptr<BasicBlock>,
+    pub exit: Ptr<BasicBlock>,
+}
+
+/// Build `while i < n { while j < m { j += 1 } i += 1 }` in the shape mem2reg
+/// leaves it (carried values are header block arguments, exit tests are
+/// `not(_ < _)`):
+///
+/// ```text
+///   preheader:        i0=0;             goto outer_header(i0)
+///   outer_header(i):  nlt = not(i < n); cond_br nlt [exit, outer_body]
+///   outer_body:       j0=0;             goto inner_header(j0)   // inner preheader
+///   inner_header(j):  mlt = not(j < m); cond_br mlt [outer_latch, inner_body]
+///   inner_body:       j1 = j+1;         goto inner_header(j1)
+///   outer_latch:      i1 = i+1;         goto outer_header(i1)
+///   exit:             return
+/// ```
+///
+/// The outer loop *contains* the inner loop, so this is the shape the
+/// nested-unroll path must handle: unrolling the outer clones the inner loop
+/// wholesale (it stays a loop in each copy), it is never flattened.
+pub fn nested_counted_loop(ctx: &mut Context, n: i64, m: i64) -> NestedLoop {
+    let (module, region) = empty_func(ctx);
+    let u32 = u32t(ctx);
+    let i1 = i1(ctx);
+
+    let preheader = block(ctx, region, vec![]);
+    let outer_header = block(ctx, region, vec![u32.into()]); // (i)
+    let outer_body = block(ctx, region, vec![]);
+    let inner_header = block(ctx, region, vec![u32.into()]); // (j)
+    let inner_body = block(ctx, region, vec![]);
+    let outer_latch = block(ctx, region, vec![]);
+    let exit = block(ctx, region, vec![]);
+
+    let not = |ctx: &mut Context, b: Ptr<BasicBlock>, v: Value| -> Value {
+        let op = Operation::new(
+            ctx,
+            MirNotOp::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![v],
+            vec![],
+            0,
+        );
+        op.insert_at_back(b, ctx);
+        op.deref(ctx).get_result(0)
+    };
+
+    // preheader: i0 = 0; goto outer_header(i0)
+    let i0 = iconst(ctx, preheader, u32, 0);
+    goto(ctx, preheader, outer_header, vec![i0]);
+
+    // outer_header(i): nlt = not(i < n); cond_br nlt [exit, outer_body]
+    let i = outer_header.deref(ctx).get_argument(0);
+    let nconst = iconst(ctx, outer_header, u32, n);
+    let lt = op2!(
+        ctx,
+        outer_header,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        nconst
+    );
+    let nlt = not(ctx, outer_header, lt);
+    cond_br(ctx, outer_header, nlt, exit, outer_body);
+
+    // outer_body: j0 = 0; goto inner_header(j0)
+    let j0 = iconst(ctx, outer_body, u32, 0);
+    goto(ctx, outer_body, inner_header, vec![j0]);
+
+    // inner_header(j): mlt = not(j < m); cond_br mlt [outer_latch, inner_body]
+    let j = inner_header.deref(ctx).get_argument(0);
+    let mconst = iconst(ctx, inner_header, u32, m);
+    let jlt = op2!(
+        ctx,
+        inner_header,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        j,
+        mconst
+    );
+    let jnlt = not(ctx, inner_header, jlt);
+    cond_br(ctx, inner_header, jnlt, outer_latch, inner_body);
+
+    // inner_body: j1 = j + 1; goto inner_header(j1)
+    let one_j = iconst(ctx, inner_body, u32, 1);
+    let j1 = op2!(
+        ctx,
+        inner_body,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        j,
+        one_j
+    );
+    goto(ctx, inner_body, inner_header, vec![j1]);
+
+    // outer_latch: i1 = i + 1; goto outer_header(i1)
+    let one_i = iconst(ctx, outer_latch, u32, 1);
+    let inext = op2!(
+        ctx,
+        outer_latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        one_i
+    );
+    goto(ctx, outer_latch, outer_header, vec![inext]);
+
+    // exit: return
+    ret(ctx, exit);
+
+    NestedLoop {
+        module,
+        region,
+        preheader,
+        outer_header,
+        outer_body,
+        inner_header,
+        inner_body,
+        outer_latch,
+        exit,
+    }
+}
