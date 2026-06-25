@@ -642,8 +642,7 @@ fn full_unroll(
     // used outside the loop). The original header is now dead, so those reads must
     // be repointed to the final unrolled values. Uses inside the loop are left
     // alone; their blocks are unreachable and get deleted by `simplify_cfg`.
-    for a in 0..s.nargs {
-        let replacement = running[a];
+    for (a, &replacement) in running.iter().enumerate().take(s.nargs) {
         s.header_args[a].replace_some_uses_with(
             ctx,
             |ctx, u| match u.user_op().deref(ctx).get_parent_block() {
@@ -1095,43 +1094,4 @@ fn collect_hints(
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::{counted_loop, mir_ctx};
-    use pliron::graph::dominance::DomInfo;
-
-    /// `analyze_shape` accepts the canonical counted loop and reports the right
-    /// facts (the supported shape: single latch, single header-test exit,
-    /// recognized counter, single-block body).
-    #[test]
-    fn analyze_shape_accepts_canonical_counted_loop() {
-        let mut ctx = mir_ctx();
-        let lp = counted_loop(&mut ctx, 8);
-
-        let mut dom = DomInfo::default();
-        let info = {
-            let dt = dom.get_dom_tree(&ctx, lp.region);
-            LoopInfo::compute(&ctx, lp.region, dt)
-        };
-        let id = info.innermost_loop(lp.header).unwrap();
-        let ph = info.preheader(&ctx, lp.region, id).unwrap();
-        let rec = induction::analyze(&ctx, &info, id, ph);
-
-        let shape = analyze_shape(&ctx, &info, lp.region, id, ph, &rec)
-            .expect("canonical counted loop is a supported shape");
-
-        assert_eq!(shape.header, lp.header);
-        assert_eq!(shape.latch, lp.latch);
-        assert_eq!(shape.exit, lp.exit);
-        assert_eq!(shape.nargs, 2); // (acc, i)
-        assert_eq!(shape.iv_idx, 1); // i
-        assert_eq!(shape.iv_init, 0);
-        assert_eq!(shape.iv_step, 1);
-        // The body is the single latch block; its entry is the latch itself.
-        assert_eq!(shape.body_entry, lp.latch);
-        assert_eq!(shape.body_blocks_ordered, vec![lp.latch]);
-    }
 }

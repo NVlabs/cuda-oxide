@@ -1665,10 +1665,10 @@ mod tests {
     /// else is rejected.
     #[test]
     fn test_fabs_libdevice_name_dispatches_on_float_width() {
-        let mut ctx = Context::new();
+        let ctx = Context::new();
         let f32_ty = FP32Type::get(&ctx).into();
         let f64_ty = FP64Type::get(&ctx).into();
-        let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let loc = pliron::location::Location::Unknown;
 
         assert_eq!(

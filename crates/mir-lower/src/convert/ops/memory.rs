@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn convert_alloca_lowers_to_llvm_alloca() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn convert_alloca_preserves_debug_local_metadata() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
@@ -1015,7 +1015,7 @@ mod tests {
     #[test]
     fn convert_store_lowers_to_llvm_store() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
 
         // Kernel takes (ptr, val) so we can store one into the other.
@@ -1055,7 +1055,7 @@ mod tests {
     #[test]
     fn convert_store_preserves_volatile() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into(), i32_ty], vec![]);
@@ -1087,7 +1087,7 @@ mod tests {
     #[test]
     fn convert_load_lowers_to_llvm_load() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into()], vec![]);
@@ -1114,7 +1114,7 @@ mod tests {
     #[test]
     fn convert_dbg_value_lowers_to_llvm_dbg_value() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
         let value = block.deref(&ctx).get_argument(0);
@@ -1191,7 +1191,7 @@ mod tests {
     #[test]
     fn mem2reg_salvages_tagged_alloca_into_mir_dbg_value() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![i32_ty], vec![i32_ty]);
@@ -1279,7 +1279,7 @@ mod tests {
     #[test]
     fn convert_load_preserves_volatile() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into()], vec![]);
@@ -1310,7 +1310,7 @@ mod tests {
     #[test]
     fn convert_ref_lowers_to_alloca_then_store() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
 
         // Take a u32 by value, build `&x`.
@@ -1348,8 +1348,8 @@ mod tests {
     #[test]
     fn convert_ptr_offset_lowers_to_gep_with_pointee_elem_type() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
-        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into(), i64_ty], vec![]);
@@ -1457,7 +1457,7 @@ mod tests {
         // u8 tag + i64 payload, rustc size 16: the slot map places the
         // payload at its rustc byte offset 8 behind an explicit
         // [7 x i8] filler, making the layout datalayout-independent.
-        let i64_payload: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let i64_payload: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let payload = make_enum_ty(
             &mut ctx,
             "OnePayload",
@@ -1514,9 +1514,9 @@ mod tests {
         use crate::convert::types::{build_enum_slot_map, llvm_type_size_align};
 
         let mut ctx = make_ctx();
-        let u64_a: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
-        let u64_b: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
-        let tag_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Unsigned).into();
+        let u64_a: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let u64_b: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let tag_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         // enum F { A(u64), B(u64) }: payloads share byte 0, tag at byte 8.
         let ty: TypeHandle = MirEnumType::get_with_layout(
             &mut ctx,
@@ -1572,7 +1572,7 @@ mod tests {
     fn device_local_multi_payload_enum_gep_and_load_lower() {
         let mut ctx = make_ctx();
         let enum_ty = make_multi_payload_enum_ty(&mut ctx);
-        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, enum_ty, true);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into(), i64_ty], vec![]);
@@ -1655,9 +1655,9 @@ mod tests {
         // The device's model of Option<&T>: an explicit u8 tag plus the
         // pointer payload, with total_size 0 ("layout not recorded"),
         // exactly what the importer builds for niche-encoded enums.
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let pointee = MirPtrType::get_generic(&mut ctx, i32_ty, false);
-        let tag_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Unsigned).into();
+        let tag_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         let niched: TypeHandle = MirEnumType::get(
             &mut ctx,
             "Option".to_string(),

@@ -1642,8 +1642,8 @@ mod tests {
         let module_block = BasicBlock::new(&mut ctx, None, vec![]);
         module_block.insert_at_back(module_region, &ctx);
 
-        let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-        let callee_ty = LlvmFuncType::get(&mut ctx, i32_ty.into(), vec![], false);
+        let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+        let callee_ty = LlvmFuncType::get(&ctx, i32_ty.into(), vec![], false);
         let callee_ident: pliron::identifier::Identifier = "__nv_sqrtf".try_into().unwrap();
         let nv_call = LlvmCallOp::new(
             &mut ctx,

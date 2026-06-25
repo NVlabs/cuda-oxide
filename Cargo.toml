@@ -44,9 +44,9 @@ repository = "https://github.com/NVlabs/cuda-oxide.git"
 # cuda-oxide consumes the dialect modeling only, not the FFI bridge.
 # `crates/rustc-codegen-cuda/Cargo.toml` MUST stay on this same rev, or pliron
 # resolves to two distinct crates and types stop unifying.
-pliron = { git = "https://github.com/pliron-org/pliron", rev = "847561916b34649ba944d4eb7db50d02cf9ddf30" }
-pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "847561916b34649ba944d4eb7db50d02cf9ddf30" }
-pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "847561916b34649ba944d4eb7db50d02cf9ddf30", default-features = false }
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854" }
+pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854" }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "222dd962a124cba8ec5f119ae6e0ecf202630854", default-features = false }
 
 # Internal crates
 llvm-export = { path = "crates/llvm-export" }
@@ -87,15 +87,3 @@ dyn-clone = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "visit", "visit-mut"] }
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
-
-# --- Local pliron override (loop-unroll dev only, branch feat/loop-unroll-pass) ---
-# We are adding op/region cloning (IRMapping + Operation::clone) upstream in pliron
-# for the loop-unroll pass. Until that PR merges we build against the local pliron
-# checkout (branch feat/op-clone = master + the in-progress clone). The declared
-# rev above (847561916, real master) is what we resolve versions against; this path
-# patch overrides the source. NEVER commit this section to a shared branch: delete
-# it and bump the rev to the clone's merge commit once it lands.
-[patch."https://github.com/pliron-org/pliron"]
-pliron = { path = "/home/nihalp/dev/pliron" }
-pliron-derive = { path = "/home/nihalp/dev/pliron/pliron-derive" }
-pliron-llvm = { path = "/home/nihalp/dev/pliron/pliron-llvm" }

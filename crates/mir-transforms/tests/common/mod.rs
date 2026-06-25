@@ -3,9 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Helpers for building small `dialect-mir` CFGs in unit tests, so the analyses
-//! (`LoopInfo`, `induction`) and the unroller's shape checks can be exercised
+//! Helpers for building small `dialect-mir` CFGs in integration tests, so the
+//! analyses (`LoopInfo`, `induction`) and the unroll pass can be exercised
 //! without going through the whole rustc -> MIR pipeline.
+//!
+//! Each test binary (`loop_info`, `induction`, `unroll`) pulls this in via
+//! `mod common;` and uses only the builders it needs, hence the crate-wide
+//! `dead_code` allow.
+
+#![allow(dead_code)]
 
 use core::num::NonZero;
 
@@ -29,25 +35,25 @@ use pliron::value::Value;
 
 /// A fresh context with the `mir` dialect registered (builtin is registered by
 /// `Context::new`).
-pub(crate) fn mir_ctx() -> Context {
+pub fn mir_ctx() -> Context {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
     ctx
 }
 
 /// A signless `i1` type.
-pub(crate) fn i1(ctx: &mut Context) -> TypedHandle<IntegerType> {
+pub fn i1(ctx: &mut Context) -> TypedHandle<IntegerType> {
     IntegerType::get(ctx, 1, Signedness::Signless)
 }
 
 /// An unsigned 32-bit type (the IV type our kernels use).
-pub(crate) fn u32t(ctx: &mut Context) -> TypedHandle<IntegerType> {
+pub fn u32t(ctx: &mut Context) -> TypedHandle<IntegerType> {
     IntegerType::get(ctx, 32, Signedness::Unsigned)
 }
 
 /// Create an empty `fn foo()` inside a module and return `(module_op, region)`.
 /// Blocks are appended to `region` by the caller; the first block is the entry.
-pub(crate) fn empty_func(ctx: &mut Context) -> (Ptr<Operation>, Ptr<Region>) {
+pub fn empty_func(ctx: &mut Context) -> (Ptr<Operation>, Ptr<Region>) {
     let module = ModuleOp::new(ctx, "test".try_into().unwrap());
     let func_ty = FunctionType::get(ctx, vec![], vec![]);
     let func_op = Operation::new(
@@ -66,18 +72,14 @@ pub(crate) fn empty_func(ctx: &mut Context) -> (Ptr<Operation>, Ptr<Region>) {
 }
 
 /// Append an empty block (with the given argument types) to `region`.
-pub(crate) fn block(
-    ctx: &mut Context,
-    region: Ptr<Region>,
-    args: Vec<TypeHandle>,
-) -> Ptr<BasicBlock> {
+pub fn block(ctx: &mut Context, region: Ptr<Region>, args: Vec<TypeHandle>) -> Ptr<BasicBlock> {
     let b = BasicBlock::new(ctx, None, args);
     b.insert_at_back(region, ctx);
     b
 }
 
 /// Append an integer constant to `b` and return its result value.
-pub(crate) fn iconst(
+pub fn iconst(
     ctx: &mut Context,
     b: Ptr<BasicBlock>,
     ty: TypedHandle<IntegerType>,
@@ -99,12 +101,7 @@ pub(crate) fn iconst(
 }
 
 /// Append an unconditional `goto target(operands)` to `b`.
-pub(crate) fn goto(
-    ctx: &mut Context,
-    b: Ptr<BasicBlock>,
-    target: Ptr<BasicBlock>,
-    operands: Vec<Value>,
-) {
+pub fn goto(ctx: &mut Context, b: Ptr<BasicBlock>, target: Ptr<BasicBlock>, operands: Vec<Value>) {
     let op = Operation::new(
         ctx,
         MirGotoOp::get_concrete_op_info(),
@@ -117,7 +114,7 @@ pub(crate) fn goto(
 }
 
 /// Append `cond_br cond [true_succ, false_succ]` (no successor operands) to `b`.
-pub(crate) fn cond_br(
+pub fn cond_br(
     ctx: &mut Context,
     b: Ptr<BasicBlock>,
     cond: Value,
@@ -140,7 +137,7 @@ pub(crate) fn cond_br(
 }
 
 /// Append a `return` (no value) to `b`.
-pub(crate) fn ret(ctx: &mut Context, b: Ptr<BasicBlock>) {
+pub fn ret(ctx: &mut Context, b: Ptr<BasicBlock>) {
     let op = Operation::new(
         ctx,
         MirReturnOp::get_concrete_op_info(),
@@ -164,7 +161,8 @@ macro_rules! op2 {
 }
 
 /// A built counted loop and the blocks worth asserting on.
-pub(crate) struct CountedLoop {
+pub struct CountedLoop {
+    pub module: Ptr<Operation>,
     pub region: Ptr<Region>,
     pub preheader: Ptr<BasicBlock>,
     pub header: Ptr<BasicBlock>,
@@ -182,8 +180,8 @@ pub(crate) struct CountedLoop {
 ///   latch:            acc1=acc+i; i1=i+1;      goto header(acc1, i1)
 ///   exit:             return
 /// ```
-pub(crate) fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
-    let (_module, region) = empty_func(ctx);
+pub fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
+    let (module, region) = empty_func(ctx);
     let u32 = u32t(ctx);
     let i1 = i1(ctx);
 
@@ -247,6 +245,7 @@ pub(crate) fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
     ret(ctx, exit);
 
     CountedLoop {
+        module,
         region,
         preheader,
         header,

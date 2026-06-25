@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn convert_return_with_scalar_value_lowers_to_llvm_return_with_value() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![i32_ty]);
         let arg = entry.deref(&ctx).get_argument(0);
         append_mir_return(&mut ctx, entry, vec![arg]);
@@ -364,8 +364,8 @@ mod tests {
         // (expects i32), false_block takes none — so the lowered cond_br must
         // expose one true-side operand and zero false-side.
         let mut ctx = make_ctx();
-        let i1_ty: TypeHandle = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
         let val = entry.deref(&ctx).get_argument(1);
@@ -402,7 +402,7 @@ mod tests {
         // mir.assert lowers to a llvm.cond_br whose false side is a fresh
         // block ending in llvm.unreachable.
         let mut ctx = make_ctx();
-        let i1_ty: TypeHandle = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
         let success = append_block(&mut ctx, entry, vec![]);
@@ -453,7 +453,7 @@ mod tests {
     fn convert_goto_lowers_to_llvm_br() {
         // mir.goto next(%arg) -> llvm.br targeting `next`, forwarding %arg.
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
         let arg = entry.deref(&ctx).get_argument(0);
 
@@ -494,7 +494,7 @@ mod tests {
         // omitted ZST arg must be filled with a synthesised `llvm.undef` so
         // the lowered br still carries both operands.
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let unit_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![]).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
         let arg = entry.deref(&ctx).get_argument(0);
@@ -540,8 +540,8 @@ mod tests {
     #[test]
     fn convert_goto_errors_when_missing_arg_is_not_zst() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
-        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
         let arg = entry.deref(&ctx).get_argument(0);
 
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn convert_return_multiple_operands_errors() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let (module_ptr, entry) =
             build_kernel(&mut ctx, vec![i32_ty, i32_ty], vec![i32_ty, i32_ty]);
         let arg0 = entry.deref(&ctx).get_argument(0);
@@ -591,8 +591,8 @@ mod tests {
     #[test]
     fn convert_cond_branch_operand_count_mismatch_errors() {
         let mut ctx = make_ctx();
-        let i1_ty: TypeHandle = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
 
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn convert_assert_missing_successor_errors() {
         let mut ctx = make_ctx();
-        let i1_ty: TypeHandle = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
+        let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
 
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn convert_goto_too_many_operands_errors() {
         let mut ctx = make_ctx();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
         let arg = entry.deref(&ctx).get_argument(0);
 
@@ -687,9 +687,9 @@ mod tests {
         // land on the true side and the i64 on the false side, checked by
         // value identity not just counts.
         let mut ctx = make_ctx();
-        let i1_ty: TypeHandle = IntegerType::get(&mut ctx, 1, Signedness::Signless).into();
-        let i32_ty: TypeHandle = IntegerType::get(&mut ctx, 32, Signedness::Signless).into();
-        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty, i64_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
         let v_true = entry.deref(&ctx).get_argument(1);

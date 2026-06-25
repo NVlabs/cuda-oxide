@@ -23,8 +23,8 @@ use pliron::{
 fn test_llvm_control_flow_verify() {
     let mut ctx = Context::new();
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i1_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
 
     // 1. BrOp
     let target_block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
@@ -75,7 +75,7 @@ fn test_llvm_control_flow_verify() {
 fn test_llvm_arithmetic_verify() {
     let mut ctx = Context::new();
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let _block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i32_ty.into()]);
 
     // Helper to check integer binops
@@ -86,7 +86,7 @@ fn test_llvm_arithmetic_verify() {
                             name: &str,
                             needs_flags: bool| {
         let mut context = Context::new();
-        let ty = IntegerType::get(&mut context, 32, Signedness::Signless);
+        let ty = IntegerType::get(&context, 32, Signedness::Signless);
         let blk = BasicBlock::new(&mut context, None, vec![ty.into(), ty.into()]);
         let l = blk.deref(&context).get_argument(0);
         let r = blk.deref(&context).get_argument(1);
@@ -104,7 +104,7 @@ fn test_llvm_arithmetic_verify() {
         assert!(op.verify(&context).is_ok(), "Valid {}", name);
 
         // Mismatch types
-        let ty64 = IntegerType::get(&mut context, 64, Signedness::Signless);
+        let ty64 = IntegerType::get(&context, 64, Signedness::Signless);
         let blk64 = BasicBlock::new(&mut context, None, vec![ty64.into()]);
         let l64 = blk64.deref(&context).get_argument(0);
 
@@ -182,9 +182,9 @@ fn test_llvm_arithmetic_verify() {
 fn test_llvm_misc_verify() {
     let mut ctx = Context::new();
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
-    let ptr_ty = llvm_export::types::PointerType::get(&mut ctx, 0);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let ptr_ty = llvm_export::types::PointerType::get(&ctx, 0);
 
     // 1. BitcastOp
     let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);

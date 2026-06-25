@@ -1021,7 +1021,7 @@ mod tests {
             }
         };
 
-        let func_type = FunctionType::get(&mut ctx, vec![], vec![]);
+        let func_type = FunctionType::get(&ctx, vec![], vec![]);
         let func_type_attr = TypeAttr::new(func_type.into());
         let mir_func = {
             let op = Operation::new(

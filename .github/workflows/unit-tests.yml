@@ -37,6 +37,7 @@ jobs:
           - package: dialect-nvvm
           - package: mir-importer
           - package: mir-lower
+          - package: mir-transforms
           - package: oxide-artifacts
           - package: reserved-oxide-symbols
           # launch_requires_unsafe trybuild fixture dev-depends on

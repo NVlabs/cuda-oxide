@@ -26,7 +26,7 @@ fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
 
     // Create MirFunc
     let func_name = "kernel_func";
-    let func_ty = pliron::builtin::types::FunctionType::get(&mut ctx, vec![], vec![]);
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, vec![], vec![]);
 
     // Manual construction of MirFuncOp
     let func_op_ptr = Operation::new(
@@ -53,7 +53,7 @@ fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
 
     // Add ReadPtxSregTidXOp
     let int32_ty = pliron::builtin::types::IntegerType::get(
-        &mut ctx,
+        &ctx,
         32,
         pliron::builtin::types::Signedness::Signless,
     );
@@ -151,7 +151,7 @@ fn test_globaltimer_lowers_to_intrinsic_call() -> Result<(), anyhow::Error> {
     let module_ptr = module.get_operation();
 
     let func_name = "kernel_func";
-    let func_ty = pliron::builtin::types::FunctionType::get(&mut ctx, vec![], vec![]);
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, vec![], vec![]);
 
     let func_op_ptr = Operation::new(
         &mut ctx,
@@ -173,7 +173,7 @@ fn test_globaltimer_lowers_to_intrinsic_call() -> Result<(), anyhow::Error> {
     };
 
     let i64_ty = pliron::builtin::types::IntegerType::get(
-        &mut ctx,
+        &ctx,
         64,
         pliron::builtin::types::Signedness::Signless,
     );
@@ -283,7 +283,7 @@ fn assert_sreg_i32_lowers_to_intrinsic(
     let module_ptr = module.get_operation();
 
     let func_name = "kernel_func";
-    let func_ty = pliron::builtin::types::FunctionType::get(&mut ctx, vec![], vec![]);
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, vec![], vec![]);
 
     let func_op_ptr = Operation::new(
         &mut ctx,
@@ -305,7 +305,7 @@ fn assert_sreg_i32_lowers_to_intrinsic(
     };
 
     let i32_ty = pliron::builtin::types::IntegerType::get(
-        &mut ctx,
+        &ctx,
         32,
         pliron::builtin::types::Signedness::Signless,
     );
@@ -411,7 +411,7 @@ fn test_threadfence_system_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     let module_ptr = module.get_operation();
 
     let func_name = "kernel_func";
-    let func_ty = pliron::builtin::types::FunctionType::get(&mut ctx, vec![], vec![]);
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, vec![], vec![]);
 
     let func_op_ptr = Operation::new(
         &mut ctx,
@@ -516,8 +516,8 @@ fn test_elect_sync_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i1_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
     let mask = entry.deref(&ctx).get_argument(0);
 
@@ -749,12 +749,12 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
     let module_region = module_ptr.deref(&ctx).get_region(0);
     let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let shared_ptr_ty = MirPtrType::get_shared(&mut ctx, i32_ty.into(), true);
     let generic_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
 
     // Callee: takes a *mut i32 in addrspace(3), returns ().
-    let callee_func_ty = FunctionType::get(&mut ctx, vec![shared_ptr_ty.into()], vec![]);
+    let callee_func_ty = FunctionType::get(&ctx, vec![shared_ptr_ty.into()], vec![]);
     let callee_func_op = Operation::new(
         &mut ctx,
         mir::MirFuncOp::get_concrete_op_info(),
@@ -791,7 +791,7 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
     // Caller: takes a *mut i32 in addrspace(0), calls `callee` with that
     // pointer. The lowerer is responsible for inserting an addrspacecast
     // since the callee's declared addrspace differs.
-    let caller_func_ty = FunctionType::get(&mut ctx, vec![generic_ptr_ty.into()], vec![]);
+    let caller_func_ty = FunctionType::get(&ctx, vec![generic_ptr_ty.into()], vec![]);
     let caller_func_op = Operation::new(
         &mut ctx,
         mir::MirFuncOp::get_concrete_op_info(),
@@ -903,17 +903,17 @@ fn test_cmp_predicate_lowering() -> Result<(), anyhow::Error> {
 
     let f32_ty = pliron::builtin::types::FP32Type::get(&ctx);
     let i32_signed = pliron::builtin::types::IntegerType::get(
-        &mut ctx,
+        &ctx,
         32,
         pliron::builtin::types::Signedness::Signed,
     );
     let u32_unsigned = pliron::builtin::types::IntegerType::get(
-        &mut ctx,
+        &ctx,
         32,
         pliron::builtin::types::Signedness::Unsigned,
     );
     let bool_ty = pliron::builtin::types::IntegerType::get(
-        &mut ctx,
+        &ctx,
         1,
         pliron::builtin::types::Signedness::Signless,
     );
@@ -927,7 +927,7 @@ fn test_cmp_predicate_lowering() -> Result<(), anyhow::Error> {
         u32_unsigned.into(),
     ];
     let func_name = "cmp_func";
-    let func_ty = pliron::builtin::types::FunctionType::get(&mut ctx, arg_tys.clone(), vec![]);
+    let func_ty = pliron::builtin::types::FunctionType::get(&ctx, arg_tys.clone(), vec![]);
 
     let func_op_ptr = Operation::new(
         &mut ctx,
@@ -1369,7 +1369,7 @@ fn test_cvt_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
 
     let lo_val = entry.deref(&ctx).get_argument(0);
@@ -1499,7 +1499,7 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
     let input = entry.deref(&ctx).get_argument(0);
 
@@ -1673,11 +1673,11 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
     let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
     let module_ptr = module.get_operation();
 
-    let bool_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
+    let bool_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
     let arg_tys: Vec<pliron::r#type::TypeHandle> =
         vec![bool_ty.into(), bool_ty.into(), bool_ty.into()];
     let func_name = "bool_phi_cmp";
-    let func_ty = FunctionType::get(&mut ctx, arg_tys.clone(), vec![]);
+    let func_ty = FunctionType::get(&ctx, arg_tys.clone(), vec![]);
 
     let func_op_ptr = Operation::new(
         &mut ctx,

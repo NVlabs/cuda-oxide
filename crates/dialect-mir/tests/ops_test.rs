@@ -35,8 +35,8 @@ fn test_mir_control_flow_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
-    let i1_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
 
     // 1. MirGotoOp
     let target_block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
@@ -105,7 +105,7 @@ fn test_mir_control_flow_verify() {
     );
 
     // 3. MirReturnOp
-    let func_ty = FunctionType::get(&mut ctx, vec![], vec![i32_ty.into()]);
+    let func_ty = FunctionType::get(&ctx, vec![], vec![i32_ty.into()]);
     let func_ty_attr = TypeAttr::new(func_ty.into());
 
     let func_op_ptr = Operation::new(
@@ -192,7 +192,7 @@ fn test_mir_load_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
 
     let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into()]);
@@ -247,7 +247,7 @@ fn test_mir_load_volatile_is_not_promotable() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
     let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into()]);
     let ptr_val = block.deref(&ctx).get_argument(0);
@@ -286,9 +286,9 @@ fn test_mir_ptr_offset_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
-    let usize_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
 
     let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into(), usize_ty.into()]);
     let ptr_val = block.deref(&ctx).get_argument(0);
@@ -337,7 +337,7 @@ fn test_mir_extract_field_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let tuple_ty = MirTupleType::get(&mut ctx, vec![i32_ty.into(), i32_ty.into()]);
 
     let block = BasicBlock::new(&mut ctx, None, vec![tuple_ty.into()]);
@@ -373,9 +373,9 @@ fn test_mir_construct_slice_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let u8_ty = IntegerType::get(&mut ctx, 8, Signedness::Unsigned);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
-    let usize_ty = IntegerType::get(&mut ctx, 64, Signedness::Unsigned);
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
     let u8_ptr_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
     let u8_slice_ty = MirSliceType::get(&mut ctx, u8_ty.into());
     let i32_slice_ty = MirSliceType::get(&mut ctx, i32_ty.into());
@@ -446,7 +446,7 @@ fn test_mir_arithmetic_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i32_ty.into()]);
     let lhs = block.deref(&ctx).get_argument(0);
 
@@ -457,7 +457,7 @@ fn test_mir_arithmetic_verify() {
                         name: &str| {
         let mut context = Context::new();
         dialect_mir::register(&mut context);
-        let ty = IntegerType::get(&mut context, 32, Signedness::Signed);
+        let ty = IntegerType::get(&context, 32, Signedness::Signed);
         let blk = BasicBlock::new(&mut context, None, vec![ty.into(), ty.into()]);
         let l = blk.deref(&context).get_argument(0);
         let r = blk.deref(&context).get_argument(1);
@@ -523,12 +523,12 @@ fn test_mir_misc_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signed);
-    let i1_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signed);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
 
     // 1. MirConstantOp
-    let i32_signless = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_signless = IntegerType::get(&ctx, 32, Signedness::Signless);
     let width = NonZeroUsize::new(32).unwrap();
     let apint = APInt::from_u32(42, width);
     let int_attr = IntegerAttr::new(i32_signless, apint);
@@ -546,7 +546,7 @@ fn test_mir_misc_verify() {
     assert!(const_op.verify(&ctx).is_ok(), "Valid Constant");
 
     // Mismatch type
-    let i64_signless = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i64_signless = IntegerType::get(&ctx, 64, Signedness::Signless);
     let i64_width = NonZeroUsize::new(64).unwrap();
     let i64_attr = IntegerAttr::new(i64_signless, APInt::from_u64(42, i64_width));
     const_op.set_attr_value(&ctx, i64_attr);
@@ -610,8 +610,8 @@ fn test_mir_comparison_verify() {
                      name: &str| {
         let mut context = Context::new();
         dialect_mir::register(&mut context);
-        let ty = IntegerType::get(&mut context, 32, Signedness::Signed);
-        let res_ty = IntegerType::get(&mut context, 1, Signedness::Signless);
+        let ty = IntegerType::get(&context, 32, Signedness::Signed);
+        let res_ty = IntegerType::get(&context, 1, Signedness::Signless);
         let blk = BasicBlock::new(&mut context, None, vec![ty.into(), ty.into()]);
         let l = blk.deref(&context).get_argument(0);
         let r = blk.deref(&context).get_argument(1);
@@ -665,8 +665,8 @@ fn test_mir_comparison_verify() {
 
     let mut context = Context::new();
     dialect_mir::register(&mut context);
-    let i8_ty = IntegerType::get(&mut context, 8, Signedness::Signed);
-    let i32_ty = IntegerType::get(&mut context, 32, Signedness::Signed);
+    let i8_ty = IntegerType::get(&context, 8, Signedness::Signed);
+    let i32_ty = IntegerType::get(&context, 32, Signedness::Signed);
     let unit = |name: &str| EnumVariant::unit(name.to_string());
     let ordering_ty = MirEnumType::get(
         &mut context,
@@ -737,8 +737,8 @@ fn test_mir_func_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
-    let func_ty = FunctionType::get(&mut ctx, vec![i32_ty.into()], vec![]);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let func_ty = FunctionType::get(&ctx, vec![i32_ty.into()], vec![]);
     let func_ty_attr = TypeAttr::new(func_ty.into());
 
     // Valid Function
@@ -805,7 +805,7 @@ fn test_mir_assign_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
     let val = block.deref(&ctx).get_argument(0);
 
@@ -866,7 +866,7 @@ fn test_mir_store_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
     let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into(), i32_ty.into()]);
     let ptr_val = block.deref(&ctx).get_argument(0);
@@ -919,7 +919,7 @@ fn test_mir_store_volatile_is_not_promotable() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
     let block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into(), i32_ty.into()]);
     let ptr_val = block.deref(&ctx).get_argument(0);

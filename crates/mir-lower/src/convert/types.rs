@@ -1270,7 +1270,7 @@ mod tests {
         let i32s = llvm_int(&mut ctx, 32);
         let i64s = llvm_int(&mut ctx, 64);
         let enum_llvm: TypeHandle =
-            llvm_types::StructType::get_unnamed(&mut ctx, vec![i8s, i32s]).into();
+            llvm_types::StructType::get_unnamed(&ctx, vec![i8s, i32s]).into();
         let pad3 = pad(&mut ctx, 3);
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),

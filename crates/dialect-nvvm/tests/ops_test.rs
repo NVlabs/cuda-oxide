@@ -31,7 +31,7 @@ fn test_thread_register_ops_verify_i32_results() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
 
     let tid_x = Operation::new(
         &mut ctx,
@@ -59,7 +59,7 @@ fn test_thread_register_ops_reject_non_i32_results() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     let op = Operation::new(
         &mut ctx,
         ReadPtxSregTidXOp::get_concrete_op_info(),
@@ -77,7 +77,7 @@ fn test_lanemask_ops_verify_i32_results() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
 
     // Each lane-position mask is a zero-operand, single-i32-result sreg read.
     let lt = Operation::new(
@@ -137,7 +137,7 @@ fn test_lanemask_op_rejects_non_i32_result() {
     dialect_nvvm::register(&mut ctx);
 
     // A 64-bit result must fail the shared lane-position mask verifier.
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     let op = Operation::new(
         &mut ctx,
         ReadPtxSregLanemaskLtOp::get_concrete_op_info(),
@@ -200,8 +200,8 @@ fn test_bf16x2_fma_constructs_and_verifies_three_operands() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let u32_ty = IntegerType::get(&mut ctx, 32, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
 
     let a = Operation::new(
         &mut ctx,
@@ -251,7 +251,7 @@ fn test_redux_sync_add_construct_and_verify() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
 
     // A block supplies the two operands [mask, value].
     let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i32_ty.into()]);
@@ -297,7 +297,7 @@ fn test_redux_sync_integer_family_construct_and_verify() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i32_ty.into()]);
     let mask = block.deref(&ctx).get_argument(0);
     let value = block.deref(&ctx).get_argument(1);
@@ -351,8 +351,8 @@ fn test_elect_sync_construct_and_verify() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i1_ty = IntegerType::get(&mut ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
 
     // A block supplies the single `mask` operand.
     let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
