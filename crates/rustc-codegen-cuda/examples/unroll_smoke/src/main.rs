@@ -343,7 +343,7 @@ fn main() {
         .flat_map(|k| (0..4u32).map(move |j| j.wrapping_add(k)))
         .fold(0u32, |a, x| a.wrapping_add(x));
     let want_nvar: u32 = (0..trip)
-        .flat_map(|k| (0..k).map(|j| j))
+        .flat_map(|k| 0..k)
         .fold(0u32, |a, x| a.wrapping_add(x));
     for tid in 0..N {
         let want_full = tid as u32 + 12;
