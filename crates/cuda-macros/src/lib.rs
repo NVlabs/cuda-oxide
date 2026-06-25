@@ -90,6 +90,10 @@ pub fn ptx_asm(input: TokenStream) -> TokenStream {
 /// Derive `cuda_core::DeviceCopy` for a type whose fields are all themselves
 /// `DeviceCopy`.
 ///
+/// Concrete enums are accepted only when rustc can const-evaluate
+/// `mem::zeroed::<Enum>()`, rejecting layouts whose all-zero bit pattern is not
+/// a valid enum value.
+///
 /// Re-exported from `cuda_core` next to the `DeviceCopy` trait so that
 /// `use cuda_core::DeviceCopy;` brings both the trait and this derive into scope
 /// (the serde `Serialize` trait+derive pattern).

@@ -1,0 +1,7 @@
+error[E0080]: evaluation panicked: aborted execution: attempted to zero-initialize type `BadPayload`, which is invalid
+  --> tests/derive_device_copy/fail_enum_payload.rs:17:23
+   |
+17 | #[derive(Copy, Clone, DeviceCopy)]
+   |                       ^^^^^^^^^^ evaluation of `_` failed here
+   |
+   = note: this error originates in the derive macro `DeviceCopy` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,5 @@
+error: `#[derive(DeviceCopy)]` supports enums only when the enum is not generic, because rustc must be able to const-evaluate `mem::zeroed::<Enum>()` for the concrete enum type and reject enums whose all-zero bit pattern is invalid.
+ --> tests/derive_device_copy/fail_enum_generic.rs:7:6
+  |
+7 | enum Maybe<T> {
+  |      ^^^^^
