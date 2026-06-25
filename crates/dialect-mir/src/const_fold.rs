@@ -9,9 +9,9 @@
 //! simplifier (`simplify_cfg`). Both are dialect-agnostic: they only act on ops
 //! that opt in via an interface. This module implements those interfaces for the
 //! `dialect-mir` integer ops so the folding happens in **our** middle-end, before
-//! we export textual LLVM IR. That makes the fold independent of `opt -O2` (and
-//! of whatever the NVVM backend does or does not optimise): the constants are
-//! already in the IR we hand off.
+//! we export textual LLVM IR. That makes the fold independent of `opt -O2` and
+//! of whatever the NVVM backend optimises. By the time we export, the constants
+//! are already in the IR we hand off.
 //!
 //! Two interfaces:
 //!
@@ -22,7 +22,7 @@
 //!   `fold_in_place` to the framework's [`fold_with_materialization`], which
 //!   builds a `builtin.constant`; `mir-lower` lowers that to `llvm.constant`.
 //!   (`sccp` materialises constant block arguments the same way, so a
-//!   `builtin.constant` can appear from either path — both are lowered.)
+//!   `builtin.constant` can appear from either path: both are lowered.)
 //! - [`BranchOpFoldInterface`] on `mir.cond_br`, so `simplify_cfg` can collapse a
 //!   conditional branch whose condition folded to a constant into an
 //!   unconditional `mir.goto` (the `match`-on-a-constant-index collapse).
@@ -37,6 +37,10 @@
 //! - Signedness is carried on the operand's `IntegerType` (Rust `ui32`/`si32`),
 //!   so `mir.shr`/`div`/`rem` and the ordering comparisons pick the
 //!   signed/unsigned operation from the operand type.
+//!
+//! For example: `5u32 / 2` folds to `2`, but `5u32 / 0` stays a runtime
+//! `mir.div` (Rust would panic), and a shift amount `>=` the bit width stays
+//! unfolded too.
 //!
 //! [`fold_with_materialization`]: pliron::opts::constants::ConstFoldInterface::fold_with_materialization
 
