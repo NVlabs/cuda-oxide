@@ -1063,5 +1063,4 @@ mod tests {
             "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
         );
     }
-
 }

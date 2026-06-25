@@ -141,7 +141,7 @@ use pliron::{
     op::{Op, op_cast},
     operation::Operation,
     result::Result,
-    r#type::{TypeHandle, type_impls},
+    r#type::{TypeHandle, Typed, type_impls},
 };
 
 use context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
@@ -176,9 +176,36 @@ fn is_mir_or_nvvm_op(ctx: &Context, op: Ptr<Operation>) -> bool {
     dialect == "mir" || dialect == "nvvm"
 }
 
+/// True for a `builtin.constant` whose result is a signed/unsigned (non-signless)
+/// integer. That is the only `builtin.constant` lowering must touch: `sccp` can
+/// materialise such a constant (it carries the MIR integer type, e.g. `ui32`), and
+/// lowering must normalise it to a signless LLVM integer like it does for
+/// `mir.constant`, else the LLVM module ends up with mismatched operand types
+/// (a signless op fed by a signed/unsigned constant). A *signless* builtin.constant
+/// is left alone (legal; the textual exporter emits it). Because the conversion
+/// emits a signless constant, this predicate is false for the result, so the
+/// DialectConversion worklist converges instead of looping.
+fn is_signed_builtin_constant(ctx: &Context, op: Ptr<Operation>) -> bool {
+    if Operation::get_opid(op, ctx) != pliron::builtin::ops::ConstantOp::get_opid_static() {
+        return false;
+    }
+    let res_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    res_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|it| it.signedness() != Signedness::Signless)
+}
+
 impl DialectConversion for MirToLlvmConversionDriver {
     fn can_convert_op(&self, ctx: &Context, op: Ptr<Operation>) -> bool {
-        is_mir_or_nvvm_op(ctx, op)
+        // A signless `builtin.constant` is left alone: it is legal and the textual
+        // exporter emits it directly. But sccp can materialise a builtin.constant
+        // carrying a signed/unsigned MIR integer type; lowering must normalise that
+        // to signless (like `mir.constant`), or the LLVM module gets mismatched
+        // operand types. So mark ONLY a non-signless builtin.constant convertible.
+        // Its conversion emits a signless constant (no longer convertible), so this
+        // converges — it does NOT loop the way marking *every* builtin.constant did.
+        is_mir_or_nvvm_op(ctx, op) || is_signed_builtin_constant(ctx, op)
     }
 
     fn can_convert_type(&self, ctx: &Context, ty: TypeHandle) -> bool {

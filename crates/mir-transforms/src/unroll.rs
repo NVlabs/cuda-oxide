@@ -27,7 +27,7 @@
 //! each loop runs), and on pliron's IR cloning (`pliron::irbuild::cloning`) to
 //! duplicate the body.
 
-use dialect_mir::ops::arithmetic::{MirAddOp, MirBitAndOp, MirSubOp};
+use dialect_mir::ops::arithmetic::{MirAddOp, MirBitAndOp, MirRemOp, MirSubOp};
 use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
 use dialect_mir::ops::constants::MirConstantOp;
 use dialect_mir::ops::control_flow::{MirCondBranchOp, MirUnrollHintOp};
@@ -35,14 +35,19 @@ use dialect_mir::ops::function::MirFuncOp;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
-use pliron::builtin::types::IntegerType;
+use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::graph::ControlFlowGraph;
 use pliron::graph::dominance::DomInfo;
-use pliron::irbuild::cloning::{IrMapping, clone_blocks_into};
+use pliron::irbuild::{
+    cloning::{IrMapping, clone_blocks_into},
+    listener::DummyListener,
+    rewriter::IRRewriter,
+};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::opts::constants::sccp::sccp;
 use pliron::opts::dce::dce;
 use pliron::opts::simplify_cfg::simplify_cfg;
 use pliron::pass_manager::AnalysisManager;
@@ -181,8 +186,19 @@ pub fn unroll_annotated_loops(
     }
 
     if changed {
-        dce(module, ctx)?;
+        // Constant-fold in our own middle-end so the unrolled index math and the
+        // match-on-a-constant-index collapse are guaranteed regardless of the
+        // backend optimiser (`opt -O2` today, NVVM later) rather than left to it.
+        // `sccp` folds the now-constant index arithmetic (a full-unrolled counter
+        // is a literal) and infers constant branch conditions; `simplify_cfg`
+        // collapses those branches into unconditional `mir.goto`; `dce` removes
+        // the ops the fold left dead. This is scoped to unrolled functions (gated
+        // on `changed`), so non-unrolled kernels are untouched. Inferred constants
+        // are materialised as `builtin.constant`, which lowering passes through
+        // unchanged and the textual exporter emits.
+        sccp(module, ctx)?;
         simplify_cfg(module, ctx)?;
+        dce(module, ctx)?;
         // Self-check: the input was already verified before this pass, so any
         // verification failure here is a bug in the unroller, not the user's
         // code. Surface it loudly rather than letting malformed IR slip into
@@ -225,9 +241,13 @@ struct LoopShape {
     exit: Ptr<BasicBlock>,
     /// The header's single in-loop successor: the first block of the body.
     body_entry: Ptr<BasicBlock>,
-    /// Every body block (the loop minus the header) in reverse-post-order from
-    /// `body_entry` (the order [`clone_blocks_into`] wants).
-    body_rpo: Vec<Ptr<BasicBlock>>,
+    /// Every body block (the loop minus the header) forward-reachable from
+    /// `body_entry`, in a deterministic visit order. `clone_blocks_into` is
+    /// order-independent, so the order is not load-bearing; we keep a stable
+    /// order only for readable IR dumps. Its length (vs the body-block count) is
+    /// what detects unreachable / irreducible body blocks (see
+    /// [`reachable_body_blocks`]).
+    body_blocks_ordered: Vec<Ptr<BasicBlock>>,
     /// The header's block arguments (the loop-carried values, counter included).
     header_args: Vec<Value>,
     nargs: usize,
@@ -262,38 +282,37 @@ fn defined_in_loop(ctx: &Context, v: Value, set: &FxHashSet<Ptr<BasicBlock>>) ->
         .unwrap_or(false)
 }
 
-/// Reverse-post-order of the blocks in `set`, starting from `entry`, following
-/// only edges that stay inside `set`. This is the order [`clone_blocks_into`]
-/// wants: a block is cloned before the blocks it branches forward to, so op
-/// results are cloned before their uses (back-edge values ride block arguments,
-/// which are mapped up front, so they resolve regardless of order).
-fn rpo_body(
+/// The blocks of `set` forward-reachable from `entry`, following only edges that
+/// stay inside `set`, in a deterministic visit order.
+///
+/// `clone_blocks_into` is order-independent (it records every clone block, block
+/// argument, and op result before wiring any operand or successor), so the order
+/// here is not required for cloning; a plain reachability walk is enough. We keep
+/// the result ordered only so IR dumps are stable. Its main job is the soundness
+/// check at the call site: if it is shorter than `set`, some body block reaches
+/// the latch but is not reachable from the single entry, i.e. irreducible /
+/// multi-entry control flow the v1 shape does not support.
+fn reachable_body_blocks(
     ctx: &Context,
     region: Ptr<Region>,
     entry: Ptr<BasicBlock>,
     set: &FxHashSet<Ptr<BasicBlock>>,
 ) -> Vec<Ptr<BasicBlock>> {
     let mut visited: FxHashSet<Ptr<BasicBlock>> = FxHashSet::default();
-    let mut post: Vec<Ptr<BasicBlock>> = Vec::new();
-    // Iterative DFS post-order. Each stack entry is (block, children-emitted?).
-    let mut stack: Vec<(Ptr<BasicBlock>, bool)> = vec![(entry, false)];
-    while let Some((b, done)) = stack.pop() {
-        if done {
-            post.push(b);
-            continue;
-        }
+    let mut order: Vec<Ptr<BasicBlock>> = Vec::new();
+    let mut stack: Vec<Ptr<BasicBlock>> = vec![entry];
+    while let Some(b) = stack.pop() {
         if !visited.insert(b) {
             continue;
         }
-        stack.push((b, true));
+        order.push(b);
         for s in region.successors(ctx, &b) {
             if set.contains(&s) && !visited.contains(&s) {
-                stack.push((s, false));
+                stack.push(s);
             }
         }
     }
-    post.reverse();
-    post
+    order
 }
 
 /// Gather the loop facts and confirm the v1 shape. See [`LoopShape`].
@@ -433,8 +452,8 @@ fn analyze_shape(
         }
     }
 
-    let body_rpo = rpo_body(ctx, region, body_entry, &body_blocks);
-    if body_rpo.len() != body_blocks.len() {
+    let body_blocks_ordered = reachable_body_blocks(ctx, region, body_entry, &body_blocks);
+    if body_blocks_ordered.len() != body_blocks.len() {
         return Err("the loop body has blocks unreachable from its entry (irreducible control flow); not supported".into());
     }
 
@@ -443,7 +462,7 @@ fn analyze_shape(
         latch,
         exit,
         body_entry,
-        body_rpo,
+        body_blocks_ordered,
         header_args,
         nargs,
         init_ops,
@@ -473,7 +492,8 @@ struct CopyResult {
     /// The operands to pass when branching into `entry` (the header -> body_entry
     /// operands, mapped through this copy's substitution).
     entry_args: Vec<Value>,
-    /// This copy's cloned blocks, in the same order as `LoopShape::body_rpo`.
+    /// This copy's cloned blocks, in the same order as
+    /// `LoopShape::body_blocks_ordered`.
     blocks: Vec<Ptr<BasicBlock>>,
 }
 
@@ -499,7 +519,14 @@ fn clone_one_copy(
         .iter()
         .map(|&v| mapper.lookup_value_or_default(v))
         .collect();
-    clone_blocks_into(&s.body_rpo, region, ctx, &mut mapper);
+    let mut rewriter = IRRewriter::<DummyListener>::default();
+    clone_blocks_into(
+        &s.body_blocks_ordered,
+        region,
+        ctx,
+        &mut rewriter,
+        &mut mapper,
+    );
     let entry = mapper.lookup_block_or_default(s.body_entry);
     let latch = mapper.lookup_block_or_default(s.latch);
     let latch_term = latch
@@ -512,7 +539,7 @@ fn clone_one_copy(
         .map(|&v| mapper.lookup_value_or_default(v))
         .collect();
     let blocks: Vec<Ptr<BasicBlock>> = s
-        .body_rpo
+        .body_blocks_ordered
         .iter()
         .map(|&b| mapper.lookup_block_or_default(b))
         .collect();
@@ -757,14 +784,15 @@ fn partial_unroll(
     rewire_goto(ctx, last_latch, main_h, &running);
 
     // The main-loop counter is mh_iv = init + (factor*step)*t, so it is always
-    // init plus a multiple of factor*step. That lets us replace `(counter +/-
-    // const) & mask` ops in the copies with literals (`fold_iv_congruences`),
-    // the main payoff of unrolling. Scan every cloned copy block.
+    // init plus a multiple of factor*step. That lets us replace counter-derived
+    // index ops -- `(counter +/- const) & mask` and `(counter +/- const) % 2^k`
+    // -- in the copies with literals (`fold_constant_index_in_copies`), the main
+    // payoff of unrolling. Scan every cloned copy block.
     let copy_blocks: Vec<Ptr<BasicBlock>> = copies
         .iter()
         .flat_map(|c| c.blocks.iter().copied())
         .collect();
-    fold_iv_congruences(ctx, &copy_blocks, mh_iv, s.iv_init, n * s.iv_step);
+    fold_constant_index_in_copies(ctx, &copy_blocks, mh_iv, s.iv_init, n * s.iv_step);
 
     // main_h guard: stay in the main loop only while a whole group of `factor`
     // iterations still fits. The last copy in a group uses counter
@@ -833,77 +861,144 @@ fn affine_offset(ctx: &Context, v: Value, iv: Value) -> Option<i128> {
     None
 }
 
-/// Replace `x & MASK` with a constant inside the unrolled main loop, when the
-/// loop counter guarantees the result is the same on every iteration.
+/// Peephole: in each partial-unroll copy, replace a counter-derived index with
+/// the constant it always equals.
 ///
-/// Why it's possible: after unrolling by N, the main loop's counter `iv` runs
-/// `0, N, 2N, ...`, so it is always a multiple of N. A multiple of N has its
-/// lowest bits all zero (with N = 4: `iv` is `0, 4, 8, 12, ...`, which in binary
-/// always ends in `00`). Copy `j` of the body uses `iv + j`, and `(iv + j) & 3`
-/// keeps only those low 2 bits, so it equals `j` -- a compile-time constant:
+/// After unrolling by N, the main counter `iv` only takes values N apart:
+/// `init, init+N, init+2N, ...`. Copy `j` of the body uses `iv + j`. Two index
+/// shapes are then the same constant on every iteration, so we replace each with
+/// a literal (note `x & (2^k - 1)` and `x % 2^k` are the same operation):
 ///
 /// ```text
-///   copy 0:  (iv + 0) & 3 = 0
-///   copy 1:  (iv + 1) & 3 = 1
-///   copy 2:  (iv + 2) & 3 = 2
-///   copy 3:  (iv + 3) & 3 = 3
+///   iv & MASK   (MASK = 2^k - 1)      keep the low k bits
+///   iv % M      (M a power of two)    same thing: x % 2^k == x & (2^k - 1)
 /// ```
 ///
-/// That `& 3` is exactly the "which pipeline stage am I on" index in the gemm
-/// kernel, and turning it into a constant is the main payoff of unrolling.
+/// Both read only the low k bits, and a multiple of N has *fixed* low k bits
+/// exactly when the window `2^k` divides the unroll step `N*step`. Example,
+/// N = 4, `(iv + j) & 3` (the gemm pipeline-stage index):
 ///
-/// What this does: scan `block` for `x & MASK` where `x` is the counter plus a
-/// constant offset (so `x == iv + offset`) and `MASK` is a low-bit mask of the
-/// form `2^k - 1` (e.g. 1, 3, 7) small enough that the counter contributes only
-/// zeros to it. For each, replace every use of the result with the constant
-/// `(init + offset) & MASK`. The leftover `x & MASK` is now unused and removed
-/// later by dead-code elimination.
+/// ```text
+///   iv = 0, 4, 8, 12, ...   all end in ...00, so:
+///     (iv + 0) & 3 = 0       (iv + 2) & 3 = 2
+///     (iv + 1) & 3 = 1       (iv + 3) & 3 = 3
+///   => each copy's stage index is a compile-time constant.
+/// ```
 ///
-/// Parameters: `iv` is the counter; `init` its starting value; `modulus` the
-/// unrolled step (`N * original_step`). Together: `iv = init + modulus * t` for
-/// iteration `t`, which is why `iv`'s low bits match `init`'s. `blocks` are all
-/// the unrolled copy blocks (one copy may span several blocks).
-fn fold_iv_congruences(
+/// Fires only when ALL of these hold (otherwise the value genuinely changes each
+/// iteration, so there is nothing to fold and we skip):
+///
+/// - the op is `(iv +/- consts) & MASK` or `(iv +/- consts) % M`;
+/// - the window (`MASK + 1`, or `M`) is a power of two -- so it reads only low
+///   bits and is therefore immune to the type's wraparound;
+/// - that window divides the unroll step `N*step` -- so the low bits never move;
+/// - for `%`, the operand type is unsigned (signed `%` follows the dividend's
+///   sign, which breaks the equality with the masked low bits);
+/// - `M > 0` -- never fold `% 0` (rem-by-zero is a Rust panic).
+///
+/// Deliberately NOT handled: non-power-of-two `% M` (e.g. `% 3`). The congruence
+/// still holds on paper, but `%` by a non-power-of-two is not wraparound-safe:
+/// near the type's max the counter wraps by `2^width`, which is not a multiple
+/// of `M`, shifting the result. Documented gap, left for later.
+///
+/// Full unroll never needs this: there `iv` is a literal per copy, so ordinary
+/// constant folding already turns `i & 3` / `i % 3` into a number. The leftover
+/// dead `& MASK` / `% M` ops are removed by the unroll pass's later `dce`.
+///
+/// Parameters: `iv` is the counter; `init` its start; `step_jump` the unroll step
+/// (`N * original_step`), so `iv = init + step_jump * t` for iteration `t`.
+/// `blocks` are all the cloned copy blocks (one copy may span several blocks).
+fn fold_constant_index_in_copies(
     ctx: &mut Context,
     blocks: &[Ptr<BasicBlock>],
     iv: Value,
     init: i128,
-    modulus: i128,
+    step_jump: i128,
 ) {
-    if modulus <= 0 {
+    if step_jump <= 0 {
         return;
     }
     for &block in blocks {
         let ops: Vec<Ptr<Operation>> = block.deref(ctx).iter(ctx).collect();
         for op in ops {
-            if Operation::get_op::<MirBitAndOp>(op, ctx).is_none() {
-                continue;
-            }
-            let a = op.deref(ctx).get_operand(0);
-            let b = op.deref(ctx).get_operand(1);
-            // One operand affine in the IV, the other a constant mask.
-            let (offset, mask) = if let (Some(o), Some(m)) =
-                (affine_offset(ctx, a, iv), induction::const_i128(ctx, b))
-            {
-                (o, m)
-            } else if let (Some(o), Some(m)) =
-                (affine_offset(ctx, b, iv), induction::const_i128(ctx, a))
-            {
-                (o, m)
-            } else {
+            let Some((offset, window)) = counter_index_window(ctx, op, iv) else {
                 continue;
             };
-            // `mask` must be a low-bit mask (2^k - 1) whose `mask+1` divides `modulus`.
-            let m1 = mask + 1;
-            if mask < 0 || m1 == 0 || (m1 & mask) != 0 || modulus % m1 != 0 {
+            // Foldable only when the window is a power of two that divides the
+            // unroll step: then the counter's low bits never move, so the index
+            // is the same every iteration (and power-of-two makes it wrap-safe).
+            // The power-of-two check also rejects a non-low-bit `& C` (e.g.
+            // `x & 5` is not `x % 6`).
+            if window <= 0 || (window & (window - 1)) != 0 || step_jump % window != 0 {
                 continue;
             }
-            let folded = (init + offset) & mask;
+            let folded = (init + offset).rem_euclid(window);
             let result = op.deref(ctx).get_result(0);
             let ty = result.get_type(ctx);
             let lit = make_const(ctx, ty, folded, op);
             result.replace_all_uses_with(ctx, &lit);
         }
+    }
+}
+
+/// If `op` is a counter-derived index we might fold -- `(iv +/- consts) & MASK`
+/// or `(iv +/- consts) % M` -- return `(offset, window)`, where `offset` is the
+/// counter's constant offset and `window` is `MASK + 1` (for `&`) or `M` (for
+/// `%`). The caller still checks that `window` is a power of two dividing the
+/// unroll step. Returns `None` for any other op.
+fn counter_index_window(ctx: &Context, op: Ptr<Operation>, iv: Value) -> Option<(i128, i128)> {
+    if Operation::get_op::<MirBitAndOp>(op, ctx).is_some() {
+        // `&` is commutative: either operand may be the counter.
+        let a = op.deref(ctx).get_operand(0);
+        let b = op.deref(ctx).get_operand(1);
+        let (offset, mask) = if let (Some(o), Some(m)) =
+            (affine_offset(ctx, a, iv), induction::const_i128(ctx, b))
+        {
+            (o, m)
+        } else if let (Some(o), Some(m)) =
+            (affine_offset(ctx, b, iv), induction::const_i128(ctx, a))
+        {
+            (o, m)
+        } else {
+            return None;
+        };
+        if mask < 0 {
+            return None;
+        }
+        // window = MASK + 1.
+        Some((offset, mask + 1))
+    } else if Operation::get_op::<MirRemOp>(op, ctx).is_some() {
+        // `%` is NOT commutative: only the dividend (operand 0) may be the
+        // counter, and only for unsigned types.
+        let dividend = op.deref(ctx).get_operand(0);
+        let divisor = op.deref(ctx).get_operand(1);
+        if !is_unsigned_int(ctx, dividend) {
+            return None;
+        }
+        let (Some(offset), Some(m)) = (
+            affine_offset(ctx, dividend, iv),
+            induction::const_i128(ctx, divisor),
+        ) else {
+            return None;
+        };
+        if m <= 0 {
+            return None;
+        }
+        // window = M.
+        Some((offset, m))
+    } else {
+        None
+    }
+}
+
+/// True if `v` has an unsigned (or signless) integer type. Keeps the `%` fold off
+/// signed remainders, whose result follows the dividend's sign rather than the
+/// masked low bits.
+fn is_unsigned_int(ctx: &Context, v: Value) -> bool {
+    let ty = v.get_type(ctx);
+    match TypedHandle::<IntegerType>::from_handle(ty, ctx) {
+        Ok(t) => t.deref(ctx).signedness() != Signedness::Signed,
+        Err(_) => false,
     }
 }
 
@@ -1037,6 +1132,6 @@ mod tests {
         assert_eq!(shape.iv_step, 1);
         // The body is the single latch block; its entry is the latch itself.
         assert_eq!(shape.body_entry, lp.latch);
-        assert_eq!(shape.body_rpo, vec![lp.latch]);
+        assert_eq!(shape.body_blocks_ordered, vec![lp.latch]);
     }
 }

@@ -378,6 +378,9 @@ pub fn run_pipeline(
                 operation: None,
             })?;
         verify_operation(&ctx, module_op_ptr, "module post-unroll")?;
+        // Constant folding (sccp -> simplify_cfg -> dce) runs inside the unroll
+        // pass, scoped to functions it actually unrolled; see
+        // `mir_transforms::unroll`. Non-unrolled kernels are left for `opt`/NVVM.
     }
 
     // Step 5: Lower dialect-mir → LLVM dialect.

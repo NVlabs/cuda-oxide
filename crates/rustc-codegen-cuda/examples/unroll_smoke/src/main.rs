@@ -80,6 +80,26 @@ mod kernels {
         }
     }
 
+    /// Partial unroll (by 4) using `i % 4`: a power-of-two modulo, the same stage
+    /// index as `i & 3` but spelled with `%`. After unrolling, the main loop's
+    /// counter is a multiple of 4, so `(i + j) % 4` folds to the constants
+    /// `0,1,2,3` -- this exercises the `% 2^k` arm of the index fold. `out[tid]`
+    /// is the sum of `i % 4` for `i` in `0..n`.
+    #[kernel]
+    pub fn partial_mod(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc: u32 = 0;
+            let mut i: u32 = 0;
+            #[unroll(4)]
+            while i < n {
+                acc = acc.wrapping_add(i % 4);
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
     /// Full unroll of a loop whose body has **internal control flow** (an
     /// `if`/`else`), so the body is several basic blocks, not one. This is the
     /// case the earlier single-block unroller could not handle. For `i` in
@@ -260,6 +280,12 @@ fn main() {
         .expect("launch partial_fold");
     let got_fold = d_fold.to_host_vec(&stream).unwrap();
 
+    let mut d_mod = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .partial_mod(stream.as_ref(), cfg, &mut d_mod, trip)
+        .expect("launch partial_mod");
+    let got_mod = d_mod.to_host_vec(&stream).unwrap();
+
     let mut d_fullmb = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
     module
         .full_mb(stream.as_ref(), cfg, &mut d_fullmb)
@@ -299,6 +325,7 @@ fn main() {
     let mut failures = 0usize;
     let want_part = trip * (trip - 1) / 2;
     let want_fold: u32 = (0..trip).map(|i| i & 3).sum();
+    let want_mod: u32 = (0..trip).map(|i| i % 4).sum();
     let want_partmb: u32 = (0..trip).map(|i| if i & 1 == 0 { i } else { 100 }).sum();
     let want_carried: u32 = {
         let (mut a, mut i, mut hi) = (0u32, 0u32, trip);
@@ -322,39 +349,73 @@ fn main() {
         let want_full = tid as u32 + 12;
         let want_fullmb = tid as u32 + 52;
         if got_full[tid] != want_full {
-            println!("FAIL tid={tid}: full_unroll={} expected={want_full}", got_full[tid]);
+            println!(
+                "FAIL tid={tid}: full_unroll={} expected={want_full}",
+                got_full[tid]
+            );
             failures += 1;
         }
         if got_part[tid] != want_part {
-            println!("FAIL tid={tid}: partial_unroll={} expected={want_part}", got_part[tid]);
+            println!(
+                "FAIL tid={tid}: partial_unroll={} expected={want_part}",
+                got_part[tid]
+            );
             failures += 1;
         }
         if got_fold[tid] != want_fold {
-            println!("FAIL tid={tid}: partial_fold={} expected={want_fold}", got_fold[tid]);
+            println!(
+                "FAIL tid={tid}: partial_fold={} expected={want_fold}",
+                got_fold[tid]
+            );
+            failures += 1;
+        }
+        if got_mod[tid] != want_mod {
+            println!(
+                "FAIL tid={tid}: partial_mod={} expected={want_mod}",
+                got_mod[tid]
+            );
             failures += 1;
         }
         if got_fullmb[tid] != want_fullmb {
-            println!("FAIL tid={tid}: full_mb={} expected={want_fullmb}", got_fullmb[tid]);
+            println!(
+                "FAIL tid={tid}: full_mb={} expected={want_fullmb}",
+                got_fullmb[tid]
+            );
             failures += 1;
         }
         if got_partmb[tid] != want_partmb {
-            println!("FAIL tid={tid}: partial_mb={} expected={want_partmb}", got_partmb[tid]);
+            println!(
+                "FAIL tid={tid}: partial_mb={} expected={want_partmb}",
+                got_partmb[tid]
+            );
             failures += 1;
         }
         if got_carried[tid] != want_carried {
-            println!("FAIL tid={tid}: carried_bound={} expected={want_carried}", got_carried[tid]);
+            println!(
+                "FAIL tid={tid}: carried_bound={} expected={want_carried}",
+                got_carried[tid]
+            );
             failures += 1;
         }
         if got_nfull[tid] != want_nfull {
-            println!("FAIL tid={tid}: nested_full={} expected={want_nfull}", got_nfull[tid]);
+            println!(
+                "FAIL tid={tid}: nested_full={} expected={want_nfull}",
+                got_nfull[tid]
+            );
             failures += 1;
         }
         if got_npart[tid] != want_npart {
-            println!("FAIL tid={tid}: nested_partial={} expected={want_npart}", got_npart[tid]);
+            println!(
+                "FAIL tid={tid}: nested_partial={} expected={want_npart}",
+                got_npart[tid]
+            );
             failures += 1;
         }
         if got_nvar[tid] != want_nvar {
-            println!("FAIL tid={tid}: nested_var_bound={} expected={want_nvar}", got_nvar[tid]);
+            println!(
+                "FAIL tid={tid}: nested_var_bound={} expected={want_nvar}",
+                got_nvar[tid]
+            );
             failures += 1;
         }
     }

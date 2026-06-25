@@ -6,6 +6,7 @@
 //! MIR dialect definition.
 
 pub mod attributes;
+pub mod const_fold;
 pub mod ops;
 pub mod rust_intrinsics;
 pub mod side_effects;

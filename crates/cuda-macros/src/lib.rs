@@ -2514,7 +2514,9 @@ impl LoopUnrollAttrVisitor {
     /// present (leaving `attrs` untouched). Records a parse error and returns
     /// `None` if the attribute is malformed.
     fn take_unroll_factor(&mut self, attrs: &mut Vec<syn::Attribute>) -> Option<u32> {
-        let idx = attrs.iter().position(|attr| attr.path().is_ident("unroll"))?;
+        let idx = attrs
+            .iter()
+            .position(|attr| attr.path().is_ident("unroll"))?;
         let attr = attrs.remove(idx);
 
         // `#[unroll]` (bare) is `Meta::Path`; `#[unroll(N)]` is `Meta::List`.
@@ -4121,7 +4123,10 @@ mod tests {
             out.contains("cuda_device::thread::__unroll_config::<4u32>()"),
             "expected factor-4 marker:\n{out}"
         );
-        assert!(!out.contains("#[unroll"), "attribute should be removed:\n{out}");
+        assert!(
+            !out.contains("#[unroll"),
+            "attribute should be removed:\n{out}"
+        );
     }
 
     #[test]

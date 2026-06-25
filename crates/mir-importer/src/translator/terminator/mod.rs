@@ -1581,6 +1581,30 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
         .map(|instance| instance.mangled_name())
 }
 
+/// Read the const-generic `FACTOR` from a `__unroll_config::<FACTOR>()` callee
+/// (`0` = full unroll).
+///
+/// Returns 0 if it cannot be read, matching bare `#[unroll]`.
+fn extract_unroll_factor(func: &mir::Operand) -> u32 {
+    use rustc_public::ty::{RigidTy, TyConstKind, TyKind};
+    let mir::Operand::Constant(constant) = func else {
+        return 0;
+    };
+    let TyKind::RigidTy(RigidTy::FnDef(_, args)) = constant.const_.ty().kind() else {
+        return 0;
+    };
+    if let Some(arg) = args.0.first()
+        && let rustc_public::ty::GenericArgKind::Const(c) = arg
+    {
+        return match c.kind() {
+            TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|v| v as u32),
+            _ => c.eval_target_usize().ok().map(|v| v as u32),
+        }
+        .unwrap_or(0);
+    }
+    0
+}
+
 /// Extracts function metadata from a MIR function operand.
 ///
 /// Returns a tuple of:
@@ -1623,29 +1647,6 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
 /// FQDN and the device linker (libdevice, external LTOIR) only knows the
 /// link symbol. `call_name` for those is `Instance::mangled_name`, which is
 /// the link symbol (it honours `#[link_name]`).
-///
-/// Read the const-generic `FACTOR` from a `__unroll_config::<FACTOR>()` callee
-/// (`0` = full unroll). Returns 0 if it cannot be read, matching bare `#[unroll]`.
-fn extract_unroll_factor(func: &mir::Operand) -> u32 {
-    use rustc_public::ty::{RigidTy, TyConstKind, TyKind};
-    let mir::Operand::Constant(constant) = func else {
-        return 0;
-    };
-    let TyKind::RigidTy(RigidTy::FnDef(_, args)) = constant.const_.ty().kind() else {
-        return 0;
-    };
-    if let Some(arg) = args.0.first()
-        && let rustc_public::ty::GenericArgKind::Const(c) = arg
-    {
-        return match c.kind() {
-            TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|v| v as u32),
-            _ => c.eval_target_usize().ok().map(|v| v as u32),
-        }
-        .unwrap_or(0);
-    }
-    0
-}
-
 fn extract_func_info(func: &mir::Operand) -> (Option<String>, Option<String>, Option<String>) {
     match func {
         mir::Operand::Constant(const_op) => match const_op.const_.kind() {

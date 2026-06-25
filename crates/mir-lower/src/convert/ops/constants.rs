@@ -77,6 +77,41 @@ pub(crate) fn convert_integer(
     Ok(())
 }
 
+/// Normalise a signed/unsigned `builtin.constant` (materialised by `sccp`) to a
+/// signless integer constant, exactly like `convert_integer` does for
+/// `mir.constant`. Only non-signless builtin.constants are routed here (see
+/// `can_convert_op`), so the signless result is final (the worklist converges).
+pub(crate) fn convert_builtin_constant(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    value: pliron::attribute::AttrObj,
+) -> Result<()> {
+    use pliron::builtin::attributes::IntegerAttr;
+
+    let (apint_value, width) = {
+        let int_attr = value.downcast_ref::<IntegerAttr>().ok_or_else(|| {
+            pliron::input_error!(
+                op.deref(ctx).loc(),
+                "builtin.constant routed to lowering must hold an IntegerAttr"
+            )
+        })?;
+        (
+            int_attr.value().clone(),
+            int_attr.get_type().deref(ctx).width(),
+        )
+    };
+
+    let llvm_int_ty = IntegerType::get(ctx, width, Signedness::Signless);
+    let llvm_int_attr = IntegerAttr::new(llvm_int_ty, apint_value);
+
+    let llvm_const = llvm::ConstantOp::new(ctx, llvm_int_attr.into());
+    rewriter.insert_operation(ctx, llvm_const.get_operation());
+    rewriter.replace_operation(ctx, op, llvm_const.get_operation());
+
+    Ok(())
+}
+
 /// Convert `mir.float_constant` to `llvm.constant`.
 ///
 /// Float constants pass through with their type preserved (f32, f64).

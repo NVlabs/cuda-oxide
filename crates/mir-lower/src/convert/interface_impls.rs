@@ -9,6 +9,7 @@
 //! bypassing the old category sub-enum dispatch.
 
 use pliron::{
+    builtin::ops::ConstantOp,
     context::Context,
     derive::op_interface_impl,
     irbuild::{
@@ -508,6 +509,23 @@ impl MirToLlvmConversion for MirConstantOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::ops::constants::convert_integer(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+/// A `builtin.constant` that `sccp` materialised carries a signed/unsigned MIR
+/// integer type; normalise it to a signless constant, exactly like `mir.constant`.
+/// Only a non-signless `builtin.constant` reaches here (see `can_convert_op`), so
+/// the emitted signless constant is final and the conversion converges.
+#[op_interface_impl]
+impl MirToLlvmConversion for ConstantOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        let value = self.get_value(ctx);
+        super::ops::constants::convert_builtin_constant(ctx, rewriter, self.get_operation(), value)
     }
 }
 
