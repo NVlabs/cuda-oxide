@@ -439,7 +439,7 @@ fn emit_pointer_cast(
     // `Option<&T>`, `Option<Box<T>>`, `Option<NonNull<T>>`,
     // `Option<bool>`, `Option<char>`, ... as a single scalar where one
     // forbidden bit pattern of the inner type stands in for `None`. When
-    // that scalar form has to be materialised as our un-niched
+    // that scalar form has to be materialized as our un-niched
     // `{ discriminant, payload }` aggregate, rustc emits a Transmute and
     // the importer attaches a `niche_encoding` attribute. We rebuild the
     // aggregate explicitly here. This branch runs **before** the legacy
@@ -887,8 +887,8 @@ fn emit_transmute_via_memory(
 /// arrays (element size times length), and structs whose fields tile the
 /// layout with no padding. Returns `None` when the size cannot be
 /// computed confidently (a struct that needs padding, an opaque struct,
-/// or an unknown type), so callers refuse the transmute loudly instead
-/// of guessing.
+/// or an unknown type), so callers refuse the transmute operation
+/// explicitly instead of guessing.
 fn type_byte_size(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u64> {
     let r = ty.deref(ctx);
     if let Some(i) = r.downcast_ref::<IntegerType>() {
@@ -1009,5 +1009,145 @@ fn float_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Result<usiz
 
 #[cfg(test)]
 mod tests {
-    // TODO (npasham): Add unit tests for cast conversion
+    use crate::convert::ops::test_util::*;
+    use dialect_mir::attributes::MirCastKindAttr;
+    use dialect_mir::ops as mir;
+    use dialect_mir::types::MirPtrType;
+    use llvm_export::ops as llvm;
+    use pliron::builtin::op_interfaces::SymbolOpInterface;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::context::{Context, Ptr};
+    use pliron::linked_list::ContainsLinkedList;
+    use pliron::op::Op;
+    use pliron::operation::Operation;
+    use pliron::r#type::TypeHandle;
+
+    fn int_ty(ctx: &mut Context, width: u32, signedness: Signedness) -> TypeHandle {
+        IntegerType::get(ctx, width, signedness).into()
+    }
+
+    fn lower_single_cast(
+        ctx: &mut Context,
+        src_ty: TypeHandle,
+        dst_ty: TypeHandle,
+        kind: MirCastKindAttr,
+    ) -> Ptr<Operation> {
+        let (module_ptr, block) = build_kernel(ctx, vec![src_ty], vec![dst_ty]);
+        let arg = block.deref(ctx).get_argument(0);
+
+        let cast_op = Operation::new(
+            ctx,
+            mir::MirCastOp::get_concrete_op_info(),
+            vec![dst_ty],
+            vec![arg],
+            vec![],
+            0,
+        );
+        mir::MirCastOp::new(cast_op).set_attr_cast_kind(ctx, kind);
+        cast_op.insert_at_back(block, ctx);
+
+        let cast_result = cast_op.deref(ctx).get_result(0);
+        append_mir_return(ctx, block, vec![cast_result]);
+
+        crate::lower_mir_to_llvm(ctx, module_ptr).expect("lowering failed");
+        module_ptr
+    }
+
+    fn assert_cast_lowered_to<T: Op>(ctx: &Context, module_ptr: Ptr<Operation>, expected: &str) {
+        let body = kernel_blocks(ctx, module_ptr);
+        assert_eq!(
+            count_ops::<T>(ctx, &body),
+            1,
+            "expected exactly one {expected}"
+        );
+        assert_eq!(
+            count_ops::<mir::MirCastOp>(ctx, &body),
+            0,
+            "mir.cast must be replaced during lowering"
+        );
+    }
+
+    fn module_has_llvm_func(ctx: &Context, module_ptr: Ptr<Operation>, symbol: &str) -> bool {
+        let top = module_top_block(ctx, module_ptr);
+        top.deref(ctx)
+            .iter(ctx)
+            .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, ctx))
+            .any(|func| func.get_symbol_name(ctx).to_string() == symbol)
+    }
+
+    #[test]
+    fn int_to_int_signed_widen_lowers_to_s_ext() {
+        let mut ctx = make_ctx();
+        let i8_ty = int_ty(&mut ctx, 8, Signedness::Signed);
+        let i32_ty = int_ty(&mut ctx, 32, Signedness::Signed);
+
+        let module_ptr = lower_single_cast(&mut ctx, i8_ty, i32_ty, MirCastKindAttr::IntToInt);
+
+        assert_cast_lowered_to::<llvm::SExtOp>(&ctx, module_ptr, "llvm.sext");
+    }
+
+    #[test]
+    fn int_to_int_unsigned_widen_lowers_to_z_ext() {
+        let mut ctx = make_ctx();
+        let u8_ty = int_ty(&mut ctx, 8, Signedness::Unsigned);
+        let u32_ty = int_ty(&mut ctx, 32, Signedness::Unsigned);
+
+        let module_ptr = lower_single_cast(&mut ctx, u8_ty, u32_ty, MirCastKindAttr::IntToInt);
+
+        assert_cast_lowered_to::<llvm::ZExtOp>(&ctx, module_ptr, "llvm.zext");
+    }
+
+    #[test]
+    fn int_to_int_narrow_lowers_to_trunc() {
+        let mut ctx = make_ctx();
+        let i32_ty = int_ty(&mut ctx, 32, Signedness::Signed);
+        let i8_ty = int_ty(&mut ctx, 8, Signedness::Signed);
+
+        let module_ptr = lower_single_cast(&mut ctx, i32_ty, i8_ty, MirCastKindAttr::IntToInt);
+
+        assert_cast_lowered_to::<llvm::TruncOp>(&ctx, module_ptr, "llvm.trunc");
+    }
+
+    #[test]
+    fn int_to_float_unsigned_lowers_to_ui_to_fp() {
+        let mut ctx = make_ctx();
+        let u32_ty = int_ty(&mut ctx, 32, Signedness::Unsigned);
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+
+        let module_ptr = lower_single_cast(&mut ctx, u32_ty, f32_ty, MirCastKindAttr::IntToFloat);
+
+        assert_cast_lowered_to::<llvm::UIToFPOp>(&ctx, module_ptr, "llvm.uitofp");
+    }
+
+    #[test]
+    fn float_to_int_signed_lowers_to_saturating_intrinsic_call() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let i32_ty = int_ty(&mut ctx, 32, Signedness::Signed);
+
+        let module_ptr = lower_single_cast(&mut ctx, f32_ty, i32_ty, MirCastKindAttr::FloatToInt);
+
+        assert_cast_lowered_to::<llvm::CallOp>(&ctx, module_ptr, "llvm.call");
+        assert!(
+            module_has_llvm_func(&ctx, module_ptr, "llvm_fptosi_sat_i32_f32"),
+            "f32 -> i32 signed cast must declare llvm_fptosi_sat_i32_f32"
+        );
+    }
+
+    #[test]
+    fn pointer_expose_address_lowers_to_ptr_to_int() {
+        let mut ctx = make_ctx();
+        let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
+        let ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 0).into();
+        let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            ptr_ty,
+            usize_ty,
+            MirCastKindAttr::PointerExposeAddress,
+        );
+
+        assert_cast_lowered_to::<llvm::PtrToIntOp>(&ctx, module_ptr, "llvm.ptrtoint");
+    }
 }
