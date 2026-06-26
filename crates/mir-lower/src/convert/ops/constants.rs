@@ -51,7 +51,7 @@ pub(crate) fn convert_integer(
 ) -> Result<()> {
     use pliron::builtin::attributes::IntegerAttr;
 
-    let (apint_value, width) = {
+    let (ap_int_value, width) = {
         let mir_const = MirConstantOp::new(op);
         let int_attr = mir_const.get_attr_value(ctx).ok_or_else(|| {
             pliron::input_error!(
@@ -60,15 +60,15 @@ pub(crate) fn convert_integer(
             )
         })?;
 
-        let apint = int_attr.value().clone();
+        let ap_int = int_attr.value().clone();
         let mir_int_ty = int_attr.get_type();
         let w = mir_int_ty.deref(ctx).width();
-        (apint, w)
+        (ap_int, w)
     };
 
     // Create signless LLVM integer type (MIR uses signed/unsigned, LLVM uses signless)
     let llvm_int_ty = IntegerType::get(ctx, width, Signedness::Signless);
-    let llvm_int_attr = IntegerAttr::new(llvm_int_ty, apint_value);
+    let llvm_int_attr = IntegerAttr::new(llvm_int_ty, ap_int_value);
 
     let llvm_const = llvm::ConstantOp::new(ctx, llvm_int_attr.into());
     rewriter.insert_operation(ctx, llvm_const.get_operation());
@@ -149,5 +149,161 @@ pub(crate) fn convert_undef(
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for constant conversion
+    use super::*;
+    use crate::convert::ops::test_util::*;
+    use llvm_export::attributes::FPHalfAttr;
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr};
+    use pliron::builtin::types::{FP32Type, FP64Type};
+    use pliron::r#type::TypeHandle;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    fn append_op_and_return(ctx: &mut Context, block: Ptr<BasicBlock>, op: Ptr<Operation>) {
+        op.insert_at_back(block, ctx);
+        let result = op.deref(ctx).get_result(0);
+        append_mir_return(ctx, block, vec![result]);
+    }
+
+    fn lowered_constants(ctx: &mut Context, module_ptr: Ptr<Operation>) -> Vec<llvm::ConstantOp> {
+        crate::lower_mir_to_llvm(ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(ctx, module_ptr);
+        find_all::<llvm::ConstantOp>(ctx, &body)
+    }
+
+    fn assert_i32_constant_lowers_to_signless(signedness: Signedness, value: APInt) {
+        let mut ctx = make_ctx();
+        let mir_i32_ty = IntegerType::get(&mut ctx, 32, signedness);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![mir_i32_ty.into()]);
+        let const_op = Operation::new(
+            &mut ctx,
+            MirConstantOp::get_concrete_op_info(),
+            vec![mir_i32_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        MirConstantOp::new(const_op)
+            .set_attr_value(&ctx, IntegerAttr::new(mir_i32_ty, value.clone()));
+        append_op_and_return(&mut ctx, block, const_op);
+
+        let constants = lowered_constants(&mut ctx, module_ptr);
+        assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
+
+        let attr = constants[0].get_value(&ctx);
+        let int_attr = attr
+            .downcast_ref::<IntegerAttr>()
+            .expect("expected lowered integer attribute");
+        let int_ty = int_attr.get_type();
+        let int_ty = int_ty.deref(&ctx);
+
+        assert_eq!(int_ty.width(), 32);
+        assert_eq!(int_ty.signedness(), Signedness::Signless);
+        assert_eq!(int_attr.value(), value);
+    }
+
+    #[test]
+    fn convert_integer_preserves_bits_and_makes_type_signless() {
+        assert_i32_constant_lowers_to_signless(
+            Signedness::Signed,
+            APInt::from_i64(-7, NonZeroUsize::new(32).unwrap()),
+        );
+        assert_i32_constant_lowers_to_signless(
+            Signedness::Unsigned,
+            APInt::from_u64(42, NonZeroUsize::new(32).unwrap()),
+        );
+    }
+
+    #[test]
+    fn convert_float_preserves_f32_attr() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let f32_value = 1.25_f32;
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![f32_ty]);
+        let f32_op = Operation::new(
+            &mut ctx,
+            MirFloatConstantOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        MirFloatConstantOp::new(f32_op).set_attr_float_value(&ctx, FPSingleAttr::from(f32_value));
+        append_op_and_return(&mut ctx, block, f32_op);
+
+        let constants = lowered_constants(&mut ctx, module_ptr);
+        assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
+
+        let attr = constants[0].get_value(&ctx);
+        let attr = attr
+            .downcast_ref::<FPSingleAttr>()
+            .expect("expected lowered f32 attribute");
+        assert_eq!(f32::from(attr.clone()).to_bits(), f32_value.to_bits());
+    }
+
+    #[test]
+    fn convert_float_preserves_f64_attr() {
+        let mut ctx = make_ctx();
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+        let f64_value = -2.5_f64;
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![f64_ty]);
+        let f64_op = Operation::new(
+            &mut ctx,
+            MirFloatConstantOp::get_concrete_op_info(),
+            vec![f64_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        MirFloatConstantOp::new(f64_op)
+            .set_attr_float_value_f64(&ctx, FPDoubleAttr::from(f64_value));
+        append_op_and_return(&mut ctx, block, f64_op);
+
+        let constants = lowered_constants(&mut ctx, module_ptr);
+        assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
+
+        let attr = constants[0].get_value(&ctx);
+        let attr = attr
+            .downcast_ref::<FPDoubleAttr>()
+            .expect("expected lowered f64 attribute");
+        assert_eq!(f64::from(attr.clone()).to_bits(), f64_value.to_bits());
+    }
+
+    #[test]
+    fn convert_f16_constant_rewrites_mir_attr_to_builtin_half_attr() {
+        let mut ctx = make_ctx();
+        let f16_ty: TypeHandle = dialect_mir::types::MirFP16Type::get(&ctx).into();
+        let bits = 0x3c00;
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![f16_ty]);
+        let const_op = Operation::new(
+            &mut ctx,
+            MirFloatConstantOp::get_concrete_op_info(),
+            vec![f16_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        MirFloatConstantOp::new(const_op)
+            .set_attr_float_value_f16(&ctx, MirFP16Attr::from_bits(bits));
+        append_op_and_return(&mut ctx, block, const_op);
+
+        let constants = lowered_constants(&mut ctx, module_ptr);
+        assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
+
+        let attr = constants[0].get_value(&ctx);
+        assert!(
+            attr.downcast_ref::<MirFP16Attr>().is_none(),
+            "lowering must not keep the MIR-specific f16 attribute"
+        );
+
+        let half_attr = attr
+            .downcast_ref::<FPHalfAttr>()
+            .expect("expected builtin half attribute");
+        assert_eq!(llvm_export::fp16_attr_to_bits(half_attr), bits);
+    }
 }
