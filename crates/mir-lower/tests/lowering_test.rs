@@ -2038,3 +2038,91 @@ fn assert_cp_async_inline_asm_lowering(
     assert_eq!(matches, 1, "missing exact {copy_size}-byte cp.async asm");
     Ok(())
 }
+
+// =============================================================================
+// cp.async zero-fill lowering tests
+// =============================================================================
+
+#[test]
+fn test_cp_async_ca_zfill_4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into(), i32_ty.into()]);
+
+    let dst = entry.deref(&ctx).get_argument(0);
+    let src = entry.deref(&ctx).get_argument(1);
+    let src_size = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCaZfill4Op::get_concrete_op_info(),
+        vec![],
+        vec![dst, src, src_size],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+}
+
+#[test]
+fn test_cp_async_ca_zfill_8_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into(), i32_ty.into()]);
+
+    let dst = entry.deref(&ctx).get_argument(0);
+    let src = entry.deref(&ctx).get_argument(1);
+    let src_size = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCaZfill8Op::get_concrete_op_info(),
+        vec![],
+        vec![dst, src, src_size],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+}
+
+#[test]
+fn test_cp_async_ca_zfill_16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into(), i32_ty.into()]);
+
+    let dst = entry.deref(&ctx).get_argument(0);
+    let src = entry.deref(&ctx).get_argument(1);
+    let src_size = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CpAsyncCaZfill16Op::get_concrete_op_info(),
+        vec![],
+        vec![dst, src, src_size],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+}

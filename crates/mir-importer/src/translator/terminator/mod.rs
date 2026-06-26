@@ -3508,6 +3508,21 @@ fn try_dispatch_intrinsic(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }
+        "cuda_device::async_copy::cp_async_ca_zfill_4" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_zfill_4(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::async_copy::cp_async_ca_zfill_8" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_zfill_8(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
+        "cuda_device::async_copy::cp_async_ca_zfill_16" => {
+            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_zfill_16(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?))
+        }
 
         // =================================================================
         // Memory Operations (from intrinsics::memory)
