@@ -557,7 +557,7 @@ pub(crate) fn convert_extract_array_element(
 /// The alloca lands at the use site, same as
 /// [`convert_extract_array_element`]; the standard `opt -O2` run (SROA)
 /// removes it again. Hoisting these into the function's entry block is a
-/// known follow-up for the unoptimised (`CUDA_OXIDE_NO_OPT=1`) path.
+/// known follow-up for the unoptimized (`CUDA_OXIDE_NO_OPT=1`) path.
 fn spill_enum_value(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -1042,5 +1042,261 @@ pub(crate) fn convert_array_element_addr(
 
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests for aggregate conversion
+    use super::*;
+    use crate::convert::ops::test_util::*;
+    use dialect_mir::attributes::{FieldIndexAttr, VariantIndexAttr};
+    use dialect_mir::ops as mir;
+    use dialect_mir::types::{EnumVariant, MirPtrType, MirSliceType, MirStructType};
+    use pliron::builtin::attributes::IntegerAttr;
+
+    fn insert_indices(ctx: &Context, inserts: &[llvm::InsertValueOp]) -> Vec<Vec<u32>> {
+        inserts.iter().map(|op| op.indices(ctx)).collect()
+    }
+
+    fn empty_struct_ty(ctx: &mut Context, name: &str) -> TypeHandle {
+        MirStructType::get(ctx, name.to_string(), vec![], vec![]).into()
+    }
+
+    fn padded_struct_with_zst_ty(ctx: &mut Context) -> (TypeHandle, TypeHandle) {
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let zst_ty = empty_struct_ty(ctx, "Marker");
+
+        let struct_ty = MirStructType::get_with_full_layout(
+            ctx,
+            "Padded".to_string(),
+            vec!["a".to_string(), "marker".to_string(), "b".to_string()],
+            vec![i8_ty, zst_ty, i64_ty],
+            vec![0, 1, 2],
+            vec![0, 1, 8],
+            16,
+            8,
+        );
+
+        (struct_ty.into(), zst_ty)
+    }
+
+    fn append_empty_struct_value(
+        ctx: &mut Context,
+        block: Ptr<pliron::basic_block::BasicBlock>,
+        zst_ty: TypeHandle,
+    ) -> Value {
+        let op = Operation::new(
+            ctx,
+            mir::MirConstructStructOp::get_concrete_op_info(),
+            vec![zst_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, ctx);
+        op.deref(ctx).get_result(0)
+    }
+
+    /// `mir.construct_slice` lowers to the canonical fat-pointer value:
+    /// `undef { ptr, i64 }`, then insert data pointer at slot 0 and length at slot 1.
+    #[test]
+    fn construct_slice_lowers_to_ptr_len_insert_values() {
+        let mut ctx = make_ctx();
+
+        let i8_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Unsigned).into();
+        let usize_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, i8_ty, false).into();
+        let slice_ty: TypeHandle = MirSliceType::get(&mut ctx, i8_ty).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty], vec![]);
+        let data_ptr = block.deref(&ctx).get_argument(0);
+        let len = block.deref(&ctx).get_argument(1);
+
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirConstructSliceOp::get_concrete_op_info(),
+            vec![slice_ty],
+            vec![data_ptr, len],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1]],
+            "slice construction must insert data pointer at slot 0 and length at slot 1"
+        );
+        assert_eq!(
+            count_ops::<llvm::UndefOp>(&ctx, &body),
+            1,
+            "slice construction should start from one undef aggregate"
+        );
+    }
+
+    /// Explicit rustc layout must be respected: field `b` is at byte offset 8,
+    /// so the lowered LLVM struct has a padding slot between `a` and `b`.
+    /// The ZST marker field is stripped and receives no insert_value.
+    #[test]
+    fn construct_struct_uses_layout_slots_and_skips_zst() {
+        let mut ctx = make_ctx();
+
+        let i8_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let (struct_ty, zst_ty) = padded_struct_with_zst_ty(&mut ctx);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![i8_ty, i64_ty], vec![]);
+        let a = block.deref(&ctx).get_argument(0);
+        let b = block.deref(&ctx).get_argument(1);
+        let marker = append_empty_struct_value(&mut ctx, block, zst_ty);
+
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirConstructStructOp::get_concrete_op_info(),
+            vec![struct_ty],
+            vec![a, marker, b],
+            vec![],
+            0,
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![2]],
+            "non-ZST fields must be inserted at their layout slots, skipping padding and ZSTs"
+        );
+    }
+
+    /// Extracting a ZST field must not emit `extract_value`: the field has no
+    /// storage in the lowered LLVM struct, so lowering materializes an undef
+    /// zero-sized value instead.
+    #[test]
+    fn extract_zst_field_lowers_to_undef_without_extract_value() {
+        let mut ctx = make_ctx();
+
+        let i8_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let (struct_ty, zst_ty) = padded_struct_with_zst_ty(&mut ctx);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![i8_ty, i64_ty], vec![]);
+        let a = block.deref(&ctx).get_argument(0);
+        let b = block.deref(&ctx).get_argument(1);
+        let marker = append_empty_struct_value(&mut ctx, block, zst_ty);
+
+        let construct = Operation::new(
+            &mut ctx,
+            mir::MirConstructStructOp::get_concrete_op_info(),
+            vec![struct_ty],
+            vec![a, marker, b],
+            vec![],
+            0,
+        );
+        construct.insert_at_back(block, &ctx);
+        let aggregate = construct.deref(&ctx).get_result(0);
+
+        let extract = Operation::new(
+            &mut ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![zst_ty],
+            vec![aggregate],
+            vec![],
+            0,
+        );
+        MirExtractFieldOp::new(extract).set_attr_index(&ctx, FieldIndexAttr(1));
+        extract.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+
+        assert_eq!(
+            count_ops::<llvm::ExtractValueOp>(&ctx, &body),
+            0,
+            "extracting a stripped ZST field must not emit llvm.extractvalue"
+        );
+
+        let zst_un_defs = find_all::<llvm::UndefOp>(&ctx, &body)
+            .into_iter()
+            .filter(|op| {
+                let result_ty = op.get_operation().deref(&ctx).get_result(0).get_type(&ctx);
+                is_zero_sized_type(&ctx, result_ty)
+            })
+            .count();
+
+        assert_eq!(
+            zst_un_defs, 2,
+            "one undef should build the ZST value and one should materialize the extracted ZST"
+        );
+    }
+
+    /// Enum construction must store the declared discriminant value, not the
+    /// variant index. This locks the `Ordering::Less = -1` style case as the
+    /// i8 bit-pattern `255`.
+    #[test]
+    fn construct_enum_uses_declared_discriminant_not_variant_index() {
+        let mut ctx = make_ctx();
+
+        let discr_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Signed).into();
+        let enum_ty: TypeHandle = MirEnumType::get(
+            &mut ctx,
+            "OrderingLike".to_string(),
+            discr_ty,
+            vec![255, 0, 1],
+            vec![
+                EnumVariant::unit("Less".to_string()),
+                EnumVariant::unit("Equal".to_string()),
+                EnumVariant::unit("Greater".to_string()),
+            ],
+        )
+        .into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let op = Operation::new(
+            &mut ctx,
+            MirConstructEnumOp::get_concrete_op_info(),
+            vec![enum_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        MirConstructEnumOp::new(op)
+            .set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0]],
+            "unit enum construction should insert only the discriminant tag"
+        );
+
+        let integer_constants: Vec<String> = find_all::<llvm::ConstantOp>(&ctx, &body)
+            .into_iter()
+            .filter_map(|op| {
+                op.get_value(&ctx)
+                    .downcast_ref::<IntegerAttr>()
+                    .map(|attr| attr.value().to_string_unsigned_decimal())
+            })
+            .collect();
+
+        assert!(
+            integer_constants.iter().any(|v| v == "255"),
+            "Less must lower to its declared i8 bit-pattern 255, not variant index 0"
+        );
+    }
 }
