@@ -113,6 +113,31 @@ fn nested_outer_full_unroll_clones_the_inner_loop() {
     );
 }
 
+/// Fully unrolling only the inner loop removes that loop and leaves its outer
+/// container intact.
+#[test]
+fn nested_inner_full_unroll_keeps_outer_loop() {
+    let mut ctx = mir_ctx();
+    let lp = nested_counted_loop(&mut ctx, 3, 2);
+
+    MirUnrollHintOp::new(&mut ctx, 0)
+        .get_operation()
+        .insert_at_front(lp.inner_body, &ctx);
+
+    let mut analyses = AnalysisManager::default();
+    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses).expect("nested inner unroll");
+
+    pliron::operation::verify_operation(lp.module, &ctx)
+        .expect("valid IR after unrolling the inner loop");
+    let info = {
+        let mut dom = DomInfo::default();
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    assert_eq!(info.loops().len(), 1, "only the outer loop should remain");
+    assert_eq!(info.loops()[0].header, lp.outer_header);
+}
+
 /// Partially unrolling an outer loop that contains an inner loop is valid: the
 /// outer loop becomes a main loop (stepping by N) plus a remainder, and each
 /// copy carries its own clone of the inner loop. We assert the IR verifies and
@@ -129,11 +154,55 @@ fn nested_outer_partial_unroll_is_valid() {
     hint.get_operation().insert_at_front(lp.outer_body, &ctx);
 
     let mut analyses = AnalysisManager::default();
-    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses).expect("nested outer partial unroll");
+    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses)
+        .expect("nested outer partial unroll");
 
-    pliron::operation::verify_operation(lp.module, &ctx).expect("valid IR after nested partial unroll");
-    assert!(
-        loop_count(&ctx, lp.region) >= 2,
-        "inner loops are cloned into the unrolled copies (loops survive)"
+    pliron::operation::verify_operation(lp.module, &ctx)
+        .expect("valid IR after nested partial unroll");
+    let info = {
+        let mut dom = DomInfo::default();
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    assert_eq!(
+        info.loops().len(),
+        7,
+        "main outer + remainder outer + original inner + four cloned inner loops"
+    );
+    assert_eq!(info.top_level().len(), 2, "main loop + remainder loop");
+    let mut child_counts: Vec<usize> = info
+        .top_level()
+        .iter()
+        .map(|&id| info.loops()[id].children.len())
+        .collect();
+    child_counts.sort_unstable();
+    assert_eq!(child_counts, [1, 4], "one and four nested inner loops");
+}
+
+/// When both loops are annotated, the driver must consume the inner hint first.
+/// Otherwise cloning the outer body would duplicate the inner hint and either
+/// unroll it repeatedly or leave marker operations behind.
+#[test]
+fn nested_inner_and_outer_full_unroll_innermost_first() {
+    let mut ctx = mir_ctx();
+    let lp = nested_counted_loop(&mut ctx, 3, 2);
+
+    MirUnrollHintOp::new(&mut ctx, 0)
+        .get_operation()
+        .insert_at_front(lp.outer_body, &ctx);
+    MirUnrollHintOp::new(&mut ctx, 0)
+        .get_operation()
+        .insert_at_front(lp.inner_body, &ctx);
+
+    let mut analyses = AnalysisManager::default();
+    unroll_annotated_loops(lp.module, &mut ctx, &mut analyses)
+        .expect("nested inner + outer unroll");
+
+    pliron::operation::verify_operation(lp.module, &ctx)
+        .expect("valid IR after unrolling both nested loops");
+    assert_eq!(
+        loop_count(&ctx, lp.region),
+        0,
+        "both fully unrolled loops should be gone"
     );
 }

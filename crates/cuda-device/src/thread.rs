@@ -709,36 +709,42 @@ pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
 
 /// Compile-time loop-unroll request marker (internal, do not call directly).
 ///
-/// This is a compile-time configuration marker that tells the compiler to
-/// attach a `mir.unroll` attribute to the enclosing function so the loop-unroll
-/// pass can find it. It does NOT generate any runtime code.
+/// The `#[kernel]` and `#[device]` macros insert this marker at the start of an
+/// annotated loop body. The MIR importer turns it into a `mir.unroll_hint`
+/// operation, and the loop-unroll pass consumes that hint before lowering. It
+/// generates no runtime code.
 ///
 /// # Usage
 ///
-/// This function should NOT be called directly. Use the `#[unroll]` /
-/// `#[unroll(N)]` attribute macro instead, which injects this marker:
+/// Put the annotation directly on the loop. Bare `#[unroll]` requests full
+/// unrolling; `#[unroll(N)]` requests `N` copies per trip:
 ///
 /// ```rust,ignore
 /// #[kernel]
-/// #[unroll]                      // full unroll (factor 0)
-/// pub fn my_kernel(output: DisjointSlice<f32>) { ... }
+/// pub fn my_kernel(mut output: DisjointSlice<u32>, n: u32) {
+///     let tid = thread::index_1d();
+///     if let Some(out_elem) = output.get_mut(tid) {
+///         let mut sum = 0;
+///         #[unroll]
+///         for i in 0..4 {
+///             sum += i;
+///         }
+///         *out_elem = sum;
+///     }
 ///
-/// #[kernel]
-/// #[unroll(4)]                   // unroll every loop by a factor of 4
-/// pub fn other_kernel(output: DisjointSlice<f32>) { ... }
+///     let mut i = 0;
+///     #[unroll(4)]
+///     while i < n {
+///         i += 1;
+///     }
+/// }
 /// ```
-///
-/// # How It Works
-///
-/// 1. The `#[unroll]` macro injects `__unroll_config::<FACTOR>()` at fn start
-/// 2. MIR importer detects this call and extracts the const generic parameter
-/// 3. The marker call is NOT compiled - it's removed during compilation
-/// 4. The loop-unroll pass reads the `mir.unroll` attribute on the function op
 ///
 /// # Parameters
 ///
-/// - `FACTOR` - `0` requests a full unroll (every constant-trip-count loop is
-///   unrolled completely); `n > 0` requests unrolling every loop by `n`.
+/// - `FACTOR = 0` requests full unrolling of this loop and requires a
+///   compile-time-known trip count.
+/// - `FACTOR >= 2` requests partial unrolling of this loop by that factor.
 #[inline(never)]
 pub fn __unroll_config<const FACTOR: u32>() {
     // This function is detected at compile time and removed.

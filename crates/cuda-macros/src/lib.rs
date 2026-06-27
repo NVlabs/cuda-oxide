@@ -1455,6 +1455,27 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 ///     // ...
 /// }
 /// ```
+///
+/// # Loop unrolling
+///
+/// Put `#[unroll]` on a loop with a compile-time-known trip count to unroll it
+/// completely. Use `#[unroll(N)]`, where `N >= 2`, to do `N` iterations of
+/// work per trip and handle any leftovers with a remainder loop.
+///
+/// ```ignore
+/// #[kernel]
+/// pub fn example(n: u32) {
+///     #[unroll]
+///     for i in 0..4 { work(i); }
+///
+///     let mut i = 0;
+///     #[unroll(4)]
+///     while i < n { work(i); i += 1; }
+/// }
+/// ```
+///
+/// Only the annotated loop is unrolled. Inner loops are copied intact unless
+/// they carry their own annotation.
 #[proc_macro_attribute]
 pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as KernelArgs);
@@ -1467,14 +1488,11 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Consume any `#[unroll]` / `#[unroll(N)]` attributes written directly on
     // loops inside the kernel body. We strip the attribute from the loop
     // expression (so rustc never sees an expression attribute, keeping us off
-    // nightly `stmt_expr_attributes`) and inject the same
-    // `__unroll_config::<FACTOR>()` marker that the standalone `#[unroll]`
-    // function attribute uses, but into the loop body instead of the function
-    // body. If the visitor hits a malformed attribute it records the error so
-    // we can surface it as a compile error below.
-    let mut unroll_visitor = LoopUnrollAttrVisitor::default();
-    unroll_visitor.visit_block_mut(&mut input.block);
-    if let Some(err) = unroll_visitor.error {
+    // nightly `stmt_expr_attributes`) and inject an
+    // `__unroll_config::<FACTOR>()` marker into the loop body. If the visitor
+    // hits a malformed attribute it records the error so we can surface it as a
+    // compile error below.
+    if let Err(err) = rewrite_loop_unroll_attrs(&mut input) {
         return err.to_compile_error().into();
     }
 
@@ -2491,11 +2509,8 @@ impl Parse for UnrollArgs {
 ///    statement of that loop's body block.
 ///
 /// `FACTOR` follows [`UnrollArgs`]: bare `#[unroll]` => `0` (full unroll),
-/// `#[unroll(N)]` => `N`. The marker is byte-for-byte the same form the
-/// standalone `#[unroll]` function attribute injects, so the MIR importer's
-/// existing detection path handles both uniformly. (The importer reads the
-/// marker off whichever block it lands in; the per-loop placement lets the
-/// unroll request be scoped to a single loop instead of the whole function.)
+/// `#[unroll(N)]` => `N`. The importer reads the marker from the block it lands
+/// in, so the request applies to that loop only.
 ///
 /// The visitor recurses through nested blocks/loops/ifs via the default
 /// `visit_mut` traversal, so an annotated loop anywhere in the function is
@@ -2579,6 +2594,17 @@ impl VisitMut for LoopUnrollAttrVisitor {
         // Recurse into nested expressions/blocks so annotated loops nested
         // inside other loops, `if`s, or blocks are also handled.
         visit_mut::visit_expr_mut(self, expr);
+    }
+}
+
+/// Consume per-loop unroll annotations in a kernel or device function and
+/// replace them with the marker calls understood by the MIR importer.
+fn rewrite_loop_unroll_attrs(input: &mut ItemFn) -> syn::Result<()> {
+    let mut visitor = LoopUnrollAttrVisitor::default();
+    visitor.visit_block_mut(&mut input.block);
+    match visitor.error {
+        Some(err) => Err(err),
+        None => Ok(()),
     }
 }
 
@@ -2855,6 +2881,9 @@ pub fn device(_attr: TokenStream, item: TokenStream) -> TokenStream {
 fn generate_device_function(mut input: ItemFn) -> TokenStream {
     if let Some(err) = reject_reserved_name(&input.sig.ident) {
         return err;
+    }
+    if let Err(err) = rewrite_loop_unroll_attrs(&mut input) {
+        return err.to_compile_error().into();
     }
     inject_thread_index_scope(&mut input);
 
@@ -4077,13 +4106,8 @@ mod tests {
     /// rewritten function as a whitespace-free string, panicking on any
     /// recorded parse error.
     fn run_loop_unroll_visitor(mut func: ItemFn) -> String {
-        let mut visitor = LoopUnrollAttrVisitor::default();
-        visitor.visit_block_mut(&mut func.block);
-        assert!(
-            visitor.error.is_none(),
-            "unexpected unroll-attr error: {:?}",
-            visitor.error.map(|e| e.to_string())
-        );
+        rewrite_loop_unroll_attrs(&mut func)
+            .unwrap_or_else(|err| panic!("unexpected unroll-attr error: {err}"));
         quote!(#func).to_string().replace(' ', "")
     }
 
@@ -4097,8 +4121,7 @@ mod tests {
             }
         };
         let out = run_loop_unroll_visitor(func);
-        // Bare #[unroll] => full unroll (factor 0), and it must match the
-        // standalone macro's __unroll_config::<N>() form.
+        // Bare #[unroll] => full unroll (factor 0).
         assert!(
             out.contains("cuda_device::thread::__unroll_config::<0u32>()"),
             "expected factor-0 marker:\n{out}"

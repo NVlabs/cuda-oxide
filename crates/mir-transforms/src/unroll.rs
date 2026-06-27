@@ -13,13 +13,15 @@
 //!   for i in 0..4 { f(i) }      unrolled fully becomes:   f(0); f(1); f(2); f(3);
 //! ```
 //!
-//! The user asks for it with `#[unroll]` or `#[unroll(N)]`, which the frontend
-//! records as a `mir.unroll` attribute (`UnrollAttr`) on the function. A factor
-//! of `0` means **full unroll**: replace a loop whose iteration count is known
-//! at compile time with that many straight-line copies of the body, no loop
-//! left. A factor of `N` (>= 2) means **partial unroll**: do `N` body copies per
-//! trip and add a small leftover ("remainder") loop for the iterations that
-//! don't divide evenly.
+//! Put `#[unroll]` directly on a loop to fully unroll it when its iteration
+//! count is known at compile time. Put `#[unroll(N)]` on a loop to do `N` body
+//! copies per trip and leave a small remainder loop for any leftover
+//! iterations. The frontend records the request as a `mir.unroll_hint`
+//! operation inside that loop.
+//!
+//! If an annotated loop contains another loop, only the annotated loop is
+//! unrolled. The inner loop is copied intact into each body copy and remains a
+//! loop. Give the inner loop its own annotation if it should be unrolled too.
 //!
 //! This pass is the reference example for writing an optimisation pass in oxide.
 //! It builds on two reusable analyses, [`LoopInfo`](crate::analyses::loop_info)
@@ -66,16 +68,6 @@ fn verbose() -> bool {
     std::env::var("CUDA_OXIDE_VERBOSE").is_ok()
 }
 
-/// The pass entry point. Unrolls each loop that carries an in-body
-/// `mir.unroll_hint` (planted by `#[unroll]` / `#[unroll(N)]` written on that
-/// loop), and leaves every other loop and function untouched.
-///
-/// Per function: find the loops (`LoopInfo`), map each hint to the loop whose
-/// body it sits in, remove the hint, analyse that loop's counter, and full- or
-/// partial-unroll by the hint's factor. Afterwards two stock pliron passes clean
-/// up: `dce` drops what unrolling makes unused (the `& mask` ops we folded to
-/// constants, full unroll's now-dead counter increments), and `simplify_cfg`
-/// deletes the original loop blocks once they are unreachable.
 /// How the author spelled the request, for diagnostics: `#[unroll]` (full) or
 /// `#[unroll(N)]` (partial by N).
 fn unroll_kind(factor: u32) -> String {
@@ -86,6 +78,18 @@ fn unroll_kind(factor: u32) -> String {
     }
 }
 
+/// Unroll each loop that carries an in-body `mir.unroll_hint`, which the
+/// frontend plants for `#[unroll]` and `#[unroll(N)]`. Other functions are left
+/// untouched.
+///
+/// Within each annotated function, this finds loops with [`LoopInfo`], maps
+/// every hint to its loop, analyzes the loop counter, and performs full or
+/// partial unrolling. Annotated nested loops are processed from the inside out.
+/// Afterward, SCCP, CFG simplification, and dead-code elimination clean only
+/// that function: constant index expressions fold, dead branches disappear,
+/// and unreachable original loop blocks are removed.
+///
+/// Unsupported loop shapes produce a warning and are not unrolled.
 pub fn unroll_annotated_loops(
     module: Ptr<Operation>,
     ctx: &mut Context,
@@ -103,22 +107,18 @@ pub fn unroll_annotated_loops(
         return Ok(());
     }
 
-    // Normalize the CFG first. `#[unroll]` is carried into the IR as a marker
-    // call planted at the top of the loop body; Rust MIR turns that call into
-    // its own basic block, so a plain counted loop arrives here looking like
-    // three blocks (header, a one-line marker block, body) instead of the two
-    // the transform handles. `simplify_cfg` merges that marker block back into
-    // the body (a block whose only successor has it as the only predecessor),
-    // restoring the simple shape. The `mir.unroll_hint` op rides along into the
-    // merged block; we remove it below, before cloning the body.
-    simplify_cfg(module, ctx)?;
-
     let mut changed = false;
     for func_op in collect_functions(module, ctx) {
         let region = func_op.deref(ctx).get_region(0);
         if collect_hints(ctx, region).is_empty() {
             continue;
         }
+        let mut function_changed = false;
+
+        // Normalize only the annotated function. The marker call often gets its
+        // own MIR block; `simplify_cfg` merges that block back into the loop body
+        // without changing unrelated functions in the module.
+        simplify_cfg(func_op, ctx)?;
 
         // Unroll one annotated loop per round, innermost-first, recomputing the
         // loop analyses each round. Each unroll rewrites the CFG -- and for a loop
@@ -134,7 +134,7 @@ pub fn unroll_annotated_loops(
         // `mir.unroll_hint` markers before we get to collect them.)
         loop {
             // Drop blocks the previous round made unreachable before recomputing.
-            simplify_cfg(module, ctx)?;
+            simplify_cfg(func_op, ctx)?;
 
             let hints = collect_hints(ctx, region);
             if hints.is_empty() {
@@ -204,7 +204,10 @@ pub fn unroll_annotated_loops(
                 partial_unroll(ctx, &info, region, loop_id, ph, &rec, factor)?
             };
             match outcome {
-                UnrollOutcome::Unrolled => changed = true,
+                UnrollOutcome::Unrolled => {
+                    function_changed = true;
+                    changed = true;
+                }
                 // Requested but unsupported shape: report exactly why, loudly, so
                 // it is never a silent no-op.
                 UnrollOutcome::Skipped(reason) => {
@@ -212,27 +215,22 @@ pub fn unroll_annotated_loops(
                 }
             }
         }
+        if function_changed {
+            // Fold and clean only this function. `sccp` folds constant index
+            // arithmetic and branch conditions, `simplify_cfg` removes dead
+            // paths and original loop blocks, and `dce` removes unused ops.
+            // Keeping the root at `func_op` preserves functions without an
+            // unrolled loop byte-for-byte.
+            sccp(func_op, ctx)?;
+            simplify_cfg(func_op, ctx)?;
+            dce(func_op, ctx)?;
+        }
     }
 
     if changed {
-        // Constant-fold in our own middle-end so the unrolled index math and the
-        // match-on-a-constant-index collapse are guaranteed regardless of the
-        // backend optimiser (`opt -O2` today, NVVM later) rather than left to it.
-        // `sccp` folds the now-constant index arithmetic (a full-unrolled counter
-        // is a literal) and infers constant branch conditions; `simplify_cfg`
-        // collapses those branches into unconditional `mir.goto`; `dce` removes
-        // the ops the fold left dead. This is scoped to unrolled functions (gated
-        // on `changed`), so non-unrolled kernels are untouched. Inferred constants
-        // are materialised as `builtin.constant`, which lowering passes through
-        // unchanged and the textual exporter emits.
-        sccp(module, ctx)?;
-        simplify_cfg(module, ctx)?;
-        dce(module, ctx)?;
-        // Self-check: the input was already verified before this pass, so any
-        // verification failure here is a bug in the unroller, not the user's
-        // code. Surface it loudly rather than letting malformed IR slip into
-        // lowering. (Runs after `simplify_cfg`, which deletes the now-unreachable
-        // original loop blocks, so the dominator-based verifier sees a clean CFG.)
+        // The input was verified before this pass, so a failure here is a bug in
+        // the unroller. Verify after cleanup, when unreachable original loop
+        // blocks are gone and the dominator-based verifier sees the final CFG.
         pliron::operation::verify_operation(module, ctx)?;
     }
     Ok(())
@@ -254,9 +252,10 @@ enum UnrollOutcome {
 /// v1 supports a loop with **arbitrary internal control flow** (the body may be
 /// many blocks: `if`/`else`, `match`, `&&`/`||`), as long as it is otherwise
 /// simple: one back-edge (latch), the only way out is the header's exit test
-/// (no early `break`), one block after the loop (exit), a recognized counter, a
-/// dedicated preheader, and no nested loops. `analyze_shape` returns `Err(reason)`
-/// for anything else, so a requested-but-impossible unroll reports exactly why.
+/// (no early `break`), one block after the loop (exit), a recognized counter,
+/// and a dedicated preheader. The body may contain nested loops; they are cloned
+/// intact. `analyze_shape` returns `Err(reason)` for anything else, so a
+/// requested-but-impossible unroll reports exactly why.
 ///
 /// We deliberately do **not** clone the header. The header holds the loop's
 /// carried values as block arguments (the counter and any accumulators); the
@@ -600,8 +599,8 @@ fn rewire_goto(
 
 /// Fully unroll a loop whose iteration count is known at compile time, so no
 /// loop is left at all. Works for any body shape the [`LoopShape`] checks allow
-/// (single latch, single header-test exit, no nested loops), including bodies
-/// with internal `if`/`else`/`match`.
+/// (single latch and single header-test exit), including bodies with internal
+/// `if`/`else`/`match` and nested loops.
 ///
 /// For a trip count `T`, it lays down `T` copies of the body, chained one into
 /// the next: copy 0 entered from the preheader, copy `k`'s latch flowing into

@@ -164,6 +164,47 @@ clear error: `"CUDA-OXIDE: FORBIDDEN CRATE IN DEVICE CODE"` with a list of
 allowed crates (`core`, `alloc`, `cuda_device`, and your local crate).
 :::
 
+## Loop unrolling
+
+Put `#[unroll]` directly on a loop whose trip count is known at compile time.
+The compiler replaces the loop with straight-line copies of its body:
+
+```rust
+#[kernel]
+pub fn sum_four(mut out: DisjointSlice<u32>) {
+    let tid = thread::index_1d();
+    if let Some(out_elem) = out.get_mut(tid) {
+        let mut sum = 0;
+        #[unroll]
+        for i in 0..4 {
+            sum += i;
+        }
+        *out_elem = sum;
+    }
+}
+```
+
+Use `#[unroll(N)]` when the trip count is only known at runtime. The loop then
+does `N` iterations' work per trip. A small remainder loop handles any leftover
+iterations, so `n` does not have to be divisible by `N`:
+
+```rust
+let mut i = 0;
+#[unroll(4)]
+while i < n {
+    process(i);
+    i += 1;
+}
+```
+
+An annotated loop may contain other loops. Only the loop carrying the
+annotation is unrolled; each inner loop is copied intact and remains a loop.
+Add a separate annotation to an inner loop if you want to unroll it too.
+
+Unrolling trades larger generated code for fewer branches and more
+optimization opportunities. Use it for small or performance-critical loops,
+and measure the result.
+
 ## `#[launch_bounds]` -- occupancy hints
 
 The `#[launch_bounds]` attribute tells the compiler how many threads you intend

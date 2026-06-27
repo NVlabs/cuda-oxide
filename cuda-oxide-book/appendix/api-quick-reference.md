@@ -17,6 +17,12 @@ use cuda_device::{kernel, device, launch_bounds, cluster_launch, cooperative_lau
 pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) { /* ... */ }
 
 #[kernel]
+pub fn unrolled(mut data: DisjointSlice<f32>) {
+    #[unroll(4)]
+    for i in 0..16 { /* ... */ }
+}
+
+#[kernel]
 #[launch_bounds(256, 2)]
 pub fn tuned_kernel(data: &mut [f32]) { /* ... */ }
 
@@ -36,6 +42,7 @@ fn helper(x: f32) -> f32 { x * x }
 |:--------------------------------------------|:--------------------------------------------------------------------|
 | `#[kernel]`                                 | Mark a function as a GPU kernel entry point (`.entry` in PTX)       |
 | `#[device]`                                 | Mark a helper function or `extern "C"` block for device compilation |
+| `#[unroll]` / `#[unroll(N)]`               | Fully unroll one loop, or unroll it by factor `N`                    |
 | `#[launch_bounds(max_threads, min_blocks)]` | Occupancy hints for register allocation                             |
 | `#[cluster_launch(x, y, z)]`                | Set compile-time cluster dimensions (Hopper+)                       |
 | `#[cooperative_launch]`                     | Launch cooperatively via `#[cuda_module]` (enables `grid::sync()`)  |

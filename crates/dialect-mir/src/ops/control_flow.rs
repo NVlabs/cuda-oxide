@@ -481,13 +481,13 @@ impl Verify for MirUnreachableOp {
 /// A per-loop unroll request, planted inside a loop body by the `#[unroll]`
 /// frontend and read by the loop-unroll pass.
 ///
-/// The author writes `#[unroll]` / `#[unroll(N)]` on a loop; the `#[kernel]`
-/// macro turns that into one of these ops at the start of the loop body. Because
+/// The author writes `#[unroll]` / `#[unroll(N)]` on a loop; the `#[kernel]` or
+/// `#[device]` macro turns that into one of these ops at the loop body's start. Because
 /// the op physically sits inside the loop, the unroll pass can map it back to the
 /// exact loop it belongs to (no fragile source-location matching). The pass reads
 /// the factor, unrolls that loop, and deletes the hint, so it never reaches
 /// lowering. It has no operands or results: it carries only the `factor`
-/// attribute (`0` = full unroll, `n` = unroll by `n`).
+/// attribute (`0` = full unroll, `n >= 2` = unroll by `n`).
 #[pliron_op(
     name = "mir.unroll_hint",
     format,

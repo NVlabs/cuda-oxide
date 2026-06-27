@@ -9,7 +9,8 @@
 //! that promotes memory slots to plain SSA values) and before the IR is lowered
 //! to the LLVM dialect on its way to PTX. The first pass here is loop unrolling,
 //! switched on by the `#[unroll]` / `#[unroll(N)]` annotation (recorded as a
-//! `mir.unroll` attribute on the function). More loop passes can live here too.
+//! `mir.unroll_hint` operation inside the annotated loop). More loop passes can
+//! live here too.
 
 pub mod analyses;
 pub mod unroll;

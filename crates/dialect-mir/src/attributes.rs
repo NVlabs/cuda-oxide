@@ -72,8 +72,8 @@ pub struct VariantIndexAttr(pub u32);
 ///   constant, unroll it completely, so the induction variable becomes a literal
 ///   in each copy (this is what lets index arithmetic such as `i & 3` fold to a
 ///   constant).
-/// * `n > 0` -- **unroll by `n`**: do `n` copies of the body per trip, leaving a
-///   remainder loop when `n` does not divide the trip count.
+/// * `n >= 2` -- **unroll by `n`**: do `n` copies of the body per trip, leaving
+///   a remainder loop when `n` does not divide the trip count.
 #[pliron_attr(name = "mir.unroll", format = "$0", verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct UnrollAttr(pub u32);

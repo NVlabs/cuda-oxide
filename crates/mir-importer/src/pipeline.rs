@@ -365,9 +365,10 @@ pub fn run_pipeline(
         verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
 
         // Step 4.6: annotation-driven loop unrolling (#[unroll] / #[unroll(N)]).
-        // Runs on the SSA form mem2reg just produced; a no-op unless a function
-        // carries a `mir.unroll` attribute. Reuses the mem2reg AnalysisManager
-        // (dominator trees are cached there).
+        // Runs on the SSA form mem2reg just produced; a no-op unless a loop
+        // contains a `mir.unroll_hint` operation. The pass receives mem2reg's
+        // AnalysisManager for the standard pass shape, but recomputes dominance
+        // after each CFG rewrite.
         if config.verbose {
             eprintln!("\n=== Running loop-unroll ===");
         }
