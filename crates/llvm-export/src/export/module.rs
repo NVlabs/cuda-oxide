@@ -156,7 +156,7 @@ fn validate_device_extern_function_shape(
         });
     if !shape_matches {
         return Err(format!(
-            "device extern `@{}` conflicts with the same-name LLVM declaration's erased scalar/address-space ABI shape",
+            "device extern `@{}` does not match the same-name LLVM declaration's parameter, result, or pointer address-space types",
             decl.export_name
         ));
     }
@@ -218,7 +218,7 @@ fn validate_device_extern_decl(
     }
     if decl.export_name.starts_with("llvm_") {
         return Err(format!(
-            "device-extern symbol `{}` uses cuda-oxide's encoded LLVM-intrinsic prefix `llvm_`; rename the boundary symbol or provide a wrapper",
+            "device-extern symbol `{}` uses the `llvm_` prefix, which cuda-oxide reserves for LLVM intrinsics; rename the symbol or provide a wrapper",
             decl.export_name
         ));
     }
@@ -239,7 +239,7 @@ fn validate_device_extern_decl(
             .any(|ty| matches!(ty, DeviceExternType::Array { .. }))
     {
         return Err(format!(
-            "device extern `@{}` uses a by-value array; cuda-oxide cannot yet reproduce aggregate C ABI coercions, so pass the array behind a pointer",
+            "device extern `@{}` passes an array by value, which is not supported yet; pass a pointer to the array instead",
             decl.export_name
         ));
     }
@@ -296,15 +296,17 @@ fn verify_legacy_text(output: &str, state: &ModuleExportState<'_>) -> Result<(),
         return Ok(());
     }
     if contains_opaque_pointer_type(output) {
-        return Err("legacy LLVM 7 export leaked an opaque `ptr` type".to_string());
+        return Err(
+            "legacy LLVM 7 output still contains unsupported opaque `ptr` syntax".to_string(),
+        );
     }
     Ok(())
 }
 
 /// Detect the opaque-pointer type token without mistaking `@ptr`, `%ptr`,
 /// quoted filenames, metadata, comments, or dotted intrinsic names for a
-/// type. This is a final defense after structural type printing, not a full
-/// LLVM lexer.
+/// type. This is a final check after structural type printing, not a full LLVM
+/// lexer.
 fn contains_opaque_pointer_type(output: &str) -> bool {
     let bytes = output.as_bytes();
     let mut index = 0;

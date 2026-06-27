@@ -109,14 +109,14 @@ Stage by stage:
    dialect itself is provided by the upstream `pliron-llvm` crate.
 
 6. **LLVM IR (.ll file).**
-   The `llvm-export` printer serializes the IR into textual LLVM IR.
-   This is a plain `.ll` file -- you can read it, feed it to `opt`, or
-   diff it between compiler versions.
+   NVVM builds first use `nvvm-transforms` to convert modern LLVM operations
+   to the forms accepted by the selected libNVVM dialect. Ordinary PTX builds
+   skip that transform. The `llvm-export` printer then writes the textual
+   LLVM IR, which can be inspected or diffed between compiler versions.
 
-7. **PTX (.ptx file).**
-   `llc` with the NVPTX target compiles the `.ll` file to PTX assembly.
-   The result is a `.ptx` file ready to be loaded by the CUDA driver at
-   runtime.
+7. **GPU artifact.**
+   Ordinary builds use `llc` to compile the `.ll` file to PTX. NVVM builds use
+   libNVVM and nvJitLink to produce LTOIR and then a cubin.
 
 ---
 
@@ -130,6 +130,7 @@ cuda-oxide is split into focused crates. Here is every one and its role:
 | `mir-importer`       | Translates Stable MIR into `dialect-mir`, orchestrates the full pipeline               |
 | `dialect-mir`        | pliron dialect modeling Rust MIR semantics (places, rvalues, terminators)              |
 | `mir-transforms`     | Analyzes and optimizes `dialect-mir` before lowering; currently provides loop unrolling |
+| `nvvm-transforms`    | Converts lowered LLVM operations to the form accepted by the selected NVVM dialect     |
 | `llvm-export`        | Re-exports `pliron-llvm`'s LLVM dialect + cuda-oxide's textual `.ll` exporter          |
 | `dialect-nvvm`       | pliron dialect for NVIDIA GPU intrinsics (`tid`, `ntid`, barriers, TMA)                |
 | `mir-lower`          | Lowers `dialect-mir` to the LLVM dialect -- the main transformation pass               |

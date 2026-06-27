@@ -3,18 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! End-to-end regression for issue #98 and the related community reports.
+//! CUDA libdevice math through the normal `#[cuda_module]` API.
 //!
-//! These kernels deliberately use the ordinary `#[cuda_module]` loading
-//! path. The math calls pull in libdevice and therefore auto-select NVVM IR;
-//! callers should not need `--emit-nvvm-ir` or a special launch API. Before
-//! legacy typed-pointer emission, libNVVM rejected that IR with
-//! `parse expected type` on pre-Blackwell targets such as `sm_86`.
-//!
-//! Coverage includes the original SwiGLU/`exp` report plus every function
-//! mentioned in the Discord reports: `sin`, `exp`, `sqrt`, `atan`, `atan2`,
-//! `acos`, and `tan`. Both kernels use a read-only slice and a
-//! `DisjointSlice`, matching the reported API shape.
+//! Calling these math methods automatically selects the NVVM IR path. The
+//! example checks SwiGLU plus `sin`, `exp`, `sqrt`, `atan`, `atan2`, `acos`,
+//! and `tan` on both legacy and modern NVVM targets.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
@@ -38,7 +31,7 @@ mod kernels {
 
     /// One output row per input, ordered like `OP_NAMES` on the host.
     #[kernel]
-    pub fn reported_math(x: &[f32], atan2_y: &[f32], mut out: DisjointSlice<[f32; 7]>) {
+    pub fn math_functions(x: &[f32], atan2_y: &[f32], mut out: DisjointSlice<[f32; 7]>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i < x.len()
@@ -115,7 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let atan2_y_dev = DeviceBuffer::from_host(&stream, &atan2_y)?;
     let mut math_out = DeviceBuffer::<[f32; 7]>::zeroed(&stream, math_x.len())?;
 
-    module.reported_math(
+    module.math_functions(
         &stream,
         LaunchConfig::for_num_elems(math_x.len() as u32),
         &math_x_dev,
@@ -149,11 +142,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if failures != 0 {
-        return Err(format!("{failures} reported-math result(s) exceeded {ULP_LIMIT} ULP").into());
+        return Err(format!("{failures} math result(s) exceeded {ULP_LIMIT} ULP").into());
     }
 
     println!(
-        "PASS: issue #98 SwiGLU plus {} inputs x {} reported libdevice operations",
+        "PASS: SwiGLU plus {} inputs x {} libdevice math operations",
         math_x.len(),
         OP_NAMES.len()
     );

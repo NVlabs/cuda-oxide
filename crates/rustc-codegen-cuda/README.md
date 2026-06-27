@@ -122,8 +122,8 @@ The `examples/` directory contains standalone kernel crates that exercise differ
 | `barrier`                    | `__syncthreads` and barrier semantics                      |
 | `atomics`                    | Atomic operations on device                                |
 | `atomic_f16`                 | Scalar f16 atomic correctness checks and microbenchmarks   |
-| `issue98_repro`              | Automatic libdevice/NVVM math on legacy and modern targets |
-| `legacy_nvvm_pointer_shapes` | Adversarial legacy typed-pointer NVVM IR flows              |
+| `libdevice_math`             | Libdevice math on legacy and modern NVVM targets            |
+| `legacy_nvvm_pointer_shapes` | Legacy NVVM pointer shapes across control flow and memory   |
 | `printf`                     | Device-side `printf` via FFI                               |
 | `tma_copy`                   | Tensor Memory Accelerator copies (Hopper+)                 |
 | `tma_multicast`              | TMA with multicast across CTAs                             |

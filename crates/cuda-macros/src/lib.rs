@@ -3028,10 +3028,8 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
 /// form. The `#[link_name]` attribute restores the original name in the binary
 /// so external LTOIR resolves correctly.
 fn generate_device_extern_block(mut input: ItemForeignMod) -> TokenStream {
-    // The structured device-extern bridge models CUDA C ABI exactly. Other
-    // Rust ABIs may use different register passing, hidden arguments, or
-    // unwind contracts even when the source-level types look identical.
-    // Reject them here so they cannot be mislabeled as C-compatible LTOIR.
+    // Device extern declarations use CUDA's C calling convention. Reject
+    // other Rust ABIs because their argument and return conventions may differ.
     if input
         .abi
         .name
@@ -3040,7 +3038,7 @@ fn generate_device_extern_block(mut input: ItemForeignMod) -> TokenStream {
     {
         return syn::Error::new_spanned(
             &input.abi,
-            "#[device] extern blocks must use the non-unwinding `extern \"C\"` ABI",
+            "#[device] extern blocks must use `extern \"C\"`",
         )
         .to_compile_error()
         .into();

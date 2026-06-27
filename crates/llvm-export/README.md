@@ -13,8 +13,10 @@ exporter local (pliron-llvm only emits real `.ll` via an `llvm-sys` bridge,
 which cuda-oxide avoids).
 
 ```text
-dialect-mir ──► mir-lower ──► LLVM dialect ──► export ──► .ll file ──► llc ──► .ptx
+dialect-mir ──► mir-lower ──► LLVM dialect ──► export ──► .ll
                               (pliron-llvm)    (this crate)
+                                     │
+                                     └── NVVM builds first run nvvm-transforms
 ```
 
 ## What this crate adds on top of pliron-llvm
@@ -67,9 +69,10 @@ let nvvm_ir = export_module_to_string_with_config(&ctx, &module, &config)?;
 ```
 
 `NvvmExportConfig` selects LLVM 7 typed-pointer NVVM IR for pre-Blackwell
-targets and modern opaque-pointer NVVM IR for Blackwell and newer targets.
-Legacy pointer values use one canonical byte-pointer representation internally
-and are cast to an operation's exact typed-pointer view at each use.
+targets and modern opaque-pointer NVVM IR for Blackwell and newer targets. In
+LLVM 7 output, each internal pointer has one neutral byte-pointer type. The
+exporter casts it to the exact pointer type needed by a load, store, GEP, call,
+or other typed operation.
 
 The export handles block-arg to PHI-node translation, grouped intrinsic
 declarations, `convergent` attribute on synchronization ops, kernel metadata

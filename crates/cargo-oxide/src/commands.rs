@@ -591,7 +591,7 @@ pub fn codegen_build(
 /// halves into one command for the Tile-to-SIMT interop workflow (#96): it
 /// builds the crate in NVVM IR mode, then compiles the emitted `<crate>.ll`
 /// with libNVVM `-gen-lto` and writes `<crate>.ltoir` (or `output`) plus the
-/// matching `.target` sidecar consumed by fail-closed runtime loaders.
+/// matching `.target` file used for runtime loading.
 ///
 /// `arch` is required because LTOIR is architecture-specific. It accepts
 /// `sm_XX`, `compute_XX`, or a bare `XX`, all mapped to libNVVM's

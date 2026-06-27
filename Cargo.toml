@@ -11,6 +11,7 @@ members = [
     "crates/mir-importer",
     "crates/mir-lower",
     "crates/mir-transforms",
+    "crates/nvvm-transforms",
     "crates/cargo-oxide",
     "crates/oxide-artifacts",
     # FFI bindings
@@ -55,6 +56,7 @@ dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
 mir-importer = { path = "crates/mir-importer" }
 mir-transforms = { path = "crates/mir-transforms" }
+nvvm-transforms = { path = "crates/nvvm-transforms" }
 cuda-device = { path = "crates/cuda-device" }
 cuda-host = { path = "crates/cuda-host" }
 cuda-macros = { path = "crates/cuda-macros" }

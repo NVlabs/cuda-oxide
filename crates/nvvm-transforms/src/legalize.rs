@@ -3,14 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Legalization from the current LLVM dialect to the LLVM 7 subset accepted
-//! by legacy NVVM IR.
+//! Converts modern LLVM operations to the LLVM 7 forms accepted by
+//! pre-Blackwell libNVVM.
 //!
-//! This pass deliberately runs after MIR-to-LLVM lowering.  Keeping it as a
-//! separate LLVM-to-LLVM pass means the normal PTX path retains the richer,
-//! current LLVM spelling while the libNVVM path gets a small, audited legacy
-//! surface.  Anything whose semantics cannot be preserved is rejected here;
-//! the textual exporter must never guess.
+//! The pass runs after MIR-to-LLVM lowering. It preserves operation semantics
+//! and reports an error when no equivalent legacy form is available.
 
 use std::num::NonZeroUsize;
 
@@ -47,19 +44,15 @@ use crate::helpers;
 
 const NNEG_ATTR: &str = "llvm_nneg_flag";
 
-/// Rewrite a lowered LLVM module to the LLVM 7 / legacy-NVVM subset.
+/// Rewrite a lowered LLVM module to the LLVM 7 subset used by legacy NVVM IR.
 ///
-/// The pass is target-independent: callers choose whether a target requires
-/// legacy NVVM IR, then invoke this function before textual export.  Rewrites
-/// are exact (not approximations), and unsupported memory-ordering constructs
-/// fail closed rather than silently losing their semantics.
-pub fn legalize_for_legacy_nvvm(ctx: &mut Context, module: Ptr<Operation>) -> Result<()> {
+/// Unsupported memory-ordering operations return an error.
+pub(crate) fn legalize_for_legacy_nvvm(ctx: &mut Context, module: Ptr<Operation>) -> Result<()> {
     let mut ops = Vec::new();
     collect_ops(ctx, module, &mut ops);
 
-    // Validate constructs for which libNVVM either rejects the IR or silently
-    // ignores LLVM ordering/scope.  Do this before mutating the module so an
-    // error leaves the caller's IR untouched.
+    // Validate the complete module before changing it. Some unsupported
+    // ordering and scope settings are otherwise ignored by libNVVM.
     for &op in &ops {
         reject_nonportable_f16_types(ctx, op)?;
         reject_unsupported_op(ctx, op)?;
@@ -111,16 +104,17 @@ pub fn legalize_for_legacy_nvvm(ctx: &mut Context, module: Ptr<Operation>) -> Re
 /// Rewrite bit-manipulation intrinsics whose integer widths NVVM rejects in
 /// both textual dialects.
 ///
-/// Unlike [`legalize_for_legacy_nvvm`], this deliberately leaves modern-only
-/// operations, flags, f16, atomics, and intrinsic signatures untouched. It is
-/// used for Blackwell+ modules, where opaque pointers are accepted but NVVM's
-/// bit-intrinsic width restrictions still stop at i64.
-pub fn legalize_nvvm_bit_intrinsics(ctx: &mut Context, module: Ptr<Operation>) -> Result<()> {
+/// Unlike [`legalize_for_legacy_nvvm`], this leaves modern operations, flags,
+/// f16, atomics, and intrinsic signatures unchanged. Blackwell and newer
+/// targets accept those forms, but NVVM bit intrinsics still stop at i64.
+pub(crate) fn legalize_nvvm_bit_intrinsics(
+    ctx: &mut Context,
+    module: Ptr<Operation>,
+) -> Result<()> {
     let mut ops = Vec::new();
     collect_ops(ctx, module, &mut ops);
 
-    // Validate every candidate before mutating so malformed intrinsic calls
-    // fail without leaving a partially rewritten module.
+    // Validate every candidate before changing the module.
     for &op in &ops {
         let Some(call) = Operation::get_op::<llvm::CallOp>(op, ctx) else {
             continue;
@@ -171,10 +165,9 @@ pub fn legalize_nvvm_bit_intrinsics(ctx: &mut Context, module: Ptr<Operation>) -
 
 /// CUDA 12's LLVM 7 NVVM dialect does not support the scalar `half` type.
 ///
-/// This checks every place a type can hide in the lowered pliron module, not
-/// only SSA results: function/global signatures, block arguments, aggregate
-/// element types, and operation type attributes such as alloca/GEP element
-/// types.  Named recursive structs are guarded by the `seen` set.
+/// This checks operands, results, function and global signatures, block
+/// arguments, aggregate elements, and operation type attributes. Named
+/// recursive structs are guarded by the `seen` set.
 fn reject_nonportable_f16_types(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
     let has_half = op
         .deref(ctx)
@@ -274,7 +267,7 @@ fn reject_unsupported_op(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
     if let Some(reason) = reason {
         return pliron::input_err!(
             op.deref(ctx).loc(),
-            "legacy NVVM IR does not soundly support {reason}; disable this construct or use the modern NVVM/PTX path"
+            "legacy NVVM IR does not support {reason}; use ordinary PTX output or a Blackwell NVVM target"
         );
     }
     Ok(())
@@ -553,7 +546,7 @@ enum LegacyBitRewrite {
 /// NVVM only accepts bit-manipulation intrinsics through i64. Rust exposes the
 /// same operations for i128, so split them into exact i64 operations before
 /// handing the module to libNVVM. `llvm.bswap.i8` is not valid LLVM IR at all;
-/// recognize it only so malformed input fails during preflight rather than in
+/// recognize it only so malformed input fails during validation rather than in
 /// the textual LLVM verifier. Rust's `u8::swap_bytes` is lowered to an identity
 /// before this pass.
 fn legacy_bit_rewrite(name: &str) -> Option<LegacyBitRewrite> {
@@ -715,7 +708,7 @@ fn rewrite_legacy_bit_intrinsic(ctx: &mut Context, op: Ptr<Operation>, name: &st
         LegacyBitRewrite::InvalidBswapI8 => {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
-                "{name} reached rewriting despite being rejected during preflight"
+                "{name} reached rewriting despite being rejected during validation"
             );
         }
         LegacyBitRewrite::FunnelLeftI128 | LegacyBitRewrite::FunnelRightI128 => {
@@ -864,10 +857,8 @@ fn rewrite_float_to_int_sat(ctx: &mut Context, op: Ptr<Operation>, name: &str) -
         parse_float_to_int_sat_name(name).expect("validated intrinsic name");
     let mut source = op.deref(ctx).get_operand(0);
 
-    // Keep the f16 extension branch defensive even though validation rejects
-    // it for the CUDA 12 compatibility floor.  If that floor is raised after
-    // toolkit-matrix testing, every half value (including infinities and NaNs)
-    // is exactly representable in f32 and can reuse the clamp algorithm.
+    // If f16 support is added later, extending to f32 preserves every f16
+    // value exactly and allows the same clamp algorithm to be reused.
     let compare_width = if source_width == 16 {
         let f32_ty: TypeHandle = FP32Type::get(ctx).into();
         let extend = llvm::FPExtOp::new(ctx, source, f32_ty);
@@ -1313,7 +1304,12 @@ mod tests {
             .get_operation()
             .insert_at_back(entry, &ctx);
 
-        legalize_for_legacy_nvvm(&mut ctx, module.get_operation()).unwrap();
+        crate::legalize_for_nvvm(
+            &mut ctx,
+            module.get_operation(),
+            llvm_export::export::NvvmIrDialect::LegacyLlvm7,
+        )
+        .unwrap();
 
         let ids = operation_ids(&ctx, module.get_operation());
         assert!(!ids.iter().any(|id| id == "llvm.fneg"), "{ids:?}");
@@ -1543,7 +1539,7 @@ mod tests {
                     "{}",
                     error.disp(&ctx)
                 );
-                assert_eq!(before, after, "{name} mutated before preflight failed");
+                assert_eq!(before, after, "{name} changed before validation failed");
             }
         }
     }
@@ -1566,7 +1562,12 @@ mod tests {
             .get_operation()
             .insert_at_back(entry, &ctx);
 
-        legalize_nvvm_bit_intrinsics(&mut ctx, module.get_operation()).unwrap();
+        crate::legalize_for_nvvm(
+            &mut ctx,
+            module.get_operation(),
+            llvm_export::export::NvvmIrDialect::Modern,
+        )
+        .unwrap();
 
         let ids = operation_ids(&ctx, module.get_operation());
         assert!(ids.iter().any(|id| id == "llvm.fneg"), "{ids:?}");

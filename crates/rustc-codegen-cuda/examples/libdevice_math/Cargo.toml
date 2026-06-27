@@ -1,5 +1,5 @@
 [package]
-name = "issue98_repro"
+name = "libdevice_math"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
@@ -7,11 +7,10 @@ license = "Apache-2.0"
 # Mark as standalone crate (not part of parent workspace)
 [workspace]
 
-# Regression for issue #98 and the related community math reports. Libdevice
-# calls auto-switch the device pipeline into NVVM IR mode. This must work with
-# legacy typed-pointer NVVM IR on pre-Blackwell targets (sm_86 etc).
+# Tests Rust math methods that are implemented by CUDA libdevice. These calls
+# automatically use the NVVM IR path on both old and new GPU architectures.
 # Verify the legacy path with:
-#   cargo oxide emit-ltoir issue98_repro --arch sm_86
+#   cargo oxide emit-ltoir libdevice_math --arch sm_86
 
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }

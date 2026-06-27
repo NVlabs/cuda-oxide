@@ -451,9 +451,8 @@ impl<'a> ModuleExportState<'a> {
             .ok_or_else(|| format!("missing exported name for value {value:?}"))
     }
 
-    /// Check that the opaque pliron value has the same non-pointee ABI shape
-    /// as an exact device-extern boundary type. Pointer pointees intentionally
-    /// live only in `DeviceExternType`, but pointer address spaces must agree.
+    /// Check the scalar type and pointer address space against a device-extern
+    /// declaration. Pointer pointees are stored separately in `DeviceExternType`.
     fn validate_device_extern_value_type(
         &self,
         expected: &DeviceExternType,
@@ -487,15 +486,13 @@ impl<'a> ModuleExportState<'a> {
 
         let expected = expected.llvm_string(self.legacy_typed_pointers())?;
         Err(format!(
-            "device-extern {position} type mismatch: boundary expects `{expected}`, lowered call has `{}`",
+            "device-extern {position} type mismatch: declaration expects `{expected}`, lowered call has `{}`",
             actual_ref.disp(self.ctx)
         ))
     }
 
-    /// Prepare a call argument for an exact legacy device-extern boundary.
-    /// Internally every pointer is canonical `i8 addrspace(A)*`; an external
-    /// declaration may require (for example) `float*`, so adapt it immediately
-    /// before the call without changing the internal SSA value's type.
+    /// Convert an internal byte pointer to the type required by a legacy
+    /// device-extern declaration, such as `float*`.
     fn device_extern_argument(
         &self,
         arg: Value,
@@ -524,9 +521,8 @@ impl<'a> ModuleExportState<'a> {
         Ok(adapted)
     }
 
-    /// In legacy mode, adapt a canonical byte pointer to the exact pointee type
-    /// required by a memory operation. Modern opaque-pointer mode needs no
-    /// adapter and simply returns the original SSA spelling.
+    /// In legacy mode, convert a byte pointer to the pointee type required by a
+    /// memory operation. Modern opaque-pointer mode returns the original value.
     fn typed_pointer_operand(
         &self,
         pointer: Value,
@@ -1203,9 +1199,8 @@ impl<'a> ModuleExportState<'a> {
         let ret_ty = llvm_func_ty.result_type();
         let is_void = ret_ty.deref(self.ctx).is::<VoidType>();
 
-        // Device externs retain an exact boundary signature outside the
-        // opaque-pointer pliron module. Clone it so emitting adapters may
-        // mutate exporter bookkeeping without borrowing the state map.
+        // Device externs keep their pointer types outside the opaque-pointer
+        // module. Clone the declaration before updating exporter state.
         let device_extern = match &callee {
             CallOpCallable::Direct(identifier) => {
                 let name = identifier.to_string();
@@ -1289,8 +1284,8 @@ impl<'a> ModuleExportState<'a> {
             None
         };
 
-        // A legacy call returning an exact `T*` must immediately normalize
-        // that result back to the canonical `i8*` used by all internal SSA.
+        // Convert a typed pointer returned by a legacy extern back to the
+        // internal byte-pointer type.
         let normalize_pointer_result = device_extern.as_ref().is_some_and(|decl| {
             self.legacy_typed_pointers()
                 && decl.return_type.pointer_parts().is_some()
@@ -1418,8 +1413,7 @@ impl<'a> ModuleExportState<'a> {
             }
 
             // Opaque pointer-to-pointer bitcasts carry no pointee information.
-            // In typed LLVM a same-type bitcast is not a useful adapter, so
-            // materialize the identity with a zero-offset byte GEP instead.
+            // In typed LLVM, use a zero-offset byte GEP for this identity.
             let result_name = self.value_name(result, value_names)?;
             write!(output, "  {result_name} = getelementptr i8, ").unwrap();
             self.export_canonical_pointer_type(source_pointer.address_space(), output);

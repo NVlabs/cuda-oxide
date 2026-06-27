@@ -28,7 +28,7 @@ The crate lives in `crates/mir-importer` and is split into two parts:
 Before diving into translation details, here is the big picture. The
 `run_pipeline()` function is the entry point that `rustc-codegen-cuda` calls
 after collecting device functions. It takes a list of `CollectedFunction`
-structs and a `PipelineConfig`, then runs seven stages:
+structs and a `PipelineConfig`, then runs these stages:
 
 ```text
 Step 1:  Translate Rust MIR → `dialect-mir`
@@ -36,8 +36,9 @@ Step 2:  Verify `dialect-mir` module
 Step 3:  Run `pliron::opts::mem2reg` to promote alloca slots back into SSA
 Step 4:  Apply `dialect-mir` optimizations (currently annotated loop unrolling)
 Step 5:  Lower `dialect-mir` → LLVM dialect (via mir-lower)
-Step 6:  Export the LLVM dialect to textual LLVM IR (.ll)
-Step 7:  Run llc to compile .ll to .ptx
+Step 6:  For NVVM builds, adjust the LLVM dialect via nvvm-transforms
+Step 7:  Export the LLVM dialect to textual LLVM IR (.ll)
+Step 8:  Compile with llc, or with libNVVM and nvJitLink
 ```
 
 Full variable-debug builds skip steps 3 and 4 so source variables remain in
@@ -76,8 +77,10 @@ For each function, the pipeline:
 6. Runs `lower_mir_to_llvm` (from the `mir-lower` crate) to lower every
    `dialect-mir` operation into its LLVM dialect equivalent via
    `DialectConversion`.
-7. Exports the LLVM dialect module to a textual `.ll` string, writes it to
-   disk, and invokes `llc` to produce the final `.ptx` file.
+7. For NVVM builds, runs `nvvm-transforms` with the dialect selected for the
+   target GPU. Ordinary PTX builds skip this step.
+8. Exports the LLVM dialect module to a textual `.ll` string and compiles it
+   with `llc`, or with libNVVM and nvJitLink for NVVM output.
 
 If any step fails, the pipeline stops and returns a typed error (`NoBody`,
 `Translation`, `Verification`, `Lowering`, `Export`, or `PtxGeneration`) with
@@ -423,11 +426,15 @@ From here, the pipeline takes over:
 3. **Lower** -- `lower_mir_to_llvm` transforms `mir.add` into `llvm.fadd`,
    `mir.load` into `llvm.load`, `mir.slice` into an LLVM struct of pointer
    and length, and so on.
-4. **Export** -- the LLVM dialect is printed as a textual `.ll` file with
+4. **Prepare NVVM IR when needed** -- `nvvm-transforms` converts operations to
+   the LLVM form accepted by the selected libNVVM target. Ordinary PTX builds
+   skip this step.
+5. **Export** -- the LLVM dialect is printed as a textual `.ll` file with
    the appropriate `!nvvm.annotations` metadata marking `vecadd` as a
    kernel entry point.
-5. **llc** -- LLVM's NVPTX backend compiles the `.ll` to `.ptx`, and the
-   result is written next to the host binary.
+6. **Compile** -- LLVM's NVPTX backend normally compiles the `.ll` to `.ptx`.
+   NVVM builds instead use libNVVM and nvJitLink. The result is written next
+   to the host binary.
 
 `dialect-mir` captures Rust semantics faithfully. Before lowering it, cuda-oxide
 can perform targeted, behavior-preserving rewrites. The first is explained in

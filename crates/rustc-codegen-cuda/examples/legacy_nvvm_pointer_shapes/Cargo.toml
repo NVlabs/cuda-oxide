@@ -7,8 +7,8 @@ license = "Apache-2.0"
 # Standalone crate, not part of the parent workspace.
 [workspace]
 
-# Adversarial end-to-end coverage for legacy LLVM 7 NVVM typed-pointer
-# emission. Verify and compile explicitly for an older dialect with:
+# Tests pointer shapes that must remain valid in LLVM 7 NVVM IR. Verify the
+# legacy path with:
 #   cargo oxide emit-ltoir legacy_nvvm_pointer_shapes --arch sm_86
 
 [dependencies]

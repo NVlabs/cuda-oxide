@@ -194,17 +194,13 @@ pub struct PipelineConfig {
     /// controlled by `target_arch` or `device_arch_hint` (normally populated
     /// by `cargo oxide`).
     pub emit_nvvm_ir: bool,
-    /// Explicit CUDA target for architecture-specific NVVM IR.
+    /// Explicit CUDA target used to choose NVVM IR syntax.
     ///
-    /// This normally comes from `CUDA_OXIDE_TARGET` / `cargo oxide --arch`.
-    /// It is kept separate from `device_arch_hint` so an advisory detected GPU
-    /// can never silently override an explicit cross-compilation target.
+    /// Normally set by `cargo oxide --arch` or `CUDA_OXIDE_TARGET`.
     pub target_arch: Option<String>,
-    /// Advisory architecture of the local GPU (`CUDA_OXIDE_DEVICE_ARCH`).
+    /// Detected architecture of the local GPU (`CUDA_OXIDE_DEVICE_ARCH`).
     ///
-    /// Used only when no explicit target was provided. A missing value is
-    /// allowed for ordinary PTX output, but NVVM IR export fails rather than
-    /// guessing which libNVVM input dialect to emit.
+    /// Used only when no explicit target is provided.
     pub device_arch_hint: Option<String>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
@@ -448,13 +444,10 @@ pub fn run_pipeline(
         );
     }
 
-    // NVVM IR syntax is architecture-specific: libNVVM selects its LLVM 7
-    // typed-pointer parser for pre-Blackwell targets and its modern parser for
-    // Blackwell+. Resolve and validate one concrete target before export so
-    // the textual dialect, embedded artifact metadata, and runtime link target
-    // cannot diverge. Headless/cross builds must provide `--arch` rather than
-    // silently producing an ambiguous module.
-    let nvvm_target = if emit_nvvm_ir {
+    // Pre-Blackwell and Blackwell GPUs use different NVVM IR pointer syntax.
+    // Resolve one concrete target before export and record it with the
+    // artifact.
+    let (nvvm_target, nvvm_dialect) = if emit_nvvm_ir {
         let target = resolve_nvvm_target(
             config.target_arch.as_deref(),
             config.device_arch_hint.as_deref(),
@@ -465,29 +458,23 @@ pub fn run_pipeline(
             NvvmIrDialect::Modern
         };
         validate_nvvm_debug_support(&target, dialect, config.debug_kind)?;
-        Some(target)
+        (Some(target), Some(dialect))
     } else {
-        None
+        (None, None)
     };
 
-    // Step 5.5: Restrict modern pliron-LLVM operations to the LLVM 7 subset
-    // accepted by libNVVM's pre-Blackwell frontend. Semantic rewrites belong
-    // here rather than in the textual printer: the legalized module is then
-    // checked by pliron's ordinary verifier before any text is emitted.
-    if let Some(target) = nvvm_target.as_ref() {
-        if target.uses_legacy_llvm() {
-            if config.verbose {
+    // Step 5.5: Convert LLVM operations to the forms supported by the selected
+    // NVVM dialect, then verify the changed module before text export.
+    if let Some(dialect) = nvvm_dialect {
+        if config.verbose {
+            if dialect == NvvmIrDialect::LegacyLlvm7 {
                 eprintln!("\n=== Legalizing LLVM dialect for legacy NVVM ===");
-            }
-            mir_lower::legacy_nvvm::legalize_for_legacy_nvvm(&mut ctx, module_op_ptr)
-                .map_err(|error| PipelineError::Lowering(error.disp(&ctx).to_string()))?;
-        } else {
-            if config.verbose {
+            } else {
                 eprintln!("\n=== Legalizing NVVM bit-intrinsic widths ===");
             }
-            mir_lower::legacy_nvvm::legalize_nvvm_bit_intrinsics(&mut ctx, module_op_ptr)
-                .map_err(|error| PipelineError::Lowering(error.disp(&ctx).to_string()))?;
         }
+        nvvm_transforms::legalize_for_nvvm(&mut ctx, module_op_ptr, dialect)
+            .map_err(|error| PipelineError::Lowering(error.disp(&ctx).to_string()))?;
     }
 
     // Step 6: Verify the final LLVM dialect module. Dump BEFORE verify so
@@ -510,11 +497,8 @@ pub fn run_pipeline(
         eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
     }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
-    // A prior build may have selected the other output mode. Remove every
-    // artifact that could make a runtime loader choose stale code before we
-    // publish the new `.ll` and its final PTX-or-target marker. Failure to
-    // invalidate an old artifact is fatal: executing an older kernel is worse
-    // than leaving this build with no loadable output.
+    // Remove artifacts from earlier builds so changing output mode cannot
+    // leave older PTX, LTOIR, or cubin selected by the loader.
     clear_stale_compilation_artifacts(&config.output_dir, &config.output_name)?;
     let _llvm_ir = export_llvm_ir(
         &ctx,
@@ -522,7 +506,7 @@ pub fn run_pipeline(
         device_externs,
         &ll_path,
         emit_nvvm_ir,
-        nvvm_target.as_ref(),
+        nvvm_dialect,
         config.debug_kind,
     )?;
     if config.verbose {
@@ -910,25 +894,18 @@ fn export_llvm_ir(
     device_externs: &[DeviceExternDecl],
     path: &Path,
     emit_nvvm_ir: bool,
-    nvvm_target: Option<&CudaArch>,
+    nvvm_dialect: Option<NvvmIrDialect>,
     debug_kind: DebugKind,
 ) -> Result<String, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
     let llvm_ir = if emit_nvvm_ir {
-        let target = nvvm_target.ok_or_else(|| {
-            PipelineError::Export("NVVM export reached without a resolved CUDA target".to_string())
+        let dialect = nvvm_dialect.ok_or_else(|| {
+            PipelineError::Export("NVVM export reached without a selected IR dialect".to_string())
         })?;
         let config = PipelineExportConfig {
-            // `CudaArch` was parsed once when the pipeline resolved its
-            // concrete target. Derive the dialect from that shared value
-            // instead of reparsing a rendered string at the export boundary.
-            inner: llvm_export::export::NvvmExportConfig::new(if target.uses_legacy_llvm() {
-                NvvmIrDialect::LegacyLlvm7
-            } else {
-                NvvmIrDialect::Modern
-            }),
+            inner: llvm_export::export::NvvmExportConfig::new(dialect),
             debug_kind,
         };
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
@@ -1724,7 +1701,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_nvvm_debug_fails_closed() {
+    fn legacy_nvvm_debug_is_rejected() {
         let legacy = resolve_nvvm_target(Some("sm_90"), None).unwrap();
         assert!(
             validate_nvvm_debug_support(

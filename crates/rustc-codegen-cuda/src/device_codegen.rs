@@ -111,14 +111,13 @@ enum DeviceExternTypePosition {
     Pointee,
 }
 
-/// Convert a Rust device-extern type into the exact LLVM boundary type we can
-/// support soundly.
+/// Convert a Rust device-extern type to the LLVM type supported at the
+/// external function boundary.
 ///
-/// In particular, this keeps raw-pointer pointees recursively. Unsupported
-/// C-ABI shapes are errors: silently treating a struct, slice, or function
-/// pointer as one opaque `ptr` can change the number and meaning of ABI
-/// arguments. Small integer parameters are also rejected until their required
-/// signext/zeroext attributes are represented by the extern metadata.
+/// Raw-pointer pointees are preserved recursively. Unsupported C ABI types
+/// return an error instead of being treated as an arbitrary pointer. Small
+/// integer parameters are rejected until their `signext` or `zeroext`
+/// attributes can be emitted.
 fn rustc_ty_to_device_extern_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
@@ -128,8 +127,7 @@ fn rustc_ty_to_device_extern_type<'tcx>(
 
     if ty.is_c_void(tcx) {
         return if position == DeviceExternTypePosition::Pointee {
-            // LLVM has no `void*`; the conventional exact representation of
-            // a C void pointer in typed-pointer IR is `i8*`.
+            // LLVM spells a C void pointer as `i8*` in typed-pointer IR.
             Ok(E::Integer(8))
         } else {
             Err("`c_void` is only supported behind a pointer".to_string())
@@ -141,7 +139,7 @@ fn rustc_ty_to_device_extern_type<'tcx>(
             Ok(E::Integer(bits))
         } else {
             Err(format!(
-                "by-value i{bits} requires C ABI extension attributes that cuda-oxide does not yet represent"
+                "`i{bits}` is not yet supported by value in a device extern; use i32/i64 or pass a pointer"
             ))
         }
     };
@@ -168,7 +166,7 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 Ok(E::Float16)
             }
             rustc_middle::ty::FloatTy::F16 => Err(
-                "by-value f16 device externs require an explicit CUDA C ABI wrapper".to_string(),
+                "`f16` is not yet supported by value in a device extern; pass a pointer or use a CUDA C wrapper".to_string(),
             ),
             rustc_middle::ty::FloatTy::F32 => Ok(E::Float32),
             rustc_middle::ty::FloatTy::F64 => Ok(E::Float64),
@@ -209,16 +207,13 @@ fn rustc_ty_to_device_extern_type<'tcx>(
             Ok(E::Void)
         }
         TyKind::Bool => Err(
-            "bool has C ABI attributes and an in-memory representation that are not yet modeled for device externs; use u32 in the wrapper"
+            "`bool` is not yet supported in device extern signatures; use `u32` in a C-compatible wrapper"
                 .to_string(),
         ),
         TyKind::Char => Err(
-            "Rust `char` is not a stable CUDA C ABI type; use u32 in the wrapper".to_string(),
+            "Rust `char` is not supported in device extern signatures; use `u32` in a C-compatible wrapper".to_string(),
         ),
-        TyKind::Never => Err(
-            "never-returning device externs require a `noreturn` ABI attribute that is not yet represented"
-                .to_string(),
-        ),
+        TyKind::Never => Err("never-returning device externs are not yet supported".to_string()),
         _ => Err(format!(
             "unsupported device-extern ABI type `{ty}`; use scalar C types or raw pointers to supported scalar/array pointees"
         )),
@@ -508,7 +503,7 @@ pub fn generate_device_code<'tcx>(
 
             if !matches!(fn_sig.abi, rustc_abi::ExternAbi::C { unwind: false }) {
                 return Err(DeviceCodegenError::InvalidDeviceExternSignature(format!(
-                    "`{}` uses ABI {:?}; device externs must use the non-unwinding C ABI",
+                    "`{}` uses ABI {:?}; device externs must use `extern \"C\"` without unwinding",
                     decl.export_name, fn_sig.abi
                 )));
             }

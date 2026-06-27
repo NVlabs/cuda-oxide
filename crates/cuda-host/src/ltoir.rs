@@ -13,8 +13,8 @@
 //! 1. Compile the NVVM IR to LTOIR via libNVVM, with libdevice added so the
 //!    `__nv_*` symbols are inlined.
 //! 2. Link the resulting LTOIR via nvJitLink to produce either a cubin for
-//!    the same architecture, or forward-compatible PTX when a legacy module
-//!    is being loaded on a newer Blackwell GPU.
+//!    the same architecture, or PTX when a pre-Blackwell module is loaded on
+//!    a Blackwell GPU.
 //! 3. Load that image with the CUDA driver.
 //!
 //! This module wraps that pipeline behind file and in-memory helpers:
@@ -22,7 +22,7 @@
 //! - [`build_cubin_from_ll`] -- explicit form, takes a `.ll` path and arch.
 //! - [`load_kernel_module`] -- the convenience form. Looks at the example's
 //!   directory and selects PTX, cubin, NVVM IR, or LTOIR using the recorded
-//!   artifact mode. **This is the one most callers want.**
+//!   artifact mode. Use this for normal module loading.
 //!
 //! All work is done via [`libnvvm_sys`] and [`nvjitlink_sys`] (`dlopen` of
 //! `libnvvm.so` and `libnvJitLink.so` from the CUDA Toolkit). No external
@@ -37,10 +37,10 @@
 //!   `<root>/lib64/libnvJitLink.so`.
 //! - **libdevice**: `CUDA_OXIDE_LIBDEVICE` env var, then
 //!   `<root>/nvvm/libdevice/libdevice.10.bc` for the same roots.
-//! - **IR arch**: the emitted `<name>.target` sidecar, then the explicit
+//! - **Artifact target**: the emitted `<name>.target` file, then the explicit
 //!   `CUDA_OXIDE_TARGET` override (set by `cargo oxide --arch=<sm_XX>`).
-//!   The CUDA context is queried separately as the execution architecture;
-//!   target-specific NVVM IR/LTOIR is never assigned a guessed source target.
+//!   The CUDA context is queried separately for the GPU that will execute the
+//!   module.
 //!
 //! # Example
 //!
@@ -72,9 +72,9 @@ pub enum LtoirError {
     #[error(transparent)]
     InvalidTarget(#[from] CudaArchParseError),
 
-    /// NVVM IR/LTOIR was loaded without the architecture used to emit it.
+    /// NVVM IR/LTOIR was loaded without its original target architecture.
     #[error(
-        "NVVM IR/LTOIR requires its emitted CUDA target. Keep the generated .target sidecar, \
+        "NVVM IR/LTOIR does not record its CUDA target. Keep the generated .target file, \
          rebuild the artifact, or explicitly set CUDA_OXIDE_TARGET to its original target."
     )]
     TargetNotFound,
@@ -89,14 +89,14 @@ pub enum LtoirError {
         requested: String,
     },
 
-    /// An artifact cannot be safely forwarded to the context's GPU.
+    /// An artifact is not compatible with the context's GPU.
     #[error("cannot execute CUDA artifact emitted for {emitted} on {execution}: {reason}")]
     IncompatibleExecutionTarget {
         /// Architecture for which the NVVM IR or LTOIR was emitted.
         emitted: String,
         /// Numeric architecture reported by the CUDA context.
         execution: String,
-        /// Why cuda-oxide refused to link or forward the artifact.
+        /// Why the artifact is incompatible.
         reason: &'static str,
     },
 
@@ -182,22 +182,19 @@ pub enum LtoirError {
 /// `arch` must be a concrete `sm_XX` or `compute_XX` CUDA target. It is
 /// normalized to `compute_XX` for libNVVM and `sm_XX` for nvJitLink.
 ///
-/// This function intentionally rebuilds from the source bytes on every call.
-/// A sound cache must include source content plus the libNVVM, libdevice, and
-/// nvJitLink identities; file mtimes and a target string are not sufficient.
+/// This function rebuilds from the source bytes on every call. A correct cache
+/// would also need the source contents and the versions of libNVVM, libdevice,
+/// and nvJitLink; file timestamps and a target string are not enough.
 pub fn build_cubin_from_ll(ll_path: &Path, arch: &str) -> Result<PathBuf, LtoirError> {
     let arch: CudaArch = arch.parse()?;
-    // Prove the source exists and is readable before publishing metadata or
-    // touching any derived artifact. An old cubin is never evidence that its
-    // source still exists.
+    // Read the source before writing target metadata or derived artifacts.
     let ll_bytes = std::fs::read(ll_path).map_err(|source| LtoirError::Io {
         path: ll_path.to_path_buf(),
         source,
     })?;
     validate_ir_target_sidecar(ll_path, &arch)?;
-    // Persist the caller-asserted source target even for legacy/manual `.ll`
-    // files that arrived without a sidecar. The generated sibling `.ltoir`
-    // then remains self-describing if the original `.ll` is later removed.
+    // Record the supplied target for older or manually created `.ll` files.
+    // The sibling `.ltoir` can then be loaded after the `.ll` is removed.
     write_artifact_target_sidecar(ll_path, &arch)?;
 
     let stem = ll_path
@@ -270,9 +267,8 @@ pub fn link_ltoir_to_cubin(
 
 /// Link one LTOIR payload to forward-compatible PTX.
 ///
-/// `arch` must be the target recorded with the LTOIR payload. This helper
-/// never retargets LTOIR to the execution GPU; callers should let the CUDA
-/// driver JIT the returned PTX for that GPU.
+/// `arch` must be the target recorded with the LTOIR payload. The returned PTX
+/// keeps that target and is JIT-compiled by the CUDA driver for the current GPU.
 pub fn link_ltoir_to_ptx(
     ltoir: &[u8],
     module_name: &str,
@@ -369,9 +365,9 @@ fn compile_nvvm_ir_to_ltoir_parsed(
 /// Lookup order, inside `CARGO_MANIFEST_DIR` (the directory containing the
 /// executable's `Cargo.toml`, where cuda-oxide writes its build artifacts):
 ///
-/// 1. A target-recorded `<name>.ll` or `<name>.ltoir` -- the `<name>.target`
-///    sidecar is the durable NVVM-mode marker and overrides stale PTX.
-/// 2. `<name>.ptx` -- the ordinary PTX path when no NVVM marker exists.
+/// 1. A target-recorded `<name>.ll` or `<name>.ltoir` -- `<name>.target`
+///    identifies NVVM output and gives it precedence over older PTX.
+/// 2. `<name>.ptx` -- the PTX path when no NVVM target file exists.
 /// 3. An unrecorded `<name>.ll` / `<name>.ltoir` -- accepted only when
 ///    `CUDA_OXIDE_TARGET` explicitly supplies its original source target.
 /// 4. `<name>.cubin` -- a standalone cubin when no source artifact exists.
@@ -464,9 +460,8 @@ enum FileArtifact {
     Cubin,
 }
 
-/// Select one file artifact without allowing a stale PTX file to hide a
-/// compiler-recorded NVVM build. A `.target` sidecar is the durable mode
-/// marker for NVVM IR/LTOIR; without one, ordinary PTX remains authoritative.
+/// Select one file artifact. A `.target` file identifies NVVM IR/LTOIR as the
+/// current output; without one, PTX takes precedence.
 fn select_file_artifact(
     has_ptx: bool,
     has_nvvm_ir: bool,
@@ -481,17 +476,15 @@ fn select_file_artifact(
         if has_ltoir {
             return Some(FileArtifact::Ltoir);
         }
-        // The marker says this stem's authoritative output is NVVM-owned, but
-        // that output has disappeared. Falling through to PTX/cubin here could
-        // execute a stale artifact after a partial deletion or failed build.
+        // The target file identifies NVVM output, but that output is missing.
+        // Do not fall back to an older PTX or cubin.
         return None;
     }
 
     if has_ptx {
         Some(FileArtifact::Ptx)
     } else if has_nvvm_ir {
-        // Older/manual NVVM IR remains usable only with an explicit
-        // CUDA_OXIDE_TARGET; source-target resolution enforces that later.
+        // Older or manual NVVM IR requires an explicit CUDA_OXIDE_TARGET.
         Some(FileArtifact::NvvmIr)
     } else if has_ltoir {
         Some(FileArtifact::Ltoir)
@@ -527,18 +520,16 @@ pub fn find_libdevice() -> Result<PathBuf, LtoirError> {
 
 /// Read and validate an explicit source target from `CUDA_OXIDE_TARGET`.
 ///
-/// Artifact loaders prefer the target recorded in the artifact or its
-/// `.target` sidecar. This function is the fail-closed fallback for older
-/// artifacts: neither `CUDA_OXIDE_DEVICE_ARCH` nor the execution context is
-/// authoritative evidence of the architecture used to emit existing IR.
+/// Artifact loaders prefer the target recorded with the artifact. Older
+/// artifacts without a `.target` file require this explicit value because the
+/// current GPU does not reveal which target was used to produce existing IR.
 pub fn target_arch() -> Result<String, LtoirError> {
     let explicit = std::env::var("CUDA_OXIDE_TARGET").ok();
     resolve_source_target(None, explicit.as_deref()).map(|target| target.sm())
 }
 
-/// Query the physical execution GPU, deliberately ignoring target-related
-/// environment variables. `CUDA_OXIDE_TARGET` describes the input IR; it must
-/// never impersonate the CUDA context's device for compatibility decisions.
+/// Query the physical execution GPU. Target-related environment variables
+/// describe the input artifact, not the GPU that will execute it.
 pub(crate) fn execution_arch_for_context(ctx: &CudaContext) -> Result<CudaArch, LtoirError> {
     let (major, minor) = ctx.compute_capability()?;
     format!("sm_{major}{minor}")
@@ -580,8 +571,8 @@ fn target_arch_for_artifact_with_explicit(
     resolve_source_target(read_emitted_target(artifact_path)?, explicit_target)
 }
 
-/// Resolve source identity from durable artifact metadata or a user assertion.
-/// The execution device is intentionally not an input to this function.
+/// Resolve the original target from artifact metadata or an explicit value.
+/// The execution GPU is not used to infer the artifact's target.
 pub(crate) fn resolve_source_target(
     recorded_target: Option<CudaArch>,
     explicit_target: Option<&str>,
@@ -640,10 +631,10 @@ fn read_artifact(path: &Path) -> Result<Vec<u8>, LtoirError> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecutionRoute {
-    /// Produce native code only for the architecture that emitted the IR.
+    /// Produce native code for the architecture that emitted the IR.
     Cubin,
-    /// Preserve the emitted virtual architecture in PTX and let the driver
-    /// JIT that PTX for the newer execution GPU.
+    /// Keep the original virtual architecture in PTX and let the driver JIT it
+    /// for the newer GPU.
     PtxBridge,
 }
 
@@ -664,12 +655,12 @@ pub(crate) fn execution_route(
 
     if emitted.suffix().is_some() {
         return Err(incompatible(
-            "architecture-specific target suffixes cannot be forwarded to another compute capability",
+            "targets with an architecture suffix, such as sm_90a, cannot be forwarded to a different GPU",
         ));
     }
     if emitted.capability() > execution.capability() {
         return Err(incompatible(
-            "CUDA artifacts cannot be executed backward on an older compute capability",
+            "an artifact built for a newer GPU cannot run on an older GPU",
         ));
     }
     if emitted.uses_legacy_llvm() && execution.capability() >= 100 {
@@ -677,7 +668,7 @@ pub(crate) fn execution_route(
     }
 
     Err(incompatible(
-        "only unsuffixed legacy pre-Blackwell artifacts can use the PTX bridge to a Blackwell-or-newer GPU",
+        "only standard pre-Blackwell targets, such as sm_86, can be converted to PTX for Blackwell",
     ))
 }
 
@@ -698,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn emitted_target_sidecar_is_authoritative() {
+    fn recorded_target_takes_precedence_over_environment() {
         let dir = temp_dir("target_sidecar");
         std::fs::create_dir_all(&dir).unwrap();
         let ll = dir.join("kernel.ll");
@@ -712,7 +703,7 @@ mod tests {
                 .unwrap()
                 .sm(),
             "sm_86",
-            "durable artifact metadata must override an ambient target"
+            "the recorded target must take precedence"
         );
         validate_ir_target_sidecar(&ll, &"sm_86".parse().unwrap()).unwrap();
 
@@ -724,14 +715,14 @@ mod tests {
     }
 
     #[test]
-    fn artifact_without_target_fails_closed_unless_target_is_explicit() {
+    fn artifact_without_target_requires_explicit_target() {
         let dir = temp_dir("missing_target");
         std::fs::create_dir_all(&dir).unwrap();
         let ll = dir.join("kernel.ll");
         std::fs::write(&ll, "; target-specific NVVM IR\n").unwrap();
 
         let error = target_arch_for_artifact_with_explicit(&ll, None)
-            .expect_err("the execution GPU must not be guessed as the IR source target");
+            .expect_err("the original build target is required");
         assert!(matches!(error, LtoirError::TargetNotFound));
 
         let asserted = target_arch_for_artifact_with_explicit(&ll, Some("compute_86")).unwrap();
@@ -769,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn recorded_nvvm_mode_beats_stale_ptx_deterministically() {
+    fn recorded_nvvm_output_takes_precedence_over_stale_ptx() {
         assert_eq!(
             select_file_artifact(true, true, false, true, true),
             Some(FileArtifact::NvvmIr)
@@ -781,7 +772,7 @@ mod tests {
         assert_eq!(
             select_file_artifact(true, false, false, true, true),
             None,
-            "an orphaned NVVM marker must not fall through to stale PTX/cubin"
+            "a missing NVVM artifact must not fall back to older output"
         );
 
         // In an ordinary PTX build there is also an LLVM `.ll`, but no NVVM
@@ -793,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn file_artifact_selection_falls_back_without_guessing_source_target() {
+    fn file_artifact_selection_accepts_older_unrecorded_nvvm_output() {
         assert_eq!(
             select_file_artifact(false, true, false, true, false),
             Some(FileArtifact::NvvmIr)
@@ -824,7 +815,7 @@ mod tests {
         assert!(matches!(error, LtoirError::Io { path, .. } if path == ll));
         assert!(
             !dir.join("kernel.target").exists(),
-            "missing source must not acquire authoritative target metadata"
+            "a missing source must not gain target metadata"
         );
 
         std::fs::remove_dir_all(dir).unwrap();
@@ -858,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn unsuffixed_legacy_target_bridges_forward_to_blackwell_as_ptx() {
+    fn standard_legacy_target_bridges_forward_to_blackwell_as_ptx() {
         for (emitted, execution) in [
             ("sm_75", "sm_100"),
             ("compute_86", "sm_120"),
@@ -904,6 +895,6 @@ mod tests {
         };
         assert_eq!(emitted, "sm_120");
         assert_eq!(execution, "sm_86");
-        assert!(reason.contains("backward"));
+        assert!(reason.contains("newer GPU"));
     }
 }

@@ -58,9 +58,7 @@ impl<'a> ModuleExportState<'a> {
 
         // NVVM only permits module-scope variables in generic/global,
         // shared, or constant memory. Local memory (address space 5) is for
-        // per-thread allocations, not LLVM globals; accepting it here would
-        // defer a malformed module to libNVVM or, worse, to a toolkit-specific
-        // interpretation.
+        // per-thread allocations, not LLVM globals.
         if self.nvvm_ir_dialect.is_some() && !matches!(address_space, 0 | 1 | 3 | 4) {
             return Err(format!(
                 "NVVM global `@{name}` uses unsupported address space {address_space}; expected generic (0), global (1), shared (3), or constant (4)"

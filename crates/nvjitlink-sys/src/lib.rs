@@ -45,12 +45,10 @@ use thiserror::Error;
 #[derive(Copy, Clone)]
 struct NvJitLinkHandle(*mut c_void);
 
-/// ABI-safe representation of nvJitLink's C `nvJitLinkResult` enum.
+/// Integer representation of nvJitLink's C `nvJitLinkResult` enum.
 ///
-/// The library is selected at runtime and future toolkits may add error codes.
-/// An open integer wrapper accepts every C result value so an unknown code is
-/// returned as an ordinary Rust error instead of becoming an invalid Rust enum
-/// discriminant at the FFI boundary.
+/// This is an integer rather than a Rust enum so result codes added by newer
+/// nvJitLink versions remain valid values.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct NvJitLinkResult(c_int);
@@ -235,9 +233,8 @@ impl LibNvJitLink {
                 complete: resolve(&lib, "nvJitLinkComplete")?,
                 get_linked_cubin_size: resolve(&lib, "nvJitLinkGetLinkedCubinSize")?,
                 get_linked_cubin: resolve(&lib, "nvJitLinkGetLinkedCubin")?,
-                // Keep these optional so an older toolkit can still serve the
-                // long-standing cubin path. The PTX bridge reports a focused
-                // error only when it is actually requested.
+                // These symbols are optional so older toolkits continue to
+                // support cubin output.
                 get_linked_ptx_size: resolve_optional(&lib, "nvJitLinkGetLinkedPtxSize"),
                 get_linked_ptx: resolve_optional(&lib, "nvJitLinkGetLinkedPtx"),
                 get_error_log_size: resolve(&lib, "nvJitLinkGetErrorLogSize")?,
@@ -383,8 +380,8 @@ impl<'a> Linker<'a> {
     /// returned buffer may include nvJitLink's trailing NUL byte, which is
     /// accepted by the CUDA driver and useful for direct `cuModuleLoadData`.
     ///
-    /// PTX output symbols are resolved lazily/optionally so loading an older
-    /// nvJitLink continues to support normal cubin links.
+    /// The PTX functions are optional so older nvJitLink versions can still
+    /// produce cubins.
     pub fn finish_ptx(self) -> Result<Vec<u8>, NvJitLinkError> {
         let get_size = self
             .nvj

@@ -123,34 +123,23 @@ operation. Generated borrowed async methods encode that requirement as Rust
 borrows, and generated owned async methods move buffers into the operation for
 spawned tasks.
 
-`#[cuda_module]` owns launch ergonomics, not target-selection policy. It loads
-whatever embedded payload the compiler produced for the current crate. PTX and
-cubin payloads load directly. Embedded NVVM IR/LTOIR normally becomes a cubin
-for the exact architecture recorded with the artifact. One compatibility path
-is deliberately broader: unsuffixed pre-Blackwell LTOIR can become PTX and let
-the CUDA driver JIT it for a newer Blackwell GPU. For example, an `sm_86`
-artifact can be tested on `sm_120` without pretending that its IR was emitted
-for `sm_120`.
+`#[cuda_module]` loads the artifact produced by the compiler. PTX and cubin
+payloads load directly. NVVM IR and LTOIR normally compile for the target
+recorded with the artifact. A module built for a standard pre-Blackwell target,
+such as `sm_86`, can also be converted to PTX and JIT-compiled by the CUDA
+driver on Blackwell. This forward path is not available for suffixed targets,
+such as `sm_90a`, and artifacts built for newer GPUs cannot run on older GPUs.
+Because this path JIT-compiles PTX, the installed driver must support the PTX
+version produced by the selected CUDA toolkit.
 
-The loader does not silently retarget native code. A backward move to an older
-GPU is rejected, as is forwarding an architecture-specific target such as
-`sm_90a`. Other cross-architecture combinations fail closed. Fatbin or
-multi-architecture packaging decisions still belong in the compiler and
-artifact layers, so the typed launch API does not need to change when those
-payload formats evolve.
+Pre-Blackwell targets use typed-pointer NVVM IR. Blackwell and newer targets
+use opaque-pointer NVVM IR. The compiler records the selected target in the
+embedded bundle and in the `<module>.target` file used by the lower-level
+loader.
 
-Embedded NVVM IR follows the dialect selected by the compiler for the target:
-pre-Blackwell targets use typed-pointer NVVM IR, while Blackwell targets
-(`sm_100` / `compute_100`) and newer use the modern opaque-pointer dialect.
-The compiler records that concrete target in the embedded bundle and, for the
-lower-level sidecar loader, in `<module>.target`. The loader verifies that
-target before invoking libNVVM. The lower-level builder deliberately rebuilds
-from NVVM IR rather than trusting an mtime-based cubin cache, so changing source
-content, toolkit components, or architecture cannot silently reuse old code.
-
-Older artifacts that do not record a target must be rebuilt or loaded with an
-explicit `CUDA_OXIDE_TARGET` matching their original build. The loader never
-uses the current GPU as a guess for an existing IR artifact's source target.
+Older artifacts without a recorded target must be rebuilt or loaded with
+`CUDA_OXIDE_TARGET` set to their original target. The lower-level builder
+recompiles NVVM IR instead of reusing a cubin based only on file timestamps.
 
 ## Tiling Utilities (tcgen05)
 

@@ -46,8 +46,8 @@ pub enum EmbeddedModuleError {
 ///
 /// Cubin and PTX payloads are loaded directly with the CUDA driver. NVVM IR and
 /// LTOIR payloads are linked to an in-memory cubin for their original target.
-/// An unsuffixed legacy payload may instead be linked to PTX when it is loaded
-/// on a newer Blackwell GPU, allowing the driver to JIT it for that device.
+/// A payload built for a standard pre-Blackwell target, such as `sm_86`, may
+/// instead be converted to PTX and JIT-compiled by the driver on Blackwell.
 pub fn load_embedded_module(
     ctx: &Arc<CudaContext>,
     name: &str,
@@ -237,20 +237,19 @@ mod tests {
 
     #[test]
     fn target_arch_falls_back_for_non_arch_target() {
-        // Older bundles used these magic strings instead of persisting a
-        // concrete architecture. They take the explicit/device fallback;
-        // newly emitted bundles always carry a validated sm_* target.
+        // Older bundles used these names instead of recording a concrete
+        // architecture. New bundles always record a validated `sm_*` target.
         for legacy in ["libdevice", "nvvm-ir"] {
             assert_eq!(concrete_bundle_target(legacy).unwrap(), None);
         }
     }
 
     #[test]
-    fn legacy_bundle_without_recorded_target_fails_closed() {
+    fn legacy_bundle_without_recorded_target_requires_explicit_target() {
         for sentinel in ["libdevice", "nvvm-ir"] {
             let bundle = bundle_with_target(sentinel);
             let error = target_arch_for_bundle_with_explicit(&bundle, None)
-                .expect_err("the execution context must not become the source target");
+                .expect_err("the original build target is required");
             assert!(matches!(error, ltoir::LtoirError::TargetNotFound));
 
             let asserted =

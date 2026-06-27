@@ -7,17 +7,11 @@
 
 use std::fmt::Write;
 
-/// A lossless LLVM-level type used at a device-extern ABI boundary.
+/// A device-extern type that preserves pointer pointees and address spaces.
 ///
-/// The ordinary pliron LLVM dialect intentionally uses opaque pointers, so a
-/// `PointerType` in the lowered module no longer remembers its pointee.  That
-/// is fine inside a function, but it is not enough to spell a pre-Blackwell
-/// libNVVM declaration such as `declare void @f(float*)`.  Device externs keep
-/// this small, deliberately supported type tree alongside the opaque module.
-///
-/// This is not a best-effort type model.  rustc-codegen-cuda rejects an extern
-/// signature which cannot be represented exactly rather than mapping an
-/// unfamiliar Rust type to `ptr`.
+/// The lowered module uses opaque pointers, so this separate type description
+/// is needed to emit declarations such as `declare void @f(float*)` for
+/// pre-Blackwell libNVVM. Unsupported extern signatures are rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DeviceExternType {
     /// Only valid as a function result.
@@ -32,9 +26,8 @@ pub enum DeviceExternType {
         pointee: Box<DeviceExternType>,
         address_space: u32,
     },
-    /// A fixed-size array. This is primarily useful as a pointer pointee; the
-    /// Rust bridge currently rejects by-value aggregate extern parameters
-    /// because reproducing rustc's C ABI coercions requires a full FnAbi.
+    /// A fixed-size array. Arrays are supported as pointer pointees; passing an
+    /// array by value is not yet supported.
     Array {
         element: Box<DeviceExternType>,
         len: u64,
@@ -59,8 +52,7 @@ impl DeviceExternType {
         }
     }
 
-    /// True when this exact legacy pointer already is the canonical internal
-    /// byte-pointer type and therefore needs no boundary bitcast.
+    /// True when this legacy pointer is already the internal byte-pointer type.
     pub(crate) fn is_canonical_byte_pointer(&self) -> bool {
         matches!(
             self,
@@ -80,8 +72,8 @@ impl DeviceExternType {
 
     /// Render this type for the selected LLVM dialect.
     ///
-    /// `legacy_typed_pointers = false` intentionally erases pointer pointees
-    /// while retaining their address spaces, matching modern LLVM syntax.
+    /// With modern LLVM syntax, pointer pointees are omitted while address
+    /// spaces are retained.
     pub(crate) fn write_llvm(
         &self,
         output: &mut String,

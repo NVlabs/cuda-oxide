@@ -24,13 +24,11 @@
 #                   with exit 0 (e.g. mathdx_ffi_test when MATHDX_ROOT is
 #                   unset), in which case we require the cuda-oxide
 #                   NVVM IR (`.ll`) to have been generated.
-#   auto-nvvm    -- runtime is deliberately invoked without either LTOIR flag
-#                   to test automatic libdevice/NVVM and device-arch selection.
-#                   GPU-less compile-only CI supplies the explicit fallback
-#                   arch because there is no device architecture to detect.
-#   NVVM_VERIFY_EXAMPLES are stronger compile-only regressions: instead of
-#                   stopping after textual IR export, `emit-ltoir` sends the
-#                   module through the real libNVVM verifier and compiler.
+#   auto-nvvm    -- runs without NVVM or architecture flags to check automatic
+#                   libdevice and target selection. Compile-only CI supplies a
+#                   target because no GPU is available.
+#   NVVM_VERIFY_EXAMPLES are compiled through the real libNVVM verifier and
+#                   compiler in compile-only mode.
 #
 # Categories are bash arrays at the top of this file. When adding an
 # error* example, also update STATUS.md and run
@@ -45,8 +43,8 @@ set -uo pipefail
 TCGEN05_EXAMPLES=(gemm_sol tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
-AUTO_NVVM_EXAMPLES=(issue98_repro)
-NVVM_VERIFY_EXAMPLES=(issue98_repro legacy_nvvm_pointer_shapes primitive_stress)
+AUTO_NVVM_EXAMPLES=(libdevice_math)
+NVVM_VERIFY_EXAMPLES=(libdevice_math legacy_nvvm_pointer_shapes primitive_stress)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_unhandled error_drop_glue error_heap_alloc error_missing_device_attr)
 
 classify() {
@@ -448,10 +446,9 @@ verdict_compile() {
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
-    # The designated dialect regressions go one step beyond textual IR generation in
-    # GPU-less CI: `emit-ltoir` runs the real libNVVM verifier and compiler.
-    # The remaining compile-only cases use `build`, which still executes the
-    # full device pipeline while skipping only host execution.
+    # Designated NVVM examples use `emit-ltoir` in compile-only mode so CI
+    # checks both textual export and real libNVVM compilation. Other examples
+    # use `build`.
     if [[ ${COMPILE_ONLY} -eq 1 ]] && verify_nvvm_in_compile_only "${ex}"; then
         local -a args=("emit-ltoir" "${ex}" "--arch=${LTOIR_ARCH}")
         if [[ ${VERBOSE} -eq 1 ]]; then

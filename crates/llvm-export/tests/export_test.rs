@@ -256,7 +256,7 @@ fn legacy_alloca_rejects_a_non_default_result_address_space() {
         &module,
         &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
     )
-    .expect_err("legacy export must not silently retag an alloca result");
+    .expect_err("legacy export must reject an alloca address-space mismatch");
     assert!(
         error.contains("alloca result uses address space 3"),
         "{error}"
@@ -296,7 +296,7 @@ fn legacy_gep_rejects_a_result_address_space_different_from_its_base() {
         &module,
         &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
     )
-    .expect_err("legacy export must not silently retag a GEP result");
+    .expect_err("legacy export must reject a GEP address-space mismatch");
     assert!(
         error.contains("GEP result address-space mismatch: base is 1, result is 3"),
         "{error}"
@@ -374,7 +374,7 @@ fn exporter_rejects_extra_predecessor_values_before_emitting_phis() {
         &module,
         &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
     )
-    .expect_err("extra predecessor values must not be silently discarded");
+    .expect_err("extra predecessor values must be rejected");
     assert!(
         error.contains("supplies 1 values") && error.contains("expects 0 block arguments"),
         "{error}"
@@ -547,7 +547,7 @@ fn pointer_bitcast_cannot_cross_address_spaces_in_either_nvvm_dialect() {
     for dialect in [NvvmIrDialect::LegacyLlvm7, NvvmIrDialect::Modern] {
         let error =
             export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::new(dialect))
-                .expect_err("pointer bitcast must not silently cross address spaces");
+                .expect_err("a cross-address-space pointer bitcast must be rejected");
         assert!(
             error.contains("pointer bitcast cannot cross address spaces 1 -> 3"),
             "{dialect:?}: {error}"
@@ -941,8 +941,8 @@ fn device_extern_rejects_invalid_symbol_and_address_space_mismatch() {
         &reserved_intrinsic_prefix,
         &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
     )
-    .expect_err("the encoded intrinsic namespace must not be ambiguous");
-    assert!(err.contains("encoded LLVM-intrinsic prefix"), "{err}");
+    .expect_err("the reserved intrinsic namespace must not be ambiguous");
+    assert!(err.contains("reserves for LLVM intrinsics"), "{err}");
 
     let by_value_array = [DeviceExternDecl {
         export_name: "array_by_value".to_string(),
@@ -959,8 +959,8 @@ fn device_extern_rejects_invalid_symbol_and_address_space_mismatch() {
         &by_value_array,
         &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
     )
-    .expect_err("by-value aggregate externs must fail closed");
-    assert!(err.contains("by-value array"), "{err}");
+    .expect_err("by-value aggregate externs must be rejected");
+    assert!(err.contains("passes an array by value"), "{err}");
 
     let nested_half = [DeviceExternDecl {
         export_name: "half_buffer".to_string(),
@@ -1034,7 +1034,7 @@ fn device_extern_rejects_invalid_symbol_and_address_space_mismatch() {
     )
     .expect_err("address-space mismatch must fail");
     assert!(
-        err.contains("erased scalar/address-space ABI shape"),
+        err.contains("parameter, result, or pointer address-space types"),
         "{err}"
     );
 }
@@ -1069,7 +1069,7 @@ fn device_extern_rejects_same_name_declaration_shape_without_a_call() {
     )
     .expect_err("the exporter must independently reject a conflicting declaration");
     assert!(
-        error.contains("erased scalar/address-space ABI shape"),
+        error.contains("parameter, result, or pointer address-space types"),
         "{error}"
     );
 }
@@ -1148,7 +1148,7 @@ fn device_extern_rejects_definition_and_address_taken_shape_conflicts() {
     )
     .expect_err("address-taking must not bypass exact extern shape validation");
     assert!(
-        error.contains("erased scalar/address-space ABI shape"),
+        error.contains("parameter, result, or pointer address-space types"),
         "{error}"
     );
 }
@@ -1188,7 +1188,7 @@ fn legacy_kernel_metadata_uses_typed_function_references() {
 }
 
 #[test]
-fn legacy_export_rejects_debug_metadata_at_the_export_boundary() {
+fn legacy_export_rejects_debug_metadata() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "legacy_debug".try_into().unwrap());
     let config = DebugConfig {
@@ -1197,7 +1197,7 @@ fn legacy_export_rejects_debug_metadata_at_the_export_boundary() {
     };
 
     let error = export_module_to_string_with_config(&ctx, &module, &config)
-        .expect_err("legacy debug output must fail closed");
+        .expect_err("legacy debug output must be rejected");
     assert!(error.contains("legacy LLVM 7"), "{error}");
     assert!(error.contains("debug"), "{error}");
 }
@@ -1374,7 +1374,7 @@ fn nvvm_export_rejects_invalid_global_address_spaces() {
         &module,
         &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
     )
-    .expect_err("NVVM module-scope local-memory global must fail closed");
+    .expect_err("NVVM module-scope local-memory global must be rejected");
     assert!(error.contains("unsupported address space 5"), "{error}");
 
     // The ordinary LLVM/PTX exporter retains its prior behavior; this

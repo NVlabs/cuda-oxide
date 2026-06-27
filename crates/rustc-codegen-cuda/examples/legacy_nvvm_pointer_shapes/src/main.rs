@@ -3,15 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Adversarial typed-pointer coverage for the legacy LLVM 7 NVVM dialect.
+//! Pointer coverage for LLVM 7 NVVM IR.
 //!
-//! cuda-oxide intentionally uses opaque pointers in its normal internal LLVM
-//! representation. Legacy NVVM output canonicalizes erased pointer values to
-//! byte pointers, then casts them at typed uses. This example makes the
-//! pointer flows that defeated a local load/store-only repair strategy survive
-//! into codegen: control-flow merges, a loop backedge, calls and returns,
-//! nested aggregate fields, pointer-to-pointer memory, and two concrete views
-//! of the same address.
+//! The kernel passes pointers through branches, a loop, function calls, nested
+//! structs, and an array of pointers. It also reads one address as both `f32`
+//! and `u32`. Together, these cases check that legacy typed pointers work
+//! throughout a function, not only at loads and stores.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
@@ -29,8 +26,7 @@ struct PointerNest {
     fallback: *const f32,
 }
 
-/// The returned pointer is selected by control flow. With inlining disabled,
-/// the call boundary and the pointer merge both remain visible to codegen.
+/// Keeps a pointer choice across a non-inlined function call.
 #[inline(never)]
 fn choose_nested(nested: &PointerNest, selector: u32) -> *const f32 {
     if selector == 0 {
@@ -42,8 +38,7 @@ fn choose_nested(nested: &PointerNest, selector: u32) -> *const f32 {
     }
 }
 
-/// Carry a pointer around a runtime loop, producing a pointer-valued loop PHI
-/// (represented as a block argument before textual LLVM export).
+/// Carries a pointer through a runtime loop.
 #[inline(never)]
 unsafe fn walk_pointer(mut ptr: *const f32, mut steps: usize) -> *const f32 {
     while steps != 0 {
@@ -53,23 +48,19 @@ unsafe fn walk_pointer(mut ptr: *const f32, mut steps: usize) -> *const f32 {
     ptr
 }
 
-/// A separate conditional control-flow merge exercises another pointer-valued
-/// call/return path after the nested aggregate has been read.
+/// Makes another pointer choice after reading the nested struct.
 #[inline(never)]
 fn select_pointer(first: *const f32, second: *const f32, use_second: bool) -> *const f32 {
     if use_second { second } else { first }
 }
 
-/// Loading through `*const *const f32` keeps the pointer array in memory and
-/// requires the legacy exporter to type both the slot address and its value.
+/// Reads a pointer from an array of pointers.
 #[inline(never)]
 unsafe fn load_pointer_slot(slot: *const *const f32) -> *const f32 {
     unsafe { *slot }
 }
 
-/// The same erased address is intentionally consumed as both `float*` and
-/// `i32*`-equivalent views. There is no single pointee type to infer globally;
-/// each use supplies the type it needs.
+/// Reads the same address as both a float and its raw bits.
 #[inline(never)]
 unsafe fn read_two_views(ptr: *const f32) -> (f32, u32) {
     let value = unsafe { *ptr };
@@ -92,8 +83,8 @@ mod kernels {
         {
             let base = values.as_ptr();
 
-            // All derived offsets remain in-bounds. The modulo operations are
-            // runtime-dependent, preventing constant folding of the choices.
+            // Modulo keeps every pointer inside the input slice. Using the
+            // runtime index keeps these choices visible to the compiler.
             let nested = PointerNest {
                 pair: PointerPair {
                     first: unsafe { base.add((i + 1) % len) },
@@ -106,8 +97,8 @@ mod kernels {
             let from_loop = unsafe { walk_pointer(base, i) };
             let selected = select_pointer(from_nested, from_loop, i & 1 != 0);
 
-            // Passing an element address to an opaque helper prevents the
-            // pointer array from being reduced to a scalar select in MIR.
+            // Read through the array so the generated code must load a pointer
+            // from memory.
             let pointer_slots = [
                 selected,
                 nested.pair.first,
@@ -118,9 +109,8 @@ mod kernels {
             let final_ptr = unsafe { load_pointer_slot(pointer_slots.as_ptr().add(slot)) };
             let (value, bits) = unsafe { read_two_views(final_ptr) };
 
-            // `exp` forces the libdevice/NVVM-IR path even without an explicit
-            // `--emit-nvvm-ir` flag. Store bits so the host can compare both
-            // the math result and the differently typed pointer read exactly.
+            // `exp` selects the libdevice/NVVM IR path automatically. Store
+            // the source bits too, so the host can check both pointer views.
             row[0] = value.exp().to_bits() as u64;
             row[1] = bits as u64;
         }
@@ -166,8 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stream = ctx.default_stream();
     let module = kernels::load(&ctx)?;
 
-    // Exactly representable binary fractions keep the raw-bit assertion
-    // independent of host/device arithmetic differences.
+    // These values are exact binary fractions, so their bits match on the CPU
+    // and GPU.
     let values: Vec<f32> = (0..N).map(|i| 0.25 + i as f32 / 32.0).collect();
     let values_dev = DeviceBuffer::from_host(&stream, &values)?;
     let mut out_dev = DeviceBuffer::<[u64; 2]>::zeroed(&stream, N)?;
@@ -207,7 +197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!(
-        "PASS: {N} lanes across pointer control-flow merges, loop backedges, calls, nested aggregates, and pointer-to-pointer memory"
+        "PASS: {N} lanes across branches, loops, calls, nested structs, and arrays of pointers"
     );
     Ok(())
 }

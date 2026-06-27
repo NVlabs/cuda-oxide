@@ -70,9 +70,8 @@ impl CudaArch {
 
     /// Optional architecture-family suffix (`a` or `f`).
     ///
-    /// Suffixed targets opt into instructions whose compatibility is narrower
-    /// than ordinary virtual-architecture PTX. Runtime loaders should not
-    /// forward such code to another numeric compute capability.
+    /// Targets such as `sm_90a` enable architecture-specific instructions and
+    /// cannot be forwarded to a different compute capability.
     pub fn suffix(&self) -> Option<char> {
         self.suffix
     }
@@ -177,21 +176,17 @@ pub struct NvvmIrVersion {
 #[derive(Copy, Clone)]
 struct NvvmProgram(*mut c_void);
 
-/// ABI-safe representation of libNVVM's C `nvvmResult` enum.
+/// Integer representation of libNVVM's C `nvvmResult` enum.
 ///
-/// This is deliberately an open integer wrapper rather than a Rust enum.
-/// libNVVM is loaded dynamically, so a newer library may return a result code
-/// unknown to this crate. Every `c_int` is valid here; a closed Rust enum would
-/// make an unknown C discriminant undefined behavior before we could report it.
+/// This is an integer rather than a Rust enum so result codes added by newer
+/// libNVVM versions remain valid values.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct NvvmResult(c_int);
 
 impl NvvmResult {
     const SUCCESS: Self = Self(0);
-    /// Present in the CUDA 13.0+ headers. Keeping it named documents that code
-    /// 10 is intentionally representable even though cuda-oxide never cancels
-    /// a program itself.
+    /// Present in CUDA 13.0 and newer headers.
     #[allow(dead_code)]
     const CANCELLED: Self = Self(10);
 }
@@ -312,11 +307,7 @@ unsafe fn resolve<T: Copy>(lib: &Library, name: &'static str) -> Result<T, NvvmE
     Ok(unsafe { *sym.into_raw() })
 }
 
-/// Resolve an optional symbol to a function pointer of inferred type `T`.
-///
-/// Use this for libNVVM queries added after the baseline API that cuda-oxide
-/// supports. Missing optional symbols preserve compatibility with older CUDA
-/// Toolkit installations.
+/// Resolve an optional symbol while remaining compatible with older toolkits.
 unsafe fn resolve_optional<T: Copy>(lib: &Library, name: &'static str) -> Option<T> {
     let sym: Symbol<T> = unsafe { lib.get(name.as_bytes()) }.ok()?;
     Some(unsafe { *sym.into_raw() })
@@ -467,11 +458,8 @@ impl<'a> Program<'a> {
         check(self.nvvm, r, "nvvmAddModuleToProgram", log)
     }
 
-    /// Verify all modules in this program for the supplied target/options.
-    ///
-    /// This preserves libNVVM's verifier log in the returned error. Calling it
-    /// before [`Self::compile`] makes malformed NVVM IR fail at the verifier
-    /// boundary rather than later in LTO compilation.
+    /// Verify all modules for the supplied target and options, returning
+    /// libNVVM's verifier log on failure.
     pub fn verify(&mut self, options: &[&str]) -> Result<(), NvvmError> {
         let coptions: Vec<CString> = options
             .iter()

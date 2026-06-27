@@ -29,7 +29,7 @@
 //!   binary (PTX, cubin, NVVM IR, LTOIR)
 //! - [`launch`]: Kernel launch traits (`CudaKernel`, `GenericCudaKernel`)
 //! - [`ltoir`]: libNVVM + nvJitLink wrappers (`load_kernel_module`, in-memory
-//!   cubin builders, and the legacy-target PTX compatibility bridge)
+//!   cubin builders, and pre-Blackwell PTX compatibility)
 //! - [`tiling`]: Layout transformations for tensor core operations (tcgen05)
 //!
 //! ## Macros
@@ -108,13 +108,13 @@ pub use embedded::{
     EmbeddedModuleError, load_all_ptx_bundles_merged, load_embedded_module,
     load_first_embedded_module,
 };
-/// Loads a compiled kernel module by name. It prefers ordinary PTX, then
+/// Loads a compiled kernel module by name. It prefers PTX, then
 /// handles NVVM IR (`<name>.ll`) or an existing `<name>.ltoir`, and finally a
 /// standalone cubin. NVVM inputs become a same-target cubin, except that an
-/// unsuffixed pre-Blackwell artifact may become PTX for driver JIT on a newer
-/// Blackwell GPU. Most beginner code never sees this path because
-/// `vecadd`-style kernels emit PTX directly. See [`ltoir`] for the complete
-/// lookup and target-compatibility rules.
+/// artifact built for a standard pre-Blackwell target, such as `sm_86`, may be
+/// converted to PTX and JIT-compiled by the driver on Blackwell. Most kernels
+/// emit PTX directly. See [`ltoir`] for the complete lookup and compatibility
+/// rules.
 pub use ltoir::{LtoirError, load_kernel_module};
 
 // Re-export launch macros from cuda-macros for convenience.

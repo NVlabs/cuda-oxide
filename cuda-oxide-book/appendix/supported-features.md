@@ -90,11 +90,11 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 |:--------|:-------|:------------|
 | Unified Single-Source Compilation | **Full** | Host and device code in the same file. Custom rustc codegen backend intercepts codegen. No `#[cfg]` needed. |
 | PTX Output | **Full** | Default output: Rust MIR → `dialect-mir` → `mem2reg` → annotated loop unroll → LLVM dialect → LLVM IR → `llc` → PTX. Targets sm_80 through sm_100a. |
-| NVVM IR Output | **Full** | Architecture-selected NVVM IR 2.0: LLVM 7 typed-pointer IR for pre-Blackwell targets and modern opaque-pointer IR for Blackwell+. Legacy export uses canonical byte pointers with exact per-operation typed views, real libNVVM verification, and fail-closed legalization for unsupported LLVM 7 constructs. |
+| NVVM IR Output | **Full** | Selects LLVM 7 typed-pointer syntax for pre-Blackwell GPUs and opaque-pointer syntax for Blackwell and newer GPUs. The generated module is verified by libNVVM, and unsupported legacy operations produce a compile error. |
 | LTOIR Linking | **Full** | Device-side LTO via libNVVM and nvJitLink. |
-| Float Math Intrinsics (libdevice) | **Full** | Rust `f32`/`f64` math methods (`sin`, `cos`, `exp`, `pow`, `sqrt`, ...) lower to CUDA libdevice (`__nv_*`) on both pre-Blackwell and Blackwell targets. cuda-oxide auto-detects libdevice usage and emits the target's NVVM dialect; the runtime builds an exact-target cubin, or bridges unsuffixed legacy LTOIR through PTX for forward execution on Blackwell. |
+| Float Math Intrinsics (libdevice) | **Full** | Rust `f32`/`f64` math methods (`sin`, `cos`, `exp`, `pow`, `sqrt`, ...) lower to CUDA libdevice (`__nv_*`) on pre-Blackwell and Blackwell GPUs. cuda-oxide selects the matching NVVM IR syntax automatically. On Blackwell, the runtime can also JIT PTX produced from a standard pre-Blackwell target such as `sm_86`. |
 | Pipeline Inspection | **Full** | `cargo oxide pipeline <example>` shows imported and post-`mem2reg` MIR, LLVM dialect, exported LLVM IR, and PTX. |
-| cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug info on the PTX path and launches `cuda-gdb`: source breakpoints, stepping, backtraces, and cross-file helper spans. Validated end-to-end by `scripts/debug-smoketest.sh`. Legacy LLVM 7 NVVM IR currently rejects debug metadata rather than emitting a dialect it has not validated. |
+| cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
 | cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, and structs/tuples/arrays with their fields. Enums, ABI-split bare slices, closures, and projections (`x.0`) are not yet described. |
 
 ## Compiler: Inline PTX

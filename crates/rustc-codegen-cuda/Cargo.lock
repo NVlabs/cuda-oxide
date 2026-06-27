@@ -346,6 +346,7 @@ dependencies = [
  "llvm-export",
  "mir-lower",
  "mir-transforms",
+ "nvvm-transforms",
  "once_cell",
  "pliron",
  "pliron-derive",
@@ -376,6 +377,14 @@ dependencies = [
  "pliron",
  "rustc-hash",
  "thiserror",
+]
+
+[[package]]
+name = "nvvm-transforms"
+version = "0.2.1"
+dependencies = [
+ "llvm-export",
+ "pliron",
 ]
 
 [[package]]

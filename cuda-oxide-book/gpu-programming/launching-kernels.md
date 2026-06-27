@@ -155,18 +155,17 @@ packaging live in the compiler and artifact/runtime loader layers. Keeping that
 policy separate lets the generated Rust launch methods stay stable as payload
 formats evolve.
 
-PTX and cubin embedded payloads are loaded directly. Embedded NVVM IR records
-the architecture that selected its textual dialect: pre-Blackwell targets use
-LLVM 7 typed pointers, while Blackwell and newer targets use modern opaque
-pointers. The loader verifies that identity before invoking libNVVM, so it
-never reparses target-specific IR as though it came from another architecture.
+PTX and cubin payloads load directly. NVVM IR records its target because
+pre-Blackwell GPUs use LLVM 7 typed pointers, while Blackwell and newer GPUs use
+opaque pointers. The loader uses that recorded target when invoking libNVVM.
 
-NVVM IR/LTOIR normally becomes a cubin for that exact target. For testing and
-forward-compatible deployment, one deliberately narrow bridge is available:
-an unsuffixed pre-Blackwell artifact such as `sm_86` can be linked back to
-`sm_86` PTX and handed to the CUDA driver for JIT compilation on Blackwell.
-Backward execution, architecture-specific targets such as `sm_90a`, and other
-cross-target combinations fail closed.
+NVVM IR and LTOIR normally compile for their original target. For a standard
+pre-Blackwell target such as `sm_86`, the loader can instead produce PTX and let
+the CUDA driver JIT it on Blackwell. This is not supported for suffixed targets
+such as `sm_90a`, or for running newer-GPU artifacts on older GPUs.
+The driver must also support the PTX version produced by the selected toolkit.
+CUDA error 222 means the toolkit is too new for the driver's PTX JIT; select a
+compatible toolkit or upgrade the driver.
 
 ## `LaunchConfig`
 

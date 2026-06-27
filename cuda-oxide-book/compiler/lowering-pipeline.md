@@ -10,6 +10,10 @@ and `dialect-nvvm`.
 This chapter covers the next bridge: turning Rust-flavored IR into something
 LLVM can compile.
 
+For NVVM builds, a separate `nvvm-transforms` pass runs after this lowering.
+It keeps `mir-lower` focused on converting `dialect-mir` to the LLVM dialect,
+then adjusts that LLVM module for legacy or modern libNVVM before text export.
+
 If you know Rust types, you are about to find out how many of them LLVM has
 never heard of.
 

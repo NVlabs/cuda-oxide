@@ -112,10 +112,10 @@ cargo oxide emit-ltoir standalone_device_fn --arch sm_100
 cargo oxide emit-ltoir my_simt_crate --arch sm_120 -o build/simt.ltoir
 ```
 
-cuda-oxide emits the NVVM IR 2.0 dialect required by the selected architecture:
-the legacy LLVM 7 typed-pointer form for pre-Blackwell targets and the modern
-opaque-pointer form for `compute_100` and newer. The target is validated before
-export and recorded alongside the artifact.
+cuda-oxide chooses the NVVM IR format from the selected architecture.
+Pre-Blackwell targets use LLVM 7 typed pointers; `compute_100` and newer targets
+use modern opaque pointers. The target is checked before export and recorded
+alongside the artifact so the runtime uses the same format.
 
 ### `cargo oxide pipeline <example>`
 

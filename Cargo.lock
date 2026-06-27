@@ -734,6 +734,7 @@ dependencies = [
  "llvm-export",
  "mir-lower",
  "mir-transforms",
+ "nvvm-transforms",
  "once_cell",
  "pliron",
  "pliron-derive",
@@ -783,6 +784,14 @@ version = "0.2.1"
 dependencies = [
  "libloading",
  "thiserror",
+]
+
+[[package]]
+name = "nvvm-transforms"
+version = "0.2.1"
+dependencies = [
+ "llvm-export",
+ "pliron",
 ]
 
 [[package]]
