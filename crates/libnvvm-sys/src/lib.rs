@@ -17,9 +17,9 @@
 //!
 //! [`LibNvvm::load`] tries (in order):
 //! 1. `LIBNVVM_PATH` env var, if set.
-//! 2. The system loader (`libnvvm.so.4`, `libnvvm.so.3`, `libnvvm.so`).
-//! 3. `<root>/nvvm/lib64/libnvvm.so` for `<root>` in `CUDA_TOOLKIT_PATH`,
+//! 2. `<root>/nvvm/lib64/libnvvm.so` for `<root>` in `CUDA_TOOLKIT_PATH`,
 //!    `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda`.
+//! 3. The system loader (`libnvvm.so.4`, `libnvvm.so.3`, `libnvvm.so`).
 //!
 //! # Symbol naming
 //!
@@ -41,9 +41,132 @@
 
 use libloading::{Library, Symbol};
 use std::ffi::{CString, c_char, c_int, c_void};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::str::FromStr;
 use thiserror::Error;
+
+// ============================================================================
+// CUDA architecture
+// ============================================================================
+
+/// A validated CUDA compute capability, independent of its textual prefix.
+///
+/// libNVVM takes `compute_XX`, while cubin-producing nvJitLink calls take
+/// `sm_XX`. Keeping one parsed value prevents those two consumers from
+/// accidentally targeting different devices.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CudaArch {
+    capability: u32,
+    suffix: Option<char>,
+}
+
+impl CudaArch {
+    /// Numeric CUDA capability (`86`, `90`, `100`, `120`, ...).
+    pub fn capability(&self) -> u32 {
+        self.capability
+    }
+
+    /// Optional architecture-family suffix (`a` or `f`).
+    ///
+    /// Suffixed targets opt into instructions whose compatibility is narrower
+    /// than ordinary virtual-architecture PTX. Runtime loaders should not
+    /// forward such code to another numeric compute capability.
+    pub fn suffix(&self) -> Option<char> {
+        self.suffix
+    }
+
+    /// Whether libNVVM selects its legacy LLVM 7 input dialect.
+    pub fn uses_legacy_llvm(&self) -> bool {
+        self.capability < 100
+    }
+
+    /// Render the target for cubin-producing tools such as nvJitLink.
+    pub fn sm(&self) -> String {
+        self.render("sm_")
+    }
+
+    /// Render the target for libNVVM.
+    pub fn compute(&self) -> String {
+        self.render("compute_")
+    }
+
+    fn render(&self, prefix: &str) -> String {
+        match self.suffix {
+            Some(suffix) => format!("{prefix}{}{suffix}", self.capability),
+            None => format!("{prefix}{}", self.capability),
+        }
+    }
+}
+
+impl FromStr for CudaArch {
+    type Err = CudaArchParseError;
+
+    fn from_str(target: &str) -> Result<Self, Self::Err> {
+        let rest = target
+            .strip_prefix("sm_")
+            .or_else(|| target.strip_prefix("compute_"))
+            .ok_or_else(|| CudaArchParseError::new(target, "expected `sm_XX` or `compute_XX`"))?;
+
+        let digit_count = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digit_count < 2 {
+            return Err(CudaArchParseError::new(
+                target,
+                "compute capability must contain at least two digits",
+            ));
+        }
+        let (digits, suffix_text) = rest.split_at(digit_count);
+        let suffix = match suffix_text {
+            "" => None,
+            "a" => Some('a'),
+            "f" => Some('f'),
+            _ => {
+                return Err(CudaArchParseError::new(
+                    target,
+                    "the only supported architecture suffixes are `a` and `f`",
+                ));
+            }
+        };
+        let capability = digits.parse::<u32>().map_err(|_| {
+            CudaArchParseError::new(target, "compute capability is not a valid integer")
+        })?;
+
+        Ok(Self { capability, suffix })
+    }
+}
+
+impl fmt::Display for CudaArch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.sm())
+    }
+}
+
+/// A malformed CUDA architecture string.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+#[error("invalid CUDA target `{target}`: {reason}")]
+pub struct CudaArchParseError {
+    target: String,
+    reason: &'static str,
+}
+
+impl CudaArchParseError {
+    fn new(target: &str, reason: &'static str) -> Self {
+        Self {
+            target: target.to_string(),
+            reason,
+        }
+    }
+}
+
+/// Versions accepted by the loaded libNVVM frontend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NvvmIrVersion {
+    pub ir_major: i32,
+    pub ir_minor: i32,
+    pub debug_major: i32,
+    pub debug_minor: i32,
+}
 
 // ============================================================================
 // FFI types
@@ -54,21 +177,23 @@ use thiserror::Error;
 #[derive(Copy, Clone)]
 struct NvvmProgram(*mut c_void);
 
-/// libNVVM result codes (`nvvmResult`). Mirrors `nvvm.h`.
-#[allow(dead_code)]
-#[repr(C)]
+/// ABI-safe representation of libNVVM's C `nvvmResult` enum.
+///
+/// This is deliberately an open integer wrapper rather than a Rust enum.
+/// libNVVM is loaded dynamically, so a newer library may return a result code
+/// unknown to this crate. Every `c_int` is valid here; a closed Rust enum would
+/// make an unknown C discriminant undefined behavior before we could report it.
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum NvvmResult {
-    Success = 0,
-    OutOfMemory = 1,
-    ProgramCreationFailure = 2,
-    IrVersionMismatch = 3,
-    InvalidInput = 4,
-    InvalidProgram = 5,
-    InvalidIr = 6,
-    InvalidOption = 7,
-    NoModuleInProgram = 8,
-    CompilationFailure = 9,
+struct NvvmResult(c_int);
+
+impl NvvmResult {
+    const SUCCESS: Self = Self(0);
+    /// Present in the CUDA 13.0+ headers. Keeping it named documents that code
+    /// 10 is intentionally representable even though cuda-oxide never cancels
+    /// a program itself.
+    #[allow(dead_code)]
+    const CANCELLED: Self = Self(10);
 }
 
 // ============================================================================
@@ -145,6 +270,7 @@ pub struct LibNvvm {
     destroy_program: unsafe extern "C" fn(*mut NvvmProgram) -> NvvmResult,
     add_module:
         unsafe extern "C" fn(NvvmProgram, *const c_char, usize, *const c_char) -> NvvmResult,
+    verify_program: unsafe extern "C" fn(NvvmProgram, c_int, *const *const c_char) -> NvvmResult,
     compile_program: unsafe extern "C" fn(NvvmProgram, c_int, *const *const c_char) -> NvvmResult,
     get_compiled_result_size: unsafe extern "C" fn(NvvmProgram, *mut usize) -> NvvmResult,
     get_compiled_result: unsafe extern "C" fn(NvvmProgram, *mut c_char) -> NvvmResult,
@@ -152,6 +278,7 @@ pub struct LibNvvm {
     get_program_log: unsafe extern "C" fn(NvvmProgram, *mut c_char) -> NvvmResult,
     get_error_string: unsafe extern "C" fn(NvvmResult) -> *const c_char,
     version: unsafe extern "C" fn(*mut c_int, *mut c_int) -> NvvmResult,
+    ir_version: unsafe extern "C" fn(*mut c_int, *mut c_int, *mut c_int, *mut c_int) -> NvvmResult,
     llvm_version: Option<unsafe extern "C" fn(*const c_char, *mut c_int) -> NvvmResult>,
 }
 
@@ -214,6 +341,7 @@ impl LibNvvm {
                 create_program: resolve(&lib, "nvvmCreateProgram")?,
                 destroy_program: resolve(&lib, "nvvmDestroyProgram")?,
                 add_module: resolve(&lib, "nvvmAddModuleToProgram")?,
+                verify_program: resolve(&lib, "nvvmVerifyProgram")?,
                 compile_program: resolve(&lib, "nvvmCompileProgram")?,
                 get_compiled_result_size: resolve(&lib, "nvvmGetCompiledResultSize")?,
                 get_compiled_result: resolve(&lib, "nvvmGetCompiledResult")?,
@@ -221,6 +349,7 @@ impl LibNvvm {
                 get_program_log: resolve(&lib, "nvvmGetProgramLog")?,
                 get_error_string: resolve(&lib, "nvvmGetErrorString")?,
                 version: resolve(&lib, "nvvmVersion")?,
+                ir_version: resolve(&lib, "nvvmIRVersion")?,
                 llvm_version: resolve_optional(&lib, "nvvmLLVMVersion"),
                 _lib: lib,
             })
@@ -240,24 +369,43 @@ impl LibNvvm {
         Ok((major, minor))
     }
 
+    /// Query the NVVM IR and debug-metadata versions accepted by libNVVM.
+    pub fn ir_version(&self) -> Result<NvvmIrVersion, NvvmError> {
+        let mut ir_major = 0;
+        let mut ir_minor = 0;
+        let mut debug_major = 0;
+        let mut debug_minor = 0;
+        let r = unsafe {
+            (self.ir_version)(
+                &mut ir_major,
+                &mut ir_minor,
+                &mut debug_major,
+                &mut debug_minor,
+            )
+        };
+        check(self, r, "nvvmIRVersion", None)?;
+        Ok(NvvmIrVersion {
+            ir_major,
+            ir_minor,
+            debug_major,
+            debug_minor,
+        })
+    }
+
     /// Query the LLVM IR major version guaranteed by libNVVM for `arch`.
     ///
-    /// `arch` must use the same form accepted by `nvvmCompileProgram`, such
-    /// as `"compute_75"` or `"compute_120"`. CUDA 13+ libNVVM exposes
+    /// CUDA 13+ libNVVM exposes
     /// `nvvmLLVMVersion` so callers can distinguish the LLVM 7 typed-pointer
     /// dialect from the modern opaque-pointer dialect for a concrete target.
     ///
     /// Returns `Ok(None)` when the loaded libNVVM predates this query.
     ///
-    /// # Panics
-    ///
-    /// Panics if `arch` contains an interior NUL byte.
-    pub fn llvm_version(&self, arch: &str) -> Result<Option<i32>, NvvmError> {
+    pub fn llvm_version(&self, arch: &CudaArch) -> Result<Option<i32>, NvvmError> {
         let Some(llvm_version) = self.llvm_version else {
             return Ok(None);
         };
 
-        let carch = CString::new(arch).expect("arch has interior NUL");
+        let carch = CString::new(arch.compute()).expect("rendered CUDA target contains NUL");
         let mut major = 0;
         let r = unsafe { llvm_version(carch.as_ptr(), &mut major) };
         check(self, r, "nvvmLLVMVersion", None)?;
@@ -319,6 +467,24 @@ impl<'a> Program<'a> {
         check(self.nvvm, r, "nvvmAddModuleToProgram", log)
     }
 
+    /// Verify all modules in this program for the supplied target/options.
+    ///
+    /// This preserves libNVVM's verifier log in the returned error. Calling it
+    /// before [`Self::compile`] makes malformed NVVM IR fail at the verifier
+    /// boundary rather than later in LTO compilation.
+    pub fn verify(&mut self, options: &[&str]) -> Result<(), NvvmError> {
+        let coptions: Vec<CString> = options
+            .iter()
+            .map(|s| CString::new(*s).expect("option has interior NUL"))
+            .collect();
+        let optr: Vec<*const c_char> = coptions.iter().map(|s| s.as_ptr()).collect();
+
+        let r =
+            unsafe { (self.nvvm.verify_program)(self.handle, optr.len() as c_int, optr.as_ptr()) };
+        let log = self.try_log();
+        check(self.nvvm, r, "nvvmVerifyProgram", log)
+    }
+
     /// Compile every previously-added module and return the produced PTX or
     /// LTOIR bytes. Wraps `nvvmCompileProgram` + `nvvmGetCompiledResult`.
     ///
@@ -363,13 +529,13 @@ impl<'a> Program<'a> {
     fn try_log(&self) -> Option<String> {
         let mut size: usize = 0;
         let r = unsafe { (self.nvvm.get_program_log_size)(self.handle, &mut size) };
-        if r != NvvmResult::Success || size <= 1 {
+        if r != NvvmResult::SUCCESS || size <= 1 {
             return None;
         }
         let mut buf = vec![0u8; size];
         let r =
             unsafe { (self.nvvm.get_program_log)(self.handle, buf.as_mut_ptr() as *mut c_char) };
-        if r != NvvmResult::Success {
+        if r != NvvmResult::SUCCESS {
             return None;
         }
         // Trim trailing NUL.
@@ -398,12 +564,12 @@ fn check(
     op: &'static str,
     log: Option<String>,
 ) -> Result<(), NvvmError> {
-    if r == NvvmResult::Success {
+    if r == NvvmResult::SUCCESS {
         return Ok(());
     }
     Err(NvvmError::Call {
         operation: op,
-        code: r as i32,
+        code: r.0,
         log: log.or_else(|| error_string(nvvm, r)),
     })
 }
@@ -429,17 +595,17 @@ fn open_library(tried: &mut Vec<String>) -> Option<Library> {
         }
     }
 
-    for soname in ["libnvvm.so.4", "libnvvm.so.3", "libnvvm.so"] {
-        tried.push(soname.to_string());
-        if let Ok(lib) = unsafe { Library::new(soname) } {
-            return Some(lib);
-        }
-    }
-
     for root in cuda_roots() {
         let path = root.join("nvvm/lib64/libnvvm.so");
         tried.push(path.display().to_string());
         if let Ok(lib) = unsafe { Library::new(&path) } {
+            return Some(lib);
+        }
+    }
+
+    for soname in ["libnvvm.so.4", "libnvvm.so.3", "libnvvm.so"] {
+        tried.push(soname.to_string());
+        if let Ok(lib) = unsafe { Library::new(soname) } {
             return Some(lib);
         }
     }
@@ -512,6 +678,74 @@ fn find_libdevice_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nvvm_result_representation_accepts_cancelled_and_future_codes() {
+        assert_eq!(NvvmResult::CANCELLED.0, 10);
+        let future_code = NvvmResult(c_int::MAX);
+        assert_ne!(future_code, NvvmResult::SUCCESS);
+        assert_eq!(future_code.0, c_int::MAX);
+    }
+
+    #[test]
+    fn cuda_arch_parses_and_renders_api_specific_spellings() {
+        for (input, capability, suffix, sm, compute, legacy) in [
+            ("sm_75", 75, None, "sm_75", "compute_75", true),
+            ("compute_90a", 90, Some('a'), "sm_90a", "compute_90a", true),
+            ("sm_100f", 100, Some('f'), "sm_100f", "compute_100f", false),
+            ("compute_120", 120, None, "sm_120", "compute_120", false),
+        ] {
+            let arch: CudaArch = input.parse().unwrap();
+            assert_eq!(arch.capability(), capability);
+            assert_eq!(arch.suffix(), suffix);
+            assert_eq!(arch.sm(), sm);
+            assert_eq!(arch.compute(), compute);
+            assert_eq!(arch.uses_legacy_llvm(), legacy);
+        }
+    }
+
+    #[test]
+    fn cuda_arch_rejects_ambiguous_or_malformed_targets() {
+        for input in [
+            "", "86", "sm_", "sm_9", "sm_90x", "sm_90aa", "SM_90", "gfx90a",
+        ] {
+            assert!(input.parse::<CudaArch>().is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires an installed CUDA Toolkit with libNVVM"]
+    fn live_version_queries_and_legacy_verifier() {
+        let nvvm = LibNvvm::load().unwrap();
+        let version = nvvm.ir_version().unwrap();
+        assert!(version.ir_major >= 1);
+        assert!(version.debug_major >= 1);
+
+        let arch: CudaArch = "compute_86".parse().unwrap();
+        if let Some(llvm_major) = nvvm.llvm_version(&arch).unwrap() {
+            assert_eq!(llvm_major, 7);
+        }
+
+        const LEGACY_MODULE: &[u8] = br#"
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+define void @kernel() {
+entry:
+  ret void
+}
+
+!nvvm.annotations = !{!0}
+!nvvmir.version = !{!1}
+!0 = !{void ()* @kernel, !"kernel", i32 1}
+!1 = !{i32 2, i32 0, i32 3, i32 1}
+"#;
+        let mut program = Program::new(&nvvm).unwrap();
+        program
+            .add_module(LEGACY_MODULE, "legacy-verifier")
+            .unwrap();
+        program.verify(&["-arch=compute_86"]).unwrap();
+    }
 
     #[test]
     fn cuda_roots_prefers_project_toolkit_env_var() {

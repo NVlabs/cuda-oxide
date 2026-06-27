@@ -18,8 +18,8 @@ None. The library is loaded at runtime, so the CUDA Toolkit only needs to be pre
 `LibNvJitLink::load()` tries (in order):
 
 1. `LIBNVJITLINK_PATH` env var, if set.
-2. The system loader (`libnvJitLink.so.13`, `libnvJitLink.so.12`, `libnvJitLink.so`).
-3. `<root>/lib64/libnvJitLink.so` for `<root>` in `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda`.
+2. `<root>/lib64/libnvJitLink.so` for `<root>` in `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda`.
+3. The system loader (`libnvJitLink.so.13`, `libnvJitLink.so.12`, `libnvJitLink.so`).
 
 nvJitLink ships with the standard CUDA Toolkit at `<cuda>/lib64/`. No separate download.
 

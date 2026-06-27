@@ -24,6 +24,13 @@
 #                   with exit 0 (e.g. mathdx_ffi_test when MATHDX_ROOT is
 #                   unset), in which case we require the cuda-oxide
 #                   NVVM IR (`.ll`) to have been generated.
+#   auto-nvvm    -- runtime is deliberately invoked without either LTOIR flag
+#                   to test automatic libdevice/NVVM and device-arch selection.
+#                   GPU-less compile-only CI supplies the explicit fallback
+#                   arch because there is no device architecture to detect.
+#   NVVM_VERIFY_EXAMPLES are stronger compile-only regressions: instead of
+#                   stopping after textual IR export, `emit-ltoir` sends the
+#                   module through the real libNVVM verifier and compiler.
 #
 # Categories are bash arrays at the top of this file. When adding an
 # error* example, also update STATUS.md and run
@@ -37,7 +44,9 @@ set -uo pipefail
 
 TCGEN05_EXAMPLES=(gemm_sol tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
-LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test manual_launch_libdevice mathdx_ffi_test primitive_stress)
+LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
+AUTO_NVVM_EXAMPLES=(issue98_repro)
+NVVM_VERIFY_EXAMPLES=(issue98_repro legacy_nvvm_pointer_shapes primitive_stress)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_unhandled error_drop_glue error_heap_alloc error_missing_device_attr)
 
 classify() {
@@ -45,8 +54,17 @@ classify() {
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
     for cat in "${WGMMA_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo wgmma;       return; }; done
     for cat in "${LTOIR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo ltoir;       return; }; done
+    for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
     for cat in "${ERROR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo error;       return; }; done
     echo standard
+}
+
+verify_nvvm_in_compile_only() {
+    local ex="$1" candidate
+    for candidate in "${NVVM_VERIFY_EXAMPLES[@]}"; do
+        [[ "$ex" == "$candidate" ]] && return 0
+    done
+    return 1
 }
 
 # ---- CLI -----------------------------------------------------------------
@@ -62,11 +80,11 @@ OPTIONS
   -o, --only PATTERN   Run only examples whose name matches the bash regex
                        PATTERN (e.g. -o 'tcgen05|wgmma').
   -s, --skip PATTERN   Skip examples whose name matches PATTERN.
-  -c, --compile-only   Build each example instead of running it (cargo
-                       oxide build). Non-error categories must exit 0 and
-                       leave a device artifact ({ex}.ptx or {ex}.ll);
-                       error examples must still fail to compile. Works
-                       on GPU-less machines (CI).
+  -c, --compile-only   Compile each example without running it. Most use
+                       `cargo oxide build`; designated NVVM regressions use
+                       `emit-ltoir` to include real libNVVM verification.
+                       Non-error categories must leave a fresh artifact;
+                       error examples must still fail. Works on GPU-less CI.
   -x, --fail-fast      Stop at the first failure.
   -v, --verbose        Stream cargo output live (instead of capturing to
                        a per-example log file). Verdict is printed at the
@@ -195,7 +213,7 @@ printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_
 printf "GPU: %s\n" "${gpu_info}"
 printf "LTOIR arch: %s\n" "${LTOIR_ARCH}"
 if [[ ${COMPILE_ONLY} -eq 1 ]]; then
-    printf "Mode: compile-only (cargo oxide build; nothing is executed)\n"
+    printf "Mode: compile-only (device artifacts only; nothing is executed)\n"
 fi
 if [[ -n "${ONLY}" ]]; then printf "Filter --only: %s\n" "${ONLY}"; fi
 if [[ -n "${SKIP}" ]]; then printf "Filter --skip: %s\n" "${SKIP}"; fi
@@ -399,6 +417,14 @@ verdict_compile() {
     local artifact="${ex//-/_}"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
+    if verify_nvvm_in_compile_only "${ex}"; then
+        if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.ltoir" ]]; then
+            echo "PASS (verified and compiled by libNVVM)"
+            return 0
+        fi
+        echo "FAIL (libNVVM compile produced no fresh LTOIR)"
+        return 1
+    fi
     if [[ -s "${ex_dir}/${artifact}.ptx" || -s "${ex_dir}/${artifact}.ll" ]]; then
         echo "PASS (compiled)"
         return 0
@@ -422,14 +448,26 @@ verdict_compile() {
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
-    # Compile-only mode swaps `run` for `build`: the full device pipeline
-    # (MIR -> dialect-mir -> LLVM dialect -> llc -> PTX) still executes at
-    # build time, only host execution is skipped. The ltoir flags are kept:
-    # `--emit-nvvm-ir` is supported by `build` for non-interop examples.
+    # The designated dialect regressions go one step beyond textual IR generation in
+    # GPU-less CI: `emit-ltoir` runs the real libNVVM verifier and compiler.
+    # The remaining compile-only cases use `build`, which still executes the
+    # full device pipeline while skipping only host execution.
+    if [[ ${COMPILE_ONLY} -eq 1 ]] && verify_nvvm_in_compile_only "${ex}"; then
+        local -a args=("emit-ltoir" "${ex}" "--arch=${LTOIR_ARCH}")
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+            CARGO_EC=${PIPESTATUS[0]}
+        else
+            cargo oxide "${args[@]}" >"${log}" 2>&1
+            CARGO_EC=$?
+        fi
+        return
+    fi
+
     local verb="run"
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
     local -a args=("${verb}" "${ex}")
-    if [[ "${cat}" == "ltoir" ]]; then
+    if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
     if [[ ${VERBOSE} -eq 1 ]]; then
@@ -511,6 +549,7 @@ for ex in "${selected[@]}"; do
             tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
             wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             standard)    verdict="$(verdict_standard    "${log}" "${ec}")"        && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;
         esac

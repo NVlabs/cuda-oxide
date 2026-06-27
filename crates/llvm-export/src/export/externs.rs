@@ -5,20 +5,152 @@
 
 //! Device extern declaration types for FFI with external LTOIR.
 
+use std::fmt::Write;
+
+/// A lossless LLVM-level type used at a device-extern ABI boundary.
+///
+/// The ordinary pliron LLVM dialect intentionally uses opaque pointers, so a
+/// `PointerType` in the lowered module no longer remembers its pointee.  That
+/// is fine inside a function, but it is not enough to spell a pre-Blackwell
+/// libNVVM declaration such as `declare void @f(float*)`.  Device externs keep
+/// this small, deliberately supported type tree alongside the opaque module.
+///
+/// This is not a best-effort type model.  rustc-codegen-cuda rejects an extern
+/// signature which cannot be represented exactly rather than mapping an
+/// unfamiliar Rust type to `ptr`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DeviceExternType {
+    /// Only valid as a function result.
+    Void,
+    /// A signless LLVM integer. Signedness is not part of an LLVM integer type.
+    Integer(u32),
+    Float16,
+    Float32,
+    Float64,
+    /// A pointer with an exact pointee and NVVM address space.
+    Pointer {
+        pointee: Box<DeviceExternType>,
+        address_space: u32,
+    },
+    /// A fixed-size array. This is primarily useful as a pointer pointee; the
+    /// Rust bridge currently rejects by-value aggregate extern parameters
+    /// because reproducing rustc's C ABI coercions requires a full FnAbi.
+    Array {
+        element: Box<DeviceExternType>,
+        len: u64,
+    },
+}
+
+impl DeviceExternType {
+    pub fn pointer_to(pointee: DeviceExternType, address_space: u32) -> Self {
+        Self::Pointer {
+            pointee: Box::new(pointee),
+            address_space,
+        }
+    }
+
+    pub fn pointer_parts(&self) -> Option<(&DeviceExternType, u32)> {
+        match self {
+            Self::Pointer {
+                pointee,
+                address_space,
+            } => Some((pointee, *address_space)),
+            _ => None,
+        }
+    }
+
+    /// True when this exact legacy pointer already is the canonical internal
+    /// byte-pointer type and therefore needs no boundary bitcast.
+    pub(crate) fn is_canonical_byte_pointer(&self) -> bool {
+        matches!(
+            self,
+            Self::Pointer { pointee, .. }
+                if matches!(pointee.as_ref(), Self::Integer(8))
+        )
+    }
+
+    pub(crate) fn contains_float16(&self) -> bool {
+        match self {
+            Self::Float16 => true,
+            Self::Pointer { pointee, .. } => pointee.contains_float16(),
+            Self::Array { element, .. } => element.contains_float16(),
+            _ => false,
+        }
+    }
+
+    /// Render this type for the selected LLVM dialect.
+    ///
+    /// `legacy_typed_pointers = false` intentionally erases pointer pointees
+    /// while retaining their address spaces, matching modern LLVM syntax.
+    pub(crate) fn write_llvm(
+        &self,
+        output: &mut String,
+        legacy_typed_pointers: bool,
+    ) -> Result<(), String> {
+        match self {
+            Self::Void => write!(output, "void").unwrap(),
+            Self::Integer(bits) if *bits > 0 => write!(output, "i{bits}").unwrap(),
+            Self::Integer(_) => {
+                return Err("device-extern integer width must be non-zero".to_string());
+            }
+            Self::Float16 => write!(output, "half").unwrap(),
+            Self::Float32 => write!(output, "float").unwrap(),
+            Self::Float64 => write!(output, "double").unwrap(),
+            Self::Pointer {
+                pointee,
+                address_space,
+            } => {
+                if matches!(pointee.as_ref(), Self::Void) {
+                    return Err(
+                        "device-extern pointer cannot have LLVM `void` as its pointee; use i8"
+                            .to_string(),
+                    );
+                }
+                if legacy_typed_pointers {
+                    pointee.write_llvm(output, true)?;
+                    if *address_space != 0 {
+                        write!(output, " addrspace({address_space})").unwrap();
+                    }
+                    write!(output, "*").unwrap();
+                } else if *address_space == 0 {
+                    write!(output, "ptr").unwrap();
+                } else {
+                    write!(output, "ptr addrspace({address_space})").unwrap();
+                }
+            }
+            Self::Array { element, len } => {
+                if matches!(element.as_ref(), Self::Void) {
+                    return Err("device-extern array element cannot be `void`".to_string());
+                }
+                write!(output, "[{len} x ").unwrap();
+                element.write_llvm(output, legacy_typed_pointers)?;
+                write!(output, "]").unwrap();
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn llvm_string(&self, legacy_typed_pointers: bool) -> Result<String, String> {
+        let mut output = String::new();
+        self.write_llvm(&mut output, legacy_typed_pointers)?;
+        Ok(output)
+    }
+}
+
 /// An external device function declaration (for linking with external LTOIR).
 ///
 /// These declarations are emitted as LLVM `declare` statements and resolved
 /// at link time by nvJitLink when linking with external LTOIR (e.g., CCCL).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceExternDecl {
     /// The export name (e.g., "cub_block_reduce_sum").
     pub export_name: String,
 
-    /// Function parameter types (LLVM type strings like "float", "ptr", "i32").
-    pub param_types: Vec<String>,
+    /// Function parameter types, including pointer pointees and address spaces.
+    pub param_types: Vec<DeviceExternType>,
 
-    /// Return type (LLVM type string like "float", "void", "i32").
-    pub return_type: String,
+    /// Return type.
+    pub return_type: DeviceExternType,
 
     /// NVVM attributes for this function.
     pub attrs: DeviceExternAttrs,

@@ -590,7 +590,8 @@ pub fn codegen_build(
 /// has to run through libNVVM separately to get linkable LTOIR. This folds both
 /// halves into one command for the Tile-to-SIMT interop workflow (#96): it
 /// builds the crate in NVVM IR mode, then compiles the emitted `<crate>.ll`
-/// with libNVVM `-gen-lto` and writes `<crate>.ltoir` (or `output`).
+/// with libNVVM `-gen-lto` and writes `<crate>.ltoir` (or `output`) plus the
+/// matching `.target` sidecar consumed by fail-closed runtime loaders.
 ///
 /// `arch` is required because LTOIR is architecture-specific. It accepts
 /// `sm_XX`, `compute_XX`, or a bare `XX`, all mapped to libNVVM's
@@ -615,12 +616,20 @@ pub fn emit_ltoir(
         std::process::exit(1);
     }
 
+    // Normalize once: libNVVM consumes compute_XX, while the compiler records
+    // and nvJitLink consumes the equivalent sm_XX spelling.
+    let parsed_arch = parse_nvvm_arch(arch).unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    });
+    let sm_arch = parsed_arch.sm();
+
     // Step 1: build in NVVM IR mode so the backend writes `<crate>.ll` as
     // libNVVM-ready NVVM IR. codegen_build exits on build failure. FMA
     // contraction stays at its default (on) for the LTOIR build. Pass
     // quiet=true so the intermediate "✓ Build succeeded" line is suppressed;
     // emit_ltoir prints its own unified summary at the end.
-    codegen_build(ctx, example, verbose, true, Some(arch), features, false);
+    codegen_build(ctx, example, verbose, true, Some(&sm_arch), features, false);
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.
     let ll_path = example_dir.join(format!("{example}.ll"));
@@ -632,8 +641,8 @@ pub fn emit_ltoir(
         std::process::exit(1);
     });
 
-    let compute_arch = nvvm_compute_arch(arch);
-    let ltoir = compile_nvvm_to_ltoir(&ir, example, &compute_arch);
+    let compute_arch = parsed_arch.compute();
+    let ltoir = compile_nvvm_to_ltoir(&ir, example, &parsed_arch);
 
     // Step 3: write the artifact.
     let out_path = output
@@ -643,6 +652,14 @@ pub fn emit_ltoir(
         eprintln!(
             "Error: could not write LTOIR to {}: {e}",
             out_path.display()
+        );
+        std::process::exit(1);
+    });
+    let target_path = out_path.with_extension("target");
+    std::fs::write(&target_path, format!("{sm_arch}\n")).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not write LTOIR target metadata to {}: {e}",
+            target_path.display()
         );
         std::process::exit(1);
     });
@@ -659,51 +676,61 @@ pub fn emit_ltoir(
 ///
 /// Accepts `sm_XX` (the form `--arch` and the rest of cargo-oxide use),
 /// `compute_XX` (passed through), or a bare `XX`.
-fn nvvm_compute_arch(arch: &str) -> String {
-    if let Some(cc) = arch.strip_prefix("sm_") {
-        format!("compute_{cc}")
-    } else if arch.starts_with("compute_") {
+fn parse_nvvm_arch(arch: &str) -> Result<libnvvm_sys::CudaArch, libnvvm_sys::CudaArchParseError> {
+    let normalized = if arch.starts_with("sm_") || arch.starts_with("compute_") {
         arch.to_string()
     } else {
         format!("compute_{arch}")
-    }
-}
-
-/// Lowest compute capability whose libNVVM accepts cuda-oxide's exported dialect.
-///
-/// cuda-oxide exports NVVM IR 2.0 (opaque pointers, LLVM 20 dialect). NVIDIA's
-/// libNVVM only parses that dialect for compute_100 and newer (Blackwell+);
-/// older targets route to the typed-pointer (NVVM IR 1.x) parser and reject the
-/// module while parsing types. See <https://github.com/NVlabs/cuda-oxide/issues/98>.
-const NVVM_OPAQUE_PTR_MIN_CC: u32 = 100;
-
-/// Parse the numeric compute capability out of a `compute_XX` string.
-///
-/// Reads the leading capability digits and ignores a trailing architecture
-/// variant letter, so `compute_90`, `compute_90a`, and `compute_100f` all yield
-/// their base capability. Returns `None` when there are no leading digits, in
-/// which case the caller skips the capability-floor hint rather than guessing.
-fn compute_capability(compute_arch: &str) -> Option<u32> {
-    let suffix = compute_arch.strip_prefix("compute_")?;
-    let digits: String = suffix.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
+    };
+    normalized.parse()
 }
 
 /// Compile NVVM IR text to binary LTOIR with libNVVM `-gen-lto`. Exits with a
 /// diagnostic on any libNVVM failure (the program log is attached to the error).
 ///
-/// When the target is below [`NVVM_OPAQUE_PTR_MIN_CC`] a compile failure also
-/// prints the issue #98 explanation, since the cryptic libNVVM parse error
-/// otherwise gives no hint that the opaque-pointer dialect is the cause. The
-/// hint is gated on actual failure so it disappears automatically if the floor
-/// ever moves.
-fn compile_nvvm_to_ltoir(ir: &[u8], name: &str, compute_arch: &str) -> Vec<u8> {
+fn compile_nvvm_to_ltoir(ir: &[u8], name: &str, arch: &libnvvm_sys::CudaArch) -> Vec<u8> {
     let nvvm = libnvvm_sys::LibNvvm::load().unwrap_or_else(|e| {
         eprintln!("Error: could not load libNVVM: {e}");
         eprintln!("libNVVM ships with the CUDA Toolkit at <CUDA>/nvvm/lib64/libnvvm.so.");
         eprintln!("Run `cargo oxide doctor` to check your toolkit setup.");
         std::process::exit(1);
     });
+    let ir_version = nvvm.ir_version().unwrap_or_else(|e| {
+        eprintln!("Error: could not query libNVVM's accepted IR version: {e}");
+        std::process::exit(1);
+    });
+    if (ir_version.ir_major, ir_version.ir_minor) != (2, 0) {
+        eprintln!(
+            "Error: installed libNVVM accepts NVVM IR {}.{}, but cuda-oxide emits NVVM IR 2.0",
+            ir_version.ir_major, ir_version.ir_minor
+        );
+        std::process::exit(1);
+    }
+    if let Some(llvm_major) = nvvm.llvm_version(arch).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not query libNVVM's LLVM dialect for {}: {e}",
+            arch.compute()
+        );
+        std::process::exit(1);
+    }) {
+        let mismatch = if arch.uses_legacy_llvm() {
+            llvm_major != 7
+        } else {
+            llvm_major == 7
+        };
+        if mismatch {
+            let expected = if arch.uses_legacy_llvm() {
+                "legacy LLVM 7 typed-pointer"
+            } else {
+                "modern opaque-pointer"
+            };
+            eprintln!(
+                "Error: libNVVM reports LLVM {llvm_major} for {}, but cuda-oxide selected the {expected} dialect",
+                arch.compute()
+            );
+            std::process::exit(1);
+        }
+    }
     let mut program = libnvvm_sys::Program::new(&nvvm).unwrap_or_else(|e| {
         eprintln!("Error: nvvmCreateProgram failed: {e}");
         std::process::exit(1);
@@ -735,25 +762,15 @@ fn compile_nvvm_to_ltoir(ir: &[u8], name: &str, compute_arch: &str) -> Vec<u8> {
         eprintln!("Error: libNVVM rejected the NVVM IR module: {e}");
         std::process::exit(1);
     });
-    let arch_opt = format!("-arch={compute_arch}");
+    let arch_opt = format!("-arch={}", arch.compute());
+    program.verify(&[&arch_opt]).unwrap_or_else(|e| {
+        eprintln!("Error: libNVVM verification failed: {e}");
+        std::process::exit(1);
+    });
     program
         .compile(&[&arch_opt, "-gen-lto"])
         .unwrap_or_else(|e| {
             eprintln!("Error: libNVVM -gen-lto compilation failed: {e}");
-            if compute_capability(compute_arch).is_some_and(|cc| cc < NVVM_OPAQUE_PTR_MIN_CC) {
-                eprintln!();
-                eprintln!(
-                    "{compute_arch} is below compute_{NVVM_OPAQUE_PTR_MIN_CC}. cuda-oxide exports"
-                );
-                eprintln!(
-                    "NVVM IR 2.0 (opaque pointers), which libNVVM only accepts for"
-                );
-                eprintln!(
-                    "compute_{NVVM_OPAQUE_PTR_MIN_CC} and newer (Blackwell+); older targets reject it while"
-                );
-                eprintln!("parsing types. Target sm_100 or newer, or follow the typed-pointer");
-                eprintln!("export work at https://github.com/NVlabs/cuda-oxide/issues/98.");
-            }
             std::process::exit(1);
         })
 }
@@ -1921,7 +1938,15 @@ fn artifact_stem(example: &str) -> String {
 /// previous run so we can verify the build produces fresh output.
 fn clean_generated_files(example_dir: &Path, example: &str) {
     let stem = artifact_stem(example);
-    for ext in &["ptx", "ll", "opt.ll", "ltoir", "cubin"] {
+    for ext in &[
+        "ptx",
+        "ll",
+        "opt.ll",
+        "ltoir",
+        "cubin",
+        "target",
+        "cubin.target",
+    ] {
         let file = example_dir.join(format!("{}.{}", stem, ext));
         if file.exists() {
             let _ = std::fs::remove_file(&file);
@@ -2247,33 +2272,18 @@ mod tests {
     }
 
     #[test]
-    fn nvvm_compute_arch_normalizes_all_accepted_forms() {
+    fn nvvm_arch_normalizes_all_accepted_forms() {
         // `sm_XX` is the form `--arch` and the rest of cargo-oxide use.
-        assert_eq!(nvvm_compute_arch("sm_120"), "compute_120");
-        assert_eq!(nvvm_compute_arch("sm_90"), "compute_90");
+        assert_eq!(parse_nvvm_arch("sm_120").unwrap().compute(), "compute_120");
+        assert_eq!(parse_nvvm_arch("sm_90").unwrap().compute(), "compute_90");
         // `compute_XX` passes through unchanged.
-        assert_eq!(nvvm_compute_arch("compute_100"), "compute_100");
+        assert_eq!(
+            parse_nvvm_arch("compute_100").unwrap().compute(),
+            "compute_100"
+        );
         // A bare capability is accepted too.
-        assert_eq!(nvvm_compute_arch("120"), "compute_120");
-    }
-
-    #[test]
-    fn compute_capability_reads_base_through_variants() {
-        // Plain capabilities parse, so the issue #98 floor hint can fire.
-        assert_eq!(compute_capability("compute_90"), Some(90));
-        assert_eq!(compute_capability("compute_100"), Some(100));
-        assert_eq!(compute_capability("compute_120"), Some(120));
-        // Architecture variants resolve to their base capability, so a pre-Blackwell
-        // variant like compute_90a still trips the floor hint.
-        assert_eq!(compute_capability("compute_90a"), Some(90));
-        assert_eq!(compute_capability("compute_100a"), Some(100));
-        assert_eq!(compute_capability("compute_120f"), Some(120));
-        // The floor itself: below 100 is hinted, 100+ is not.
-        assert!(compute_capability("compute_90a").unwrap() < NVVM_OPAQUE_PTR_MIN_CC);
-        assert!(compute_capability("compute_100").unwrap() >= NVVM_OPAQUE_PTR_MIN_CC);
-        // A non-compute string or a missing capability yields no hint.
-        assert_eq!(compute_capability("sm_90"), None);
-        assert_eq!(compute_capability("compute_"), None);
+        assert_eq!(parse_nvvm_arch("120").unwrap().compute(), "compute_120");
+        assert!(parse_nvvm_arch("sm_90x").is_err());
     }
 
     #[test]

@@ -45,8 +45,9 @@ pub enum EmbeddedModuleError {
 /// Load a named embedded artifact bundle from the current executable.
 ///
 /// Cubin and PTX payloads are loaded directly with the CUDA driver. NVVM IR and
-/// LTOIR payloads are first linked to an in-memory cubin via the existing
-/// libNVVM/nvJitLink path.
+/// LTOIR payloads are linked to an in-memory cubin for their original target.
+/// An unsuffixed legacy payload may instead be linked to PTX when it is loaded
+/// on a newer Blackwell GPU, allowing the driver to JIT it for that device.
 pub fn load_embedded_module(
     ctx: &Arc<CudaContext>,
     name: &str,
@@ -144,15 +145,31 @@ fn load_bundle(
     }
 
     if let Some(nvvm_ir) = bundle.payload(ArtifactPayloadKind::NvvmIr) {
-        let arch = target_arch_for_bundle(bundle);
-        let cubin = ltoir::build_cubin_from_nvvm_ir(nvvm_ir, &bundle.name, &arch)?;
-        return Ok(ctx.load_module_from_image(&cubin)?);
+        let emitted = target_arch_for_bundle(bundle)?;
+        let execution = ltoir::execution_arch_for_context(ctx)?;
+        let image = match ltoir::execution_route(&emitted, &execution)? {
+            ltoir::ExecutionRoute::Cubin => {
+                ltoir::build_cubin_from_nvvm_ir(nvvm_ir, &bundle.name, &emitted.sm())?
+            }
+            ltoir::ExecutionRoute::PtxBridge => {
+                ltoir::build_ptx_from_nvvm_ir(nvvm_ir, &bundle.name, &emitted.sm())?
+            }
+        };
+        return Ok(ctx.load_module_from_image(&image)?);
     }
 
     if let Some(ltoir) = bundle.payload(ArtifactPayloadKind::Ltoir) {
-        let arch = target_arch_for_bundle(bundle);
-        let cubin = ltoir::link_ltoir_to_cubin(ltoir, &bundle.name, &arch)?;
-        return Ok(ctx.load_module_from_image(&cubin)?);
+        let emitted = target_arch_for_bundle(bundle)?;
+        let execution = ltoir::execution_arch_for_context(ctx)?;
+        let image = match ltoir::execution_route(&emitted, &execution)? {
+            ltoir::ExecutionRoute::Cubin => {
+                ltoir::link_ltoir_to_cubin(ltoir, &bundle.name, &emitted.sm())?
+            }
+            ltoir::ExecutionRoute::PtxBridge => {
+                ltoir::link_ltoir_to_ptx(ltoir, &bundle.name, &emitted.sm())?
+            }
+        };
+        return Ok(ctx.load_module_from_image(&image)?);
     }
 
     Err(EmbeddedModuleError::UnsupportedPayload {
@@ -160,48 +177,34 @@ fn load_bundle(
     })
 }
 
-fn target_arch_for_bundle(bundle: &OwnedArtifactBundle) -> String {
-    if is_cuda_arch(&bundle.target) {
-        bundle.target.clone()
-    } else {
-        ltoir::target_arch()
-    }
+fn target_arch_for_bundle(
+    bundle: &OwnedArtifactBundle,
+) -> Result<libnvvm_sys::CudaArch, ltoir::LtoirError> {
+    let explicit = std::env::var("CUDA_OXIDE_TARGET").ok();
+    target_arch_for_bundle_with_explicit(bundle, explicit.as_deref())
 }
 
-fn is_cuda_arch(target: &str) -> bool {
-    target.starts_with("sm_") || target.starts_with("compute_")
+fn target_arch_for_bundle_with_explicit(
+    bundle: &OwnedArtifactBundle,
+    explicit_target: Option<&str>,
+) -> Result<libnvvm_sys::CudaArch, ltoir::LtoirError> {
+    ltoir::resolve_source_target(concrete_bundle_target(&bundle.target)?, explicit_target)
+}
+
+fn concrete_bundle_target(
+    target: &str,
+) -> Result<Option<libnvvm_sys::CudaArch>, ltoir::LtoirError> {
+    match target {
+        // Compatibility for artifacts emitted before concrete NVVM targets
+        // were recorded. New bundles must never use these sentinels.
+        "libdevice" | "nvvm-ir" => Ok(None),
+        target => Ok(Some(target.parse()?)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn target_arch_uses_bundle_sm_target() {
-        let bundle = bundle_with_target("sm_90");
-        assert_eq!(target_arch_for_bundle(&bundle), "sm_90");
-    }
-
-    #[test]
-    fn target_arch_uses_bundle_compute_target() {
-        let bundle = bundle_with_target("compute_90");
-        assert_eq!(target_arch_for_bundle(&bundle), "compute_90");
-    }
-
-    #[test]
-    fn target_arch_falls_back_for_non_arch_target() {
-        // Bundles produced before the wire-format change recorded the magic
-        // string "libdevice" as the target; bundles produced after main's
-        // pipeline cleanup record "nvvm-ir" when no explicit arch is pinned.
-        // Both must round-trip through the legacy ltoir::target_arch() fallback.
-        for legacy in ["libdevice", "nvvm-ir"] {
-            let bundle = bundle_with_target(legacy);
-            assert!(
-                !target_arch_for_bundle(&bundle).is_empty(),
-                "target_arch_for_bundle returned empty for legacy target {legacy:?}"
-            );
-        }
-    }
 
     fn bundle_with_target(target: &str) -> OwnedArtifactBundle {
         OwnedArtifactBundle {
@@ -210,5 +213,61 @@ mod tests {
             payloads: Vec::new(),
             entries: Vec::new(),
         }
+    }
+
+    #[test]
+    fn target_arch_uses_bundle_sm_target() {
+        assert_eq!(
+            concrete_bundle_target("sm_90")
+                .unwrap()
+                .map(|target| target.sm()),
+            Some("sm_90".to_string())
+        );
+    }
+
+    #[test]
+    fn target_arch_uses_bundle_compute_target() {
+        assert_eq!(
+            concrete_bundle_target("compute_90")
+                .unwrap()
+                .map(|target| target.sm()),
+            Some("sm_90".to_string())
+        );
+    }
+
+    #[test]
+    fn target_arch_falls_back_for_non_arch_target() {
+        // Older bundles used these magic strings instead of persisting a
+        // concrete architecture. They take the explicit/device fallback;
+        // newly emitted bundles always carry a validated sm_* target.
+        for legacy in ["libdevice", "nvvm-ir"] {
+            assert_eq!(concrete_bundle_target(legacy).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn legacy_bundle_without_recorded_target_fails_closed() {
+        for sentinel in ["libdevice", "nvvm-ir"] {
+            let bundle = bundle_with_target(sentinel);
+            let error = target_arch_for_bundle_with_explicit(&bundle, None)
+                .expect_err("the execution context must not become the source target");
+            assert!(matches!(error, ltoir::LtoirError::TargetNotFound));
+
+            let asserted =
+                target_arch_for_bundle_with_explicit(&bundle, Some("compute_86")).unwrap();
+            assert_eq!(asserted.sm(), "sm_86");
+        }
+    }
+
+    #[test]
+    fn recorded_bundle_target_overrides_explicit_environment_target() {
+        let bundle = bundle_with_target("sm_90");
+        let selected = target_arch_for_bundle_with_explicit(&bundle, Some("sm_120")).unwrap();
+        assert_eq!(selected.sm(), "sm_90");
+    }
+
+    #[test]
+    fn target_arch_rejects_malformed_bundle_target() {
+        assert!(concrete_bundle_target("sm_90x").is_err());
     }
 }

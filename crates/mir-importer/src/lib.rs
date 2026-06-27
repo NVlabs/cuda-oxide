@@ -86,5 +86,5 @@ pub mod translator;
 pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DeviceExternAttrs,
-    DeviceExternDecl, PipelineConfig, PipelineError, run_pipeline,
+    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, run_pipeline,
 };

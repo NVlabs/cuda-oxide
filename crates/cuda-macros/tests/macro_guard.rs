@@ -17,6 +17,7 @@ fn reserved_name_macro_guard() {
     t.compile_fail("tests/compile_fail/kernel_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_extern_reserved_name.rs");
+    t.compile_fail("tests/compile_fail/device_extern_wrong_abi.rs");
 }
 
 /// `cuda_launch!` is a caller-unsafe API: its expansion calls the unsafe

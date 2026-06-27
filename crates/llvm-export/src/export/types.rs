@@ -8,11 +8,14 @@
 use std::fmt::Write;
 
 use pliron::{
-    builtin::types::{FP32Type, FP64Type, IntegerType},
+    builtin::{
+        type_interfaces::FunctionTypeInterface,
+        types::{FP32Type, FP64Type, IntegerType},
+    },
     r#type::TypeHandle,
 };
 
-use crate::types::{HalfType, PointerType, StructType, VoidType};
+use crate::types::{FuncType, HalfType, PointerType, StructType, VoidType};
 
 use super::state::ModuleExportState;
 
@@ -23,7 +26,9 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "i{}", int_ty.width()).unwrap();
         } else if let Some(ptr_ty) = ty_ref.downcast_ref::<PointerType>() {
             let addrspace = ptr_ty.address_space();
-            if addrspace != 0 {
+            if self.legacy_typed_pointers() {
+                self.export_canonical_pointer_type(addrspace, output);
+            } else if addrspace != 0 {
                 write!(output, "ptr addrspace({addrspace})").unwrap();
             } else {
                 write!(output, "ptr").unwrap();
@@ -54,8 +59,78 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(vec_ty.elem_type(), output)?;
             write!(output, ">").unwrap();
         } else {
-            write!(output, "void /* unknown: {} */", ty_ref.disp(self.ctx)).unwrap();
+            return Err(format!(
+                "cannot export unknown LLVM type `{}`",
+                ty_ref.disp(self.ctx)
+            ));
         }
+        Ok(())
+    }
+
+    pub(super) fn is_pointer_type(&self, ty: TypeHandle) -> bool {
+        ty.deref(self.ctx).is::<PointerType>()
+    }
+
+    pub(super) fn is_i8_type(&self, ty: TypeHandle) -> bool {
+        ty.deref(self.ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 8)
+    }
+
+    /// Print the canonical legacy representation of an erased pointer.
+    pub(super) fn export_canonical_pointer_type(&self, addrspace: u32, output: &mut String) {
+        write!(output, "i8").unwrap();
+        if addrspace != 0 {
+            write!(output, " addrspace({addrspace})").unwrap();
+        }
+        write!(output, "*").unwrap();
+    }
+
+    /// Print a typed pointer to `pointee` in `addrspace` for LLVM 7 syntax.
+    pub(super) fn export_pointer_to(
+        &self,
+        pointee: TypeHandle,
+        addrspace: u32,
+        output: &mut String,
+    ) -> Result<(), String> {
+        self.export_type(pointee, output)?;
+        if addrspace != 0 {
+            write!(output, " addrspace({addrspace})").unwrap();
+        }
+        write!(output, "*").unwrap();
+        Ok(())
+    }
+
+    /// Print an LLVM 7 function-pointer type using the same recursively
+    /// canonicalized argument and result types as function declarations.
+    pub(super) fn export_function_pointer_type(
+        &self,
+        function_type: TypeHandle,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let function_ref = function_type.deref(self.ctx);
+        let function_type = function_ref.downcast_ref::<FuncType>().ok_or_else(|| {
+            format!(
+                "expected function type, got `{}`",
+                function_ref.disp(self.ctx)
+            )
+        })?;
+
+        self.export_type(function_type.result_type(), output)?;
+        write!(output, " (").unwrap();
+        for (index, argument) in function_type.arg_types().iter().enumerate() {
+            if index != 0 {
+                write!(output, ", ").unwrap();
+            }
+            self.export_type(*argument, output)?;
+        }
+        if function_type.is_var_arg() {
+            if !function_type.arg_types().is_empty() {
+                write!(output, ", ").unwrap();
+            }
+            write!(output, "...").unwrap();
+        }
+        write!(output, ")*").unwrap();
         Ok(())
     }
 

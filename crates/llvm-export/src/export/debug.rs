@@ -791,6 +791,7 @@ mod tests {
             false,
             true,
             super::super::config::DebugKind::LineTables,
+            None,
         );
 
         let (path, pos) = state

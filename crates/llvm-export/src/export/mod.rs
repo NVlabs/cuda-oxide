@@ -48,8 +48,10 @@ mod ops;
 mod state;
 mod types;
 
-pub use config::{DebugKind, ExportBackendConfig, NvvmExportConfig, PtxExportConfig};
-pub use externs::{AsDeviceExtern, DeviceExternAttrs, DeviceExternDecl};
+pub use config::{
+    DebugKind, ExportBackendConfig, NvvmExportConfig, NvvmIrDialect, PtxExportConfig,
+};
+pub use externs::{AsDeviceExtern, DeviceExternAttrs, DeviceExternDecl, DeviceExternType};
 
 use pliron::{builtin::ops::ModuleOp, context::Context};
 

@@ -155,9 +155,18 @@ packaging live in the compiler and artifact/runtime loader layers. Keeping that
 policy separate lets the generated Rust launch methods stay stable as payload
 formats evolve.
 
-PTX and cubin embedded payloads are loaded directly. Embedded NVVM IR/LTOIR is
-compiled or linked to a cubin through the same libNVVM/nvJitLink path used by
-the lower-level sidecar loader.
+PTX and cubin embedded payloads are loaded directly. Embedded NVVM IR records
+the architecture that selected its textual dialect: pre-Blackwell targets use
+LLVM 7 typed pointers, while Blackwell and newer targets use modern opaque
+pointers. The loader verifies that identity before invoking libNVVM, so it
+never reparses target-specific IR as though it came from another architecture.
+
+NVVM IR/LTOIR normally becomes a cubin for that exact target. For testing and
+forward-compatible deployment, one deliberately narrow bridge is available:
+an unsuffixed pre-Blackwell artifact such as `sm_86` can be linked back to
+`sm_86` PTX and handed to the CUDA driver for JIT compilation on Blackwell.
+Backward execution, architecture-specific targets such as `sm_90a`, and other
+cross-target combinations fail closed.
 
 ## `LaunchConfig`
 

@@ -2,6 +2,7 @@ target/
 .smoketest-logs/
 *.ptx
 *.ltoir
+*.target
 .ltoir_arch
 *.ll
 *.bc

@@ -33,7 +33,9 @@
 //!
 //! Override with `CUDA_OXIDE_TARGET=<target>` environment variable.
 
-use llvm_export::export::{DebugKind, ExportBackendConfig};
+use libnvvm_sys::CudaArch;
+pub use llvm_export::export::DeviceExternType;
+use llvm_export::export::{DebugKind, ExportBackendConfig, NvvmIrDialect};
 use pliron::common_traits::Verify;
 use rustc_public::mir::mono::Instance;
 
@@ -77,11 +79,12 @@ pub struct DeviceExternDecl {
     /// The export name (the original function name, e.g., "cub_block_reduce_sum").
     pub export_name: String,
 
-    /// Function parameter types (LLVM type strings like "float", "ptr", "i32").
-    pub param_types: Vec<String>,
+    /// Structured LLVM ABI parameter types. Pointer pointees are retained even
+    /// though the lowered pliron LLVM module itself uses opaque pointers.
+    pub param_types: Vec<DeviceExternType>,
 
-    /// Return type (LLVM type string like "float", "void", "i32").
-    pub return_type: String,
+    /// Structured LLVM ABI return type.
+    pub return_type: DeviceExternType,
 
     /// NVVM attributes for this function.
     pub attrs: DeviceExternAttrs,
@@ -186,9 +189,23 @@ pub struct PipelineConfig {
     ///
     /// The output can be compiled to LTOIR using `nvvmCompileProgram -gen-lto`.
     ///
-    /// Currently supports NVVM 20 dialect (Blackwell+). Architecture is
-    /// controlled by `--arch` flag.
+    /// Pre-Blackwell targets use the legacy LLVM 7 dialect; Blackwell and
+    /// newer targets use the modern opaque-pointer dialect. Architecture is
+    /// controlled by `target_arch` or `device_arch_hint` (normally populated
+    /// by `cargo oxide`).
     pub emit_nvvm_ir: bool,
+    /// Explicit CUDA target for architecture-specific NVVM IR.
+    ///
+    /// This normally comes from `CUDA_OXIDE_TARGET` / `cargo oxide --arch`.
+    /// It is kept separate from `device_arch_hint` so an advisory detected GPU
+    /// can never silently override an explicit cross-compilation target.
+    pub target_arch: Option<String>,
+    /// Advisory architecture of the local GPU (`CUDA_OXIDE_DEVICE_ARCH`).
+    ///
+    /// Used only when no explicit target was provided. A missing value is
+    /// allowed for ordinary PTX output, but NVVM IR export fails rather than
+    /// guessing which libNVVM input dialect to emit.
+    pub device_arch_hint: Option<String>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
 }
@@ -202,6 +219,8 @@ impl Default for PipelineConfig {
             show_mir_dialect: false,
             show_llvm_dialect: false,
             emit_nvvm_ir: false,
+            target_arch: None,
+            device_arch_hint: None,
             debug_kind: DebugKind::Off,
         }
     }
@@ -386,14 +405,12 @@ pub fn run_pipeline(
         // `mir_transforms::unroll`. Non-unrolled kernels are left for `opt`/NVVM.
     }
 
-    // Step 5: Lower dialect-mir → LLVM dialect.
-    if config.verbose {
-        eprintln!("\n=== Lowering dialect-mir → LLVM dialect ===");
-    }
-    lower_to_llvm(&mut ctx, module_op_ptr)?;
-
-    // Step 5.5: Add device extern declarations to the LLVM dialect module.
-    // These are needed before verification so calls to extern functions are valid.
+    // Step 4.9: Add structured device-extern declarations before call
+    // lowering. The call converter consults these declarations to preserve
+    // pointer address spaces and insert an explicit addrspacecast when the
+    // caller and external ABI differ. Adding declarations only after lowering
+    // is too late: every unknown pointer argument has already fallen back to
+    // generic addrspace(0) by then.
     if !device_externs.is_empty() {
         if config.verbose {
             eprintln!(
@@ -404,19 +421,11 @@ pub fn run_pipeline(
         add_device_extern_declarations(&mut ctx, module_op_ptr, device_externs)?;
     }
 
-    // Step 6: Verify the LLVM dialect module. Dump BEFORE verify so
-    // verification failures still surface the IR to the user.
-    if config.show_llvm_dialect {
-        eprintln!("\n=== LLVM dialect (pre-verify) ===");
-        eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
-    }
+    // Step 5: Lower dialect-mir → LLVM dialect.
     if config.verbose {
-        eprintln!("=== Verifying LLVM dialect module ===");
+        eprintln!("\n=== Lowering dialect-mir → LLVM dialect ===");
     }
-    verify_operation(&ctx, module_op_ptr, "llvm module")?;
-    if config.verbose {
-        eprintln!("LLVM dialect verification successful ✓");
-    }
+    lower_to_llvm(&mut ctx, module_op_ptr)?;
 
     // Detect CUDA libdevice usage.
     //
@@ -439,18 +448,81 @@ pub fn run_pipeline(
         );
     }
 
+    // NVVM IR syntax is architecture-specific: libNVVM selects its LLVM 7
+    // typed-pointer parser for pre-Blackwell targets and its modern parser for
+    // Blackwell+. Resolve and validate one concrete target before export so
+    // the textual dialect, embedded artifact metadata, and runtime link target
+    // cannot diverge. Headless/cross builds must provide `--arch` rather than
+    // silently producing an ambiguous module.
+    let nvvm_target = if emit_nvvm_ir {
+        let target = resolve_nvvm_target(
+            config.target_arch.as_deref(),
+            config.device_arch_hint.as_deref(),
+        )?;
+        let dialect = if target.uses_legacy_llvm() {
+            NvvmIrDialect::LegacyLlvm7
+        } else {
+            NvvmIrDialect::Modern
+        };
+        validate_nvvm_debug_support(&target, dialect, config.debug_kind)?;
+        Some(target)
+    } else {
+        None
+    };
+
+    // Step 5.5: Restrict modern pliron-LLVM operations to the LLVM 7 subset
+    // accepted by libNVVM's pre-Blackwell frontend. Semantic rewrites belong
+    // here rather than in the textual printer: the legalized module is then
+    // checked by pliron's ordinary verifier before any text is emitted.
+    if let Some(target) = nvvm_target.as_ref() {
+        if target.uses_legacy_llvm() {
+            if config.verbose {
+                eprintln!("\n=== Legalizing LLVM dialect for legacy NVVM ===");
+            }
+            mir_lower::legacy_nvvm::legalize_for_legacy_nvvm(&mut ctx, module_op_ptr)
+                .map_err(|error| PipelineError::Lowering(error.disp(&ctx).to_string()))?;
+        } else {
+            if config.verbose {
+                eprintln!("\n=== Legalizing NVVM bit-intrinsic widths ===");
+            }
+            mir_lower::legacy_nvvm::legalize_nvvm_bit_intrinsics(&mut ctx, module_op_ptr)
+                .map_err(|error| PipelineError::Lowering(error.disp(&ctx).to_string()))?;
+        }
+    }
+
+    // Step 6: Verify the final LLVM dialect module. Dump BEFORE verify so
+    // verification failures still surface the exact post-legalization IR.
+    if config.show_llvm_dialect {
+        eprintln!("\n=== LLVM dialect (pre-verify) ===");
+        eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
+    }
+    if config.verbose {
+        eprintln!("=== Verifying LLVM dialect module ===");
+    }
+    verify_operation(&ctx, module_op_ptr, "llvm module")?;
+    if config.verbose {
+        eprintln!("LLVM dialect verification successful ✓");
+    }
+
     // Step 7: Export to LLVM IR
     if config.verbose {
         let mode = if emit_nvvm_ir { "NVVM IR" } else { "PTX" };
         eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
     }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
+    // A prior build may have selected the other output mode. Remove every
+    // artifact that could make a runtime loader choose stale code before we
+    // publish the new `.ll` and its final PTX-or-target marker. Failure to
+    // invalidate an old artifact is fatal: executing an older kernel is worse
+    // than leaving this build with no loadable output.
+    clear_stale_compilation_artifacts(&config.output_dir, &config.output_name)?;
     let _llvm_ir = export_llvm_ir(
         &ctx,
         module_op_ptr,
         device_externs,
         &ll_path,
         emit_nvvm_ir,
+        nvvm_target.as_ref(),
         config.debug_kind,
     )?;
     if config.verbose {
@@ -473,10 +545,11 @@ pub fn run_pipeline(
             };
             eprintln!("\n=== Skipping llc ({reason}); consumer owns libNVVM/nvJitLink build ===");
         }
-        // Record the real GPU arch in the bundle target when the caller
-        // pinned one via CUDA_OXIDE_TARGET; otherwise leave the legacy
-        // "nvvm-ir" sentinel that cuda-host's loader knows to re-resolve.
-        let target = std::env::var("CUDA_OXIDE_TARGET").unwrap_or_else(|_| "nvvm-ir".to_string());
+        let target = nvvm_target
+            .as_ref()
+            .expect("NVVM target was resolved before export")
+            .sm();
+        write_nvvm_target_sidecar(&config.output_dir, &config.output_name, &target)?;
         Ok(CompilationResult {
             artifact_path: ll_path.clone(),
             artifact_kind: CompilationArtifactKind::NvvmIr,
@@ -625,20 +698,20 @@ fn lower_to_llvm(ctx: &mut Context, module_op_ptr: Ptr<Operation>) -> Result<(),
 /// functions pass verification; the matching `declare` statements with
 /// attributes are emitted during LLVM IR export.
 ///
-/// Idempotent with respect to the lowering step that runs before it: a
-/// symbol may already have been declared at a call site (mir-lower declares
-/// `__nv_*` libdevice callees on demand). Inserting a second `FuncOp` for
-/// the same symbol would fail module verification with a multiple-definition
-/// error, so symbols that already exist in the module are skipped.
+/// This runs before MIR-to-LLVM call lowering so the call converter can read
+/// exact parameter address spaces. It is still idempotent with respect to any
+/// LLVM declaration already present in the mixed module; inserting a second
+/// `FuncOp` for the same symbol would fail module verification.
 fn add_device_extern_declarations(
     ctx: &mut Context,
     module_op_ptr: Ptr<Operation>,
     device_externs: &[DeviceExternDecl],
 ) -> Result<(), PipelineError> {
     use llvm_export::ops::FuncOp;
-    use llvm_export::types::{FuncType, VoidType};
+    use llvm_export::types::FuncType;
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
     use pliron::identifier::Identifier;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
     // Get the module's block pointer first (this is a Ptr, not a Ref, so no borrow issues)
     let block = {
@@ -646,46 +719,56 @@ fn add_device_extern_declarations(
         region.iter(ctx).next().expect("Module should have a block")
     };
 
-    let declared_symbols: HashSet<String> = block
+    let declared_symbols: HashMap<_, _> = block
         .deref(ctx)
         .iter(ctx)
         .filter_map(|op| {
-            Operation::get_op::<FuncOp>(op, ctx).map(|f| f.get_symbol_name(ctx).to_string())
+            Operation::get_op::<FuncOp>(op, ctx)
+                .map(|f| (f.get_symbol_name(ctx).to_string(), f.get_type(ctx)))
         })
         .collect();
 
     for decl in device_externs {
-        if declared_symbols.contains(&decl.export_name) {
-            continue;
-        }
-
-        // Parse parameter types from strings
         let param_types: Vec<_> = decl
             .param_types
             .iter()
-            .map(|t| llvm_type_string_to_pliron(ctx, t))
-            .collect();
-
-        // Parse return type - for void, use VoidType
-        let return_type = if decl.return_type == "void" {
-            VoidType::get(ctx).into()
-        } else {
-            llvm_type_string_to_pliron(ctx, &decl.return_type)
-        };
+            .map(|ty| device_extern_type_to_pliron(ctx, ty, false))
+            .collect::<Result<_, _>>()?;
+        let return_type = device_extern_type_to_pliron(ctx, &decl.return_type, true)?;
 
         // Create function type (result, args, is_variadic)
         let func_type = FuncType::get(ctx, return_type, param_types, false);
+
+        if let Some(existing_type) = declared_symbols.get(&decl.export_name) {
+            let existing_ref = existing_type.deref(ctx);
+            let existing = &*existing_ref;
+            let expected_ref = func_type.deref(ctx);
+            let expected = &*expected_ref;
+            if existing.result_type() != expected.result_type()
+                || existing.arg_types() != expected.arg_types()
+                || existing.is_var_arg() != expected.is_var_arg()
+            {
+                return Err(PipelineError::Export(format!(
+                    "device extern `@{}` conflicts with the call-site declaration: expected `{}`, found `{}`",
+                    decl.export_name,
+                    expected_ref.disp(ctx),
+                    existing_ref.disp(ctx),
+                )));
+            }
+            continue;
+        }
 
         // Use the original export name (NOT the prefixed name).
         // The MIR sees calls to `cuda_oxide_device_extern_<hash>_foo`, but
         // mir-lower/convert/ops/call.rs strips the reserved prefix via
         // `reserved_oxide_symbols::device_extern_base_name`, so the LLVM IR
         // emits `call @foo(...)`. For that to resolve, we declare `@foo` here.
-        let func_ident: Identifier = decl
-            .export_name
-            .clone()
-            .try_into()
-            .unwrap_or_else(|_| "extern_func".try_into().unwrap());
+        let func_ident: Identifier = decl.export_name.clone().try_into().map_err(|_| {
+            PipelineError::Export(format!(
+                "device-extern symbol `{}` cannot be represented by the LLVM dialect",
+                decl.export_name
+            ))
+        })?;
 
         // Create function declaration (no body = declaration)
         let func_op = FuncOp::new(ctx, func_ident, func_type);
@@ -697,23 +780,121 @@ fn add_device_extern_declarations(
     Ok(())
 }
 
-/// Convert LLVM type string to pliron type.
-fn llvm_type_string_to_pliron(ctx: &mut Context, type_str: &str) -> pliron::r#type::TypeHandle {
-    use llvm_export::types::PointerType;
+/// Convert the structured device-extern ABI type to the opaque-pointer pliron
+/// LLVM type used for verification and call lowering.
+fn device_extern_type_to_pliron(
+    ctx: &mut Context,
+    ty: &DeviceExternType,
+    allow_void: bool,
+) -> Result<pliron::r#type::TypeHandle, PipelineError> {
+    use llvm_export::types::{ArrayType, HalfType, PointerType, VoidType};
     use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 
-    match type_str {
-        "float" => FP32Type::get(ctx).into(),
-        "double" => FP64Type::get(ctx).into(),
-        "half" => llvm_export::types::HalfType::get(ctx).into(),
-        "i1" => IntegerType::get(ctx, 1, Signedness::Signless).into(),
-        "i8" => IntegerType::get(ctx, 8, Signedness::Signless).into(),
-        "i16" => IntegerType::get(ctx, 16, Signedness::Signless).into(),
-        "i32" => IntegerType::get(ctx, 32, Signedness::Signless).into(),
-        "i64" => IntegerType::get(ctx, 64, Signedness::Signless).into(),
-        "i128" => IntegerType::get(ctx, 128, Signedness::Signless).into(),
-        _ => PointerType::get(ctx, 0).into(), // Default to ptr
+    Ok(match ty {
+        DeviceExternType::Void if allow_void => VoidType::get(ctx).into(),
+        DeviceExternType::Void => {
+            return Err(PipelineError::Export(
+                "device-extern parameters and aggregate elements cannot be `void`".to_string(),
+            ));
+        }
+        DeviceExternType::Integer(bits) if *bits > 0 => {
+            IntegerType::get(ctx, *bits, Signedness::Signless).into()
+        }
+        DeviceExternType::Integer(_) => {
+            return Err(PipelineError::Export(
+                "device-extern integer width must be non-zero".to_string(),
+            ));
+        }
+        DeviceExternType::Float16 => HalfType::get(ctx).into(),
+        DeviceExternType::Float32 => FP32Type::get(ctx).into(),
+        DeviceExternType::Float64 => FP64Type::get(ctx).into(),
+        DeviceExternType::Pointer {
+            pointee,
+            address_space,
+        } => {
+            if matches!(pointee.as_ref(), DeviceExternType::Void) {
+                return Err(PipelineError::Export(
+                    "device-extern pointer cannot have `void` as its pointee; use i8".to_string(),
+                ));
+            }
+            PointerType::get(ctx, *address_space).into()
+        }
+        DeviceExternType::Array { element, len } => {
+            let element = device_extern_type_to_pliron(ctx, element, false)?;
+            ArrayType::get(ctx, element, *len).into()
+        }
+    })
+}
+
+fn resolve_nvvm_target(
+    explicit_target: Option<&str>,
+    device_arch_hint: Option<&str>,
+) -> Result<CudaArch, PipelineError> {
+    let (target, source) = explicit_target
+        .map(|target| (target, "explicit CUDA target"))
+        .or_else(|| device_arch_hint.map(|target| (target, "detected GPU architecture")))
+        .ok_or_else(|| {
+            PipelineError::Export(
+                "NVVM IR requires a concrete CUDA target because pre-Blackwell and Blackwell+ \
+             use different LLVM dialects; pass `cargo oxide ... --arch sm_XX` (or set \
+             CUDA_OXIDE_TARGET)"
+                    .to_string(),
+            )
+        })?;
+    target.parse::<CudaArch>().map_err(|error| {
+        PipelineError::Export(format!(
+            "cannot select an NVVM IR dialect from the {source} `{target}`: {error}"
+        ))
+    })
+}
+
+fn validate_nvvm_debug_support(
+    target: &CudaArch,
+    dialect: NvvmIrDialect,
+    debug_kind: DebugKind,
+) -> Result<(), PipelineError> {
+    if dialect == NvvmIrDialect::LegacyLlvm7 && debug_kind != DebugKind::Off {
+        return Err(PipelineError::Export(format!(
+            "legacy LLVM 7 NVVM IR for {} does not yet support cuda-oxide debug metadata; \
+             rebuild without device debug information",
+            target.sm()
+        )));
     }
+    Ok(())
+}
+
+fn write_nvvm_target_sidecar(
+    output_dir: &Path,
+    output_name: &str,
+    target: &str,
+) -> Result<(), PipelineError> {
+    let path = output_dir.join(format!("{output_name}.target"));
+    std::fs::write(&path, format!("{target}\n")).map_err(|error| {
+        PipelineError::Export(format!(
+            "failed to record NVVM target in {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn clear_stale_compilation_artifacts(
+    output_dir: &Path,
+    output_name: &str,
+) -> Result<(), PipelineError> {
+    for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+        let path = output_dir.join(format!("{output_name}.{suffix}"));
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(PipelineError::Export(format!(
+                    "failed to invalidate stale CUDA artifact {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Exports an LLVM dialect module to textual LLVM IR (`.ll` file).
@@ -729,14 +910,25 @@ fn export_llvm_ir(
     device_externs: &[DeviceExternDecl],
     path: &Path,
     emit_nvvm_ir: bool,
+    nvvm_target: Option<&CudaArch>,
     debug_kind: DebugKind,
 ) -> Result<String, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
     let llvm_ir = if emit_nvvm_ir {
+        let target = nvvm_target.ok_or_else(|| {
+            PipelineError::Export("NVVM export reached without a resolved CUDA target".to_string())
+        })?;
         let config = PipelineExportConfig {
-            inner: llvm_export::export::NvvmExportConfig,
+            // `CudaArch` was parsed once when the pipeline resolved its
+            // concrete target. Derive the dialect from that shared value
+            // instead of reparsing a rendered string at the export boundary.
+            inner: llvm_export::export::NvvmExportConfig::new(if target.uses_legacy_llvm() {
+                NvvmIrDialect::LegacyLlvm7
+            } else {
+                NvvmIrDialect::Modern
+            }),
             debug_kind,
         };
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
@@ -783,6 +975,10 @@ impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
 
     fn emit_ptx_kernel_keyword(&self) -> bool {
         self.inner.emit_ptx_kernel_keyword()
+    }
+
+    fn nvvm_ir_dialect(&self) -> Option<NvvmIrDialect> {
+        self.inner.nvvm_ir_dialect()
     }
 
     fn debug_kind(&self) -> DebugKind {
@@ -1365,7 +1561,33 @@ mod tests {
         assert!(!config.show_mir_dialect);
         assert!(!config.show_llvm_dialect);
         assert!(!config.emit_nvvm_ir);
+        assert_eq!(config.target_arch, None);
+        assert_eq!(config.device_arch_hint, None);
         assert_eq!(config.debug_kind, DebugKind::Off);
+    }
+
+    #[test]
+    fn stale_artifact_invalidation_removes_every_competing_output() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_stale_artifacts_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+            fs::write(root.join(format!("kernel.{suffix}")), b"stale").unwrap();
+        }
+
+        clear_stale_compilation_artifacts(&root, "kernel").unwrap();
+
+        for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+            assert!(!root.join(format!("kernel.{suffix}")).exists(), "{suffix}");
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1422,6 +1644,8 @@ mod tests {
             show_mir_dialect: false,
             show_llvm_dialect: false,
             emit_nvvm_ir: true,
+            target_arch: Some("sm_86".to_string()),
+            device_arch_hint: None,
             debug_kind: DebugKind::Off,
         };
 
@@ -1431,16 +1655,100 @@ mod tests {
         assert!(result.ll_path.is_file());
         assert_eq!(result.artifact_path, result.ll_path);
         assert_eq!(result.artifact_kind, CompilationArtifactKind::NvvmIr);
+        assert_eq!(result.target, "sm_86");
+        assert_eq!(
+            fs::read_to_string(output_dir.join("empty.target")).unwrap(),
+            "sm_86\n"
+        );
 
         fs::remove_dir_all(&root).expect("clean up temp output dir");
+    }
+
+    #[test]
+    fn structured_device_extern_survives_pre_lowering_insertion() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_mir_importer_extern_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        let config = PipelineConfig {
+            output_dir: root.clone(),
+            output_name: "extern_only".to_string(),
+            verbose: false,
+            show_mir_dialect: false,
+            show_llvm_dialect: false,
+            emit_nvvm_ir: true,
+            target_arch: Some("sm_86".to_string()),
+            device_arch_hint: None,
+            debug_kind: DebugKind::Off,
+        };
+        let externs = [DeviceExternDecl {
+            export_name: "consume_float".to_string(),
+            param_types: vec![DeviceExternType::pointer_to(DeviceExternType::Float32, 0)],
+            return_type: DeviceExternType::Void,
+            attrs: DeviceExternAttrs::default(),
+        }];
+
+        let result = run_pipeline(&[], &externs, &config).expect("pipeline run");
+        let ir = fs::read_to_string(result.ll_path).expect("read exported IR");
+        assert!(
+            ir.contains("declare void @consume_float(float*)"),
+            "structured pointee must survive through export:\n{ir}"
+        );
+        assert!(
+            !ir.split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|token| token == "ptr"),
+            "legacy device-extern output must not contain opaque pointers:\n{ir}"
+        );
+
+        fs::remove_dir_all(&root).expect("clean up temp output dir");
+    }
+
+    #[test]
+    fn nvvm_target_resolution_is_concrete_and_strict() {
+        let legacy = resolve_nvvm_target(Some("compute_90a"), Some("sm_120")).unwrap();
+        assert_eq!(legacy.sm(), "sm_90a");
+        assert!(legacy.uses_legacy_llvm());
+
+        let modern = resolve_nvvm_target(None, Some("sm_120f")).unwrap();
+        assert_eq!(modern.compute(), "compute_120f");
+        assert!(!modern.uses_legacy_llvm());
+
+        for target in [None, Some("nvvm-ir"), Some("sm_90x"), Some("86")] {
+            assert!(resolve_nvvm_target(target, None).is_err(), "{target:?}");
+        }
+    }
+
+    #[test]
+    fn legacy_nvvm_debug_fails_closed() {
+        let legacy = resolve_nvvm_target(Some("sm_90"), None).unwrap();
+        assert!(
+            validate_nvvm_debug_support(
+                &legacy,
+                NvvmIrDialect::LegacyLlvm7,
+                DebugKind::LineTables,
+            )
+            .is_err()
+        );
+        validate_nvvm_debug_support(&legacy, NvvmIrDialect::LegacyLlvm7, DebugKind::Off).unwrap();
+
+        let modern = resolve_nvvm_target(Some("sm_120"), None).unwrap();
+        validate_nvvm_debug_support(&modern, NvvmIrDialect::Modern, DebugKind::Full).unwrap();
     }
 
     #[test]
     fn test_device_extern_decl_converts_to_export_decl() {
         let decl = DeviceExternDecl {
             export_name: "device_add".to_string(),
-            param_types: vec!["ptr".to_string(), "i32".to_string()],
-            return_type: "void".to_string(),
+            param_types: vec![
+                DeviceExternType::pointer_to(DeviceExternType::Float32, 0),
+                DeviceExternType::Integer(32),
+            ],
+            return_type: DeviceExternType::Void,
             attrs: DeviceExternAttrs {
                 is_convergent: true,
                 is_pure: false,
@@ -1451,8 +1759,14 @@ mod tests {
         let exported = decl.as_device_extern();
 
         assert_eq!(exported.export_name, "device_add");
-        assert_eq!(exported.param_types, ["ptr", "i32"]);
-        assert_eq!(exported.return_type, "void");
+        assert_eq!(
+            exported.param_types,
+            [
+                DeviceExternType::pointer_to(DeviceExternType::Float32, 0),
+                DeviceExternType::Integer(32),
+            ]
+        );
+        assert_eq!(exported.return_type, DeviceExternType::Void);
         assert!(exported.attrs.is_convergent);
         assert!(!exported.attrs.is_pure);
         assert!(exported.attrs.is_readonly);

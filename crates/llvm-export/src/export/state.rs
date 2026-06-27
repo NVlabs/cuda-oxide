@@ -5,13 +5,17 @@
 
 //! Exporter state and kernel bookkeeping.
 
-use pliron::{basic_block::BasicBlock, context::Ptr, value::Value};
+use pliron::{basic_block::BasicBlock, context::Ptr, r#type::TypeHandle, value::Value};
 use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::ops::{DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap};
 
-use super::config::DebugKind;
+use super::{
+    config::{DebugKind, NvvmIrDialect},
+    externs::DeviceExternDecl,
+};
 
 /// Map from block to its predecessors with the values passed to each predecessor.
 /// Used for PHI node generation when exporting to LLVM IR.
@@ -37,6 +41,12 @@ pub(super) struct KernelInfo {
     pub(super) name: String,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct GlobalSymbolInfo {
+    pub(super) value_type: TypeHandle,
+    pub(super) address_space: u32,
+}
+
 pub(super) struct ModuleExportState<'a> {
     pub(super) ctx: &'a pliron::context::Context,
     /// Track if any convergent operations were used (for emitting attributes section)
@@ -53,6 +63,22 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
     pub(super) device_functions: Vec<String>,
+    /// Emitted function signatures keyed by their final, prefix-stripped name.
+    pub(super) function_types: FxHashMap<String, TypeHandle>,
+    /// Original pliron symbol spelling for each final exported function name.
+    /// Device-extern declarations can only suppress an exact-name declaration;
+    /// a prefixed alias would otherwise emit a second definition/declaration.
+    pub(super) function_source_names: FxHashMap<String, String>,
+    /// Functions with a region are emitted independently and therefore cannot
+    /// also be supplied as an external side-table declaration.
+    pub(super) function_definitions: HashSet<String>,
+    /// Exact device-extern ABI signatures. Lowered pliron pointers are opaque;
+    /// this side table retains pointees for legacy LLVM 7 declarations and
+    /// call-boundary adapters.
+    pub(super) device_externs: FxHashMap<String, DeviceExternDecl>,
+    /// Global value types/address spaces, indexed before any function body is
+    /// emitted so `addressof` is independent of top-level textual order.
+    pub(super) global_symbols: FxHashMap<String, GlobalSymbolInfo>,
     /// Next `!N` metadata ID in this module.
     ///
     /// LLVM has one flat numbered metadata namespace per module. Today this is
@@ -61,6 +87,8 @@ pub(super) struct ModuleExportState<'a> {
     next_metadata_id: usize,
     /// Which debug metadata tier this export should emit.
     pub(super) debug_kind: DebugKind,
+    /// NVVM textual dialect, or `None` for the ordinary PTX/llc path.
+    pub(super) nvvm_ir_dialect: Option<NvvmIrDialect>,
     /// The single compile unit used for Stage 2 line-table debug info.
     pub(super) debug_compile_unit: Option<usize>,
     /// `DIFile` nodes keyed by the source path they describe.
@@ -108,6 +136,7 @@ impl<'a> ModuleExportState<'a> {
         track_all_kernels: bool,
         emit_ptx_kernel_keyword: bool,
         debug_kind: DebugKind,
+        nvvm_ir_dialect: Option<NvvmIrDialect>,
     ) -> Self {
         Self {
             ctx,
@@ -118,8 +147,14 @@ impl<'a> ModuleExportState<'a> {
             track_all_kernels,
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
+            function_types: FxHashMap::default(),
+            function_source_names: FxHashMap::default(),
+            function_definitions: HashSet::new(),
+            device_externs: FxHashMap::default(),
+            global_symbols: FxHashMap::default(),
             next_metadata_id: 0,
             debug_kind,
+            nvvm_ir_dialect,
             debug_compile_unit: None,
             debug_files: FxHashMap::default(),
             debug_subroutine_type: None,
@@ -137,6 +172,22 @@ impl<'a> ModuleExportState<'a> {
             debug_declare_used: false,
             debug_value_used: false,
         }
+    }
+
+    pub(super) fn legacy_typed_pointers(&self) -> bool {
+        self.nvvm_ir_dialect
+            .is_some_and(NvvmIrDialect::uses_typed_pointers)
+    }
+
+    pub(super) fn function_type(&self, name: &str) -> Result<TypeHandle, String> {
+        self.function_types
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("missing exported function type for `@{name}`"))
+    }
+
+    pub(super) fn device_extern(&self, name: &str) -> Option<&DeviceExternDecl> {
+        self.device_externs.get(name)
     }
 
     pub(super) fn alloc_metadata_id(&mut self) -> usize {

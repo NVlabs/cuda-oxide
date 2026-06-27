@@ -126,6 +126,7 @@ pub mod context;
 pub mod conversion_interface;
 pub mod convert;
 pub mod helpers;
+pub mod legacy_nvvm;
 pub mod lowering;
 pub mod type_conversion_interface;
 

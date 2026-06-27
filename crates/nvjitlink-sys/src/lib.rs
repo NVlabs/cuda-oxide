@@ -31,7 +31,7 @@
 //! ```
 
 use libloading::{Library, Symbol};
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::ptr;
 use thiserror::Error;
@@ -45,30 +45,18 @@ use thiserror::Error;
 #[derive(Copy, Clone)]
 struct NvJitLinkHandle(*mut c_void);
 
-/// nvJitLink result codes (`nvJitLinkResult`). Mirrors `nvJitLink.h`.
-#[allow(dead_code)]
-#[repr(C)]
+/// ABI-safe representation of nvJitLink's C `nvJitLinkResult` enum.
+///
+/// The library is selected at runtime and future toolkits may add error codes.
+/// An open integer wrapper accepts every C result value so an unknown code is
+/// returned as an ordinary Rust error instead of becoming an invalid Rust enum
+/// discriminant at the FFI boundary.
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum NvJitLinkResult {
-    Success = 0,
-    UnrecognizedOption = 1,
-    MissingArch = 2,
-    InvalidInput = 3,
-    PtxCompile = 4,
-    NvvmCompile = 5,
-    Internal = 6,
-    Threadpool = 7,
-    UnrecognizedInput = 8,
-    Finalize = 9,
-    NullInput = 10,
-    IncompatibleOptions = 11,
-    IncorrectInputType = 12,
-    ArchMismatch = 13,
-    OutdatedLibrary = 14,
-    MissingFatbin = 15,
-    UnrecognizedArch = 16,
-    UnsupportedArch = 17,
-    LtoNotEnabled = 18,
+struct NvJitLinkResult(c_int);
+
+impl NvJitLinkResult {
+    const SUCCESS: Self = Self(0);
 }
 
 /// nvJitLink input kinds (`nvJitLinkInputType`). Mirrors `nvJitLink.h`.
@@ -128,6 +116,14 @@ pub enum NvJitLinkError {
         source: libloading::Error,
     },
 
+    /// The loaded nvJitLink predates linked-PTX retrieval. Cubin output is
+    /// still usable; only callers that explicitly request PTX receive this
+    /// error.
+    #[error(
+        "the loaded libnvJitLink does not export nvJitLinkGetLinkedPtxSize/nvJitLinkGetLinkedPtx"
+    )]
+    PtxOutputUnavailable,
+
     /// An nvJitLink call returned a non-`Success` `nvJitLinkResult`. `log`
     /// carries the nvJitLink error log when one was produced by the call.
     #[error("nvJitLink error in {operation}: {code:?}{}", .log.as_ref().map(|l| format!("\n--- nvJitLink error log ---\n{l}")).unwrap_or_default())]
@@ -169,6 +165,9 @@ pub struct LibNvJitLink {
     complete: unsafe extern "C" fn(NvJitLinkHandle) -> NvJitLinkResult,
     get_linked_cubin_size: unsafe extern "C" fn(NvJitLinkHandle, *mut usize) -> NvJitLinkResult,
     get_linked_cubin: unsafe extern "C" fn(NvJitLinkHandle, *mut c_void) -> NvJitLinkResult,
+    get_linked_ptx_size:
+        Option<unsafe extern "C" fn(NvJitLinkHandle, *mut usize) -> NvJitLinkResult>,
+    get_linked_ptx: Option<unsafe extern "C" fn(NvJitLinkHandle, *mut c_char) -> NvJitLinkResult>,
     get_error_log_size: unsafe extern "C" fn(NvJitLinkHandle, *mut usize) -> NvJitLinkResult,
     get_error_log: unsafe extern "C" fn(NvJitLinkHandle, *mut c_char) -> NvJitLinkResult,
     get_info_log_size: unsafe extern "C" fn(NvJitLinkHandle, *mut usize) -> NvJitLinkResult,
@@ -236,6 +235,11 @@ impl LibNvJitLink {
                 complete: resolve(&lib, "nvJitLinkComplete")?,
                 get_linked_cubin_size: resolve(&lib, "nvJitLinkGetLinkedCubinSize")?,
                 get_linked_cubin: resolve(&lib, "nvJitLinkGetLinkedCubin")?,
+                // Keep these optional so an older toolkit can still serve the
+                // long-standing cubin path. The PTX bridge reports a focused
+                // error only when it is actually requested.
+                get_linked_ptx_size: resolve_optional(&lib, "nvJitLinkGetLinkedPtxSize"),
+                get_linked_ptx: resolve_optional(&lib, "nvJitLinkGetLinkedPtx"),
                 get_error_log_size: resolve(&lib, "nvJitLinkGetErrorLogSize")?,
                 get_error_log: resolve(&lib, "nvJitLinkGetErrorLog")?,
                 get_info_log_size: resolve(&lib, "nvJitLinkGetInfoLogSize")?,
@@ -256,7 +260,7 @@ impl LibNvJitLink {
         let mut major = 0;
         let mut minor = 0;
         let r = unsafe { f(&mut major, &mut minor) };
-        if r == NvJitLinkResult::Success {
+        if r == NvJitLinkResult::SUCCESS {
             Some((major, minor))
         } else {
             None
@@ -372,6 +376,45 @@ impl<'a> Linker<'a> {
         Ok(buf)
     }
 
+    /// Drive the link and return linked PTX text.
+    ///
+    /// Construct the linker with both `-lto` and `-ptx`. Unlike
+    /// [`Self::finish`], this retrieves `nvJitLinkGetLinkedPtx*` output. The
+    /// returned buffer may include nvJitLink's trailing NUL byte, which is
+    /// accepted by the CUDA driver and useful for direct `cuModuleLoadData`.
+    ///
+    /// PTX output symbols are resolved lazily/optionally so loading an older
+    /// nvJitLink continues to support normal cubin links.
+    pub fn finish_ptx(self) -> Result<Vec<u8>, NvJitLinkError> {
+        let get_size = self
+            .nvj
+            .get_linked_ptx_size
+            .ok_or(NvJitLinkError::PtxOutputUnavailable)?;
+        let get = self
+            .nvj
+            .get_linked_ptx
+            .ok_or(NvJitLinkError::PtxOutputUnavailable)?;
+
+        let r = unsafe { (self.nvj.complete)(self.handle) };
+        check(self.nvj, &self, r, "nvJitLinkComplete")?;
+
+        let mut size = 0;
+        let r = unsafe { get_size(self.handle, &mut size) };
+        check(self.nvj, &self, r, "nvJitLinkGetLinkedPtxSize")?;
+
+        let mut buf = vec![0u8; size];
+        let r = unsafe { get(self.handle, buf.as_mut_ptr() as *mut c_char) };
+        check(self.nvj, &self, r, "nvJitLinkGetLinkedPtx")?;
+
+        if let Some(info) = self.try_info_log()
+            && std::env::var_os("CUDA_OXIDE_VERBOSE").is_some()
+        {
+            eprintln!("--- nvJitLink info log ---\n{info}");
+        }
+
+        Ok(buf)
+    }
+
     /// Best-effort retrieval of the error log.
     fn try_error_log(&self) -> Option<String> {
         try_log(
@@ -413,12 +456,12 @@ fn check(
     r: NvJitLinkResult,
     op: &'static str,
 ) -> Result<(), NvJitLinkError> {
-    if r == NvJitLinkResult::Success {
+    if r == NvJitLinkResult::SUCCESS {
         return Ok(());
     }
     Err(NvJitLinkError::Call {
         operation: op,
-        code: r as i32,
+        code: r.0,
         log: linker.try_error_log(),
     })
 }
@@ -434,12 +477,12 @@ fn try_log(
     }
     let mut size: usize = 0;
     let r = unsafe { size_fn(handle, &mut size) };
-    if r != NvJitLinkResult::Success || size <= 1 {
+    if r != NvJitLinkResult::SUCCESS || size <= 1 {
         return None;
     }
     let mut buf = vec![0u8; size];
     let r = unsafe { get_fn(handle, buf.as_mut_ptr() as *mut c_char) };
-    if r != NvJitLinkResult::Success {
+    if r != NvJitLinkResult::SUCCESS {
         return None;
     }
     if let Some(&0) = buf.last() {
@@ -457,6 +500,14 @@ fn open_library(tried: &mut Vec<String>) -> Option<Library> {
         }
     }
 
+    for root in cuda_roots() {
+        let path = root.join("lib64/libnvJitLink.so");
+        tried.push(path.display().to_string());
+        if let Ok(lib) = unsafe { Library::new(&path) } {
+            return Some(lib);
+        }
+    }
+
     for soname in [
         "libnvJitLink.so.13",
         "libnvJitLink.so.12",
@@ -464,14 +515,6 @@ fn open_library(tried: &mut Vec<String>) -> Option<Library> {
     ] {
         tried.push(soname.to_string());
         if let Ok(lib) = unsafe { Library::new(soname) } {
-            return Some(lib);
-        }
-    }
-
-    for root in cuda_roots() {
-        let path = root.join("lib64/libnvJitLink.so");
-        tried.push(path.display().to_string());
-        if let Ok(lib) = unsafe { Library::new(&path) } {
             return Some(lib);
         }
     }
@@ -500,6 +543,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn result_representation_accepts_future_error_codes() {
+        let future_code = NvJitLinkResult(c_int::MAX);
+        assert_ne!(future_code, NvJitLinkResult::SUCCESS);
+        assert_eq!(future_code.0, c_int::MAX);
+    }
+
+    #[test]
     fn cuda_roots_prefers_project_toolkit_env_var() {
         let roots = cuda_roots_from_env(|var| match var {
             "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
@@ -518,5 +568,13 @@ mod tests {
                 PathBuf::from("/opt/cuda"),
             ]
         );
+    }
+
+    #[test]
+    #[ignore = "requires an installed CUDA Toolkit with nvJitLink"]
+    fn installed_toolkit_exposes_linked_ptx_output() {
+        let library = LibNvJitLink::load().expect("load nvJitLink");
+        assert!(library.get_linked_ptx_size.is_some());
+        assert!(library.get_linked_ptx.is_some());
     }
 }

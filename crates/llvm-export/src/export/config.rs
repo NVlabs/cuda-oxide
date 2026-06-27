@@ -8,12 +8,36 @@
 /// Minimal data layout for PTX mode (default behavior).
 pub(super) const NVPTX_DATALAYOUT_PTX: &str = "e-i64:64-i128:128-v16:16-v32:32-n16:32:64";
 
-/// Full NVPTX data layout for libNVVM/LTOIR mode (Blackwell+, LLVM 20 dialect).
+/// Full NVPTX data layout for libNVVM/LTOIR mode (Blackwell+, modern dialect).
 ///
 /// This matches nvcc's output for sm_100+ and is required for full NVVM compatibility.
 pub(super) const NVPTX_DATALAYOUT_FULL: &str = "e-p:64:64:64-p3:32:32:32-i1:8:8-i8:8:8-\
     i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-f128:128:128-\
     v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64-a:8:8";
+
+/// The only supported 64-bit data layout for the legacy LLVM 7 NVVM dialect.
+///
+/// Keep this in sync with NVIDIA's NVVM IR specification. In particular, the
+/// legacy parser does not accept the modern per-address-space layout entries.
+pub(super) const NVPTX_DATALAYOUT_LEGACY: &str = "e-p:64:64:64-i1:8:8-i8:8:8-\
+    i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-\
+    v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64";
+
+/// Textual LLVM dialect selected by libNVVM for a concrete GPU target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NvvmIrDialect {
+    /// LLVM 7 syntax, including typed pointers. Used for pre-Blackwell targets.
+    LegacyLlvm7,
+    /// The current toolkit's modern opaque-pointer syntax. Used for Blackwell+.
+    #[default]
+    Modern,
+}
+
+impl NvvmIrDialect {
+    pub fn uses_typed_pointers(self) -> bool {
+        matches!(self, Self::LegacyLlvm7)
+    }
+}
 
 /// Device debug metadata to emit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -62,6 +86,11 @@ pub trait ExportBackendConfig {
 
     /// Whether kernel definitions should use the `ptx_kernel` calling convention.
     fn emit_ptx_kernel_keyword(&self) -> bool;
+
+    /// NVVM input dialect, when this is an NVVM export.
+    fn nvvm_ir_dialect(&self) -> Option<NvvmIrDialect> {
+        None
+    }
 
     /// Which device debug metadata tier to emit.
     fn debug_kind(&self) -> DebugKind {
@@ -112,14 +141,30 @@ impl ExportBackendConfig for PtxExportConfig {
 /// This produces IR suitable for consumption by libNVVM (e.g., `nvvmCompileProgram -gen-lto`)
 /// or other NVVM-compatible tools.
 ///
-/// Currently supports NVVM 20 dialect (Blackwell+, opaque pointers).
-/// NVVM 7 dialect (pre-Blackwell, typed pointers) is not yet supported.
+/// Supports both libNVVM input dialects: LLVM 7 typed-pointer IR for
+/// pre-Blackwell targets and the current toolkit's opaque-pointer IR for
+/// Blackwell and newer targets.
 #[derive(Clone, Debug, Default)]
-pub struct NvvmExportConfig;
+pub struct NvvmExportConfig {
+    dialect: NvvmIrDialect,
+}
+
+impl NvvmExportConfig {
+    pub fn new(dialect: NvvmIrDialect) -> Self {
+        Self { dialect }
+    }
+
+    pub fn dialect(&self) -> NvvmIrDialect {
+        self.dialect
+    }
+}
 
 impl ExportBackendConfig for NvvmExportConfig {
     fn datalayout(&self) -> &str {
-        NVPTX_DATALAYOUT_FULL
+        match self.dialect {
+            NvvmIrDialect::LegacyLlvm7 => NVPTX_DATALAYOUT_LEGACY,
+            NvvmIrDialect::Modern => NVPTX_DATALAYOUT_FULL,
+        }
     }
 
     fn emit_llvm_used(&self) -> bool {
@@ -131,7 +176,10 @@ impl ExportBackendConfig for NvvmExportConfig {
     }
 
     fn nvvmir_version(&self) -> [i32; 4] {
-        [2, 0, 3, 2] // NVVM IR 2.0, debug 3.2
+        match self.dialect {
+            NvvmIrDialect::LegacyLlvm7 => [2, 0, 3, 1],
+            NvvmIrDialect::Modern => [2, 0, 3, 2],
+        }
     }
 
     fn emit_all_kernel_annotations(&self) -> bool {
@@ -140,5 +188,9 @@ impl ExportBackendConfig for NvvmExportConfig {
 
     fn emit_ptx_kernel_keyword(&self) -> bool {
         false
+    }
+
+    fn nvvm_ir_dialect(&self) -> Option<NvvmIrDialect> {
+        Some(self.dialect)
     }
 }

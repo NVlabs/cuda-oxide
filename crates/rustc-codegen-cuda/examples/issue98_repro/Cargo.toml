@@ -7,11 +7,11 @@ license = "Apache-2.0"
 # Mark as standalone crate (not part of parent workspace)
 [workspace]
 
-# Repro for issue #98: libdevice calls (__nv_expf) auto-switch the device
-# pipeline into NVVM IR mode; the emitted opaque-pointer NVVM IR is rejected
-# by libNVVM with "parse expected type" for pre-Blackwell archs (sm_86 etc).
-# Build with:
-#   cargo oxide build issue98_repro --arch sm_90 -v
+# Regression for issue #98 and the related community math reports. Libdevice
+# calls auto-switch the device pipeline into NVVM IR mode. This must work with
+# legacy typed-pointer NVVM IR on pre-Blackwell targets (sm_86 etc).
+# Verify the legacy path with:
+#   cargo oxide emit-ltoir issue98_repro --arch sm_86
 
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }

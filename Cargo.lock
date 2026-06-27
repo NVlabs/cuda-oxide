@@ -729,6 +729,7 @@ dependencies = [
  "combine",
  "dialect-mir",
  "dialect-nvvm",
+ "libnvvm-sys",
  "linkme",
  "llvm-export",
  "mir-lower",

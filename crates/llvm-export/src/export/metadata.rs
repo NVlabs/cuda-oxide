@@ -28,7 +28,7 @@ pub(super) fn emit_nvvm_annotations(
     output: &mut String,
     state: &mut ModuleExportState,
     emit_all_annotations: bool,
-) {
+) -> Result<(), String> {
     let mut metadata_refs = Vec::new();
 
     // Collect names of kernels that have special configs
@@ -50,12 +50,9 @@ pub(super) fn emit_nvvm_annotations(
 
         for kernel_name in basic_kernels {
             let md_id = state.alloc_metadata_id();
-            writeln!(
-                output,
-                "!{} = !{{ptr @{}, !\"kernel\", i32 1}}",
-                md_id, kernel_name
-            )
-            .unwrap();
+            write!(output, "!{md_id} = !{{").unwrap();
+            emit_function_reference(output, state, &kernel_name)?;
+            writeln!(output, ", !\"kernel\", i32 1}}").unwrap();
             metadata_refs.push(format!("!{}", md_id));
         }
     }
@@ -69,10 +66,11 @@ pub(super) fn emit_nvvm_annotations(
 
     for (name, dim_x, dim_y, dim_z) in cluster_kernels {
         let md_id = state.alloc_metadata_id();
+        write!(output, "!{md_id} = !{{").unwrap();
+        emit_function_reference(output, state, &name)?;
         writeln!(
             output,
-            "!{} = !{{ptr @{}, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {}, !\"cluster_dim_y\", i32 {}, !\"cluster_dim_z\", i32 {}}}",
-            md_id, name, dim_x, dim_y, dim_z
+            ", !\"kernel\", i32 1, !\"cluster_dim_x\", i32 {dim_x}, !\"cluster_dim_y\", i32 {dim_y}, !\"cluster_dim_z\", i32 {dim_z}}}"
         )
         .unwrap();
         metadata_refs.push(format!("!{}", md_id));
@@ -88,23 +86,17 @@ pub(super) fn emit_nvvm_annotations(
     for (name, max_threads, min_blocks) in launch_bounds_kernels {
         for (key, value) in [("maxntidx", max_threads), ("maxntidy", 1), ("maxntidz", 1)] {
             let md_id = state.alloc_metadata_id();
-            writeln!(
-                output,
-                "!{} = !{{ptr @{}, !\"{}\", i32 {}}}",
-                md_id, name, key, value
-            )
-            .unwrap();
+            write!(output, "!{md_id} = !{{").unwrap();
+            emit_function_reference(output, state, &name)?;
+            writeln!(output, ", !\"{key}\", i32 {value}}}").unwrap();
             metadata_refs.push(format!("!{}", md_id));
         }
 
         if let Some(min_blocks) = min_blocks {
             let md_id = state.alloc_metadata_id();
-            writeln!(
-                output,
-                "!{} = !{{ptr @{}, !\"minctasm\", i32 {}}}",
-                md_id, name, min_blocks
-            )
-            .unwrap();
+            write!(output, "!{md_id} = !{{").unwrap();
+            emit_function_reference(output, state, &name)?;
+            writeln!(output, ", !\"minctasm\", i32 {min_blocks}}}").unwrap();
             metadata_refs.push(format!("!{}", md_id));
         }
     }
@@ -118,6 +110,21 @@ pub(super) fn emit_nvvm_annotations(
         )
         .unwrap();
     }
+    Ok(())
+}
+
+fn emit_function_reference(
+    output: &mut String,
+    state: &ModuleExportState<'_>,
+    name: &str,
+) -> Result<(), String> {
+    if state.legacy_typed_pointers() {
+        state.export_function_pointer_type(state.function_type(name)?, output)?;
+    } else {
+        write!(output, "ptr").unwrap();
+    }
+    write!(output, " @{name}").unwrap();
+    Ok(())
 }
 
 pub(super) fn emit_nvvmir_version(
@@ -145,7 +152,7 @@ mod tests {
     use pliron::context::Context;
 
     fn test_state<'a>(ctx: &'a Context) -> ModuleExportState<'a> {
-        ModuleExportState::new(ctx, true, false, DebugKind::Off)
+        ModuleExportState::new(ctx, true, false, DebugKind::Off, None)
     }
 
     #[test]
@@ -185,7 +192,7 @@ mod tests {
         });
 
         let mut output = String::new();
-        emit_nvvm_annotations(&mut output, &mut state, true);
+        emit_nvvm_annotations(&mut output, &mut state, true).unwrap();
         emit_nvvmir_version(&mut output, &mut state, [2, 0, 3, 2]);
 
         assert_eq!(
@@ -214,7 +221,7 @@ mod tests {
         });
 
         let mut output = String::new();
-        emit_nvvm_annotations(&mut output, &mut state, false);
+        emit_nvvm_annotations(&mut output, &mut state, false).unwrap();
 
         assert!(output.is_empty());
         assert_eq!(state.next_metadata_id(), 0);

@@ -1,0 +1,5 @@
+error: #[device] extern blocks must use the non-unwinding `extern "C"` ABI
+ --> tests/compile_fail/device_extern_wrong_abi.rs:4:8
+  |
+4 | unsafe extern "Rust" {
+  |        ^^^^^^^^^^^^^
