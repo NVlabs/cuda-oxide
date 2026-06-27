@@ -166,6 +166,32 @@ pub fn inline_asm_convergent(
     inline_asm.get_operation()
 }
 
+/// Create an inline assembly operation with the sideeffect attribute (non-convergent).
+///
+/// Use this for operations that write to memory but are NOT warp-synchronous
+/// (e.g., `cp.async` copies). Unlike `inline_asm_convergent`, the emitted asm
+/// is marked `sideeffect` only, allowing LLVM to move or duplicate it across
+/// divergent control flow when legal.
+pub fn inline_asm_sideeffect(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    result_ty: pliron::r#type::TypeHandle,
+    inputs: Vec<Value>,
+    asm_template: &str,
+    constraints: &str,
+) -> Ptr<Operation> {
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        result_ty,
+        inputs,
+        asm_template,
+        constraints,
+        AsmKind::SideEffect,
+    );
+    rewriter.insert_operation(ctx, inline_asm.get_operation());
+    inline_asm.get_operation()
+}
+
 /// Truncate an i32 result to i1 (for predicate results).
 pub fn trunc_to_i1(
     ctx: &mut Context,
