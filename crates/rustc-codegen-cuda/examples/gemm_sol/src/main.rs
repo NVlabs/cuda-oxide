@@ -3224,6 +3224,12 @@ mod kernels {
     /// CLC work-stealing: rank 0 issues clc_try_cancel_multicast; both CTAs receive the
     /// response via CLC_BAR. Tile indices are derived by dividing the CLC first_ctaid_x
     /// by the cluster size (2), NOT using raw CTA IDs.
+    ///
+    /// # Shape contract
+    ///
+    /// `k` must be a multiple of 256. With a K tile size of 64, this makes `k_iters`
+    /// a multiple of four, so every output tile starts on pipeline stage 0. The MMA
+    /// consumer relies on that reset to keep its unrolled stage selection constant.
     #[kernel]
     #[cluster_launch(2, 1, 1)]
     pub unsafe fn gemm_sol_clc_multicast_4_stage_pipeline(
@@ -3634,13 +3640,14 @@ mod kernels {
 
                     let tile_k_base = tile_iter * k_iters;
                     let mut k_idx: u32 = 0;
-                    // Unroll the K-loop by one full pipeline cycle. Keep the stage
-                    // derived from the global K-tile sequence so this consumer uses
-                    // exactly the same buffer and barrier as the producer.
+                    // Unroll one full pipeline cycle. The launch contract guarantees
+                    // k_iters % 4 == 0, so the producer's global stage and this local
+                    // stage agree at every tile boundary. Keeping this expression
+                    // loop-local lets the unroll pass fold each stage match.
                     #[unroll(4)]
                     while k_idx < k_iters {
                         let global_k = tile_k_base + k_idx;
-                        let stage = global_k & 3;
+                        let stage = k_idx & 3;
                         let tma_parity = (global_k >> 2) & 1;
 
                         let (smem_a_base, smem_b_base, tma_bar_const, mma_bar_mut): (
@@ -6149,7 +6156,7 @@ fn run_correctness_test_clc_multicast_4_stage_pipeline(
     n: usize,
     k: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    assert!(m.is_multiple_of(256) && n.is_multiple_of(128) && k.is_multiple_of(64));
+    assert!(m.is_multiple_of(256) && n.is_multiple_of(128) && k.is_multiple_of(256));
 
     println!("Matrix: {}x{}x{} (f16 -> bf16)", m, n, k);
     println!("CLC + cta_group::2 + 4-stage SMEM pipeline.");
@@ -6347,7 +6354,7 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     const WARMUP: usize = 10;
     const ITERS: usize = 100;
 
-    assert!(m.is_multiple_of(256) && n.is_multiple_of(128) && k.is_multiple_of(64));
+    assert!(m.is_multiple_of(256) && n.is_multiple_of(128) && k.is_multiple_of(256));
 
     let dev_a = DeviceBuffer::<u16>::zeroed(stream, m * k)?;
     let dev_b = DeviceBuffer::<u16>::zeroed(stream, n * k)?;
