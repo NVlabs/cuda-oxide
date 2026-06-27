@@ -1,11 +1,14 @@
 # The Lowering Pipeline
 
-The previous chapters built the IR from both ends: [MIR Importer](mir-importer.md)
-translated Stable MIR into `dialect-mir`, and
+The previous chapters built and prepared the IR.
+[MIR Importer](mir-importer.md) translated Stable MIR into `dialect-mir`.
+[Compiler Optimizations](compiler-optimizations.md) explained how
+`mir-transforms` rewrites that IR in place, while
 [Pliron Dialects](mlir-dialects.md) described `dialect-mir`, the LLVM dialect,
-and `dialect-nvvm`. This chapter is about the bridge between them -- the pass
-that takes Rust-flavored IR and turns it into something LLVM can actually
-compile.
+and `dialect-nvvm`.
+
+This chapter covers the next bridge: turning Rust-flavored IR into something
+LLVM can compile.
 
 If you know Rust types, you are about to find out how many of them LLVM has
 never heard of.

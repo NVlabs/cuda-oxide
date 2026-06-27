@@ -167,6 +167,7 @@ compiler/pliron
 compiler/rustc-public
 compiler/rustc-codegen-cuda
 compiler/mir-importer
+compiler/compiler-optimizations
 compiler/mlir-dialects
 compiler/lowering-pipeline
 compiler/adding-new-intrinsics

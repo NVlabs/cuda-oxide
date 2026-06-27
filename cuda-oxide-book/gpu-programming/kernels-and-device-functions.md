@@ -164,6 +164,8 @@ clear error: `"CUDA-OXIDE: FORBIDDEN CRATE IN DEVICE CODE"` with a list of
 allowed crates (`core`, `alloc`, `cuda_device`, and your local crate).
 :::
 
+(loop-unrolling)=
+
 ## Loop unrolling
 
 Inside a `#[kernel]` or `#[device]` function, put `#[unroll]` directly on a
@@ -226,6 +228,11 @@ unrolling because they keep loop variables in memory instead of SSA form.
 Unrolling trades larger generated code for fewer branches and more
 optimization opportunities. Use it for small or performance-critical loops,
 and measure the result.
+
+:::{seealso}
+For how the compiler analyzes and rewrites annotated loops, including the
+stage-index peephole, see [Compiler Optimizations](../compiler/compiler-optimizations.md).
+:::
 
 ## `#[launch_bounds]` -- occupancy hints
 

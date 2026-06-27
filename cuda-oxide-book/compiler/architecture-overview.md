@@ -98,7 +98,8 @@ Stage by stage:
    `BinOp`, etc.). The initial form uses per-local `mir.alloca` slots with
    `mir.load`/`mir.store` for cross-block data flow; `pliron::opts::mem2reg`
    then promotes those slots back into SSA values.
-   Annotated loop unrolling runs on that SSA form before lowering.
+   [Compiler optimizations](compiler-optimizations.md), beginning with
+   annotated loop unrolling, run on that SSA form before lowering.
 
 5. **LLVM dialect (pliron-llvm).**
    `mir-lower` transforms `dialect-mir` operations into LLVM dialect
@@ -128,6 +129,7 @@ cuda-oxide is split into focused crates. Here is every one and its role:
 | `rustc-codegen-cuda` | Custom rustc codegen backend -- intercepts `codegen_crate()`, splits host/device code  |
 | `mir-importer`       | Translates Stable MIR into `dialect-mir`, orchestrates the full pipeline               |
 | `dialect-mir`        | pliron dialect modeling Rust MIR semantics (places, rvalues, terminators)              |
+| `mir-transforms`     | Analyzes and optimizes `dialect-mir` before lowering; currently provides loop unrolling |
 | `llvm-export`        | Re-exports `pliron-llvm`'s LLVM dialect + cuda-oxide's textual `.ll` exporter          |
 | `dialect-nvvm`       | pliron dialect for NVIDIA GPU intrinsics (`tid`, `ntid`, barriers, TMA)                |
 | `mir-lower`          | Lowers `dialect-mir` to the LLVM dialect -- the main transformation pass               |
@@ -335,6 +337,8 @@ The rest of this chapter zooms into each piece of the architecture:
 - **[The Code Generator: rustc-codegen-cuda](rustc-codegen-cuda.md)** -- the
   codegen backend that intercepts rustc.
 - **[MIR Importer](mir-importer.md)** -- translating Stable MIR into pliron.
+- **[Compiler Optimizations](compiler-optimizations.md)** -- how
+  `mir-transforms` analyzes and rewrites `dialect-mir`.
 - **[Pliron Dialects](mlir-dialects.md)** -- the three custom dialects and their
   operation sets.
 - **[The Lowering Pipeline](lowering-pipeline.md)** -- `dialect-mir` to the

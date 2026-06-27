@@ -197,7 +197,7 @@ the variable may honestly print as `<optimized out>` because it has not been
 loaded into a register yet. For variable checks, prefer a source line after the
 value is used:
 
-```gdb
+```text
 break src/main.rs:412
 run
 info args
