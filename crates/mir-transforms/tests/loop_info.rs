@@ -9,7 +9,10 @@
 
 mod common;
 
-use common::{block, counted_loop, empty_func, mir_ctx, ret};
+use common::{
+    block, counted_loop, early_exit_counted_loop, empty_func, mir_ctx, multi_latch_counted_loop,
+    multiple_exit_counted_loop, ret,
+};
 use mir_transforms::analyses::loop_info::LoopInfo;
 use pliron::graph::dominance::DomInfo;
 
@@ -67,4 +70,75 @@ fn finds_a_single_counted_loop() {
     // Body blocks map to this loop; the preheader (outside) does not.
     assert_eq!(info.innermost_loop(lp.latch), Some(id));
     assert_eq!(info.innermost_loop(lp.preheader), None);
+}
+
+#[test]
+fn finds_both_continue_back_edges_as_latches() {
+    let mut ctx = mir_ctx();
+    let lp = multi_latch_counted_loop(&mut ctx, 4, 1, 1);
+
+    let mut dom = DomInfo::default();
+    let info = {
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    assert_eq!(info.loops().len(), 1);
+    let id = info.innermost_loop(lp.header).unwrap();
+    let l = &info.loops()[id];
+    assert_eq!(l.blocks.len(), 4, "header + chooser + two latches");
+    assert_eq!(l.latches.len(), 2);
+    assert!(l.latches.contains(&lp.continue_latch));
+    assert!(l.latches.contains(&lp.normal_latch));
+    assert_eq!(info.exiting_blocks(&ctx, lp.region, id), vec![lp.header]);
+    assert_eq!(info.exit_blocks(&ctx, lp.region, id), vec![lp.exit]);
+}
+
+#[test]
+fn reports_header_and_early_break_as_exiting_blocks() {
+    let mut ctx = mir_ctx();
+    let lp = early_exit_counted_loop(&mut ctx, 4, 2);
+
+    let mut dom = DomInfo::default();
+    let info = {
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    assert_eq!(info.loops().len(), 1);
+    let id = info.innermost_loop(lp.header).unwrap();
+    let l = &info.loops()[id];
+    assert_eq!(l.latches, vec![lp.latch]);
+
+    let exiting = info.exiting_blocks(&ctx, lp.region, id);
+    assert_eq!(exiting.len(), 2);
+    assert!(exiting.contains(&lp.header));
+    assert!(exiting.contains(&lp.body));
+    assert_eq!(info.exit_blocks(&ctx, lp.region, id), vec![lp.exit]);
+}
+
+#[test]
+fn reports_all_early_exit_targets() {
+    let mut ctx = mir_ctx();
+    let lp = multiple_exit_counted_loop(&mut ctx, 4);
+
+    let mut dom = DomInfo::default();
+    let info = {
+        let dt = dom.get_dom_tree(&ctx, lp.region);
+        LoopInfo::compute(&ctx, lp.region, dt)
+    };
+    assert_eq!(info.loops().len(), 1);
+    let id = info.innermost_loop(lp.header).unwrap();
+    let l = &info.loops()[id];
+    assert_eq!(l.latches, vec![lp.latch]);
+
+    let exiting = info.exiting_blocks(&ctx, lp.region, id);
+    assert_eq!(exiting.len(), 3);
+    assert!(exiting.contains(&lp.header));
+    assert!(exiting.contains(&lp.check_a));
+    assert!(exiting.contains(&lp.check_b));
+
+    let exits = info.exit_blocks(&ctx, lp.region, id);
+    assert_eq!(exits.len(), 3);
+    assert!(exits.contains(&lp.normal_exit));
+    assert!(exits.contains(&lp.exit_a));
+    assert!(exits.contains(&lp.exit_b));
 }

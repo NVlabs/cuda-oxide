@@ -51,11 +51,16 @@ pub fn u32t(ctx: &mut Context) -> TypedHandle<IntegerType> {
     IntegerType::get(ctx, 32, Signedness::Unsigned)
 }
 
-/// Create an empty `fn foo()` inside a module and return `(module_op, region)`.
-/// Blocks are appended to `region` by the caller; the first block is the entry.
-pub fn empty_func(ctx: &mut Context) -> (Ptr<Operation>, Ptr<Region>) {
+/// Create `fn foo(inputs...) -> outputs...` inside a module and return
+/// `(module_op, region)`. Blocks are appended to `region` by the caller; the
+/// first block is the entry and must have the same argument types as `inputs`.
+pub fn func(
+    ctx: &mut Context,
+    inputs: Vec<TypeHandle>,
+    outputs: Vec<TypeHandle>,
+) -> (Ptr<Operation>, Ptr<Region>) {
     let module = ModuleOp::new(ctx, "test".try_into().unwrap());
-    let func_ty = FunctionType::get(ctx, vec![], vec![]);
+    let func_ty = FunctionType::get(ctx, inputs, outputs);
     let func_op = Operation::new(
         ctx,
         MirFuncOp::get_concrete_op_info(),
@@ -69,6 +74,11 @@ pub fn empty_func(ctx: &mut Context) -> (Ptr<Operation>, Ptr<Region>) {
     module.append_operation(ctx, func_op, 0);
     let region = func_op.deref(ctx).get_region(0);
     (module.get_operation(), region)
+}
+
+/// Create an empty `fn foo()` inside a module and return `(module_op, region)`.
+pub fn empty_func(ctx: &mut Context) -> (Ptr<Operation>, Ptr<Region>) {
+    func(ctx, vec![], vec![])
 }
 
 /// Append an empty block (with the given argument types) to `region`.
@@ -113,15 +123,19 @@ pub fn goto(ctx: &mut Context, b: Ptr<BasicBlock>, target: Ptr<BasicBlock>, oper
     op.insert_at_back(b, ctx);
 }
 
-/// Append `cond_br cond [true_succ, false_succ]` (no successor operands) to `b`.
-pub fn cond_br(
+/// Append `cond_br cond [true_succ(true_operands),
+/// false_succ(false_operands)]` to `b`.
+pub fn cond_br_args(
     ctx: &mut Context,
     b: Ptr<BasicBlock>,
     cond: Value,
     true_succ: Ptr<BasicBlock>,
+    true_operands: Vec<Value>,
     false_succ: Ptr<BasicBlock>,
+    false_operands: Vec<Value>,
 ) {
-    let (flat, segs) = MirCondBranchOp::compute_segment_sizes(vec![vec![cond], vec![], vec![]]);
+    let (flat, segs) =
+        MirCondBranchOp::compute_segment_sizes(vec![vec![cond], true_operands, false_operands]);
     let op = Operation::new(
         ctx,
         MirCondBranchOp::get_concrete_op_info(),
@@ -136,17 +150,33 @@ pub fn cond_br(
     op.insert_at_back(b, ctx);
 }
 
-/// Append a `return` (no value) to `b`.
-pub fn ret(ctx: &mut Context, b: Ptr<BasicBlock>) {
+/// Append `cond_br cond [true_succ, false_succ]` (no successor operands) to `b`.
+pub fn cond_br(
+    ctx: &mut Context,
+    b: Ptr<BasicBlock>,
+    cond: Value,
+    true_succ: Ptr<BasicBlock>,
+    false_succ: Ptr<BasicBlock>,
+) {
+    cond_br_args(ctx, b, cond, true_succ, vec![], false_succ, vec![]);
+}
+
+/// Append `return values...` to `b`.
+pub fn ret_values(ctx: &mut Context, b: Ptr<BasicBlock>, values: Vec<Value>) {
     let op = Operation::new(
         ctx,
         MirReturnOp::get_concrete_op_info(),
         vec![],
-        vec![],
+        values,
         vec![],
         0,
     );
     op.insert_at_back(b, ctx);
+}
+
+/// Append a `return` (no value) to `b`.
+pub fn ret(ctx: &mut Context, b: Ptr<BasicBlock>) {
+    ret_values(ctx, b, vec![]);
 }
 
 /// Append a two-operand op (built from `info`) of `result_ty` to `b`, returning
@@ -181,6 +211,19 @@ pub struct CountedLoop {
 ///   exit:             return
 /// ```
 pub fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
+    counted_loop_from(ctx, 0, n)
+}
+
+/// Build the same unsigned counted loop with an explicit starting value. This
+/// variant covers constants whose high bit is set without changing the common
+/// zero-based test shape.
+pub fn counted_loop_from(ctx: &mut Context, start: i64, n: i64) -> CountedLoop {
+    counted_loop_from_step(ctx, start, n, 1)
+}
+
+/// Build the unsigned counted loop with explicit start, bound, and positive
+/// step. This exposes wraparound cases without complicating ordinary tests.
+pub fn counted_loop_from_step(ctx: &mut Context, start: i64, n: i64, step: i64) -> CountedLoop {
     let (module, region) = empty_func(ctx);
     let u32 = u32t(ctx);
     let i1 = i1(ctx);
@@ -190,9 +233,9 @@ pub fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
     let latch = block(ctx, region, vec![]);
     let exit = block(ctx, region, vec![]);
 
-    // preheader: acc0 = 0; i0 = 0; goto header(acc0, i0)
+    // preheader: acc0 = 0; i0 = start; goto header(acc0, i0)
     let acc0 = iconst(ctx, preheader, u32, 0);
-    let i0 = iconst(ctx, preheader, u32, 0);
+    let i0 = iconst(ctx, preheader, u32, start);
     goto(ctx, preheader, header, vec![acc0, i0]);
 
     // header(acc, i): nlt = not(i < n); cond_br nlt [exit, latch]
@@ -221,7 +264,7 @@ pub fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
     };
     cond_br(ctx, header, nlt, exit, latch);
 
-    // latch: acc1 = acc + i; i1 = i + 1; goto header(acc1, i1)
+    // latch: acc1 = acc + i; i1 = i + step; goto header(acc1, i1)
     let acc1 = op2!(
         ctx,
         latch,
@@ -230,7 +273,7 @@ pub fn counted_loop(ctx: &mut Context, n: i64) -> CountedLoop {
         acc,
         i
     );
-    let one = iconst(ctx, latch, u32, 1);
+    let one = iconst(ctx, latch, u32, step);
     let inext = op2!(
         ctx,
         latch,
@@ -384,5 +427,465 @@ pub fn nested_counted_loop(ctx: &mut Context, n: i64, m: i64) -> NestedLoop {
         inner_body,
         outer_latch,
         exit,
+    }
+}
+
+/// A counted loop whose `continue` and normal paths are distinct back-edges.
+pub struct MultiLatchLoop {
+    pub module: Ptr<Operation>,
+    pub region: Ptr<Region>,
+    pub preheader: Ptr<BasicBlock>,
+    pub header: Ptr<BasicBlock>,
+    pub choose: Ptr<BasicBlock>,
+    pub continue_latch: Ptr<BasicBlock>,
+    pub normal_latch: Ptr<BasicBlock>,
+    pub exit: Ptr<BasicBlock>,
+}
+
+/// Build this two-latch loop, returning the final accumulator:
+///
+/// ```text
+///   preheader:          acc0=0; i0=0; goto header(acc0, i0)
+///   header(acc, i):     if i >= n -> exit(acc), else -> choose
+///   choose:             if i < 2 -> continue_latch, else -> normal_latch
+///   continue_latch:     ic = i + continue_step; goto header(acc, ic)
+///   normal_latch:       acc1 = acc+i; in = i + normal_step;
+///                       goto header(acc1, in)
+///   exit(result):       return result
+/// ```
+///
+/// With both steps equal to one and `n=4`, this models a `continue` for `i=0,1`
+/// and produces `2+3=5`. Giving the two latches different steps constructs the
+/// unsafe non-affine recurrence that the unroller must reject.
+pub fn multi_latch_counted_loop(
+    ctx: &mut Context,
+    n: i64,
+    continue_step: i64,
+    normal_step: i64,
+) -> MultiLatchLoop {
+    let u32 = u32t(ctx);
+    let i1 = i1(ctx);
+    let (module, region) = func(ctx, vec![], vec![u32.into()]);
+
+    let preheader = block(ctx, region, vec![]);
+    let header = block(ctx, region, vec![u32.into(), u32.into()]); // (acc, i)
+    let choose = block(ctx, region, vec![]);
+    let continue_latch = block(ctx, region, vec![]);
+    let normal_latch = block(ctx, region, vec![]);
+    let exit = block(ctx, region, vec![u32.into()]);
+
+    let acc0 = iconst(ctx, preheader, u32, 0);
+    let i0 = iconst(ctx, preheader, u32, 0);
+    goto(ctx, preheader, header, vec![acc0, i0]);
+
+    let acc = header.deref(ctx).get_argument(0);
+    let i = header.deref(ctx).get_argument(1);
+    let nconst = iconst(ctx, header, u32, n);
+    let lt_n = op2!(
+        ctx,
+        header,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        nconst
+    );
+    let done = {
+        let op = Operation::new(
+            ctx,
+            MirNotOp::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![lt_n],
+            vec![],
+            0,
+        );
+        op.insert_at_back(header, ctx);
+        op.deref(ctx).get_result(0)
+    };
+    cond_br_args(ctx, header, done, exit, vec![acc], choose, vec![]);
+
+    let two = iconst(ctx, choose, u32, 2);
+    let take_continue = op2!(
+        ctx,
+        choose,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        two
+    );
+    cond_br(ctx, choose, take_continue, continue_latch, normal_latch);
+
+    let cstep = iconst(ctx, continue_latch, u32, continue_step);
+    let ic = op2!(
+        ctx,
+        continue_latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        cstep
+    );
+    goto(ctx, continue_latch, header, vec![acc, ic]);
+
+    let acc1 = op2!(
+        ctx,
+        normal_latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        acc,
+        i
+    );
+    let nstep = iconst(ctx, normal_latch, u32, normal_step);
+    let inext = op2!(
+        ctx,
+        normal_latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        nstep
+    );
+    goto(ctx, normal_latch, header, vec![acc1, inext]);
+
+    let result = exit.deref(ctx).get_argument(0);
+    ret_values(ctx, exit, vec![result]);
+
+    MultiLatchLoop {
+        module,
+        region,
+        preheader,
+        header,
+        choose,
+        continue_latch,
+        normal_latch,
+        exit,
+    }
+}
+
+/// A counted loop with one normal exit and one early `break` edge.
+pub struct EarlyExitLoop {
+    pub module: Ptr<Operation>,
+    pub region: Ptr<Region>,
+    pub preheader: Ptr<BasicBlock>,
+    pub header: Ptr<BasicBlock>,
+    pub body: Ptr<BasicBlock>,
+    pub latch: Ptr<BasicBlock>,
+    pub exit: Ptr<BasicBlock>,
+}
+
+/// Build `while i < n { acc += i; if i >= break_at { break } i += 1 }`.
+/// Both the normal header exit and the early body exit pass the path-specific
+/// accumulator into the shared exit block.
+pub fn early_exit_counted_loop(ctx: &mut Context, n: i64, break_at: i64) -> EarlyExitLoop {
+    let u32 = u32t(ctx);
+    let i1 = i1(ctx);
+    let (module, region) = func(ctx, vec![], vec![u32.into()]);
+
+    let preheader = block(ctx, region, vec![]);
+    let header = block(ctx, region, vec![u32.into(), u32.into()]); // (acc, i)
+    let body = block(ctx, region, vec![]);
+    let latch = block(ctx, region, vec![]);
+    let exit = block(ctx, region, vec![u32.into()]);
+
+    let acc0 = iconst(ctx, preheader, u32, 0);
+    let i0 = iconst(ctx, preheader, u32, 0);
+    goto(ctx, preheader, header, vec![acc0, i0]);
+
+    let acc = header.deref(ctx).get_argument(0);
+    let i = header.deref(ctx).get_argument(1);
+    let nconst = iconst(ctx, header, u32, n);
+    let lt_n = op2!(
+        ctx,
+        header,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        nconst
+    );
+    let done = {
+        let op = Operation::new(
+            ctx,
+            MirNotOp::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![lt_n],
+            vec![],
+            0,
+        );
+        op.insert_at_back(header, ctx);
+        op.deref(ctx).get_result(0)
+    };
+    cond_br_args(ctx, header, done, exit, vec![acc], body, vec![]);
+
+    let acc1 = op2!(
+        ctx,
+        body,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        acc,
+        i
+    );
+    let break_const = iconst(ctx, body, u32, break_at);
+    let before_break = op2!(
+        ctx,
+        body,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        break_const
+    );
+    // Continue while `i < break_at`; the false edge is the early `break`.
+    cond_br_args(ctx, body, before_break, latch, vec![], exit, vec![acc1]);
+
+    let one = iconst(ctx, latch, u32, 1);
+    let inext = op2!(
+        ctx,
+        latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        one
+    );
+    goto(ctx, latch, header, vec![acc1, inext]);
+
+    let result = exit.deref(ctx).get_argument(0);
+    ret_values(ctx, exit, vec![result]);
+
+    EarlyExitLoop {
+        module,
+        region,
+        preheader,
+        header,
+        body,
+        latch,
+        exit,
+    }
+}
+
+/// Build the same early-exit loop, but let `exit` read the header accumulator
+/// directly rather than receiving it as a block argument. This is valid before
+/// unrolling because the header dominates the exit. With an early exit, however,
+/// no single replacement value is correct for every cloned path, so v1 must skip.
+pub fn early_exit_with_direct_liveout(ctx: &mut Context, n: i64) -> EarlyExitLoop {
+    let u32 = u32t(ctx);
+    let i1 = i1(ctx);
+    let (module, region) = func(ctx, vec![], vec![u32.into()]);
+
+    let preheader = block(ctx, region, vec![]);
+    let header = block(ctx, region, vec![u32.into(), u32.into()]); // (acc, i)
+    let body = block(ctx, region, vec![]);
+    let latch = block(ctx, region, vec![]);
+    let exit = block(ctx, region, vec![]);
+
+    let acc0 = iconst(ctx, preheader, u32, 0);
+    let i0 = iconst(ctx, preheader, u32, 0);
+    goto(ctx, preheader, header, vec![acc0, i0]);
+
+    let acc = header.deref(ctx).get_argument(0);
+    let i = header.deref(ctx).get_argument(1);
+    let nconst = iconst(ctx, header, u32, n);
+    let lt_n = op2!(
+        ctx,
+        header,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        nconst
+    );
+    let done = {
+        let op = Operation::new(
+            ctx,
+            MirNotOp::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![lt_n],
+            vec![],
+            0,
+        );
+        op.insert_at_back(header, ctx);
+        op.deref(ctx).get_result(0)
+    };
+    cond_br(ctx, header, done, exit, body);
+
+    let acc1 = op2!(
+        ctx,
+        body,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        acc,
+        i
+    );
+    let two = iconst(ctx, body, u32, 2);
+    let before_break = op2!(
+        ctx,
+        body,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        two
+    );
+    let break_now = {
+        let op = Operation::new(
+            ctx,
+            MirNotOp::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![before_break],
+            vec![],
+            0,
+        );
+        op.insert_at_back(body, ctx);
+        op.deref(ctx).get_result(0)
+    };
+    cond_br(ctx, body, break_now, exit, latch);
+
+    let one = iconst(ctx, latch, u32, 1);
+    let inext = op2!(
+        ctx,
+        latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        one
+    );
+    goto(ctx, latch, header, vec![acc1, inext]);
+
+    ret_values(ctx, exit, vec![acc]);
+
+    EarlyExitLoop {
+        module,
+        region,
+        preheader,
+        header,
+        body,
+        latch,
+        exit,
+    }
+}
+
+/// A counted loop with two early-exit targets plus its normal exit.
+pub struct MultipleExitLoop {
+    pub module: Ptr<Operation>,
+    pub region: Ptr<Region>,
+    pub preheader: Ptr<BasicBlock>,
+    pub header: Ptr<BasicBlock>,
+    pub check_a: Ptr<BasicBlock>,
+    pub check_b: Ptr<BasicBlock>,
+    pub latch: Ptr<BasicBlock>,
+    pub normal_exit: Ptr<BasicBlock>,
+    pub exit_a: Ptr<BasicBlock>,
+    pub exit_b: Ptr<BasicBlock>,
+}
+
+/// Build a counted loop with two runtime-controlled `break` targets. `flag_a`
+/// and `flag_b` are function arguments, so SCCP cannot erase either path:
+///
+/// ```text
+///   header(acc, i):  done -> normal_exit(acc), otherwise -> check_a
+///   check_a:         acc1=acc+i; flag_a -> exit_a(acc1), else -> check_b
+///   check_b:         flag_b -> exit_b(acc1), else -> latch
+///   latch:           i1=i+1; goto header(acc1, i1)
+/// ```
+///
+/// The exits return the normal value, `value+100`, and `value+200` respectively.
+pub fn multiple_exit_counted_loop(ctx: &mut Context, n: i64) -> MultipleExitLoop {
+    let u32 = u32t(ctx);
+    let i1 = i1(ctx);
+    let (module, region) = func(ctx, vec![i1.into(), i1.into()], vec![u32.into()]);
+
+    let preheader = block(ctx, region, vec![i1.into(), i1.into()]);
+    let header = block(ctx, region, vec![u32.into(), u32.into()]); // (acc, i)
+    let check_a = block(ctx, region, vec![]);
+    let check_b = block(ctx, region, vec![]);
+    let latch = block(ctx, region, vec![]);
+    let normal_exit = block(ctx, region, vec![u32.into()]);
+    let exit_a = block(ctx, region, vec![u32.into()]);
+    let exit_b = block(ctx, region, vec![u32.into()]);
+
+    let flag_a = preheader.deref(ctx).get_argument(0);
+    let flag_b = preheader.deref(ctx).get_argument(1);
+    let acc0 = iconst(ctx, preheader, u32, 0);
+    let i0 = iconst(ctx, preheader, u32, 0);
+    goto(ctx, preheader, header, vec![acc0, i0]);
+
+    let acc = header.deref(ctx).get_argument(0);
+    let i = header.deref(ctx).get_argument(1);
+    let nconst = iconst(ctx, header, u32, n);
+    let lt_n = op2!(
+        ctx,
+        header,
+        MirLtOp::get_concrete_op_info(),
+        i1.into(),
+        i,
+        nconst
+    );
+    let done = {
+        let op = Operation::new(
+            ctx,
+            MirNotOp::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![lt_n],
+            vec![],
+            0,
+        );
+        op.insert_at_back(header, ctx);
+        op.deref(ctx).get_result(0)
+    };
+    cond_br_args(ctx, header, done, normal_exit, vec![acc], check_a, vec![]);
+
+    let acc1 = op2!(
+        ctx,
+        check_a,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        acc,
+        i
+    );
+    cond_br_args(ctx, check_a, flag_a, exit_a, vec![acc1], check_b, vec![]);
+    cond_br_args(ctx, check_b, flag_b, exit_b, vec![acc1], latch, vec![]);
+
+    let one = iconst(ctx, latch, u32, 1);
+    let inext = op2!(
+        ctx,
+        latch,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        i,
+        one
+    );
+    goto(ctx, latch, header, vec![acc1, inext]);
+
+    let normal_value = normal_exit.deref(ctx).get_argument(0);
+    ret_values(ctx, normal_exit, vec![normal_value]);
+
+    let value_a = exit_a.deref(ctx).get_argument(0);
+    let tag_a = iconst(ctx, exit_a, u32, 100);
+    let tagged_a = op2!(
+        ctx,
+        exit_a,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        value_a,
+        tag_a
+    );
+    ret_values(ctx, exit_a, vec![tagged_a]);
+
+    let value_b = exit_b.deref(ctx).get_argument(0);
+    let tag_b = iconst(ctx, exit_b, u32, 200);
+    let tagged_b = op2!(
+        ctx,
+        exit_b,
+        MirAddOp::get_concrete_op_info(),
+        u32.into(),
+        value_b,
+        tag_b
+    );
+    ret_values(ctx, exit_b, vec![tagged_b]);
+
+    MultipleExitLoop {
+        module,
+        region,
+        preheader,
+        header,
+        check_a,
+        check_b,
+        latch,
+        normal_exit,
+        exit_a,
+        exit_b,
     }
 }

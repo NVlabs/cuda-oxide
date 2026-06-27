@@ -32,11 +32,12 @@ warp shuffle and an integer add coexist in the same function body.
 Data flows through the pipeline like this:
 
 ```text
-dialect-mir ──(mem2reg)──▶ dialect-mir (SSA) ──(DialectConversion)──▶ LLVM dialect + dialect-nvvm ops ──(export)──▶ textual LLVM IR ──(llc)──▶ PTX
+dialect-mir ──(mem2reg)──▶ dialect-mir (SSA) ──(annotated unroll)──▶ dialect-mir
+  ──(DialectConversion)──▶ LLVM dialect + dialect-nvvm ops ──(export)──▶ LLVM IR ──(llc)──▶ PTX
 ```
 
-Each arrow is a well-defined transformation. The first two happen inside
-pliron; the last one is LLVM's NVPTX backend doing what it does best.
+Each arrow is a well-defined transformation over pliron or LLVM IR. The last
+one is LLVM's NVPTX backend doing what it does best.
 
 ---
 

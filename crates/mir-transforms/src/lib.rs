@@ -13,4 +13,5 @@
 //! live here too.
 
 pub mod analyses;
+mod canonicalize;
 pub mod unroll;

@@ -725,9 +725,11 @@ pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
 ///     let tid = thread::index_1d();
 ///     if let Some(out_elem) = output.get_mut(tid) {
 ///         let mut sum = 0;
+///         let mut i = 0;
 ///         #[unroll]
-///         for i in 0..4 {
+///         while i < 4 {
 ///             sum += i;
+///             i += 1;
 ///         }
 ///         *out_elem = sum;
 ///     }
@@ -739,6 +741,19 @@ pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
 ///     }
 /// }
 /// ```
+///
+/// The pass currently recognizes explicit counted `while` loops. Range-based
+/// `for` loops are not yet recognized.
+///
+/// Loops with several `continue` paths are supported. Full `#[unroll]` also
+/// preserves `break` paths and multiple exit targets. Partial `#[unroll(N)]`
+/// requires a positive counter step, a `<` or `<=` test, an unchanging limit,
+/// and no exit besides the normal header test. Unsupported requests warn and
+/// are not unrolled.
+///
+/// One annotation may create at most 1,024 body copies, 8,192 cloned basic
+/// blocks, and 65,536 cloned operations. Larger requests warn and are not
+/// unrolled.
 ///
 /// # Parameters
 ///

@@ -762,7 +762,7 @@ fn compile_nvvm_to_ltoir(ir: &[u8], name: &str, compute_arch: &str) -> Vec<u8> {
 // Pipeline command
 // =============================================================================
 
-/// Show the full compilation pipeline with verbose output at every stage.
+/// Show verbose pipeline progress and the available intermediate artifacts.
 ///
 /// Enables all diagnostic env vars (`CUDA_OXIDE_VERBOSE`, `SHOW_RUSTC_MIR`,
 /// `DUMP_MIR`, `DUMP_LLVM`) so the user can see MIR collection, the

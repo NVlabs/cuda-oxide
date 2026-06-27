@@ -62,9 +62,10 @@
 //! │   │  Pipeline stages:                                                       │   │
 //! │   │    1. Rust MIR → `dialect-mir` (alloca form)                            │   │
 //! │   │    2. `dialect-mir` → `dialect-mir` (mem2reg → SSA)                     │   │
-//! │   │    3. `dialect-mir` → LLVM dialect (via `mir-lower`)                    │   │
-//! │   │    4. LLVM dialect → textual LLVM IR (.ll)                              │   │
-//! │   │    5. LLVM IR → PTX via `llc` (.ptx)                                    │   │
+//! │   │    3. Apply annotated loop unrolling                                    │   │
+//! │   │    4. `dialect-mir` → LLVM dialect (via `mir-lower`)                    │   │
+//! │   │    5. LLVM dialect → textual LLVM IR (.ll)                              │   │
+//! │   │    6. LLVM IR → PTX via `llc` (.ptx)                                    │   │
 //! │   └─────────────────────────────────────────────────────────────────────────┘   │
 //! │                              │                                                  │
 //! │                              ▼                                                  │
@@ -371,6 +372,7 @@ impl From<std::io::Error> for DeviceCodegenError {
 ///                     ├──▶ `dialect-mir` (alloca form)
 ///                     │
 ///                     ├──▶ `dialect-mir` (mem2reg → SSA)
+///                     ├──▶ annotated loop unroll
 ///                     │
 ///                     ├──▶ LLVM dialect
 ///                     │
@@ -584,7 +586,7 @@ pub fn generate_device_code<'tcx>(
         };
 
         // Run the cuda-oxide pipeline!
-        // Rust MIR → `dialect-mir` → mem2reg → LLVM dialect → LLVM IR → PTX.
+        // Rust MIR → `dialect-mir` → mem2reg → unroll → LLVM dialect → LLVM IR → PTX.
         // Device externs are emitted as `declare` statements in LLVM IR
         mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config)
     });

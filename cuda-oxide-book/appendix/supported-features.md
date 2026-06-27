@@ -55,6 +55,7 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 | For Loops (range, iterator, enumerate) | **Full** | Full iterator desugaring: range-based, `slice.iter()`, `enumerate()`, nested loops, `break`, `continue`. |
 | While Loops / If-Else | **Full** | Baseline control flow fully supported. |
 | Break and Continue | **Full** | `break` and `continue` in for/while loops, including early exit. |
+| Loop Unroll Annotations | **Partial** | `#[unroll]` and `#[unroll(N)]` request unrolling of explicit counted `while` loops. Nested loops and multiple `continue` paths work; full unrolling preserves `break` paths and multiple exit targets, while partial unrolling requires a positive-step `<`/`<=` loop with an invariant limit and only the normal header exit. Requests are capped at 1,024 copies, 8,192 cloned blocks, and 65,536 cloned operations. |
 
 ## Compiler: Arithmetic and Casting
 
@@ -88,11 +89,11 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 | Feature | Status | Description |
 |:--------|:-------|:------------|
 | Unified Single-Source Compilation | **Full** | Host and device code in the same file. Custom rustc codegen backend intercepts codegen. No `#[cfg]` needed. |
-| PTX Output | **Full** | Default output: Rust MIR → `dialect-mir` → `mem2reg` → LLVM dialect → LLVM IR → `llc` → PTX. Targets sm_80 through sm_100a. |
+| PTX Output | **Full** | Default output: Rust MIR → `dialect-mir` → `mem2reg` → annotated loop unroll → LLVM dialect → LLVM IR → `llc` → PTX. Targets sm_80 through sm_100a. |
 | NVVM IR Output | **Full** | Alternative output for libNVVM consumption with NVVM metadata. |
 | LTOIR Linking | **Full** | Device-side LTO via libNVVM and nvJitLink. |
 | Float Math Intrinsics (libdevice) | **Full** | Rust `f32`/`f64` math methods (`sin`, `cos`, `exp`, `pow`, `sqrt`, ...) lower to CUDA libdevice (`__nv_*`). cuda-oxide auto-detects libdevice usage and emits NVVM IR; `cuda_host::load_kernel_module` (sync) and `cuda_host::load_kernel_module_async` (async) build the cubin via libNVVM + nvJitLink at runtime. |
-| Pipeline Inspection | **Full** | `cargo oxide pipeline <example>` shows IR at each compilation stage. |
+| Pipeline Inspection | **Full** | `cargo oxide pipeline <example>` shows imported and post-`mem2reg` MIR, LLVM dialect, exported LLVM IR, and PTX. |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug info and launches `cuda-gdb`: source breakpoints, stepping, backtraces, and cross-file helper spans. Validated end-to-end by `scripts/debug-smoketest.sh`. |
 | cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, and structs/tuples/arrays with their fields. Enums, ABI-split bare slices, closures, and projections (`x.0`) are not yet described. |
 

@@ -166,8 +166,9 @@ allowed crates (`core`, `alloc`, `cuda_device`, and your local crate).
 
 ## Loop unrolling
 
-Put `#[unroll]` directly on a loop whose trip count is known at compile time.
-The compiler replaces the loop with straight-line copies of its body:
+Inside a `#[kernel]` or `#[device]` function, put `#[unroll]` directly on a
+loop whose trip count is known at compile time. This requests that the compiler
+remove the loop and lay out copies of its body:
 
 ```rust
 #[kernel]
@@ -175,18 +176,23 @@ pub fn sum_four(mut out: DisjointSlice<u32>) {
     let tid = thread::index_1d();
     if let Some(out_elem) = out.get_mut(tid) {
         let mut sum = 0;
+        let mut i = 0;
         #[unroll]
-        for i in 0..4 {
+        while i < 4 {
             sum += i;
+            i += 1;
         }
         *out_elem = sum;
     }
 }
 ```
 
-Use `#[unroll(N)]` when the trip count is only known at runtime. The loop then
-does `N` iterations' work per trip. A small remainder loop handles any leftover
-iterations, so `n` does not have to be divisible by `N`:
+The pass currently recognizes explicit counted `while` loops. Range-based
+`for` loops are not yet recognized.
+
+Use `#[unroll(N)]`, where `N >= 2`, when the trip count is only known at runtime.
+The loop then does `N` iterations' work per trip. A small remainder loop handles
+any leftover iterations, so `n` does not have to be divisible by `N`:
 
 ```rust
 let mut i = 0;
@@ -200,6 +206,22 @@ while i < n {
 An annotated loop may contain other loops. Only the loop carrying the
 annotation is unrolled; each inner loop is copied intact and remains a loop.
 Add a separate annotation to an inner loop if you want to unroll it too.
+
+Loops with several `continue` paths are supported. Full `#[unroll]` also
+preserves `break` paths and loops with more than one exit target.
+
+Partial `#[unroll(N)]` currently requires the loop condition to be the only
+exit. If the loop has a `break` or another exit, the compiler warns and does not
+unroll that loop.
+
+Partial unrolling also requires a counted-up loop: the counter must have a
+positive step, use `<` or `<=`, and compare against a limit that does not change
+inside the loop. The compiler warns and does not unroll unsupported requests.
+
+To keep generated code bounded, one annotation may create at most 1,024 body
+copies, 8,192 cloned basic blocks, and 65,536 cloned operations. A larger
+request warns and is not unrolled. Full variable-debug builds also skip
+unrolling because they keep loop variables in memory instead of SSA form.
 
 Unrolling trades larger generated code for fewer branches and more
 optimization opportunities. Use it for small or performance-critical loops,

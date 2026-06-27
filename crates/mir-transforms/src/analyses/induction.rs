@@ -52,14 +52,18 @@
 use dialect_mir::ops::arithmetic::{MirAddOp, MirNotOp, MirSubOp};
 use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
 use dialect_mir::ops::constants::MirConstantOp;
+use dialect_mir::ops::control_flow::MirCondBranchOp;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::BranchOpInterface;
+use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::op::op_cast;
 use pliron::operation::Operation;
+use pliron::r#type::{Typed, TypedHandle};
 use pliron::value::Value;
+use rustc_hash::FxHashSet;
 
-use crate::analyses::loop_info::{LoopId, LoopInfo};
+use crate::analyses::loop_info::{Loop, LoopId, LoopInfo};
 
 /// A comparison operator, the `<pred>` in a test written `lhs <pred> rhs`:
 /// less-than, less-or-equal, greater-than, greater-or-equal.
@@ -135,12 +139,25 @@ pub struct LoopRecurrences {
 }
 
 /// If `v` is a compile-time integer constant (a `mir.constant` op), return its
-/// value; `None` if `v` is computed at runtime.
+/// mathematical value; `None` if `v` is computed at runtime or cannot fit in
+/// the analysis's `i128` representation.
+///
+/// APInt's `to_i128` sign-extends narrow values, so unsigned and signless
+/// constants must be zero-extended explicitly. Otherwise an unsigned `u8`
+/// constant such as 200 would be mistaken for -56 and could produce a wrong
+/// trip count.
 pub(crate) fn const_i128(ctx: &Context, v: Value) -> Option<i128> {
     let def = v.defining_op()?;
     let c = Operation::get_op::<MirConstantOp>(def, ctx)?;
     let attr = c.get_attr_value(ctx)?;
-    Some(attr.value().to_i128())
+    let ty = TypedHandle::<IntegerType>::from_handle(v.get_type(ctx), ctx).ok()?;
+    if ty.deref(ctx).width() > 128 {
+        return None;
+    }
+    match ty.deref(ctx).signedness() {
+        Signedness::Signed => Some(attr.value().to_i128()),
+        Signedness::Unsigned | Signedness::Signless => i128::try_from(attr.value().to_u128()).ok(),
+    }
 }
 
 /// The values that the branch from `pred` to `header` supplies for `header`'s
@@ -214,25 +231,23 @@ pub fn analyze(
         .map(|i| header.deref(ctx).get_argument(i))
         .collect();
 
-    // Starting values come in on the preheader edge; next-iteration values come
-    // in on the latch edge. A simple counted loop has exactly one latch; if it
-    // has more we leave `latch_ops` as None and classify everything as Unknown.
+    // Starting values come in on the preheader edge. Next-iteration values may
+    // come from several latches, or through a synthetic latch block whose block
+    // arguments merge several old back-edges. Trace those block arguments to
+    // their leaf incoming values and require every path to agree before calling
+    // something an induction variable.
     let pre_ops = edge_operands(ctx, preheader, header);
-    let latch_ops = l
-        .latches
-        .first()
-        .copied()
-        .and_then(|latch| edge_operands(ctx, latch, header));
 
     // Classify each header argument.
     let mut args = Vec::with_capacity(nargs);
     for (i, &arg) in header_args.iter().enumerate() {
+        let recurrence_values = recurrence_values(ctx, l, header, arg, i);
         args.push(classify_arg(
             ctx,
             arg,
             i,
             pre_ops.as_deref(),
-            latch_ops.as_deref(),
+            recurrence_values.as_deref(),
         ));
     }
 
@@ -259,25 +274,127 @@ pub fn analyze(
     }
 }
 
+/// Values that can arrive at header argument `arg_index` on any back-edge.
+///
+/// A unique-latch canonicalizer represents the merge as a latch block argument.
+/// Looking only at the latch-to-header operand would therefore see a block
+/// argument instead of `arg + step`. Follow in-loop block arguments backwards
+/// until reaching the actual values supplied by the former latch edges.
+fn recurrence_values(
+    ctx: &Context,
+    lp: &Loop,
+    header: Ptr<BasicBlock>,
+    arg: Value,
+    arg_index: usize,
+) -> Option<Vec<Value>> {
+    let mut out = Vec::new();
+    for edge_use in header.uses(ctx) {
+        let term = edge_use.user_op();
+        let source = term.deref(ctx).get_parent_block()?;
+        if !lp.latches.contains(&source) {
+            continue;
+        }
+        let opobj = Operation::get_op_dyn(term, ctx);
+        let branch = op_cast::<dyn BranchOpInterface>(opobj.as_ref())?;
+        let value = branch
+            .successor_operands(ctx, edge_use.find_index(ctx))
+            .get(arg_index)
+            .copied()?;
+        let mut visiting = FxHashSet::default();
+        if !expand_block_argument(ctx, lp, header, arg, value, &mut visiting, &mut out) {
+            return None;
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Recursively replace an in-loop block argument with every value passed to it.
+/// `arg` itself is a leaf: following the header argument would walk around the
+/// loop forever. `visiting` rejects any other block-argument cycle rather than
+/// guessing at a recurrence.
+fn expand_block_argument(
+    ctx: &Context,
+    lp: &Loop,
+    header: Ptr<BasicBlock>,
+    arg: Value,
+    value: Value,
+    visiting: &mut FxHashSet<Value>,
+    out: &mut Vec<Value>,
+) -> bool {
+    if value == arg {
+        out.push(value);
+        return true;
+    }
+    let Some(block) = value.defining_block() else {
+        out.push(value);
+        return true;
+    };
+    if block == header || !lp.blocks.contains(&block) {
+        out.push(value);
+        return true;
+    }
+    if !visiting.insert(value) {
+        return false;
+    }
+
+    let index = value.find_index(ctx);
+    let incoming_edges = block.uses(ctx);
+    if incoming_edges.is_empty() {
+        visiting.remove(&value);
+        return false;
+    }
+    for edge_use in incoming_edges {
+        let term = edge_use.user_op();
+        let Some(source) = term.deref(ctx).get_parent_block() else {
+            visiting.remove(&value);
+            return false;
+        };
+        if !lp.blocks.contains(&source) {
+            visiting.remove(&value);
+            return false;
+        }
+        let opobj = Operation::get_op_dyn(term, ctx);
+        let Some(branch) = op_cast::<dyn BranchOpInterface>(opobj.as_ref()) else {
+            visiting.remove(&value);
+            return false;
+        };
+        let operands = branch.successor_operands(ctx, edge_use.find_index(ctx));
+        let Some(&incoming) = operands.get(index) else {
+            visiting.remove(&value);
+            return false;
+        };
+        if !expand_block_argument(ctx, lp, header, arg, incoming, visiting, out) {
+            visiting.remove(&value);
+            return false;
+        }
+    }
+    visiting.remove(&value);
+    true
+}
+
 fn classify_arg(
     ctx: &Context,
     arg: Value,
     i: usize,
     pre_ops: Option<&[Value]>,
-    latch_ops: Option<&[Value]>,
+    recurrence_values: Option<&[Value]>,
 ) -> ArgKind {
-    let latch_val = match latch_ops.and_then(|o| o.get(i).copied()) {
-        Some(v) => v,
-        None => return ArgKind::Unknown,
+    let values = match recurrence_values {
+        Some(values) if !values.is_empty() => values,
+        _ => return ArgKind::Unknown,
     };
-    // Fed back unchanged -> same value every iteration.
-    if latch_val == arg {
+    // Fed back unchanged on every path -> same value every iteration.
+    if values.iter().all(|&value| value == arg) {
         return ArgKind::Invariant;
     }
-    // Is the fed-back value `arg + c`, `c + arg`, or `arg - c` for a constant c?
-    // If so, c is the per-iteration step and this is a counter.
-    let step = step_of(ctx, latch_val, arg);
-    if let Some(step) = step {
+
+    // Every back-edge must carry `arg + c`, `c + arg`, or `arg - c`, and every
+    // path must agree on c. Choosing one arbitrary latch is unsound.
+    let mut steps = values.iter().map(|&value| step_of(ctx, value, arg));
+    let first_step = steps.next().flatten();
+    if let Some(step) = first_step
+        && steps.all(|candidate| candidate == Some(step))
+    {
         if let Some(init) = pre_ops
             .and_then(|o| o.get(i).copied())
             .and_then(|v| const_i128(ctx, v))
@@ -309,7 +426,7 @@ fn step_of(ctx: &Context, v: Value, arg: Value) -> Option<i128> {
         let a = def.deref(ctx).get_operand(0);
         let b = def.deref(ctx).get_operand(1);
         if a == arg {
-            return const_i128(ctx, b).map(|c| -c);
+            return const_i128(ctx, b).and_then(i128::checked_neg);
         }
     }
     None
@@ -333,6 +450,12 @@ fn analyze_guard(
         Some(t) => t,
         None => return (None, None, None, None),
     };
+    // Successor position and operand 0 have true/false-condition meaning only
+    // for `mir.cond_br`. Do not infer a guard from another two-way branch op that
+    // happens to expose the same raw operation layout.
+    if Operation::get_op::<MirCondBranchOp>(term, ctx).is_none() {
+        return (None, None, None, None);
+    }
     let succs: Vec<Ptr<BasicBlock>> = term.deref(ctx).successors().collect();
     if succs.len() != 2 {
         return (None, None, None, None);
@@ -405,18 +528,26 @@ fn analyze_guard(
 fn trip_count(init: i128, step: i128, bound: i128, pred: CmpPred) -> Option<u64> {
     let count = match pred {
         // Counting up toward an upper limit.
-        CmpPred::Lt if step > 0 => div_ceil(bound - init, step),
-        CmpPred::Le if step > 0 => div_ceil(bound - init + 1, step),
+        CmpPred::Lt if step > 0 => div_ceil(bound.checked_sub(init)?, step)?,
+        CmpPred::Le if step > 0 => div_ceil(bound.checked_sub(init)?.checked_add(1)?, step)?,
         // Counting down toward a lower limit.
-        CmpPred::Gt if step < 0 => div_ceil(init - bound, -step),
-        CmpPred::Ge if step < 0 => div_ceil(init - bound + 1, -step),
+        CmpPred::Gt if step < 0 => div_ceil(init.checked_sub(bound)?, step.checked_neg()?)?,
+        CmpPred::Ge if step < 0 => div_ceil(
+            init.checked_sub(bound)?.checked_add(1)?,
+            step.checked_neg()?,
+        )?,
         _ => return None,
     };
-    Some(count.max(0) as u64)
+    u64::try_from(count).ok()
 }
 
 /// Divide and round up (so 5/4 is 2). Returns 0 when the numerator is zero or
-/// negative, which corresponds to a loop that never runs.
-fn div_ceil(num: i128, den: i128) -> i128 {
-    if num <= 0 { 0 } else { (num + den - 1) / den }
+/// negative, which corresponds to a loop that never runs. Returns `None` if
+/// the host-side analysis arithmetic would overflow.
+fn div_ceil(num: i128, den: i128) -> Option<i128> {
+    if num <= 0 {
+        Some(0)
+    } else {
+        Some(num.checked_add(den.checked_sub(1)?)? / den)
+    }
 }

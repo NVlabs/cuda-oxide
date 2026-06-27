@@ -69,8 +69,8 @@ Here is the full journey of a `#[kernel]` function, from source to silicon:
 
 The full compilation pipeline. Rust source enters the rustc frontend, passes
 through Stable MIR, is translated into `dialect-mir` (with `mem2reg` promoting
-allocas back into SSA), lowered to the LLVM dialect, exported as textual LLVM IR,
-and finally compiled to PTX by the NVPTX backend.
+allocas back into SSA), applies annotated loop unrolling, lowers to the LLVM
+dialect, exports textual LLVM IR, and finally compiles to PTX.
 ```
 
 Stage by stage:
@@ -98,6 +98,7 @@ Stage by stage:
    `BinOp`, etc.). The initial form uses per-local `mir.alloca` slots with
    `mir.load`/`mir.store` for cross-block data flow; `pliron::opts::mem2reg`
    then promotes those slots back into SSA values.
+   Annotated loop unrolling runs on that SSA form before lowering.
 
 5. **LLVM dialect (pliron-llvm).**
    `mir-lower` transforms `dialect-mir` operations into LLVM dialect

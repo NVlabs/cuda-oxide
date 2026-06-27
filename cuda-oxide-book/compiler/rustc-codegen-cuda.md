@@ -103,8 +103,8 @@ called from device code. More on this in {ref}`Device Function Collection
 
 **b) Generate device code.**
 `device_codegen::generate_device_code()` bridges the collected functions to
-stable MIR and runs the full cuda-oxide pipeline (`dialect-mir` -> `mem2reg`
--> LLVM dialect -> `.ll` -> PTX).
+stable MIR and runs the full cuda-oxide pipeline (`dialect-mir` -> `mem2reg` ->
+annotated loop unroll -> LLVM dialect -> `.ll` -> PTX).
 
 ### Step 4: Always Compile Host Code
 

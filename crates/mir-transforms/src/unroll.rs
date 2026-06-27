@@ -10,14 +10,26 @@
 //! chances to optimise. For example:
 //!
 //! ```text
-//!   for i in 0..4 { f(i) }      unrolled fully becomes:   f(0); f(1); f(2); f(3);
+//!   i = 0; while i < 4 { f(i); i += 1 }   becomes:   f(0); f(1); f(2); f(3);
 //! ```
 //!
-//! Put `#[unroll]` directly on a loop to fully unroll it when its iteration
-//! count is known at compile time. Put `#[unroll(N)]` on a loop to do `N` body
-//! copies per trip and leave a small remainder loop for any leftover
-//! iterations. The frontend records the request as a `mir.unroll_hint`
-//! operation inside that loop.
+//! `#[unroll]` requests full unrolling when the iteration count is known at
+//! compile time. `#[unroll(N)]` requests `N` body copies per trip and leaves a
+//! small remainder loop for leftover iterations. The frontend records the
+//! request as a `mir.unroll_hint` operation inside that loop.
+//!
+//! The current analysis recognizes explicit counted `while` loops. Range-based
+//! `for` loops are not yet recognized.
+//!
+//! Several `continue` paths are supported: the pass joins their back-edges
+//! before unrolling. Full `#[unroll]` also preserves early `break` paths and
+//! multiple exit targets. Partial `#[unroll(N)]` warns and leaves the loop not
+//! unrolled when it has an extra exit. Partial unrolling currently requires a
+//! positive step, a `<` or `<=` test, and a loop-invariant bound.
+//!
+//! To bound compile time and memory, one request may create at most 1,024 body
+//! copies, 8,192 cloned blocks, and 65,536 cloned operations. Larger requests
+//! warn and are not unrolled.
 //!
 //! If an annotated loop contains another loop, only the annotated loop is
 //! unrolled. The inner loop is copied intact into each body copy and remains a
@@ -32,8 +44,9 @@
 use dialect_mir::ops::arithmetic::{MirAddOp, MirBitAndOp, MirRemOp, MirSubOp};
 use dialect_mir::ops::comparison::{MirGeOp, MirGtOp, MirLeOp, MirLtOp};
 use dialect_mir::ops::constants::MirConstantOp;
-use dialect_mir::ops::control_flow::{MirCondBranchOp, MirUnrollHintOp};
+use dialect_mir::ops::control_flow::{MirCondBranchOp, MirGotoOp, MirUnrollHintOp};
 use dialect_mir::ops::function::MirFuncOp;
+use dialect_mir::ops::{MirStorageDeadOp, MirStorageLiveOp};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
@@ -47,10 +60,10 @@ use pliron::irbuild::{
     rewriter::IRRewriter,
 };
 use pliron::linked_list::ContainsLinkedList;
-use pliron::op::Op;
+use pliron::op::{Op, op_cast};
 use pliron::operation::Operation;
 use pliron::opts::constants::sccp::sccp;
-use pliron::opts::dce::dce;
+use pliron::opts::dce::{SideEffects, dce};
 use pliron::opts::simplify_cfg::simplify_cfg;
 use pliron::pass_manager::AnalysisManager;
 use pliron::region::Region;
@@ -63,6 +76,22 @@ use std::num::NonZero;
 
 use crate::analyses::induction::{self, ArgKind, CmpPred};
 use crate::analyses::loop_info::LoopInfo;
+use crate::canonicalize::{CanonicalizeOutcome, close_header_liveouts, merge_backedges};
+
+/// Hard safety limit on how many body copies one annotation may request.
+/// Explicit annotations still need a bound: accepting an arbitrary `u32`
+/// factor or `u64` trip count would let valid source exhaust the compiler.
+const MAX_UNROLL_COPIES: u64 = 1_024;
+
+/// Hard safety limit on the total number of basic blocks cloned by one unroll.
+/// This separately bounds large and nested bodies even when their copy count is
+/// below [`MAX_UNROLL_COPIES`].
+const MAX_CLONED_BLOCKS: u64 = 8_192;
+
+/// Hard safety limit on the total number of operations cloned by one unroll.
+/// A block budget alone is insufficient because one block may contain an
+/// arbitrarily large straight-line body.
+const MAX_CLONED_OPS: u64 = 65_536;
 
 fn verbose() -> bool {
     std::env::var("CUDA_OXIDE_VERBOSE").is_ok()
@@ -78,16 +107,66 @@ fn unroll_kind(factor: u32) -> String {
     }
 }
 
+/// Check code-growth budgets whose inputs have already been counted safely.
+fn check_growth_budget(
+    copies: u64,
+    blocks_per_copy: u64,
+    ops_per_copy: u64,
+) -> std::result::Result<(), String> {
+    if copies > MAX_UNROLL_COPIES {
+        return Err(format!(
+            "unrolling would create {copies} body copies; the safety limit is {MAX_UNROLL_COPIES}"
+        ));
+    }
+    let total_blocks = copies
+        .checked_mul(blocks_per_copy)
+        .ok_or_else(|| "the requested unroll is too large to budget safely".to_string())?;
+    if total_blocks > MAX_CLONED_BLOCKS {
+        return Err(format!(
+            "unrolling would clone {total_blocks} body blocks ({copies} copies x {blocks_per_copy} blocks); the safety limit is {MAX_CLONED_BLOCKS} cloned blocks"
+        ));
+    }
+    let total_ops = copies
+        .checked_mul(ops_per_copy)
+        .ok_or_else(|| "the requested unroll is too large to budget safely".to_string())?;
+    if total_ops > MAX_CLONED_OPS {
+        return Err(format!(
+            "unrolling would clone {total_ops} operations ({copies} copies x {ops_per_copy} operations); the safety limit is {MAX_CLONED_OPS} cloned operations"
+        ));
+    }
+    Ok(())
+}
+
+/// Count one body copy and check every code-growth budget before cloning.
+fn check_clone_budget(
+    ctx: &Context,
+    copies: u64,
+    body_blocks: &[Ptr<BasicBlock>],
+) -> std::result::Result<(), String> {
+    let blocks_per_copy = u64::try_from(body_blocks.len())
+        .map_err(|_| "the loop body is too large to budget safely".to_string())?;
+    let mut ops_per_copy = 0u64;
+    for &block in body_blocks {
+        let block_ops = u64::try_from(block.deref(ctx).iter(ctx).count())
+            .map_err(|_| "the loop body has too many operations to budget safely".to_string())?;
+        ops_per_copy = ops_per_copy
+            .checked_add(block_ops)
+            .ok_or_else(|| "the loop body has too many operations to budget safely".to_string())?;
+    }
+    check_growth_budget(copies, blocks_per_copy, ops_per_copy)
+}
+
 /// Unroll each loop that carries an in-body `mir.unroll_hint`, which the
 /// frontend plants for `#[unroll]` and `#[unroll(N)]`. Other functions are left
 /// untouched.
 ///
 /// Within each annotated function, this finds loops with [`LoopInfo`], maps
-/// every hint to its loop, analyzes the loop counter, and performs full or
-/// partial unrolling. Annotated nested loops are processed from the inside out.
-/// Afterward, SCCP, CFG simplification, and dead-code elimination clean only
-/// that function: constant index expressions fold, dead branches disappear,
-/// and unreachable original loop blocks are removed.
+/// every hint to its loop, joins multiple back-edges through one latch, analyzes
+/// the loop counter, and performs full or partial unrolling. It recomputes loop
+/// and induction facts after normalization. Annotated nested loops are processed
+/// from the inside out. Afterward, SCCP, CFG simplification, and dead-code
+/// elimination clean only that function: constant index expressions fold, dead
+/// branches disappear, and unreachable original loop blocks are removed.
 ///
 /// Unsupported loop shapes produce a warning and are not unrolled.
 pub fn unroll_annotated_loops(
@@ -132,9 +211,17 @@ pub fn unroll_annotated_loops(
         // cloned, so inner hints are never duplicated into the copies. (`dce` is
         // deliberately NOT run here: it would delete the side-effect-free
         // `mir.unroll_hint` markers before we get to collect them.)
+        let mut skip_simplify_once = false;
         loop {
             // Drop blocks the previous round made unreachable before recomputing.
-            simplify_cfg(func_op, ctx)?;
+            // Do not immediately simplify a newly inserted unified latch: a CFG
+            // cleanup could fold that forwarding block away before the fresh
+            // loop analysis gets to use it.
+            if skip_simplify_once {
+                skip_simplify_once = false;
+            } else {
+                simplify_cfg(func_op, ctx)?;
+            }
 
             let hints = collect_hints(ctx, region);
             if hints.is_empty() {
@@ -174,6 +261,89 @@ pub fn unroll_annotated_loops(
             };
             let kind = unroll_kind(factor);
 
+            let Some(ph) = info.preheader(ctx, region, loop_id) else {
+                // The author asked for unrolling; never silently do nothing.
+                for (op, block, _f) in &hints {
+                    if info.innermost_loop(*block) == Some(loop_id) {
+                        op.unlink(ctx);
+                    }
+                }
+                eprintln!(
+                    "warning: {kind} requested but the loop was not unrolled: it has no single preheader (it is entered from more than one place)"
+                );
+                continue;
+            };
+
+            // A grouped main loop plus a remainder loop needs explicit merging
+            // for every early-exit value. Keep that as a follow-up: full unroll
+            // can preserve those paths directly, partial unroll warns and skips.
+            if factor != 0 {
+                let lp = &info.loops()[loop_id];
+                let exiting = info.exiting_blocks(ctx, region, loop_id);
+                let exits = info.exit_blocks(ctx, region, loop_id);
+                if exiting.len() != 1 || exiting[0] != lp.header || exits.len() != 1 {
+                    for (op, block, _f) in &hints {
+                        if info.innermost_loop(*block) == Some(loop_id) {
+                            op.unlink(ctx);
+                        }
+                    }
+                    eprintln!(
+                        "warning: {kind} requested but the loop was not unrolled: partial unrolling does not yet support an early `break` or multiple exits"
+                    );
+                    continue;
+                }
+            }
+
+            // Full unroll needs path-specific values at early exits. Route any
+            // directly used header arguments through outside block arguments
+            // before cloning, then recompute analyses over the normalized IR.
+            if factor == 0 {
+                match close_header_liveouts(ctx, &info, loop_id) {
+                    CanonicalizeOutcome::Unchanged => {}
+                    CanonicalizeOutcome::Changed => {
+                        function_changed = true;
+                        changed = true;
+                        skip_simplify_once = true;
+                        continue;
+                    }
+                    CanonicalizeOutcome::Unsupported(reason) => {
+                        for (op, block, _f) in &hints {
+                            if info.innermost_loop(*block) == Some(loop_id) {
+                                op.unlink(ctx);
+                            }
+                        }
+                        eprintln!(
+                            "warning: {kind} requested but the loop was not unrolled: could not route its live-out values: {reason}"
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            // Normalize every continue/back-edge through one unconditional
+            // latch. Leave the hint in place when the CFG changes so the next
+            // round can recompute dominance, loops, and induction facts first.
+            match merge_backedges(ctx, &info, loop_id) {
+                CanonicalizeOutcome::Unchanged => {}
+                CanonicalizeOutcome::Changed => {
+                    function_changed = true;
+                    changed = true;
+                    skip_simplify_once = true;
+                    continue;
+                }
+                CanonicalizeOutcome::Unsupported(reason) => {
+                    for (op, block, _f) in &hints {
+                        if info.innermost_loop(*block) == Some(loop_id) {
+                            op.unlink(ctx);
+                        }
+                    }
+                    eprintln!(
+                        "warning: {kind} requested but the loop was not unrolled: could not normalize its back-edges: {reason}"
+                    );
+                    continue;
+                }
+            }
+
             // Consume this loop's hint(s) before any cloning so the markers are
             // never copied into the unrolled bodies.
             for (op, block, _f) in &hints {
@@ -182,13 +352,6 @@ pub fn unroll_annotated_loops(
                 }
             }
 
-            let Some(ph) = info.preheader(ctx, region, loop_id) else {
-                // The author asked for unrolling; never silently do nothing.
-                eprintln!(
-                    "warning: {kind} requested but the loop was not unrolled: it has no single preheader (it is entered from more than one place)"
-                );
-                continue;
-            };
             let rec = induction::analyze(ctx, &info, loop_id, ph);
             if verbose() {
                 eprintln!(
@@ -219,8 +382,8 @@ pub fn unroll_annotated_loops(
             // Fold and clean only this function. `sccp` folds constant index
             // arithmetic and branch conditions, `simplify_cfg` removes dead
             // paths and original loop blocks, and `dce` removes unused ops.
-            // Keeping the root at `func_op` preserves functions without an
-            // unrolled loop byte-for-byte.
+            // The outer filter ensures this cleanup never touches a function
+            // with no unroll annotation.
             sccp(func_op, ctx)?;
             simplify_cfg(func_op, ctx)?;
             dce(func_op, ctx)?;
@@ -240,9 +403,9 @@ pub fn unroll_annotated_loops(
 enum UnrollOutcome {
     /// The loop was unrolled; the IR changed.
     Unrolled,
-    /// The loop was left unchanged, with a plain-English reason. The caller turns
-    /// this into a loud warning (the author asked for unrolling, so we never just
-    /// silently do nothing).
+    /// The loop was not unrolled, with a plain-English reason. The caller turns
+    /// this into a loud warning (the author asked for unrolling, so we never
+    /// silently do nothing). Earlier normalization may still have rewritten its CFG.
     Skipped(String),
 }
 
@@ -250,12 +413,13 @@ enum UnrollOutcome {
 /// and partial unroll, plus the checks that the loop is in the shape we support.
 ///
 /// v1 supports a loop with **arbitrary internal control flow** (the body may be
-/// many blocks: `if`/`else`, `match`, `&&`/`||`), as long as it is otherwise
-/// simple: one back-edge (latch), the only way out is the header's exit test
-/// (no early `break`), one block after the loop (exit), a recognized counter,
-/// and a dedicated preheader. The body may contain nested loops; they are cloned
-/// intact. `analyze_shape` returns `Err(reason)` for anything else, so a
-/// requested-but-impossible unroll reports exactly why.
+/// many blocks: `if`/`else`, `match`, `&&`/`||`) and may contain nested
+/// loops. Multiple source latches have already been merged into one canonical
+/// latch. Full unrolling accepts early exits and multiple exit targets. Partial
+/// unrolling additionally requires the header test to be the only exit. Both
+/// modes require a recognized counter, a dedicated preheader, and a header with
+/// only pure guard calculations before its conditional branch. `analyze_shape`
+/// returns `Err(reason)` for anything else.
 ///
 /// We deliberately do **not** clone the header. The header holds the loop's
 /// carried values as block arguments (the counter and any accumulators); the
@@ -266,7 +430,10 @@ enum UnrollOutcome {
 struct LoopShape {
     header: Ptr<BasicBlock>,
     latch: Ptr<BasicBlock>,
-    exit: Ptr<BasicBlock>,
+    /// The outside successor of the header's ordinary loop test.
+    normal_exit: Ptr<BasicBlock>,
+    /// Whether some body block can leave without going through the latch.
+    has_early_exits: bool,
     /// The header's single in-loop successor: the first block of the body.
     body_entry: Ptr<BasicBlock>,
     /// Every body block (the loop minus the header) forward-reachable from
@@ -285,8 +452,8 @@ struct LoopShape {
     recur_ops: Vec<Value>,
     /// header -> body_entry operands (args the header passes into the body).
     entry_ops: Vec<Value>,
-    /// header -> exit operands (the loop's live-out values).
-    exit_ops: Vec<Value>,
+    /// header -> normal_exit operands (the normal-completion live-out values).
+    normal_exit_ops: Vec<Value>,
     iv_idx: usize,
     iv_init: i128,
     iv_step: i128,
@@ -351,6 +518,7 @@ fn analyze_shape(
     id: usize,
     preheader: Ptr<BasicBlock>,
     rec: &induction::LoopRecurrences,
+    allow_early_exits: bool,
 ) -> std::result::Result<LoopShape, String> {
     let l = &info.loops()[id];
     // A loop that *contains* an inner loop can be unrolled: the inner loop's
@@ -360,31 +528,15 @@ fn analyze_shape(
     // separate `#[unroll]` on the inner loop, which the driver processes
     // innermost-first; and the driver recomputes `LoopInfo` after each unroll so
     // the cloned inner loops are re-registered cleanly. So `l.children` is no
-    // longer a bail. (Single-latch / single-exit are still required of *this*
-    // loop below; the inner loops may be any shape since they are opaque body
-    // blocks to the clone.)
+    // longer a bail; inner loops are opaque body blocks to the clone.
     if l.latches.len() != 1 {
         return Err(format!(
-            "the loop has {} back-edges; only single-latch loops are supported for now",
+            "the loop has {} back-edges after canonicalization; expected one unified latch",
             l.latches.len()
         ));
     }
     let header = l.header;
     let latch = l.latches[0];
-
-    // The only way out must be the header's exit test: no early `break`.
-    let exiting = info.exiting_blocks(ctx, region, id);
-    if exiting.len() != 1 || exiting[0] != header {
-        return Err("the body can leave the loop early (a `break`/extra exit); only loops whose sole exit is the header test are supported for now".into());
-    }
-    let exits = info.exit_blocks(ctx, region, id);
-    if exits.len() != 1 {
-        return Err(format!(
-            "the loop has {} exit targets; only single-exit loops are supported for now",
-            exits.len()
-        ));
-    }
-    let exit = exits[0];
 
     let iv_idx = rec
         .primary_iv
@@ -394,20 +546,60 @@ fn analyze_shape(
         _ => return Err("the loop counter is not a simple induction variable".into()),
     };
 
-    // The body entry is the header's one successor that stays inside the loop.
+    // The header has one ordinary body successor and one ordinary exit. Other
+    // body blocks may have their own outside successors on the full-unroll path.
     let header_term = header
         .deref(ctx)
         .get_terminator(ctx)
         .ok_or("the header has no terminator")?;
-    let in_loop: Vec<Ptr<BasicBlock>> = header_term
-        .deref(ctx)
-        .successors()
+    if Operation::get_op::<MirCondBranchOp>(header_term, ctx).is_none() {
+        return Err("the loop header must end in a mir.cond_br exit test".into());
+    }
+    // Full unrolling removes the header, and partial unrolling bypasses it for
+    // grouped iterations. Either transform would change observable header work.
+    // Storage lifetime markers are harmless: lowering erases them and emits no
+    // runtime instruction.
+    for op in header.deref(ctx).iter(ctx) {
+        let harmless_marker = Operation::get_op::<MirStorageLiveOp>(op, ctx).is_some()
+            || Operation::get_op::<MirStorageDeadOp>(op, ctx).is_some();
+        if op == header_term || harmless_marker {
+            continue;
+        }
+        let opobj = Operation::get_op_dyn(op, ctx);
+        let may_have_side_effects = op_cast::<dyn SideEffects>(opobj.as_ref())
+            .is_none_or(|effects| effects.has_side_effects(ctx));
+        if may_have_side_effects {
+            return Err(
+                "the loop header contains an operation with possible side effects; move that work into the body before unrolling"
+                    .into(),
+            );
+        }
+    }
+    let successors: Vec<Ptr<BasicBlock>> = header_term.deref(ctx).successors().collect();
+    let in_loop: Vec<_> = successors
+        .iter()
+        .copied()
         .filter(|s| l.blocks.contains(s))
         .collect();
-    if in_loop.len() != 1 {
-        return Err("could not identify a single loop-body entry from the header".into());
+    let outside: Vec<_> = successors
+        .iter()
+        .copied()
+        .filter(|s| !l.blocks.contains(s))
+        .collect();
+    if in_loop.len() != 1 || outside.len() != 1 {
+        return Err("the loop header must have one body edge and one normal exit edge".into());
     }
     let body_entry = in_loop[0];
+    let normal_exit = outside[0];
+
+    let exiting = info.exiting_blocks(ctx, region, id);
+    let exits = info.exit_blocks(ctx, region, id);
+    let has_early_exits = exiting.iter().any(|&block| block != header);
+    if !allow_early_exits && (has_early_exits || exits.len() != 1) {
+        return Err(
+            "partial unrolling does not yet support an early `break` or multiple exits".into(),
+        );
+    }
 
     // The preheader must end in a plain branch to the header (dedicated preheader).
     let preheader_term = preheader
@@ -415,8 +607,8 @@ fn analyze_shape(
         .get_terminator(ctx)
         .ok_or("the preheader has no terminator")?;
     let p_succs: Vec<Ptr<BasicBlock>> = preheader_term.deref(ctx).successors().collect();
-    if p_succs != [header] {
-        return Err("the loop has no dedicated preheader (its entry edge is not a plain branch to the header)".into());
+    if Operation::get_op::<MirGotoOp>(preheader_term, ctx).is_none() || p_succs != [header] {
+        return Err("the loop preheader must end in a mir.goto to the header".into());
     }
 
     // The latch must end in a plain back-edge to the header.
@@ -425,8 +617,8 @@ fn analyze_shape(
         .get_terminator(ctx)
         .ok_or("the latch has no terminator")?;
     let l_succs: Vec<Ptr<BasicBlock>> = latch_term.deref(ctx).successors().collect();
-    if l_succs != [header] {
-        return Err("the loop latch does not end in a single back-edge to the header".into());
+    if Operation::get_op::<MirGotoOp>(latch_term, ctx).is_none() || l_succs != [header] {
+        return Err("the loop latch must end in a mir.goto back to the header".into());
     }
 
     let nargs = header.deref(ctx).get_num_arguments();
@@ -443,7 +635,7 @@ fn analyze_shape(
         .filter(|v| v.len() == nargs)
         .ok_or("latch carried-value arity mismatch")?;
     let entry_ops = induction::edge_operands(ctx, header, body_entry).unwrap_or_default();
-    let exit_ops = induction::edge_operands(ctx, header, exit).unwrap_or_default();
+    let normal_exit_ops = induction::edge_operands(ctx, header, normal_exit).unwrap_or_default();
 
     // Clean-header check (see [`LoopShape`]): the body must not read any value the
     // header *computes*. Reading the header's block arguments is fine (we
@@ -473,7 +665,7 @@ fn analyze_shape(
     // Same for live-outs: a header *block argument* the exit reads is handled (we
     // substitute the final value), but a header op *result* on the exit edge
     // would dangle once full unroll deletes the header. Reject it loudly.
-    for &v in &exit_ops {
+    for &v in &normal_exit_ops {
         if defined_in_header(ctx, v) {
             return Err("the header computes a live-out value the exit reads; this shape needs header cloning (a follow-up)".into());
         }
@@ -487,7 +679,8 @@ fn analyze_shape(
     Ok(LoopShape {
         header,
         latch,
-        exit,
+        normal_exit,
+        has_early_exits,
         body_entry,
         body_blocks_ordered,
         header_args,
@@ -495,7 +688,7 @@ fn analyze_shape(
         init_ops,
         recur_ops,
         entry_ops,
-        exit_ops,
+        normal_exit_ops,
         iv_idx,
         iv_init,
         iv_step,
@@ -597,17 +790,112 @@ fn rewire_goto(
     }
 }
 
+/// Whether `value` is read directly by an operation outside this loop.
+///
+/// Passing it as an exit-edge operand is safe: that use belongs to the branch
+/// inside the loop. The corresponding exit block argument is the value outside
+/// code should read.
+fn has_direct_outside_use(
+    ctx: &Context,
+    value: Value,
+    loop_blocks: &FxHashSet<Ptr<BasicBlock>>,
+) -> bool {
+    value.uses(ctx).iter().any(|r#use| {
+        r#use
+            .user_op()
+            .deref(ctx)
+            .get_parent_block()
+            .is_none_or(|block| !loop_blocks.contains(&block))
+    })
+}
+
+/// Check the live-out rule before cloning anything. With an early exit there is
+/// no single "final" loop value, so every loop definition must leave through an
+/// exit edge and an exit block argument. Without an early exit, header arguments
+/// may still be replaced by their normal final values as the original path did.
+fn liveouts_are_safe(ctx: &Context, shape: &LoopShape) -> bool {
+    for &block in &shape.loop_blocks {
+        for value in block.deref(ctx).arguments() {
+            let replaceable_header_arg =
+                !shape.has_early_exits && shape.header_args.contains(&value);
+            if !replaceable_header_arg && has_direct_outside_use(ctx, value, &shape.loop_blocks) {
+                return false;
+            }
+        }
+        for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+            for value in op.deref(ctx).results() {
+                if has_direct_outside_use(ctx, value, &shape.loop_blocks) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Mathematical bounds representable by the IV type. Signless integers follow
+/// the dialect's existing unsigned comparison convention. Unsigned 128-bit
+/// values above `i128::MAX` are conservatively outside this analysis.
+fn integer_value_bounds(ctx: &Context, ty: TypeHandle) -> Option<(i128, i128)> {
+    let typed = TypedHandle::<IntegerType>::from_handle(ty, ctx).ok()?;
+    let width = typed.deref(ctx).width();
+    if width == 0 || width > 128 {
+        return None;
+    }
+    match typed.deref(ctx).signedness() {
+        Signedness::Signed if width == 128 => Some((i128::MIN, i128::MAX)),
+        Signedness::Signed => {
+            let half = 1i128.checked_shl(width - 1)?;
+            Some((-half, half - 1))
+        }
+        Signedness::Unsigned | Signedness::Signless if width >= 127 => Some((0, i128::MAX)),
+        Signedness::Unsigned | Signedness::Signless => Some((0, (1i128.checked_shl(width)? - 1))),
+    }
+}
+
+/// Full unrolling uses a mathematical recurrence. Prove that the fixed-width IV
+/// reaches the same final value without wrapping; otherwise the original loop
+/// may continue after the trip count this analysis computed.
+fn full_iv_stays_in_range(ctx: &Context, shape: &LoopShape, trip: i128) -> bool {
+    let Some((min, max)) = integer_value_bounds(ctx, shape.iv_type) else {
+        return false;
+    };
+    let Some(delta) = trip.checked_mul(shape.iv_step) else {
+        return false;
+    };
+    let Some(final_iv) = shape.iv_init.checked_add(delta) else {
+        return false;
+    };
+    (min..=max).contains(&shape.iv_init) && (min..=max).contains(&final_iv)
+}
+
+/// A grouped positive-IV span must be small enough to cross the type boundary
+/// at most once. The runtime guard can then detect that crossing reliably.
+fn partial_span_is_representable(ctx: &Context, ty: TypeHandle, span: i128) -> bool {
+    let Some((_min, max)) = integer_value_bounds(ctx, ty) else {
+        return false;
+    };
+    (0..=max).contains(&span)
+}
+
 /// Fully unroll a loop whose iteration count is known at compile time, so no
-/// loop is left at all. Works for any body shape the [`LoopShape`] checks allow
-/// (single latch and single header-test exit), including bodies with internal
-/// `if`/`else`/`match` and nested loops.
+/// loop is left at all. Works for any body shape the [`LoopShape`] checks allow,
+/// including bodies with internal `if`/`else`/`match`, nested loops, early
+/// exits, and multiple exit targets.
 ///
 /// For a trip count `T`, it lays down `T` copies of the body, chained one into
 /// the next: copy 0 entered from the preheader, copy `k`'s latch flowing into
-/// copy `k+1`, and the last copy's latch flowing to the loop's exit. In copy `k`
+/// copy `k+1`, and the last copy's latch flowing to the header's normal exit. In copy `k`
 /// the counter is the literal `init + k*step`, and the other carried values are
 /// threaded from each copy to the next. The original loop blocks become
 /// unreachable and `simplify_cfg` deletes them.
+///
+/// Early exits are cloned with the body. Their outside targets stay unchanged,
+/// while their edge operands are remapped to the current copy. An exit from copy
+/// `k` therefore skips every later copy, just as `break` skips later iterations.
+/// Values made in the body must leave through exit-edge operands and block
+/// arguments. A small normalization handles direct outside uses of header-carried
+/// values before cloning.
 fn full_unroll(
     ctx: &mut Context,
     info: &LoopInfo,
@@ -616,18 +904,64 @@ fn full_unroll(
     preheader: Ptr<BasicBlock>,
     rec: &induction::LoopRecurrences,
 ) -> Result<UnrollOutcome> {
-    let s = match analyze_shape(ctx, info, region, id, preheader, rec) {
+    let s = match analyze_shape(ctx, info, region, id, preheader, rec, true) {
         Ok(s) => s,
         Err(why) => return Ok(UnrollOutcome::Skipped(why)),
     };
-    let trip = match rec.trip_count {
-        Some(t) => t as i128,
+    let trip_count = match rec.trip_count {
+        Some(t) => t,
         None => {
             return Ok(UnrollOutcome::Skipped(
                 "full #[unroll] needs a compile-time-constant trip count; this loop's count is only known at runtime (use #[unroll(N)] for partial unrolling)".into(),
             ));
         }
     };
+    if let Err(reason) = check_clone_budget(ctx, trip_count, &s.body_blocks_ordered) {
+        return Ok(UnrollOutcome::Skipped(reason));
+    }
+    if !liveouts_are_safe(ctx, &s) {
+        return Ok(UnrollOutcome::Skipped(
+            "full unrolling requires values made in the loop body to leave through exit block arguments".into(),
+        ));
+    }
+    let trip = i128::from(trip_count);
+    if !full_iv_stays_in_range(ctx, &s, trip) {
+        return Ok(UnrollOutcome::Skipped(
+            "the loop counter may wrap before the computed full-unroll trip count is reached"
+                .into(),
+        ));
+    }
+
+    // Precompute every literal before changing the CFG. Besides keeping all
+    // arithmetic checked, this guarantees that an unsupported recurrence cannot
+    // leave behind a partly unrolled loop.
+    let copies = match usize::try_from(trip_count) {
+        Ok(copies) => copies,
+        Err(_) => {
+            return Ok(UnrollOutcome::Skipped(
+                "the full-unroll copy count does not fit this target's address space".into(),
+            ));
+        }
+    };
+    let Some(literal_count) = copies.checked_add(1) else {
+        return Ok(UnrollOutcome::Skipped(
+            "the full-unroll counter table is too large to allocate safely".into(),
+        ));
+    };
+    let mut iv_literals = Vec::with_capacity(literal_count);
+    for k in 0..=trip_count {
+        let Some(delta) = i128::from(k).checked_mul(s.iv_step) else {
+            return Ok(UnrollOutcome::Skipped(
+                "the full-unroll counter arithmetic overflows the analysis range".into(),
+            ));
+        };
+        let Some(value) = s.iv_init.checked_add(delta) else {
+            return Ok(UnrollOutcome::Skipped(
+                "the full-unroll counter arithmetic overflows the analysis range".into(),
+            ));
+        };
+        iv_literals.push(value);
+    }
 
     // Carried values flowing into the next copy; start at the loop's initial
     // values. `prev_tail` is the branch we must point at the next copy (the
@@ -635,10 +969,10 @@ fn full_unroll(
     let mut running: Vec<Value> = s.init_ops.clone();
     let mut prev_tail = s.preheader_term;
 
-    for k in 0..trip {
+    for &iv_literal in iv_literals.iter().take(copies) {
         // The counter in copy k is the literal init + k*step. Materialize it just
         // before the branch into this copy, so it dominates the copy.
-        let iv_val = make_const(ctx, s.iv_type, s.iv_init + k * s.iv_step, prev_tail);
+        let iv_val = make_const(ctx, s.iv_type, iv_literal, prev_tail);
         let mut subst = running.clone();
         subst[s.iv_idx] = iv_val;
         let c = clone_one_copy(ctx, region, &s, &subst);
@@ -649,35 +983,37 @@ fn full_unroll(
 
     // The loop has finished: the counter's final value is the literal
     // init + T*step. Use it for any live-out reads of the counter.
-    let final_iv = make_const(ctx, s.iv_type, s.iv_init + trip * s.iv_step, prev_tail);
+    let final_iv = make_const(ctx, s.iv_type, iv_literals[copies], prev_tail);
     running[s.iv_idx] = final_iv;
 
     // Branch the last copy to the exit, feeding the exit's own block arguments (if
     // any) the final carried values.
     let exit_args: Vec<Value> = s
-        .exit_ops
+        .normal_exit_ops
         .iter()
         .map(|&v| match s.header_args.iter().position(|&h| h == v) {
             Some(a) => running[a],
             None => v,
         })
         .collect();
-    rewire_goto(ctx, prev_tail, s.exit, &exit_args);
+    rewire_goto(ctx, prev_tail, s.normal_exit, &exit_args);
 
     // The exit (and code after it) may also read the carried values *directly* by
     // dominance (this IR is not loop-closed SSA, so a header block argument can be
     // used outside the loop). The original header is now dead, so those reads must
     // be repointed to the final unrolled values. Uses inside the loop are left
     // alone; their blocks are unreachable and get deleted by `simplify_cfg`.
-    for (a, &replacement) in running.iter().enumerate().take(s.nargs) {
-        s.header_args[a].replace_some_uses_with(
-            ctx,
-            |ctx, u| match u.user_op().deref(ctx).get_parent_block() {
-                Some(b) => !s.loop_blocks.contains(&b),
-                None => true,
-            },
-            &replacement,
-        );
+    if !s.has_early_exits {
+        for (a, &replacement) in running.iter().enumerate().take(s.nargs) {
+            s.header_args[a].replace_some_uses_with(
+                ctx,
+                |ctx, u| match u.user_op().deref(ctx).get_parent_block() {
+                    Some(b) => !s.loop_blocks.contains(&b),
+                    None => true,
+                },
+                &replacement,
+            );
+        }
     }
 
     Ok(UnrollOutcome::Unrolled)
@@ -716,7 +1052,10 @@ fn make_const(ctx: &mut Context, ty: TypeHandle, value: i128, before: Ptr<Operat
 /// keeps going only while a whole group of `factor` more iterations still fits;
 /// once fewer than that remain, control falls into the remainder loop.
 ///
-/// Only counting-up loops (test `<` or `<=`, positive step) are handled for now.
+/// Multiple source latches are supported after normalization. An early `break`
+/// or another exit is not yet supported here: the main and remainder loops would
+/// need their path-specific exit values merged. Such a request warns and skips.
+/// Only counting-up loops (test `<` or `<=`, positive step) are handled.
 ///
 /// What it produces (the loop was entered as `preheader -> header`):
 /// ```text
@@ -737,20 +1076,47 @@ fn partial_unroll(
     rec: &induction::LoopRecurrences,
     factor: u32,
 ) -> Result<UnrollOutcome> {
-    let n = factor as i128;
-    if n < 2 {
+    if factor < 2 {
         return Ok(UnrollOutcome::Skipped(format!(
             "unroll factor {factor} is too small (need 2 or more)"
         )));
     }
-    let s = match analyze_shape(ctx, info, region, id, preheader, rec) {
+    let n = i128::from(factor);
+    let s = match analyze_shape(ctx, info, region, id, preheader, rec, false) {
         Ok(s) => s,
         Err(why) => return Ok(UnrollOutcome::Skipped(why)),
+    };
+    if let Err(reason) = check_clone_budget(ctx, u64::from(factor), &s.body_blocks_ordered) {
+        return Ok(UnrollOutcome::Skipped(reason));
+    }
+    let factor_usize = match usize::try_from(factor) {
+        Ok(factor) => factor,
+        Err(_) => {
+            return Ok(UnrollOutcome::Skipped(
+                "the partial-unroll factor does not fit this target's address space".into(),
+            ));
+        }
     };
     // Partial unroll needs an up-counting loop with a known bound value.
     if s.iv_step <= 0 || !matches!(rec.continue_pred, Some(CmpPred::Lt) | Some(CmpPred::Le)) {
         return Ok(UnrollOutcome::Skipped(
             "partial #[unroll(N)] supports only up-counting loops (test < or <=, positive step) for now".into(),
+        ));
+    }
+    let Some(last_span) = (n - 1).checked_mul(s.iv_step) else {
+        return Ok(UnrollOutcome::Skipped(
+            "the partial-unroll counter step is too large to analyze safely".into(),
+        ));
+    };
+    let Some(group_step) = n.checked_mul(s.iv_step) else {
+        return Ok(UnrollOutcome::Skipped(
+            "the partial-unroll counter step is too large to analyze safely".into(),
+        ));
+    };
+    if !partial_span_is_representable(ctx, s.iv_type, last_span) {
+        return Ok(UnrollOutcome::Skipped(
+            "the partial-unroll group spans too much of the counter type to guard wraparound safely"
+                .into(),
         ));
     }
     let pred = rec.continue_pred.unwrap();
@@ -778,6 +1144,18 @@ fn partial_unroll(
         ));
     }
 
+    // Validate each per-copy offset before creating the main header or cloning
+    // any body block, so arithmetic failure is always a clean skip.
+    let mut copy_offsets = Vec::with_capacity(factor_usize);
+    for j in 0..factor {
+        let Some(offset) = i128::from(j).checked_mul(s.iv_step) else {
+            return Ok(UnrollOutcome::Skipped(
+                "the partial-unroll counter offset overflows the analysis range".into(),
+            ));
+        };
+        copy_offsets.push(offset);
+    }
+
     let arg_types: Vec<TypeHandle> = s.header_args.iter().map(|a| a.get_type(ctx)).collect();
     // The new main-loop header, taking the same carried values as the original.
     let main_h = BasicBlock::new(ctx, None, arg_types);
@@ -787,26 +1165,37 @@ fn partial_unroll(
         .collect();
     let mh_iv = mh_args[s.iv_idx];
 
-    // Lay down `factor` copies of the body, threading carried values copy to
-    // copy. Copy 0 uses the main header's args (its counter is mh_iv); each later
-    // copy uses the previous copy's latch results, so its counter is the previous
-    // counter + step (a runtime value, not a literal: partial keeps it runtime).
+    // Lay down `factor` copies of the body, threading non-IV carried values from
+    // one copy to the next. Give each copy an explicit `mh_iv + j*step` counter.
+    // This is semantically the same recurrence, and it keeps the affine relation
+    // visible even when a synthetic unified latch forwards its counter through a
+    // block argument.
     let mut running: Vec<Value> = mh_args.clone();
-    let mut copies: Vec<CopyResult> = Vec::with_capacity(factor as usize);
-    for _ in 0..factor {
-        let subst = running.clone();
+    let mut copies: Vec<CopyResult> = Vec::with_capacity(factor_usize);
+    for (j, offset) in copy_offsets.iter().copied().enumerate() {
+        let copy_iv = if j == 0 {
+            mh_iv
+        } else {
+            let offset_value = append_const(ctx, s.iv_type, offset, main_h);
+            append_add(ctx, s.iv_type, mh_iv, offset_value, main_h)
+        };
+        let mut subst = running.clone();
+        subst[s.iv_idx] = copy_iv;
         let c = clone_one_copy(ctx, region, &s, &subst);
         running = c.next_running.clone();
         copies.push(c);
     }
+    let next_offset = append_const(ctx, s.iv_type, group_step, main_h);
+    running[s.iv_idx] = append_add(ctx, s.iv_type, mh_iv, next_offset, main_h);
+
     // Chain copy j's latch into copy j+1's entry; the last copy's latch loops
     // back to main_h carrying `running` (counter now mh_iv + factor*step).
-    for j in 0..(factor as usize - 1) {
+    for j in 0..(factor_usize - 1) {
         let next_entry = copies[j + 1].entry;
         let next_args = copies[j + 1].entry_args.clone();
         rewire_goto(ctx, copies[j].latch_term, next_entry, &next_args);
     }
-    let last_latch = copies[factor as usize - 1].latch_term;
+    let last_latch = copies[factor_usize - 1].latch_term;
     rewire_goto(ctx, last_latch, main_h, &running);
 
     // The main-loop counter is mh_iv = init + (factor*step)*t, so it is always
@@ -818,13 +1207,14 @@ fn partial_unroll(
         .iter()
         .flat_map(|c| c.blocks.iter().copied())
         .collect();
-    fold_constant_index_in_copies(ctx, &copy_blocks, mh_iv, s.iv_init, n * s.iv_step);
+    fold_constant_index_in_copies(ctx, &copy_blocks, mh_iv, s.iv_init, group_step);
 
     // main_h guard: stay in the main loop only while a whole group of `factor`
     // iterations still fits. The last copy in a group uses counter
-    // mh_iv + (factor-1)*step, so the group fits exactly when that still passes
-    // the test. True -> copy 0 (enter the main body); False -> the original
-    // header (the remainder loop), passing the current carried values.
+    // mh_iv + (factor-1)*step, so the group fits when that still passes the test
+    // and did not wrap below mh_iv. True -> copy 0 (enter the main body); False
+    // -> the original header (the remainder loop), passing the current carried
+    // values. The remainder then preserves the source loop's exact wrap behavior.
     // A constant bound may be defined inside the (original) loop, which does not
     // dominate `main_h`; re-materialize it here. A non-constant bound was already
     // checked to be defined outside the loop, so it dominates `main_h` as-is.
@@ -832,9 +1222,11 @@ fn partial_unroll(
         Some(c) => append_const(ctx, bound.get_type(ctx), c, main_h),
         None => bound,
     };
-    let last_off = append_const(ctx, s.iv_type, (n - 1) * s.iv_step, main_h);
+    let last_off = append_const(ctx, s.iv_type, last_span, main_h);
     let last_iv = append_add(ctx, s.iv_type, mh_iv, last_off, main_h);
-    let cont = append_cmp(ctx, pred, last_iv, guard_bound, s.i1_type, main_h);
+    let within_bound = append_cmp(ctx, pred, last_iv, guard_bound, s.i1_type, main_h);
+    let no_wrap = append_cmp(ctx, CmpPred::Ge, last_iv, mh_iv, s.i1_type, main_h);
+    let cont = append_bitand(ctx, s.i1_type, within_bound, no_wrap, main_h);
     let entry0 = copies[0].entry;
     let entry0_args = copies[0].entry_args.clone();
     let (flat, segs) =
@@ -872,16 +1264,16 @@ fn affine_offset(ctx: &Context, v: Value, iv: Value) -> Option<i128> {
         let a = def.deref(ctx).get_operand(0);
         let b = def.deref(ctx).get_operand(1);
         if let (Some(o), Some(c)) = (affine_offset(ctx, a, iv), induction::const_i128(ctx, b)) {
-            return Some(o + c);
+            return o.checked_add(c);
         }
         if let (Some(o), Some(c)) = (affine_offset(ctx, b, iv), induction::const_i128(ctx, a)) {
-            return Some(o + c);
+            return o.checked_add(c);
         }
     } else if Operation::get_op::<MirSubOp>(def, ctx).is_some() {
         let a = def.deref(ctx).get_operand(0);
         let b = def.deref(ctx).get_operand(1);
         if let (Some(o), Some(c)) = (affine_offset(ctx, a, iv), induction::const_i128(ctx, b)) {
-            return Some(o - c);
+            return o.checked_sub(c);
         }
     }
     None
@@ -958,7 +1350,10 @@ fn fold_constant_index_in_copies(
             if window <= 0 || (window & (window - 1)) != 0 || step_jump % window != 0 {
                 continue;
             }
-            let folded = (init + offset).rem_euclid(window);
+            let Some(base) = init.checked_add(offset) else {
+                continue;
+            };
+            let folded = base.rem_euclid(window);
             let result = op.deref(ctx).get_result(0);
             let ty = result.get_type(ctx);
             let lit = make_const(ctx, ty, folded, op);
@@ -992,7 +1387,7 @@ fn counter_index_window(ctx: &Context, op: Ptr<Operation>, iv: Value) -> Option<
             return None;
         }
         // window = MASK + 1.
-        Some((offset, mask + 1))
+        Some((offset, mask.checked_add(1)?))
     } else if Operation::get_op::<MirRemOp>(op, ctx).is_some() {
         // `%` is NOT commutative: only the dividend (operand 0) may be the
         // counter, and only for unsigned types.
@@ -1069,6 +1464,27 @@ fn append_add(
     op.deref(ctx).get_result(0)
 }
 
+/// Build boolean `a & b`, add it as the last op of `block`, and return its
+/// result. Both inputs and the result have `i1_type`.
+fn append_bitand(
+    ctx: &mut Context,
+    i1_type: TypeHandle,
+    a: Value,
+    b: Value,
+    block: Ptr<BasicBlock>,
+) -> Value {
+    let op = Operation::new(
+        ctx,
+        MirBitAndOp::get_concrete_op_info(),
+        vec![i1_type],
+        vec![a, b],
+        vec![],
+        0,
+    );
+    op.insert_at_back(block, ctx);
+    op.deref(ctx).get_result(0)
+}
+
 /// Build the comparison `a <pred> b` (a boolean, of type `i1_type`), add it as
 /// the last op of `block`, and return its result value.
 fn append_cmp(
@@ -1121,4 +1537,19 @@ fn collect_hints(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_growth_budget;
+
+    #[test]
+    fn growth_budget_counts_operations_not_only_blocks() {
+        let err = check_growth_budget(1_024, 1, 65).unwrap_err();
+        assert!(err.contains("65536 cloned operations"));
+        assert!(
+            check_growth_budget(1_024, 1, 64).is_ok(),
+            "the exact operation limit remains allowed"
+        );
+    }
 }

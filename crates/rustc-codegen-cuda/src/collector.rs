@@ -478,12 +478,13 @@ fn is_ptx_asm_marker_path(fn_path: &str) -> bool {
 
 /// Returns true for the hidden `__unroll_config::<FACTOR>` marker function.
 ///
-/// `#[unroll]` / `#[unroll(N)]` on a loop makes the `#[kernel]` macro plant a
-/// call to this marker at the top of the loop body; the MIR importer rewrites
-/// that call to a `mir.unroll_hint` op (consumed by the loop-unroll pass) and
-/// never emits a real call. So the marker's (empty) body must not be collected,
-/// or it would show up as a dead `.func` in the generated PTX. Matches both the
-/// re-exported path (`cuda_device::__unroll_config`) and the full path.
+/// `#[unroll]` / `#[unroll(N)]` on a loop makes the `#[kernel]` or `#[device]`
+/// macro plant a call to this marker at the top of the loop body. The MIR
+/// importer rewrites that call to a `mir.unroll_hint` op (consumed by the
+/// loop-unroll pass) and never emits a real call. So the marker's empty body must
+/// not be collected, or it would show up as a dead `.func` in the generated PTX.
+/// Matches both the re-exported path (`cuda_device::__unroll_config`) and the
+/// full path.
 fn is_unroll_marker_path(fn_path: &str) -> bool {
     fn_path.contains("::__unroll_config")
 }

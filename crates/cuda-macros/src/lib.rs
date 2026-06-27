@@ -1458,24 +1458,39 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 ///
 /// # Loop unrolling
 ///
-/// Put `#[unroll]` on a loop with a compile-time-known trip count to unroll it
-/// completely. Use `#[unroll(N)]`, where `N >= 2`, to do `N` iterations of
-/// work per trip and handle any leftovers with a remainder loop.
+/// Put `#[unroll]` on a loop with a compile-time-known trip count to request full
+/// unrolling. Use `#[unroll(N)]`, where `N >= 2`, to request `N` iterations of
+/// work per trip; a remainder loop handles any leftovers.
 ///
 /// ```ignore
 /// #[kernel]
 /// pub fn example(n: u32) {
-///     #[unroll]
-///     for i in 0..4 { work(i); }
-///
 ///     let mut i = 0;
+///     #[unroll]
+///     while i < 4 { work(i); i += 1; }
+///
+///     let mut j = 0;
 ///     #[unroll(4)]
-///     while i < n { work(i); i += 1; }
+///     while j < n { work(j); j += 1; }
 /// }
 /// ```
 ///
+/// The pass currently recognizes explicit counted `while` loops. Range-based
+/// `for` loops are not yet recognized.
+///
 /// Only the annotated loop is unrolled. Inner loops are copied intact unless
-/// they carry their own annotation.
+/// they carry their own annotation. Several `continue` paths (multiple
+/// back-edges) are supported.
+///
+/// Full `#[unroll]` preserves `break` paths and multiple exit targets. Partial
+/// `#[unroll(N)]` currently requires the loop condition to be the only exit. If
+/// the loop has a `break` or another extra exit, the compiler warns and skips
+/// partial unrolling for that loop.
+///
+/// Partial unrolling also requires a positive counter step, a `<` or `<=` test,
+/// and a limit that does not change inside the loop. One annotation may create
+/// at most 1,024 body copies, 8,192 cloned basic blocks, and 65,536 cloned
+/// operations. Unsupported or larger requests warn and are not unrolled.
 #[proc_macro_attribute]
 pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as KernelArgs);
@@ -2463,8 +2478,8 @@ impl Parse for LaunchBoundsArgs {
 
 /// Arguments for the `#[unroll]` / `#[unroll(N)]` attribute.
 ///
-/// Bare `#[unroll]` parses to factor `0` (full unroll); `#[unroll(N)]` parses to
-/// factor `N`.
+/// Bare `#[unroll]` parses to factor `0` (full unroll); `#[unroll(N)]` requires
+/// `N >= 2`.
 struct UnrollArgs {
     factor: u32,
 }
@@ -2483,7 +2498,11 @@ impl Parse for UnrollArgs {
             .collect::<Result<Vec<_>, _>>()?;
 
         match values.len() {
-            1 => Ok(UnrollArgs { factor: values[0] }),
+            1 if values[0] >= 2 => Ok(UnrollArgs { factor: values[0] }),
+            1 => Err(syn::Error::new_spanned(
+                args.first().unwrap(),
+                "partial unroll factor must be at least 2; use #[unroll] for full unrolling",
+            )),
             _ => Err(syn::Error::new_spanned(
                 args.first().unwrap(),
                 "unroll expects no argument (full unroll) or one factor: #[unroll] or #[unroll(N)]",
@@ -2806,6 +2825,20 @@ pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - Return values (unlike kernels which must return `()`)
 /// - Be called from kernels and other device functions
 /// - Use generics (each monomorphization becomes a separate device function)
+/// - Use per-loop `#[unroll]` and `#[unroll(N)]` annotations
+///
+/// # Loop unrolling
+///
+/// Loop annotations work the same way in device function definitions as they do
+/// in kernels. Use an explicit counted `while` loop; range-based `for` loops are
+/// not yet recognized. Partial factors must be `N >= 2`. Multiple `continue`
+/// paths are supported; full unrolling preserves `break` and multiple exit
+/// targets. Partial unrolling requires a positive counter step, a `<` or `<=`
+/// test, an unchanging limit, and no exit besides the normal header test.
+///
+/// One annotation may create at most 1,024 body copies, 8,192 cloned basic
+/// blocks, and 65,536 cloned operations. Unsupported or larger requests warn
+/// and are not unrolled.
 ///
 /// # Example: Device Function Definition
 ///
@@ -4225,5 +4258,12 @@ mod tests {
             visitor.error.is_some(),
             "malformed #[unroll(1, 2)] should record a parse error"
         );
+    }
+
+    #[test]
+    fn partial_unroll_factor_must_be_at_least_two() {
+        assert!(syn::parse_str::<UnrollArgs>("0").is_err());
+        assert!(syn::parse_str::<UnrollArgs>("1").is_err());
+        assert_eq!(syn::parse_str::<UnrollArgs>("2").unwrap().factor, 2);
     }
 }

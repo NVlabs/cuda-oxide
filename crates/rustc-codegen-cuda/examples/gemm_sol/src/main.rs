@@ -3634,19 +3634,13 @@ mod kernels {
 
                     let tile_k_base = tile_iter * k_iters;
                     let mut k_idx: u32 = 0;
-                    // Unroll the K-loop by one full pipeline cycle. The compiler
-                    // clones the body (barrier waits + the j<4 MMA loop) 4x and
-                    // folds the stage index to the literals 0,1,2,3, so the 4-way
-                    // buffer/barrier select collapses and the MMAs issue
-                    // back-to-back (the Phase-4D single biggest win).
+                    // Unroll the K-loop by one full pipeline cycle. Keep the stage
+                    // derived from the global K-tile sequence so this consumer uses
+                    // exactly the same buffer and barrier as the producer.
                     #[unroll(4)]
                     while k_idx < k_iters {
                         let global_k = tile_k_base + k_idx;
-                        // stage is loop-local so #[unroll(4)] folds it to 0..3
-                        // (sound: k_iters is a multiple of 4, so k_idx & 3 ==
-                        // global_k & 3). Parity stays global: it must continue the
-                        // pipeline phase across tile boundaries.
-                        let stage = k_idx & 3;
+                        let stage = global_k & 3;
                         let tma_parity = (global_k >> 2) & 1;
 
                         let (smem_a_base, smem_b_base, tma_bar_const, mma_bar_mut): (

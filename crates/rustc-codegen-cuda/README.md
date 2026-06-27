@@ -34,7 +34,7 @@ fn main() {
       ▼
   rustc_codegen_cuda
       ├── collect #[kernel] functions + transitive callees
-      ├── device MIR  → dialect-mir → mem2reg → LLVM dialect → LLVM IR → PTX
+      ├── device MIR  → dialect-mir → mem2reg → unroll → LLVM dialect → LLVM IR → PTX
       └── host   MIR  → rustc_codegen_llvm (standard path)
       │
       ▼
@@ -44,7 +44,9 @@ fn main() {
 The backend implements rustc's `CodegenBackend` trait. When rustc calls `codegen_crate()`:
 
 1. **Collect** -- `collector.rs` scans codegen units for functions prefixed with `cuda_oxide_kernel_<hash>_` (set by the `#[kernel]` proc-macro -- the prefix is owned by `crates/reserved-oxide-symbols/`, the workspace-internal source of truth for the cuda-oxide naming contract). It then walks the MIR call graph to gather all transitively reachable device functions.
-2. **Compile device code** -- `device_codegen.rs` feeds the collected MIR through the cuda-oxide pipeline: `mir-importer` translates Rust MIR to `dialect-mir`, runs `mem2reg`, and calls `mir-lower` to produce the LLVM dialect, which is then exported to LLVM IR and compiled to PTX via `llc`.
+2. **Compile device code** -- `device_codegen.rs` feeds the collected MIR through
+   the cuda-oxide pipeline: translate to `dialect-mir`, run `mem2reg`, apply
+   annotated unrolling, lower and export to LLVM IR, then compile PTX with `llc`.
 3. **Compile host code** -- The standard `rustc_codegen_llvm` backend handles everything else.
 
 ## Usage

@@ -11,12 +11,12 @@
 //! # Pipeline Steps
 //!
 //! ```text
-//! ┌────────────┐  ┌────────────┐  ┌───────────┐  ┌────────────────┐  ┌────────────┐
-//! │ 1. Trans-  │─▶│ 2. Verify  │─▶│ 3. mem2reg│─▶│  4. Lower      │─▶│ 5. Export  │
-//! │    late to │  │ dialect-mir│  │   (slots  │  │ dialect-mir →  │  │ LLVM IR    │
-//! │ dialect-mir│  │            │  │    → SSA) │  │  LLVM dialect  │  │ → PTX (llc)│
-//! └────────────┘  └────────────┘  └───────────┘  └────────────────┘  └────────────┘
+//! MIR -> dialect-mir -> verify -> mem2reg -> annotated loop unroll
+//!     -> LLVM dialect -> LLVM IR -> PTX
 //! ```
+//!
+//! Builds with variable debug information skip `mem2reg` and loop unrolling so
+//! source variables remain in stable stack slots.
 //!
 //! # GPU Target Selection
 //!
@@ -214,11 +214,13 @@ impl Default for PipelineConfig {
 /// 1. Register the `dialect-mir`, `dialect-nvvm`, and LLVM dialects
 /// 2. Translate each function's MIR body into `dialect-mir`
 /// 3. Verify the `dialect-mir` module
-/// 4. Run `pliron::opts::mem2reg` to promote slot allocas back into SSA
-/// 5. Lower `dialect-mir` → LLVM dialect (via `mir-lower`)
-/// 6. Verify the LLVM dialect module
-/// 7. Export the LLVM dialect to a `.ll` file (including device extern declarations)
-/// 8. Invoke `llc` to generate PTX (or emit LTOIR/NVVM IR when requested)
+/// 4. Unless full variable-debug mode is enabled, run `mem2reg` to promote slot
+///    allocas back into SSA
+/// 5. In the same modes, unroll annotated loops and clean up changed functions
+/// 6. Lower `dialect-mir` → LLVM dialect (via `mir-lower`)
+/// 7. Verify the LLVM dialect module
+/// 8. Export the LLVM dialect to a `.ll` file (including device extern declarations)
+/// 9. Invoke `llc` to generate PTX (or emit LTOIR/NVVM IR when requested)
 ///
 /// # Target Selection
 ///

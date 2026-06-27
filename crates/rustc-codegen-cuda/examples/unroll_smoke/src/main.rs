@@ -147,6 +147,69 @@ mod kernels {
         }
     }
 
+    /// Full unroll with an early `break`. Only `i = 0..4` reach the addition, so
+    /// each thread writes its index plus `0+1+2+3+4 = 10`.
+    #[kernel]
+    pub fn full_early_break(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let base = tid.get() as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc = base;
+            let mut i = 0u32;
+            #[unroll]
+            while i < 8 {
+                if i == 5 {
+                    break;
+                }
+                acc = acc.wrapping_add(i);
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Partial unroll with two paths back to the header. Both paths increment
+    /// `i` once, while even values add `i` and odd values add `2*i`.
+    #[kernel]
+    pub fn partial_continue_paths(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc = 0u32;
+            let mut i = 0u32;
+            #[unroll(4)]
+            while i < n {
+                let current = i;
+                i += 1;
+                if current & 1 == 0 {
+                    acc = acc.wrapping_add(current);
+                    continue;
+                }
+                acc = acc.wrapping_add(current.wrapping_mul(2));
+            }
+            *out_elem = acc;
+        }
+    }
+
+    /// Partial unroll still rejects early exits. This loop must run normally
+    /// after the warning and produce the same `0+1+2+3+4 = 10` result.
+    #[kernel]
+    pub fn partial_early_break_skipped(mut out: DisjointSlice<u32>, n: u32) {
+        let tid = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(tid) {
+            let mut acc = 0u32;
+            let mut i = 0u32;
+            #[unroll(4)]
+            while i < n {
+                if i == 5 {
+                    break;
+                }
+                acc = acc.wrapping_add(i);
+                i += 1;
+            }
+            *out_elem = acc;
+        }
+    }
+
     /// Regression guard: the loop bound `hi` is **loop-carried** (it changes each
     /// iteration), so partial unroll's "does a group of 4 still fit" guard would
     /// be unsound. The pass must refuse this loop (a loud warning) and leave it as
@@ -352,6 +415,24 @@ fn main() {
         .expect("launch partial_mb");
     let got_partmb = d_partmb.to_host_vec(&stream).unwrap();
 
+    let mut d_full_break = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .full_early_break(stream.as_ref(), cfg, &mut d_full_break)
+        .expect("launch full_early_break");
+    let got_full_break = d_full_break.to_host_vec(&stream).unwrap();
+
+    let mut d_continue = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .partial_continue_paths(stream.as_ref(), cfg, &mut d_continue, trip)
+        .expect("launch partial_continue_paths");
+    let got_continue = d_continue.to_host_vec(&stream).unwrap();
+
+    let mut d_partial_break = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    module
+        .partial_early_break_skipped(stream.as_ref(), cfg, &mut d_partial_break, trip)
+        .expect("launch partial_early_break_skipped");
+    let got_partial_break = d_partial_break.to_host_vec(&stream).unwrap();
+
     let mut d_carried = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
     module
         .carried_bound(stream.as_ref(), cfg, &mut d_carried, trip)
@@ -393,6 +474,8 @@ fn main() {
     let want_fold: u32 = (0..trip).map(|i| i & 3).sum();
     let want_mod: u32 = (0..trip).map(|i| i % 4).sum();
     let want_partmb: u32 = (0..trip).map(|i| if i & 1 == 0 { i } else { 100 }).sum();
+    let want_continue: u32 = (0..trip).map(|i| if i & 1 == 0 { i } else { 2 * i }).sum();
+    let want_partial_break: u32 = (0..trip.min(5)).sum();
     let want_carried: u32 = {
         let (mut a, mut i, mut hi) = (0u32, 0u32, trip);
         while i < hi {
@@ -457,6 +540,28 @@ fn main() {
             println!(
                 "FAIL tid={tid}: partial_mb={} expected={want_partmb}",
                 got_partmb[tid]
+            );
+            failures += 1;
+        }
+        let want_full_break = tid as u32 + 10;
+        if got_full_break[tid] != want_full_break {
+            println!(
+                "FAIL tid={tid}: full_early_break={} expected={want_full_break}",
+                got_full_break[tid]
+            );
+            failures += 1;
+        }
+        if got_continue[tid] != want_continue {
+            println!(
+                "FAIL tid={tid}: partial_continue_paths={} expected={want_continue}",
+                got_continue[tid]
+            );
+            failures += 1;
+        }
+        if got_partial_break[tid] != want_partial_break {
+            println!(
+                "FAIL tid={tid}: partial_early_break_skipped={} expected={want_partial_break}",
+                got_partial_break[tid]
             );
             failures += 1;
         }

@@ -965,8 +965,8 @@ fn translate_call(
         }
     }
 
-    // Per-loop unroll marker from `#[unroll]` / `#[unroll(N)]`. The `#[kernel]`
-    // macro injects this call as the first statement of the annotated loop's
+    // Per-loop unroll marker from `#[unroll]` / `#[unroll(N)]`. The enclosing
+    // `#[kernel]` or `#[device]` macro injects this call at the start of the loop
     // body, so we plant a `mir.unroll_hint` op right here, inside that loop
     // body. The loop-unroll pass later maps the hint back to its enclosing loop
     // (via LoopInfo) and consumes it, so it never reaches lowering. The factor
@@ -978,20 +978,27 @@ fn translate_call(
     if let Some(ref name) = pattern_name
         && (name == "__unroll_config" || name.ends_with("::__unroll_config"))
     {
-        let factor = extract_unroll_factor(func);
+        let Some(factor) = extract_unroll_factor(func) else {
+            return input_err!(
+                loc,
+                TranslationErr::invalid_op(
+                    "could not read the const-generic factor from an unroll marker",
+                )
+            );
+        };
+        let Some(target) = target_usize else {
+            return input_err!(
+                loc,
+                TranslationErr::invalid_op("an unroll marker call has no return target")
+            );
+        };
         let hint = MirUnrollHintOp::new(ctx, factor).get_operation();
         hint.deref_mut(ctx).set_loc(loc.clone());
         match prev_op {
             Some(prev) => hint.insert_after(ctx, prev),
             None => hint.insert_at_front(block_ptr, ctx),
         }
-        return Ok(helpers::emit_goto(
-            ctx,
-            target_usize.expect("__unroll_config must have target"),
-            hint,
-            block_map,
-            loc,
-        ));
+        return Ok(helpers::emit_goto(ctx, target, hint, block_map, loc));
     }
 
     // Handle DynamicSharedArray specially to extract the ALIGN const generic
@@ -1584,25 +1591,30 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
 /// Read the const-generic `FACTOR` from a `__unroll_config::<FACTOR>()` callee
 /// (`0` = full unroll).
 ///
-/// Returns 0 if it cannot be read, matching bare `#[unroll]`.
-fn extract_unroll_factor(func: &mir::Operand) -> u32 {
+/// Returns `None` when the callee is malformed instead of silently turning the
+/// request into a full unroll.
+fn extract_unroll_factor(func: &mir::Operand) -> Option<u32> {
     use rustc_public::ty::{RigidTy, TyConstKind, TyKind};
     let mir::Operand::Constant(constant) = func else {
-        return 0;
+        return None;
     };
     let TyKind::RigidTy(RigidTy::FnDef(_, args)) = constant.const_.ty().kind() else {
-        return 0;
+        return None;
     };
     if let Some(arg) = args.0.first()
         && let rustc_public::ty::GenericArgKind::Const(c) = arg
     {
         return match c.kind() {
-            TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|v| v as u32),
-            _ => c.eval_target_usize().ok().map(|v| v as u32),
-        }
-        .unwrap_or(0);
+            TyConstKind::Value(_, alloc) => {
+                alloc.read_uint().ok().and_then(|v| u32::try_from(v).ok())
+            }
+            _ => c
+                .eval_target_usize()
+                .ok()
+                .and_then(|v| u32::try_from(v).ok()),
+        };
     }
-    0
+    None
 }
 
 /// Extracts function metadata from a MIR function operand.

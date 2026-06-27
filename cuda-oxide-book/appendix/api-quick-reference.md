@@ -18,8 +18,9 @@ pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) { /* ... */ }
 
 #[kernel]
 pub fn unrolled(mut data: DisjointSlice<f32>) {
+    let mut i = 0;
     #[unroll(4)]
-    for i in 0..16 { /* ... */ }
+    while i < 16 { /* ... */ i += 1; }
 }
 
 #[kernel]
@@ -42,13 +43,25 @@ fn helper(x: f32) -> f32 { x * x }
 |:--------------------------------------------|:--------------------------------------------------------------------|
 | `#[kernel]`                                 | Mark a function as a GPU kernel entry point (`.entry` in PTX)       |
 | `#[device]`                                 | Mark a helper function or `extern "C"` block for device compilation |
-| `#[unroll]` / `#[unroll(N)]`               | Fully unroll one loop, or unroll it by factor `N`                    |
+| `#[unroll]` / `#[unroll(N)]`               | Request full unrolling, or unrolling by a factor `N >= 2`            |
 | `#[launch_bounds(max_threads, min_blocks)]` | Occupancy hints for register allocation                             |
 | `#[cluster_launch(x, y, z)]`                | Set compile-time cluster dimensions (Hopper+)                       |
 | `#[cooperative_launch]`                     | Launch cooperatively via `#[cuda_module]` (enables `grid::sync()`)  |
 | `#[convergent]`                             | Mark as convergent (barrier semantics)                              |
 | `#[pure]`                                   | Mark as side-effect free                                            |
 | `#[readonly]`                               | Mark as read-only                                                   |
+
+Use these annotations only on an explicit counted `while` loop inside a
+`#[kernel]` or `#[device]` function. Range-based `for` loops are not yet
+recognized by the unroll pass. Nested loops and multiple `continue` paths are
+supported. Full `#[unroll]` preserves `break` paths and multiple exit targets.
+
+Partial `#[unroll(N)]` requires a positive step, a `<` or `<=` test, an
+unchanging limit, and no exit besides the normal header test. Other requests
+warn and are not unrolled.
+
+One annotation may create at most 1,024 body copies, 8,192 cloned basic blocks,
+and 65,536 cloned operations. Larger requests warn and are not unrolled.
 
 ### Debug and PTX Macros
 

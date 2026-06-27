@@ -32,7 +32,7 @@
 //!        │
 //!        ▼
 //! ┌──────────────┐
-//! │ mir-importer │  (Stable MIR → dialect-mir, then mem2reg)
+//! │ mir-importer │  (Stable MIR → dialect-mir, mem2reg, annotated unroll)
 //! └──────┬───────┘
 //!        │
 //!        ▼

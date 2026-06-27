@@ -121,7 +121,8 @@ newer until that lands.
 
 ### `cargo oxide pipeline <example>`
 
-Shows the full compilation pipeline with verbose output at every stage: MIR collection, `dialect-mir` (alloca + post-`mem2reg`), the LLVM dialect, textual LLVM IR, and the final PTX.
+Shows verbose progress plus the selected IR artifacts: MIR collection,
+`dialect-mir` before and after `mem2reg`, LLVM dialect, LLVM IR, and final PTX.
 
 ```bash
 cargo oxide pipeline vecadd
