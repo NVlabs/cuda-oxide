@@ -106,21 +106,6 @@ impl std::fmt::Debug for DriverError {
 
 impl error::Error for DriverError {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn identifies_unsupported_ptx_version() {
-        let unsupported =
-            DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_UNSUPPORTED_PTX_VERSION);
-        let unrelated = DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE);
-
-        assert!(unsupported.is_unsupported_ptx_version());
-        assert!(!unrelated.is_unsupported_ptx_version());
-    }
-}
-
 /// Converts a raw CUDA driver return value into `Result<T, DriverError>`.
 ///
 /// Implemented for `CUresult` (void-returning calls) and for
@@ -152,5 +137,20 @@ impl<T> IntoResult<T> for (cuda_bindings::CUresult, MaybeUninit<T>) {
             cuda_bindings::cudaError_enum_CUDA_SUCCESS => Ok(unsafe { self.1.assume_init() }),
             _ => Err(DriverError(self.0)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifies_unsupported_ptx_version() {
+        let unsupported =
+            DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_UNSUPPORTED_PTX_VERSION);
+        let unrelated = DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE);
+
+        assert!(unsupported.is_unsupported_ptx_version());
+        assert!(!unrelated.is_unsupported_ptx_version());
     }
 }

@@ -396,11 +396,12 @@ verdict_ltoir() {
 #   1. `cargo oxide build` exited 0. Device codegen failures are rustc
 #      fatals (see rustc-codegen-cuda/src/lib.rs join on device results),
 #      so a broken device pipeline cannot exit 0.
-#   2. A fresh device artifact exists: {ex}.ptx, or {ex}.ll for the
-#      NVVM-IR path. cargo-oxide deletes stale ones before building
-#      (clean_generated_files), so presence proves this build emitted it.
-#      This catches collector regressions where the build "succeeds"
-#      because no #[kernel] was found and device codegen never ran.
+#   2. A fresh device artifact exists: {ex}.ptx, or {ex}.ll plus a concrete
+#      {ex}.target for the NVVM-IR path. cargo-oxide deletes stale ones before
+#      building (clean_generated_files), so presence proves this build emitted
+#      them. This catches collector regressions where the build "succeeds"
+#      because no #[kernel] was found and device codegen never ran, and prevents
+#      target-specific NVVM IR from being published without its source target.
 # Interop examples write PTX into their configured ptx_dir instead, and
 # cargo-oxide itself verifies that file exists (exits non-zero if not),
 # so the exit code alone is trusted for them.
@@ -423,9 +424,18 @@ verdict_compile() {
         echo "FAIL (libNVVM compile produced no fresh LTOIR)"
         return 1
     fi
-    if [[ -s "${ex_dir}/${artifact}.ptx" || -s "${ex_dir}/${artifact}.ll" ]]; then
+    if [[ -s "${ex_dir}/${artifact}.ptx" ]]; then
         echo "PASS (compiled)"
         return 0
+    fi
+    if [[ -s "${ex_dir}/${artifact}.ll" ]]; then
+        local target_file="${ex_dir}/${artifact}.target"
+        if [[ -s "${target_file}" ]] && grep -qE '^sm_[0-9]+[af]?$' "${target_file}"; then
+            echo "PASS (compiled NVVM IR for $(tr -d '[:space:]' < "${target_file}"))"
+            return 0
+        fi
+        echo "FAIL (NVVM IR emitted without a concrete .target sidecar)"
+        return 1
     fi
     # Match only the real interop config shapes ([[package.metadata.
     # cuda-oxide.device-crates]] tables or a device-crates = [...] key),

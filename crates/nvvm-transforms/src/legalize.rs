@@ -46,7 +46,8 @@ const NNEG_ATTR: &str = "llvm_nneg_flag";
 
 /// Rewrite a lowered LLVM module to the LLVM 7 subset used by legacy NVVM IR.
 ///
-/// Unsupported memory-ordering operations return an error.
+/// Atomic and fence operations that cuda-oxide has not yet legalized return an
+/// error instead of being emitted with unverified semantics.
 pub(crate) fn legalize_for_legacy_nvvm(ctx: &mut Context, module: Ptr<Operation>) -> Result<()> {
     let mut ops = Vec::new();
     collect_ops(ctx, module, &mut ops);
@@ -267,7 +268,7 @@ fn reject_unsupported_op(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
     if let Some(reason) = reason {
         return pliron::input_err!(
             op.deref(ctx).loc(),
-            "legacy NVVM IR does not support {reason}; use ordinary PTX output or a Blackwell NVVM target"
+            "cuda-oxide has not yet legalized {reason} for legacy NVVM IR; use ordinary PTX output or a Blackwell NVVM target"
         );
     }
     Ok(())

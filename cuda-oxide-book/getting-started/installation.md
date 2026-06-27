@@ -111,6 +111,51 @@ nvcc --version
 If you installed CUDA to a non-default location, set `CUDA_TOOLKIT_PATH` to its root directory (the one containing `include/cuda.h`). If unset, cuda-oxide defaults to `/usr/local/cuda`.
 :::
 
+(installation-toolkit-driver-compatibility)=
+
+### Toolkit and driver compatibility
+
+The CUDA toolkit and NVIDIA driver are separate installations. A newer toolkit
+can often run with an older driver through CUDA minor-version compatibility,
+but that compatibility does not cover newer PTX:
+
+```text
+cubin ───────────────────────────► driver loads finished GPU code
+PTX   ──► driver compiles it ─────► finished GPU code
+```
+
+The normal cuda-oxide path gets PTX from LLVM `llc`, so installing a newer CUDA
+toolkit does not by itself change that PTX version. The NVVM forward-execution
+path gets PTX from the selected toolkit's nvJitLink. If that PTX is newer than
+the driver understands, module loading returns
+`CUDA_ERROR_UNSUPPORTED_PTX_VERSION` (error 222).
+
+For example, the toolchains used during current validation produced:
+
+```text
+LLVM llc ───────────────► PTX 8.7 ──► driver 580 ✓
+CUDA 13.3 nvJitLink ───► PTX 9.3 ──► driver 580 ✗ error 222
+```
+
+These are observed versions, not permanent properties of the two paths. Check
+the generated PTX `.version` directive when diagnosing another toolchain.
+
+CUDA 13.x minor-version compatibility starts at driver 580, while CUDA 13.3's
+corresponding full-support driver is 610.43.02. A 580 driver can therefore load
+compatible finished cubins, but it cannot JIT PTX 9.3 produced by CUDA 13.3.
+See the [CUDA release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html)
+for the current driver table.
+
+Upgrade the driver or select a compatible toolkit for the command:
+
+```bash
+CUDA_TOOLKIT_PATH=/usr/local/cuda-13.0 cargo oxide run <example> --arch sm_86
+```
+
+See NVIDIA's
+[minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)
+for the supported driver ranges and PTX limitation.
+
 ---
 
 ## LLVM 21+ (optional)

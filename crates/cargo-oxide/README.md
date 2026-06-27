@@ -50,8 +50,10 @@ cargo oxide setup                   # explicitly build the codegen backend
 | `--tui`            | debug                            | Use GDB's TUI interface                         |
 | `--check`          | fmt                              | Check formatting only                           |
 
-`--arch` is required for `emit-ltoir` (LTOIR is architecture-specific); for all other
-commands it is optional and defaults to host GPU auto-detection.
+`--arch` is required for `emit-ltoir` and explicit NVVM IR output because those
+artifacts are architecture-specific. Without an override, `run` detects the
+local GPU, while `build` and `pipeline` use the compiler's feature-based target
+so they remain useful for cross-compilation.
 
 `--no-fmad` disables FMA contraction for kernels that rely on two separate
 roundings (e.g. Dekker's algorithm, 2Sum). Equivalent to `CUDA_OXIDE_NO_FMA=1`.

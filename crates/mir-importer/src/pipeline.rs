@@ -192,7 +192,9 @@ pub struct PipelineConfig {
     /// Pre-Blackwell targets use the legacy LLVM 7 dialect; Blackwell and
     /// newer targets use the modern opaque-pointer dialect. Architecture is
     /// controlled by `target_arch` or `device_arch_hint` (normally populated
-    /// by `cargo oxide`).
+    /// by `cargo oxide`). When an ordinary build switches to NVVM IR after
+    /// detecting libdevice, the pipeline may instead select the module's
+    /// feature-based target floor.
     pub emit_nvvm_ir: bool,
     /// Explicit CUDA target used to choose NVVM IR syntax.
     ///
@@ -444,6 +446,27 @@ pub fn run_pipeline(
         );
     }
 
+    // An ordinary zero-flag build may discover only now that libdevice makes
+    // NVVM IR necessary. Preserve the normal target policy in that case:
+    // explicit target, then a compatible local-GPU hint, then the compiler's
+    // feature-based target. Feature detection uses the
+    // same LLVM text that the ordinary PTX path would inspect, but keeps this
+    // preview in memory because the final pointer dialect is not known yet.
+    let automatic_features =
+        if needs_libdevice && !config.emit_nvvm_ir && config.target_arch.is_none() {
+            let preview = render_llvm_ir(
+                &ctx,
+                module_op_ptr,
+                device_externs,
+                false,
+                None,
+                config.debug_kind,
+            )?;
+            Some(detect_features_in_llvm_text(&preview))
+        } else {
+            None
+        };
+
     // Pre-Blackwell and Blackwell GPUs use different NVVM IR pointer syntax.
     // Resolve one concrete target before export and record it with the
     // artifact.
@@ -451,6 +474,7 @@ pub fn run_pipeline(
         let target = resolve_nvvm_target(
             config.target_arch.as_deref(),
             config.device_arch_hint.as_deref(),
+            automatic_features,
         )?;
         let dialect = if target.uses_legacy_llvm() {
             NvvmIrDialect::LegacyLlvm7
@@ -813,23 +837,40 @@ fn device_extern_type_to_pliron(
 fn resolve_nvvm_target(
     explicit_target: Option<&str>,
     device_arch_hint: Option<&str>,
+    automatic_features: Option<DetectedFeatures>,
 ) -> Result<CudaArch, PipelineError> {
-    let (target, source) = explicit_target
-        .map(|target| (target, "explicit CUDA target"))
-        .or_else(|| device_arch_hint.map(|target| (target, "detected GPU architecture")))
-        .ok_or_else(|| {
-            PipelineError::Export(
-                "NVVM IR requires a concrete CUDA target because pre-Blackwell and Blackwell+ \
-             use different LLVM dialects; pass `cargo oxide ... --arch sm_XX` (or set \
-             CUDA_OXIDE_TARGET)"
-                    .to_string(),
-            )
-        })?;
-    target.parse::<CudaArch>().map_err(|error| {
-        PipelineError::Export(format!(
-            "cannot select an NVVM IR dialect from the {source} `{target}`: {error}"
-        ))
-    })
+    let parse = |target: &str, source: &str| {
+        target.parse::<CudaArch>().map_err(|error| {
+            PipelineError::Export(format!(
+                "cannot select an NVVM IR dialect from the {source} `{target}`: {error}"
+            ))
+        })
+    };
+
+    if let Some(target) = explicit_target {
+        return parse(target, "explicit CUDA target");
+    }
+
+    if let Some(features) = automatic_features {
+        if let Some(target) = device_arch_hint {
+            let parsed = parse(target, "detected GPU architecture")?;
+            if arch_satisfies(&parsed.sm(), features) {
+                return Ok(parsed);
+            }
+        }
+        return parse(select_target(features), "feature-based compiler default");
+    }
+
+    if let Some(target) = device_arch_hint {
+        return parse(target, "detected GPU architecture");
+    }
+
+    Err(PipelineError::Export(
+        "NVVM IR requires a concrete CUDA target because pre-Blackwell and Blackwell+ \
+         use different LLVM dialects; pass `cargo oxide ... --arch sm_XX` (or set \
+         CUDA_OXIDE_TARGET)"
+            .to_string(),
+    ))
 }
 
 fn validate_nvvm_debug_support(
@@ -897,6 +938,33 @@ fn export_llvm_ir(
     nvvm_dialect: Option<NvvmIrDialect>,
     debug_kind: DebugKind,
 ) -> Result<String, PipelineError> {
+    let llvm_ir = render_llvm_ir(
+        ctx,
+        module_op_ptr,
+        device_externs,
+        emit_nvvm_ir,
+        nvvm_dialect,
+        debug_kind,
+    )?;
+
+    std::fs::write(path, &llvm_ir).map_err(|e| PipelineError::Export(e.to_string()))?;
+
+    Ok(llvm_ir)
+}
+
+/// Render LLVM text without publishing an artifact.
+///
+/// Automatic libdevice mode uses this once before NVVM legalization to detect
+/// the same target features as the normal PTX path. The final export still
+/// happens exactly once, after the target-specific legalization pass.
+fn render_llvm_ir(
+    ctx: &Context,
+    module_op_ptr: Ptr<Operation>,
+    device_externs: &[DeviceExternDecl],
+    emit_nvvm_ir: bool,
+    nvvm_dialect: Option<NvvmIrDialect>,
+    debug_kind: DebugKind,
+) -> Result<String, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
 
@@ -918,8 +986,6 @@ fn export_llvm_ir(
         llvm_export::export::export_module_with_externs(ctx, &module_op, device_externs, &config)
             .map_err(PipelineError::Export)?
     };
-
-    std::fs::write(path, &llvm_ir).map_err(|e| PipelineError::Export(e.to_string()))?;
 
     Ok(llvm_ir)
 }
@@ -967,15 +1033,11 @@ impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
 ///
 /// WGMMA (Warpgroup Matrix Multiply-Accumulate) requires sm_90a specifically.
 /// These are NOT forward-compatible - only work on H100/H200.
-fn contains_wgmma_features(ll_path: &Path) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(ll_path) {
-        contents.contains("wgmma.fence")
-            || contents.contains("wgmma.commit_group")
-            || contents.contains("wgmma.wait_group")
-            || contents.contains("wgmma.mma_async")
-    } else {
-        false
-    }
+fn contains_wgmma_features(contents: &str) -> bool {
+    contents.contains("wgmma.fence")
+        || contents.contains("wgmma.commit_group")
+        || contents.contains("wgmma.wait_group")
+        || contents.contains("wgmma.mma_async")
 }
 
 /// Checks for Thread Block Cluster instructions (sm_90+).
@@ -984,18 +1046,14 @@ fn contains_wgmma_features(ll_path: &Path) -> bool {
 /// - Cluster special registers (%cluster_ctaid, %cluster_nctaid)
 /// - Cluster synchronization (cluster.sync)
 /// - Distributed shared memory (mapa.shared::cluster)
-fn contains_cluster_features(ll_path: &Path) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(ll_path) {
-        // Cluster special registers
-        contents.contains("cluster_ctaid")
-            || contents.contains("cluster_nctaid")
-            // Cluster synchronization
-            || contents.contains("cluster.sync")
-            // Distributed shared memory
-            || contents.contains("mapa.shared::cluster")
-    } else {
-        false
-    }
+fn contains_cluster_features(contents: &str) -> bool {
+    // Cluster special registers
+    contents.contains("cluster_ctaid")
+        || contents.contains("cluster_nctaid")
+        // Cluster synchronization
+        || contents.contains("cluster.sync")
+        // Distributed shared memory
+        || contents.contains("mapa.shared::cluster")
 }
 
 /// Checks for TMA/mbarrier instructions (Hopper+ compatible with Blackwell).
@@ -1005,18 +1063,14 @@ fn contains_cluster_features(ll_path: &Path) -> bool {
 /// - mbarrier: Async hardware barriers with transaction tracking
 ///
 /// Use sm_90 (not sm_90a) for forward compatibility with sm_120 (Blackwell).
-fn contains_tma_features(ll_path: &Path) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(ll_path) {
-        // TMA instructions
-        contents.contains("cp.async.bulk.tensor")
-            // mbarrier with transaction tracking (Hopper+)
-            || contents.contains("mbarrier.arrive.expect_tx")
-            || contents.contains("mbarrier.try_wait")
-            // Proxy fence for async operations
-            || contents.contains("fence.proxy.async")
-    } else {
-        false
-    }
+fn contains_tma_features(contents: &str) -> bool {
+    // TMA instructions
+    contents.contains("cp.async.bulk.tensor")
+        // mbarrier with transaction tracking (Hopper+)
+        || contents.contains("mbarrier.arrive.expect_tx")
+        || contents.contains("mbarrier.try_wait")
+        // Proxy fence for async operations
+        || contents.contains("fence.proxy.async")
 }
 /// Checks for Blackwell tcgen05 instructions (sm_100a+).
 ///
@@ -1027,22 +1081,18 @@ fn contains_tma_features(ll_path: &Path) -> bool {
 /// - tcgen05 MMA is single-thread (vs WGMMA's 128 threads)
 /// - Uses Tensor Memory (TMEM) instead of registers
 /// - Different synchronization model (mbarrier-based)
-fn contains_blackwell_features(ll_path: &Path) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(ll_path) {
-        // tcgen05 TMEM allocation/deallocation
-        contents.contains("tcgen05.alloc")
-            || contents.contains("tcgen05.dealloc")
-            || contents.contains("tcgen05.relinquish_alloc_permit")
-            // tcgen05 synchronization
-            || contents.contains("tcgen05.fence")
-            || contents.contains("tcgen05.commit")
-            // tcgen05 MMA instructions (ws and non-ws/cta_group forms)
-            || contents.contains("tcgen05.mma")
-            // tcgen05 data movement
-            || contents.contains("tcgen05.cp")
-    } else {
-        false
-    }
+fn contains_blackwell_features(contents: &str) -> bool {
+    // tcgen05 TMEM allocation/deallocation
+    contents.contains("tcgen05.alloc")
+        || contents.contains("tcgen05.dealloc")
+        || contents.contains("tcgen05.relinquish_alloc_permit")
+        // tcgen05 synchronization
+        || contents.contains("tcgen05.fence")
+        || contents.contains("tcgen05.commit")
+        // tcgen05 MMA instructions (ws and non-ws/cta_group forms)
+        || contents.contains("tcgen05.mma")
+        // tcgen05 data movement
+        || contents.contains("tcgen05.cp")
 }
 
 /// Checks for TMA multicast in LLVM IR (requires sm_100a).
@@ -1051,14 +1101,10 @@ fn contains_blackwell_features(ll_path: &Path) -> bool {
 /// architecture-specific extension that broadcasts a tile to all CTAs in a
 /// cluster. In the LLVM intrinsic, this is controlled by the `use_cta_mask`
 /// parameter (second-to-last i1 argument) being set to true.
-fn contains_tma_multicast(ll_path: &Path) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(ll_path) {
-        contents
-            .lines()
-            .any(|line| line.contains("g2s.tile") && line.contains(", i1 1, i1"))
-    } else {
-        false
-    }
+fn contains_tma_multicast(contents: &str) -> bool {
+    contents
+        .lines()
+        .any(|line| line.contains("g2s.tile") && line.contains(", i1 1, i1"))
 }
 
 /// GPU features detected in LLVM IR that determine target selection.
@@ -1076,6 +1122,38 @@ enum DetectedFeatures {
     Cluster,
     /// No special features (maximum compatibility, sm_80).
     Basic,
+}
+
+/// Detect the strongest architecture requirement in exported LLVM text.
+///
+/// Both the ordinary PTX path and automatic libdevice mode use this exact
+/// detector. The latter renders an in-memory preview before choosing the NVVM
+/// pointer dialect.
+fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
+    match (
+        contains_blackwell_features(contents),
+        contains_tma_multicast(contents),
+        contains_wgmma_features(contents),
+        contains_tma_features(contents),
+        contains_cluster_features(contents),
+    ) {
+        (true, _, _, _, _) => DetectedFeatures::Blackwell,
+        (_, true, _, _, _) => DetectedFeatures::TmaMulticast,
+        (_, _, true, _, _) => DetectedFeatures::Wgmma,
+        (_, _, _, true, _) => DetectedFeatures::Tma,
+        (_, _, _, _, true) => DetectedFeatures::Cluster,
+        _ => DetectedFeatures::Basic,
+    }
+}
+
+fn detect_features_in_llvm_file(ll_path: &Path) -> Result<DetectedFeatures, PipelineError> {
+    let contents = std::fs::read_to_string(ll_path).map_err(|error| {
+        PipelineError::PtxGeneration(format!(
+            "failed to inspect generated LLVM IR {}: {error}",
+            ll_path.display()
+        ))
+    })?;
+    Ok(detect_features_in_llvm_text(&contents))
 }
 
 /// Maps detected features to GPU target architecture.
@@ -1104,7 +1182,7 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 /// datacenter-Blackwell family: consumer Blackwell (sm_120) and Hopper (sm_90)
 /// lack them, so an sm_120 GPU cannot run an sm_100 tcgen05 kernel even though
 /// 120 > 100. WGMMA is Hopper-only. The remaining features are forward
-/// compatible from their floor (TMA / cluster need sm_90+, basic needs sm_80+).
+/// compatible from their floor (TMA / cluster need sm_90+, basic needs sm_70+).
 ///
 /// Used to decide whether the GPU in this machine (the `CUDA_OXIDE_DEVICE_ARCH`
 /// hint) can actually run the kernel, or whether we must build for the arch the
@@ -1117,7 +1195,10 @@ fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
         DetectedFeatures::Blackwell | DetectedFeatures::TmaMulticast => major == 10,
         DetectedFeatures::Wgmma => major == 9,
         DetectedFeatures::Tma | DetectedFeatures::Cluster => major >= 9,
-        DetectedFeatures::Basic => major >= 8,
+        // Basic kernels are supported on the project's Volta+ floor. The
+        // cross-compilation default remains sm_80, but a detected sm_70/sm_75
+        // GPU is a valid and more useful target for `cargo oxide run`.
+        DetectedFeatures::Basic => major >= 7,
     }
 }
 
@@ -1220,21 +1301,7 @@ fn generate_ptx(
     // `cargo oxide run`. Used only when that GPU can actually run the kernel.
     let device_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
 
-    // Detect features (order matters: most specific first)
-    let detected = match (
-        contains_blackwell_features(ll_path),
-        contains_tma_multicast(ll_path),
-        contains_wgmma_features(ll_path),
-        contains_tma_features(ll_path),
-        contains_cluster_features(ll_path),
-    ) {
-        (true, _, _, _, _) => DetectedFeatures::Blackwell,
-        (_, true, _, _, _) => DetectedFeatures::TmaMulticast,
-        (_, _, true, _, _) => DetectedFeatures::Wgmma,
-        (_, _, _, true, _) => DetectedFeatures::Tma,
-        (_, _, _, _, true) => DetectedFeatures::Cluster,
-        _ => DetectedFeatures::Basic,
-    };
+    let detected = detect_features_in_llvm_file(ll_path)?;
 
     // Arch the IR actually requires (the hard floor).
     let feature_arch = select_target(detected);
@@ -1517,17 +1584,7 @@ impl std::error::Error for PipelineError {}
 mod tests {
     use super::*;
     use llvm_export::export::AsDeviceExtern;
-    use std::{fs, path::PathBuf};
-
-    fn write_temp_ll(name: &str, contents: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "cuda_oxide_mir_importer_{}_{}.ll",
-            std::process::id(),
-            name
-        ));
-        fs::write(&path, contents).expect("write temp LLVM IR");
-        path
-    }
+    use std::fs;
 
     #[test]
     fn test_pipeline_config_default_values() {
@@ -1687,22 +1744,71 @@ mod tests {
 
     #[test]
     fn nvvm_target_resolution_is_concrete_and_strict() {
-        let legacy = resolve_nvvm_target(Some("compute_90a"), Some("sm_120")).unwrap();
+        let legacy = resolve_nvvm_target(Some("compute_90a"), Some("sm_120"), None).unwrap();
         assert_eq!(legacy.sm(), "sm_90a");
         assert!(legacy.uses_legacy_llvm());
 
-        let modern = resolve_nvvm_target(None, Some("sm_120f")).unwrap();
+        let modern = resolve_nvvm_target(None, Some("sm_120f"), None).unwrap();
         assert_eq!(modern.compute(), "compute_120f");
         assert!(!modern.uses_legacy_llvm());
 
         for target in [None, Some("nvvm-ir"), Some("sm_90x"), Some("86")] {
-            assert!(resolve_nvvm_target(target, None).is_err(), "{target:?}");
+            assert!(
+                resolve_nvvm_target(target, None, None).is_err(),
+                "{target:?}"
+            );
         }
     }
 
     #[test]
+    fn automatic_nvvm_target_uses_the_module_feature_floor() {
+        for (features, expected, is_legacy) in [
+            (DetectedFeatures::Basic, "sm_80", true),
+            (DetectedFeatures::Cluster, "sm_90", true),
+            (DetectedFeatures::Wgmma, "sm_90a", true),
+            (DetectedFeatures::Tma, "sm_100", false),
+            (DetectedFeatures::TmaMulticast, "sm_100a", false),
+            (DetectedFeatures::Blackwell, "sm_100a", false),
+        ] {
+            let target = resolve_nvvm_target(None, None, Some(features)).unwrap();
+            assert_eq!(target.sm(), expected, "{features:?}");
+            assert_eq!(target.uses_legacy_llvm(), is_legacy, "{features:?}");
+        }
+    }
+
+    #[test]
+    fn automatic_nvvm_target_uses_only_a_compatible_device_hint() {
+        let turing =
+            resolve_nvvm_target(None, Some("sm_75"), Some(DetectedFeatures::Basic)).unwrap();
+        assert_eq!(turing.sm(), "sm_75");
+
+        let blackwell =
+            resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Basic)).unwrap();
+        assert_eq!(blackwell.sm(), "sm_120a");
+
+        let hopper =
+            resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Wgmma)).unwrap();
+        assert_eq!(hopper.sm(), "sm_90a");
+
+        assert!(
+            resolve_nvvm_target(None, Some("not-an-arch"), Some(DetectedFeatures::Basic)).is_err()
+        );
+    }
+
+    #[test]
+    fn explicit_nvvm_target_wins_over_automatic_selection() {
+        let target = resolve_nvvm_target(
+            Some("sm_86"),
+            Some("sm_120a"),
+            Some(DetectedFeatures::Blackwell),
+        )
+        .unwrap();
+        assert_eq!(target.sm(), "sm_86");
+    }
+
+    #[test]
     fn legacy_nvvm_debug_is_rejected() {
-        let legacy = resolve_nvvm_target(Some("sm_90"), None).unwrap();
+        let legacy = resolve_nvvm_target(Some("sm_90"), None, None).unwrap();
         assert!(
             validate_nvvm_debug_support(
                 &legacy,
@@ -1713,7 +1819,7 @@ mod tests {
         );
         validate_nvvm_debug_support(&legacy, NvvmIrDialect::LegacyLlvm7, DebugKind::Off).unwrap();
 
-        let modern = resolve_nvvm_target(Some("sm_120"), None).unwrap();
+        let modern = resolve_nvvm_target(Some("sm_120"), None, None).unwrap();
         validate_nvvm_debug_support(&modern, NvvmIrDialect::Modern, DebugKind::Full).unwrap();
     }
 
@@ -1751,40 +1857,36 @@ mod tests {
 
     #[test]
     fn test_feature_detection_reads_llvm_ir_snippets() {
-        let path = write_temp_ll(
-            "features",
-            r#"
-                call void asm sideeffect "wgmma.fence.sync.aligned", ""()
-                call void @llvm.nvvm.tcgen05.alloc()
-                call void asm sideeffect "cluster.sync.aligned", ""()
-                call void asm sideeffect "cp.async.bulk.tensor.2d.shared::cluster.global", ""()
-            "#,
+        let llvm = r#"
+            call void asm sideeffect "wgmma.fence.sync.aligned", ""()
+            call void @llvm.nvvm.tcgen05.alloc()
+            call void asm sideeffect "cluster.sync.aligned", ""()
+            call void asm sideeffect "cp.async.bulk.tensor.2d.shared::cluster.global", ""()
+        "#;
+
+        assert!(contains_wgmma_features(llvm));
+        assert!(contains_blackwell_features(llvm));
+        assert!(contains_cluster_features(llvm));
+        assert!(contains_tma_features(llvm));
+        assert_eq!(
+            detect_features_in_llvm_text(llvm),
+            DetectedFeatures::Blackwell,
+            "the strongest requirement must win"
         );
-
-        assert!(contains_wgmma_features(&path));
-        assert!(contains_blackwell_features(&path));
-        assert!(contains_cluster_features(&path));
-        assert!(contains_tma_features(&path));
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
     fn test_tma_multicast_detection_requires_cta_mask() {
-        let multicast = write_temp_ll(
-            "tma_multicast",
-            "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 1, i1 false)",
-        );
-        let unicast = write_temp_ll(
-            "tma_unicast",
-            "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 0, i1 false)",
-        );
+        let multicast = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 1, i1 false)";
+        let unicast = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 0, i1 false)";
 
-        assert!(contains_tma_multicast(&multicast));
-        assert!(!contains_tma_multicast(&unicast));
-
-        let _ = fs::remove_file(multicast);
-        let _ = fs::remove_file(unicast);
+        assert!(contains_tma_multicast(multicast));
+        assert!(!contains_tma_multicast(unicast));
+        assert_eq!(
+            detect_features_in_llvm_text(multicast),
+            DetectedFeatures::TmaMulticast
+        );
+        assert_eq!(detect_features_in_llvm_text(unicast), DetectedFeatures::Tma);
     }
 
     #[test]
@@ -1836,7 +1938,7 @@ mod tests {
 
     #[test]
     fn test_arch_satisfies_forward_compatible_features() {
-        // Plain TMA / cluster lower on any sm_90+ device; basic on any sm_80+.
+        // Plain TMA / cluster lower on any sm_90+ device; basic on Volta+.
         // So a consumer sm_120 GPU is a valid target for these (it runs locally
         // instead of being downgraded to the feature floor).
         for arch in ["sm_90a", "sm_100a", "sm_120a"] {
@@ -1845,6 +1947,8 @@ mod tests {
             assert!(arch_satisfies(arch, DetectedFeatures::Basic));
         }
         assert!(arch_satisfies("sm_80", DetectedFeatures::Basic));
+        assert!(arch_satisfies("sm_75", DetectedFeatures::Basic));
+        assert!(arch_satisfies("sm_70", DetectedFeatures::Basic));
         assert!(!arch_satisfies("sm_80", DetectedFeatures::Tma));
     }
 
@@ -1890,6 +1994,20 @@ mod tests {
         assert!(
             module_uses_libdevice(&ctx, module_ptr),
             "module containing `__nv_*` function declaration must be flagged"
+        );
+    }
+
+    #[test]
+    fn in_memory_llvm_preview_uses_the_shared_feature_detector() {
+        let mut ctx = Context::new();
+        let module_ptr = build_module_with_func_decl(&mut ctx, "llvm_nvvm_tcgen05_alloc");
+
+        let preview = render_llvm_ir(&ctx, module_ptr, &[], false, None, DebugKind::Off).unwrap();
+
+        assert!(preview.contains("@llvm.nvvm.tcgen05.alloc"), "{preview}");
+        assert_eq!(
+            detect_features_in_llvm_text(&preview),
+            DetectedFeatures::Blackwell
         );
     }
 

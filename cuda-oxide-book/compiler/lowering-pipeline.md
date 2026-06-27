@@ -579,6 +579,12 @@ only) > backend feature-based default. `cargo oxide build` and
 `cargo oxide pipeline` deliberately skip the host-CC step so they remain
 usable for cross-compilation.
 
+If the lowered module calls CUDA libdevice, cuda-oxide switches from `llc` to
+the NVVM path automatically. It resolves the target with the same precedence
+before choosing typed- or opaque-pointer NVVM IR. Explicit NVVM/LTOIR commands
+still require `--arch`; the feature-based fallback applies only when an
+ordinary build discovers that libdevice is needed.
+
 ```{note}
 Why LLVM 21? The 2-D bulk TMA load intrinsic used by `tma_copy`,
 `gemm_sol`, and `tcgen05_matmul` gained a 10-operand form with `addrspace(7)`
@@ -586,6 +592,29 @@ and a `cta_group` parameter in LLVM 21. Older `llc` versions reject it with
 `Intrinsic has incorrect argument type!`. Rather than maintain separate
 intrinsic emitters per LLVM version, we set 21 as the minimum.
 ```
+
+## Atomic operations in legacy NVVM IR
+
+An “LLVM-level atomic” is an atomic instruction in the NVVM input. It is not a
+statement about whether the GPU has atomic hardware. CUDA 12's LLVM 7 NVVM
+dialect accepts only a subset:
+
+| LLVM construct | CUDA 12 NVVM IR | cuda-oxide legacy path today |
+|:----------------|:----------------|:-----------------------------|
+| Atomic load or store | Not supported as an LLVM atomic instruction | Rejected; it needs another lowering |
+| `fence` | LLVM `fence` is unsupported; an NVVM memory-barrier operation is required | Rejected pending an exact ordering/scope mapping |
+| `cmpxchg` | `i32`/`i64`, plus `i128` on `compute_90+`; global/shared pointers or generic pointers known to refer there | Rejected pending type, address-space, alignment, and ordering validation |
+| `atomicrmw` | Integer `xchg`, `add`, `sub`, `and`, `or`, `xor`, `max`, `min`, `umax`, and `umin` on `i32`/`i64`; `i128 xchg` on `compute_90+`; the same address-space restriction | Rejected pending the same validation |
+| NVVM atomic intrinsics | Provide selected additional operations, including floating-point atomic add | Not yet part of generic LLVM-atomic legalization |
+
+The normal LLVM-to-PTX path keeps its existing atomic support. The limitation
+above applies only to the legacy NVVM legalizer. cuda-oxide rejects these
+operations until it can prove that their type, address space, ordering, and
+scope are preserved. The legacy specification also accepts but ignores
+`cmpxchg`'s `weak` marker and failure ordering.
+
+For the exact accepted types and operations, see the
+[CUDA 12.4 NVVM IR specification](https://docs.nvidia.com/cuda/archive/12.4.0/nvvm-ir-spec/index.html).
 
 ---
 
