@@ -23,7 +23,7 @@
 //! Both instructions are available on `sm_61+` (Pascal and later).
 //!
 //! Build and run with:
-//!   cargo oxide run dotprod
+//!   cargo oxide run dotprod --arch sm_61
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::dotprod::{dp2a_s32, dp2a_u32, dp4a_s32, dp4a_u32};
