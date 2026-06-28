@@ -33,11 +33,7 @@ mod kernels {
     /// memory via `cp.async.ca.shared.global [...], [...], 4, src_size;`.
     /// The remaining `4 - src_size` bytes are zero-filled by hardware.
     #[kernel]
-    pub fn test_zfill_4(
-        input: &[u32],
-        src_size: u32,
-        mut out: DisjointSlice<u32>,
-    ) {
+    pub fn test_zfill_4(input: &[u32], src_size: u32, mut out: DisjointSlice<u32>) {
         static mut SMEM: SharedArray<u32, 32> = SharedArray::UNINIT;
 
         let tid = thread::threadIdx_x() as usize;
@@ -112,7 +108,10 @@ fn main() {
         let out = out_dev.to_host_vec(&stream).unwrap();
         for i in 0..32 {
             if out[i] != input[i] {
-                eprintln!("  FAIL [{}]: expected 0x{:08X}, got 0x{:08X}", i, input[i], out[i]);
+                eprintln!(
+                    "  FAIL [{}]: expected 0x{:08X}, got 0x{:08X}",
+                    i, input[i], out[i]
+                );
                 test_pass = false;
                 all_pass = false;
             }
@@ -183,5 +182,8 @@ fn main() {
         println!("\nFAIL: cp.async zero-fill, one or more checks failed");
         std::process::exit(1);
     }
-    println!("\nPASS: cp.async zero-fill, all 3 tests verified on sm_{}{}", major, minor);
+    println!(
+        "\nPASS: cp.async zero-fill, all 3 tests verified on sm_{}{}",
+        major, minor
+    );
 }
