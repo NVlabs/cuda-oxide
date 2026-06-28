@@ -6,7 +6,8 @@
 //! Packed cvt variants end-to-end example (sm_80+).
 //!
 //! Tests the four new packed conversion intrinsics added in PR #276 alongside
-//! the baseline `cvt_f16x2_f32`, all on the same (lo=3.14, hi=-2.5) inputs:
+//! the baseline `cvt_f16x2_f32`, all on the same
+//! `(lo = 1.0065, hi = -1.0065)` inputs:
 //!
 //!   - `cvt_f16x2_f32`          round-to-nearest f16 pack (baseline)
 //!   - `cvt_rz_f16x2_f32`      round-toward-zero f16 pack
@@ -14,10 +15,11 @@
 //!   - `cvt_rn_relu_bf16x2_f32` round-to-nearest + ReLU bf16 pack
 //!   - `cvt_rz_bf16x2_f32`     round-toward-zero bf16 pack
 //!
-//! The host unpacks each u32 result and verifies:
-//!   - rn variants: lo ~ 3.14, hi ~ -2.5
-//!   - rz variants: lo ~ 3.14 (truncated), hi ~ -2.5 (truncated)
-//!   - relu variants: lo ~ 3.14, hi = 0.0 (negative clamped)
+//! The finite input sits on opposite sides of the nearest and toward-zero
+//! results for both f16 and bf16. The host therefore checks the exact packed
+//! bits instead of using a tolerance that could let the wrong rounding mode
+//! pass. A second launch verifies that the ReLU variants produce CUDA's
+//! canonical NaN for NaN inputs.
 //!
 //! Run: cargo oxide run cvt_packed
 
@@ -57,52 +59,6 @@ mod kernels {
 }
 
 // =============================================================================
-// HOST HELPERS - half/bfloat16 unpacking
-// =============================================================================
-
-/// Unpack a u32 holding two IEEE 754 half-precision (f16) values.
-fn unpack_f16x2(packed: u32) -> (f32, f32) {
-    let lo_bits = (packed & 0xFFFF) as u16;
-    let hi_bits = (packed >> 16) as u16;
-    (f16_to_f32(lo_bits), f16_to_f32(hi_bits))
-}
-
-/// Convert an IEEE 754 half-precision bit pattern to f32.
-fn f16_to_f32(bits: u16) -> f32 {
-    let sign = ((bits >> 15) & 1) as u32;
-    let exp = ((bits >> 10) & 0x1F) as u32;
-    let mant = (bits & 0x3FF) as u32;
-
-    if exp == 0 {
-        if mant == 0 {
-            return f32::from_bits(sign << 31);
-        }
-        // Denormalized: shift mantissa until the implicit 1 appears.
-        let mut m = mant;
-        let mut e = 0i32;
-        while (m & 0x400) == 0 {
-            m <<= 1;
-            e += 1;
-        }
-        m &= 0x3FF;
-        f32::from_bits((sign << 31) | (((127 - 15 + 1 - e as u32) & 0xFF) << 23) | (m << 13))
-    } else if exp == 31 {
-        // Inf / NaN
-        f32::from_bits((sign << 31) | (0xFF << 23) | (mant << 13))
-    } else {
-        // Normalized
-        f32::from_bits((sign << 31) | ((exp + 112) << 23) | (mant << 13))
-    }
-}
-
-/// Unpack a u32 holding two bfloat16 values.
-fn unpack_bf16x2(packed: u32) -> (f32, f32) {
-    let lo = f32::from_bits((packed & 0xFFFF) as u32 << 16);
-    let hi = f32::from_bits((packed >> 16) << 16);
-    (lo, hi)
-}
-
-// =============================================================================
 // HOST VERIFICATION
 // =============================================================================
 
@@ -127,8 +83,10 @@ fn main() {
         .expect("Failed to load PTX module");
     let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
-    let lo: f32 = 3.14;
-    let hi: f32 = -2.5;
+    // This value rounds up under round-to-nearest but truncates down under
+    // round-toward-zero in both f16 and bf16.
+    let lo = 1.0065_f32;
+    let hi = -lo;
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, NUM_VARIANTS).unwrap();
     let cfg = LaunchConfig::for_num_elems(1);
@@ -140,101 +98,52 @@ fn main() {
     let results = out_dev.to_host_vec(&stream).unwrap();
     assert_eq!(results.len(), NUM_VARIANTS);
 
+    let labels = [
+        "cvt_f16x2_f32 (rn)",
+        "cvt_rz_f16x2_f32",
+        "cvt_rn_relu_f16x2_f32",
+        "cvt_rn_relu_bf16x2_f32",
+        "cvt_rz_bf16x2_f32",
+    ];
+    let expected = [
+        0xbc07_3c07, // f16 rn:  (-1.0068359375,  1.0068359375)
+        0xbc06_3c06, // f16 rz:  (-1.0058593750,  1.0058593750)
+        0x0000_3c07, // f16 rn + ReLU
+        0x0000_3f81, // bf16 rn + ReLU
+        0xbf80_3f80, // bf16 rz:  (-1.0, 1.0)
+    ];
+
     let mut failures = 0;
-
-    // f16 tolerance: ~3 decimal digits, use 0.002 for rn and 0.004 for rz.
-    let f16_tol = 0.002;
-    let f16_rz_tol = 0.004;
-    // bf16 tolerance: ~2 decimal digits, use 0.02 for rn and 0.04 for rz.
-    let bf16_tol = 0.02;
-    let bf16_rz_tol = 0.04;
-
-    // --- 0: cvt_f16x2_f32 (round-to-nearest) ---
-    {
-        let (got_lo, got_hi) = unpack_f16x2(results[0]);
-        println!("[0] cvt_f16x2_f32:           lo={got_lo:.6}, hi={got_hi:.6}  (packed={:#010x})", results[0]);
-        if (got_lo - lo).abs() > f16_tol {
-            eprintln!("    FAIL: lo expected ~{lo}, got {got_lo}");
-            failures += 1;
-        }
-        if (got_hi - hi).abs() > f16_tol {
-            eprintln!("    FAIL: hi expected ~{hi}, got {got_hi}");
+    for i in 0..NUM_VARIANTS {
+        let got = results[i];
+        let want = expected[i];
+        if got == want {
+            println!("[{i}] {}: PASS ({got:#010x})", labels[i]);
+        } else {
+            eprintln!(
+                "[{i}] {}: FAIL, expected {want:#010x}, got {got:#010x}",
+                labels[i]
+            );
             failures += 1;
         }
     }
 
-    // --- 1: cvt_rz_f16x2_f32 (round-toward-zero) ---
-    {
-        let (got_lo, got_hi) = unpack_f16x2(results[1]);
-        println!("[1] cvt_rz_f16x2_f32:        lo={got_lo:.6}, hi={got_hi:.6}  (packed={:#010x})", results[1]);
-        if (got_lo - lo).abs() > f16_rz_tol {
-            eprintln!("    FAIL: lo expected ~{lo}, got {got_lo}");
-            failures += 1;
-        }
-        if (got_hi - hi).abs() > f16_rz_tol {
-            eprintln!("    FAIL: hi expected ~{hi}, got {got_hi}");
-            failures += 1;
-        }
-        // rz truncates toward zero, so |got| <= |exact|
-        if got_lo.abs() > lo.abs() + f16_rz_tol {
-            eprintln!("    FAIL: rz lo magnitude should be <= input magnitude");
-            failures += 1;
-        }
-        if got_hi.abs() > hi.abs() + f16_rz_tol {
-            eprintln!("    FAIL: rz hi magnitude should be <= input magnitude");
-            failures += 1;
-        }
-    }
-
-    // --- 2: cvt_rn_relu_f16x2_f32 (round-to-nearest + ReLU) ---
-    {
-        let (got_lo, got_hi) = unpack_f16x2(results[2]);
-        println!("[2] cvt_rn_relu_f16x2_f32:   lo={got_lo:.6}, hi={got_hi:.6}  (packed={:#010x})", results[2]);
-        if (got_lo - lo).abs() > f16_tol {
-            eprintln!("    FAIL: lo expected ~{lo}, got {got_lo}");
-            failures += 1;
-        }
-        // hi was -2.5, ReLU should clamp to 0.0
-        if got_hi != 0.0 {
-            eprintln!("    FAIL: hi expected 0.0 (ReLU clamp), got {got_hi}");
-            failures += 1;
-        }
-    }
-
-    // --- 3: cvt_rn_relu_bf16x2_f32 (round-to-nearest + ReLU, bf16) ---
-    {
-        let (got_lo, got_hi) = unpack_bf16x2(results[3]);
-        println!("[3] cvt_rn_relu_bf16x2_f32:  lo={got_lo:.6}, hi={got_hi:.6}  (packed={:#010x})", results[3]);
-        if (got_lo - lo).abs() > bf16_tol {
-            eprintln!("    FAIL: lo expected ~{lo}, got {got_lo}");
-            failures += 1;
-        }
-        // hi was -2.5, ReLU should clamp to 0.0
-        if got_hi != 0.0 {
-            eprintln!("    FAIL: hi expected 0.0 (ReLU clamp), got {got_hi}");
-            failures += 1;
-        }
-    }
-
-    // --- 4: cvt_rz_bf16x2_f32 (round-toward-zero, bf16) ---
-    {
-        let (got_lo, got_hi) = unpack_bf16x2(results[4]);
-        println!("[4] cvt_rz_bf16x2_f32:       lo={got_lo:.6}, hi={got_hi:.6}  (packed={:#010x})", results[4]);
-        if (got_lo - lo).abs() > bf16_rz_tol {
-            eprintln!("    FAIL: lo expected ~{lo}, got {got_lo}");
-            failures += 1;
-        }
-        if (got_hi - hi).abs() > bf16_rz_tol {
-            eprintln!("    FAIL: hi expected ~{hi}, got {got_hi}");
-            failures += 1;
-        }
-        // rz truncates toward zero, so |got| <= |exact|
-        if got_lo.abs() > lo.abs() + bf16_rz_tol {
-            eprintln!("    FAIL: rz lo magnitude should be <= input magnitude");
-            failures += 1;
-        }
-        if got_hi.abs() > hi.abs() + bf16_rz_tol {
-            eprintln!("    FAIL: rz hi magnitude should be <= input magnitude");
+    // PTX specifies that `.relu` converts NaN results to canonical NaN rather
+    // than clamping them to zero. Check both packed lanes for each format.
+    module
+        .cvt_packed_variants(&stream, cfg, f32::NAN, f32::NAN, &mut out_dev)
+        .expect("NaN kernel launch failed");
+    let nan_results = out_dev.to_host_vec(&stream).unwrap();
+    for (label, packed, expected_nan) in [
+        ("cvt_rn_relu_f16x2_f32 NaN", nan_results[2], 0x7fff_7fff),
+        ("cvt_rn_relu_bf16x2_f32 NaN", nan_results[3], 0x7fff_7fff),
+    ] {
+        if packed == expected_nan {
+            println!("{label}: PASS ({packed:#010x})");
+        } else {
+            eprintln!(
+                "{label}: FAIL, expected canonical NaNs {expected_nan:#010x}, got {packed:#010x}"
+            );
             failures += 1;
         }
     }
