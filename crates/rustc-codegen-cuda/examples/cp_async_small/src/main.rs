@@ -42,8 +42,8 @@ mod kernels {
         // Initiate the 4-byte async copy, commit, and wait.
         unsafe {
             cp_async_ca_4(dst_ptr, src_ptr);
-            ptx_asm!("cp.async.commit_group;");
-            ptx_asm!("cp.async.wait_all;");
+            ptx_asm!("cp.async.commit_group;", clobber("memory"));
+            ptx_asm!("cp.async.wait_all;", clobber("memory"));
         }
 
         // Ensure every thread's copy has landed before reading.
@@ -76,8 +76,8 @@ mod kernels {
         // Initiate the 8-byte async copy, commit, and wait.
         unsafe {
             cp_async_ca_8(dst_ptr, src_ptr);
-            ptx_asm!("cp.async.commit_group;");
-            ptx_asm!("cp.async.wait_all;");
+            ptx_asm!("cp.async.commit_group;", clobber("memory"));
+            ptx_asm!("cp.async.wait_all;", clobber("memory"));
         }
 
         thread::sync_threads();

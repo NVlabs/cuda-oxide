@@ -46,6 +46,9 @@
 ///   `cp.async.wait_group`, or an mbarrier that tracks this operation.
 /// - Group waits cover copies issued by the executing thread. If another thread
 ///   will access the destination, synchronize the threads after completion.
+/// - Completion instructions emitted with [`ptx_asm!`](crate::ptx_asm) must use
+///   `clobber("memory")` so the compiler cannot move memory accesses across the
+///   wait.
 ///
 /// # See also
 ///
@@ -79,6 +82,9 @@ pub unsafe fn cp_async_ca_4(_shared_dst: *mut u32, _global_src: *const u32) {
 ///   `cp.async.wait_group`, or an mbarrier that tracks this operation.
 /// - Group waits cover copies issued by the executing thread. If another thread
 ///   will access the destination, synchronize the threads after completion.
+/// - Completion instructions emitted with [`ptx_asm!`](crate::ptx_asm) must use
+///   `clobber("memory")` so the compiler cannot move memory accesses across the
+///   wait.
 ///
 /// # See also
 ///
