@@ -72,7 +72,10 @@ fn convert_cp_async_impl(
 ///
 /// Emits inline PTX:
 /// ```ptx
-/// cp.async.{cache_policy}.shared.global [%smem32], [$1], {copy_size}, $2;
+/// cvta.to.shared.u64 %smem64, $0;
+/// cvt.u32.u64 %smem32, %smem64;
+/// cvta.to.global.u64 %gmem64, $1;
+/// cp.async.{cache_policy}.shared.global [%smem32], [%gmem64], {copy_size}, $2;
 /// ```
 fn convert_cp_async_zfill_impl(
     ctx: &mut Context,
@@ -99,9 +102,11 @@ fn convert_cp_async_zfill_impl(
             "{{ \
             .reg .u64 %smem64; \
             .reg .u32 %smem32; \
+            .reg .u64 %gmem64; \
             cvta.to.shared.u64 %smem64, $0; \
             cvt.u32.u64 %smem32, %smem64; \
-            cp.async.{cache_policy}.shared.global [%smem32], [$1], {copy_size}, $2; \
+            cvta.to.global.u64 %gmem64, $1; \
+            cp.async.{cache_policy}.shared.global [%smem32], [%gmem64], {copy_size}, $2; \
             }}"
         ),
         "l,l,r,~{memory}",

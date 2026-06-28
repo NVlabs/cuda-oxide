@@ -27,6 +27,9 @@
 //! zero-fill the remaining `cp_size - src_size` bytes in shared memory.
 //! This is useful for boundary tiles in tiled algorithms where the last
 //! tile may be smaller than the full tile size.
+//! CUDA's shipped pipeline and CCCL helpers use `src_size == cp_size` for the
+//! full-copy case, so the accepted range is `0..=cp_size`; larger values are
+//! invalid.
 //!
 //! The functions are compiler-recognized stubs. Their bodies never execute; the
 //! cuda-oxide compiler replaces each call with the corresponding PTX instruction.
@@ -117,13 +120,29 @@ pub unsafe fn cp_async_ca_8(_shared_dst: *mut u32, _global_src: *const u32) {
 ///
 /// # PTX Instruction
 ///
-/// `cp.async.ca.shared.global [%smem32], [$1], 4, $2;`
+/// `cp.async.ca.shared.global [shared_dst], [global_src], 4, src_size;`
 ///
 /// # Safety
 ///
-/// - `shared_dst` must point to valid shared memory, 4-byte aligned.
-/// - `global_src` must point to valid global memory for `src_size` bytes.
-/// - Must be followed by `cp.async.commit_group` and `cp.async.wait_group`.
+/// - `src_size` must be at most 4.
+/// - `shared_dst` must point to 4 writable bytes in shared memory.
+/// - `global_src` must be a global-memory pointer whose first `src_size` bytes
+///   are readable.
+/// - Both pointers must be aligned to 4 bytes.
+/// - Both memory ranges must remain valid, and the readable prefix at
+///   `global_src` must not be modified, until the copy completes.
+/// - No operation may read or write any byte in the destination range,
+///   including through an overlapping asynchronous copy, until this copy
+///   completes.
+/// - The thread issuing the copy must complete it with `cp.async.wait_all`,
+///   `cp.async.commit_group` followed by a matching `cp.async.wait_group`, or an
+///   mbarrier that tracks this operation. These waits cover only copies issued
+///   by that thread.
+/// - User-authored completion assembly must include a compiler memory clobber
+///   (for example, `ptx_asm!(..., clobber("memory"))`) so memory accesses cannot
+///   move across the completion wait.
+/// - If another thread will access the destination, synchronize the threads
+///   after the issuing thread has completed the copy.
 ///
 /// # See also
 ///
@@ -143,13 +162,29 @@ pub unsafe fn cp_async_ca_zfill_4(_shared_dst: *mut u32, _global_src: *const u8,
 ///
 /// # PTX Instruction
 ///
-/// `cp.async.ca.shared.global [%smem32], [$1], 8, $2;`
+/// `cp.async.ca.shared.global [shared_dst], [global_src], 8, src_size;`
 ///
 /// # Safety
 ///
-/// - `shared_dst` must point to valid shared memory, 4-byte aligned.
-/// - `global_src` must point to valid global memory for `src_size` bytes.
-/// - Must be followed by `cp.async.commit_group` and `cp.async.wait_group`.
+/// - `src_size` must be at most 8.
+/// - `shared_dst` must point to 8 writable bytes in shared memory.
+/// - `global_src` must be a global-memory pointer whose first `src_size` bytes
+///   are readable.
+/// - Both pointers must be aligned to 8 bytes.
+/// - Both memory ranges must remain valid, and the readable prefix at
+///   `global_src` must not be modified, until the copy completes.
+/// - No operation may read or write any byte in the destination range,
+///   including through an overlapping asynchronous copy, until this copy
+///   completes.
+/// - The thread issuing the copy must complete it with `cp.async.wait_all`,
+///   `cp.async.commit_group` followed by a matching `cp.async.wait_group`, or an
+///   mbarrier that tracks this operation. These waits cover only copies issued
+///   by that thread.
+/// - User-authored completion assembly must include a compiler memory clobber
+///   (for example, `ptx_asm!(..., clobber("memory"))`) so memory accesses cannot
+///   move across the completion wait.
+/// - If another thread will access the destination, synchronize the threads
+///   after the issuing thread has completed the copy.
 ///
 /// # See also
 ///
@@ -168,13 +203,29 @@ pub unsafe fn cp_async_ca_zfill_8(_shared_dst: *mut u32, _global_src: *const u8,
 ///
 /// # PTX Instruction
 ///
-/// `cp.async.ca.shared.global [%smem32], [$1], 16, $2;`
+/// `cp.async.ca.shared.global [shared_dst], [global_src], 16, src_size;`
 ///
 /// # Safety
 ///
-/// - `shared_dst` must point to valid shared memory, 16-byte aligned.
-/// - `global_src` must point to valid global memory for `src_size` bytes.
-/// - Must be followed by `cp.async.commit_group` and `cp.async.wait_group`.
+/// - `src_size` must be at most 16.
+/// - `shared_dst` must point to 16 writable bytes in shared memory.
+/// - `global_src` must be a global-memory pointer whose first `src_size` bytes
+///   are readable.
+/// - Both pointers must be aligned to 16 bytes.
+/// - Both memory ranges must remain valid, and the readable prefix at
+///   `global_src` must not be modified, until the copy completes.
+/// - No operation may read or write any byte in the destination range,
+///   including through an overlapping asynchronous copy, until this copy
+///   completes.
+/// - The thread issuing the copy must complete it with `cp.async.wait_all`,
+///   `cp.async.commit_group` followed by a matching `cp.async.wait_group`, or an
+///   mbarrier that tracks this operation. These waits cover only copies issued
+///   by that thread.
+/// - User-authored completion assembly must include a compiler memory clobber
+///   (for example, `ptx_asm!(..., clobber("memory"))`) so memory accesses cannot
+///   move across the completion wait.
+/// - If another thread will access the destination, synchronize the threads
+///   after the issuing thread has completed the copy.
 ///
 /// # See also
 ///

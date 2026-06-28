@@ -42,26 +42,26 @@ mod kernels {
 
         let tid = thread::threadIdx_x() as usize;
         let gid = thread::index_1d();
+        let dst_ptr = unsafe { (core::ptr::addr_of_mut!(SMEM) as *mut u32).add(tid) };
 
         // Pre-fill shared memory with a sentinel so we can detect zero-fill.
         unsafe {
-            SMEM[tid] = 0xDEAD_BEEF;
+            dst_ptr.write(0xDEAD_BEEF);
         }
         thread::sync_threads();
 
-        let dst_ptr = unsafe { SMEM.as_mut_ptr().add(tid) };
         let src_ptr = unsafe { input.as_ptr().add(gid.get()) as *const u8 };
 
         // Initiate the zero-fill copy, commit, and wait.
         unsafe {
             cp_async_ca_zfill_4(dst_ptr, src_ptr, src_size);
-            ptx_asm!("cp.async.commit_group;");
-            ptx_asm!("cp.async.wait_all;");
+            ptx_asm!("cp.async.commit_group;", clobber("memory"));
+            ptx_asm!("cp.async.wait_all;", clobber("memory"));
         }
 
         thread::sync_threads();
 
-        let val = unsafe { SMEM[tid] };
+        let val = unsafe { dst_ptr.read() };
         if let Some(slot) = out.get_mut(gid) {
             *slot = val;
         }
@@ -139,11 +139,11 @@ fn main() {
         let mut test_pass = true;
         let out = out_dev.to_host_vec(&stream).unwrap();
         let expected = 0x0000_CCDD_u32;
-        for i in 0..32 {
-            if out[i] != expected {
+        for (i, &actual) in out.iter().enumerate() {
+            if actual != expected {
                 eprintln!(
                     "  FAIL [{}]: expected 0x{:08X}, got 0x{:08X}",
-                    i, expected, out[i]
+                    i, expected, actual
                 );
                 test_pass = false;
                 all_pass = false;
@@ -167,9 +167,9 @@ fn main() {
 
         let mut test_pass = true;
         let out = out_dev.to_host_vec(&stream).unwrap();
-        for i in 0..32 {
-            if out[i] != 0 {
-                eprintln!("  FAIL [{}]: expected 0x00000000, got 0x{:08X}", i, out[i]);
+        for (i, &actual) in out.iter().enumerate() {
+            if actual != 0 {
+                eprintln!("  FAIL [{i}]: expected 0x00000000, got 0x{actual:08X}");
                 test_pass = false;
                 all_pass = false;
             }
