@@ -20,45 +20,27 @@ mod kernels {
     use super::*;
 
     #[kernel]
-    pub fn test_bf16x2_arith(mut out: DisjointSlice<u32>) {
+    pub fn test_bf16x2_arith(mut out: DisjointSlice<[u32; NUM_OPS]>) {
         let idx = thread::index_1d();
-        if idx.get() != 0 {
-            return;
-        }
+        if let Some(row) = out.get_mut(idx) {
+            // Pack known f32 pairs into bf16x2.
+            let a = cvt_f32x2_bf16x2(2.0, 4.0);
+            let b = cvt_f32x2_bf16x2(3.0, 5.0);
+            let neg_one = cvt_f32x2_bf16x2(-1.0, -1.0);
+            let zero = cvt_f32x2_bf16x2(0.0, 0.0);
 
-        // Pack known f32 pairs into bf16x2.
-        let a = cvt_f32x2_bf16x2(2.0, 4.0);
-        let b = cvt_f32x2_bf16x2(3.0, 5.0);
-        let neg_one = cvt_f32x2_bf16x2(-1.0, -1.0);
-        let zero = cvt_f32x2_bf16x2(0.0, 0.0);
-
-        // 0: add  -> (2+3, 4+5) = (5, 9)
-        let r_add = add_bf16x2(a, b);
-        // 1: sub  -> (2-3, 4-5) = (-1, -1)
-        let r_sub = sub_bf16x2(a, b);
-        // 2: mul  -> (2*3, 4*5) = (6, 20)
-        let r_mul = mul_bf16x2(a, b);
-        // 3: min  -> (min(2,3), min(4,5)) = (2, 4)
-        let r_min = min_bf16x2(a, b);
-        // 4: max  -> (max(2,3), max(4,5)) = (3, 5)
-        let r_max = max_bf16x2(a, b);
-        // 5: neg  -> (-2, -4)
-        let r_neg = neg_bf16x2(a);
-        // 6: abs(neg(a)) -> (2, 4)
-        let r_abs = abs_bf16x2(r_neg);
-        // 7: fma_relu(a, neg_one, zero) -> relu(a*(-1)+0) = relu(-2,-4) = (0, 0)
-        let r_fma_relu = fma_relu_bf16x2(a, neg_one, zero);
-
-        // Write results. Each `if let` guard mirrors the existing bf16x2_fma
-        // example pattern so the compiler sees bounds-checked indexing.
-        let results = [r_add, r_sub, r_mul, r_min, r_max, r_neg, r_abs, r_fma_relu];
-        let mut i = 0u32;
-        while (i as usize) < results.len() {
-            let slot = thread::thread_idx_x() * (results.len() as u32) + i;
-            if let Some(s) = out.get_mut(slot) {
-                *s = results[i as usize];
-            }
-            i += 1;
+            // One thread owns one complete result row, so every write remains
+            // within the element selected by its typed ThreadIndex witness.
+            row[0] = add_bf16x2(a, b); // (5, 9)
+            row[1] = sub_bf16x2(a, b); // (-1, -1)
+            row[2] = mul_bf16x2(a, b); // (6, 20)
+            row[3] = min_bf16x2(a, b); // (2, 4)
+            row[4] = max_bf16x2(a, b); // (3, 5)
+            let negated = neg_bf16x2(a);
+            row[5] = negated; // (-2, -4)
+            row[6] = abs_bf16x2(negated); // (2, 4)
+            // relu(a * -1 + 0) = (0, 0)
+            row[7] = fma_relu_bf16x2(a, neg_one, zero);
         }
     }
 }
@@ -102,33 +84,34 @@ fn main() {
     let (major, minor) = ctx.compute_capability().expect("compute capability");
     if major < 9 {
         println!(
-            "skipping: bf16x2 arithmetic requires sm_90+ (device is sm_{major}{minor})"
+            "skipping: this all-operations example uses sm_90+ add/sub/mul (device is sm_{major}{minor})"
         );
         return;
     }
 
     let stream = ctx.default_stream();
     let module = kernels::load(&ctx).expect("load embedded PTX");
-    let mut out = DeviceBuffer::<u32>::zeroed(&stream, NUM_OPS).unwrap();
+    let mut out = DeviceBuffer::<[u32; NUM_OPS]>::zeroed(&stream, 1).unwrap();
 
     module
         .test_bf16x2_arith(&stream, LaunchConfig::for_num_elems(1), &mut out)
         .expect("launch test_bf16x2_arith");
 
-    let results = out.to_host_vec(&stream).unwrap();
-    assert_eq!(results.len(), NUM_OPS, "unexpected result count");
+    let rows = out.to_host_vec(&stream).unwrap();
+    assert_eq!(rows.len(), 1, "unexpected result-row count");
+    let results = &rows[0];
 
     println!("verifying {NUM_OPS} operations:");
 
     let mut pass = true;
-    pass &= check("add",      results[0],  5.0,  9.0);
-    pass &= check("sub",      results[1], -1.0, -1.0);
-    pass &= check("mul",      results[2],  6.0, 20.0);
-    pass &= check("min",      results[3],  2.0,  4.0);
-    pass &= check("max",      results[4],  3.0,  5.0);
-    pass &= check("neg",      results[5], -2.0, -4.0);
-    pass &= check("abs",      results[6],  2.0,  4.0);
-    pass &= check("fma_relu", results[7],  0.0,  0.0);
+    pass &= check("add", results[0], 5.0, 9.0);
+    pass &= check("sub", results[1], -1.0, -1.0);
+    pass &= check("mul", results[2], 6.0, 20.0);
+    pass &= check("min", results[3], 2.0, 4.0);
+    pass &= check("max", results[4], 3.0, 5.0);
+    pass &= check("neg", results[5], -2.0, -4.0);
+    pass &= check("abs", results[6], 2.0, 4.0);
+    pass &= check("fma_relu", results[7], 0.0, 0.0);
 
     if !pass {
         println!("FAIL: bf16x2_arith, one or more checks failed");

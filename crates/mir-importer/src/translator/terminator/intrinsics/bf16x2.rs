@@ -3,8 +3,8 @@
 
 //! Packed bf16x2 ALU intrinsics.
 //!
-//! Exposes `fma_bf16x2` (sm_80+) and `add`, `sub`, `mul`, `min`, `max`,
-//! `neg`, `abs` on packed bf16x2 (sm_90+).
+//! FMA, min, max, negation, and absolute value require `sm_80+`. Add,
+//! subtract, and multiply require `sm_90+`.
 
 use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};

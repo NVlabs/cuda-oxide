@@ -4,8 +4,8 @@
 //! Packed `bf16x2` arithmetic operations.
 //!
 //! Single-thread, non-convergent packed bf16 ALU ops lowered to inline PTX.
-//! FMA is supported from `sm_80`; the remaining ops (`add`, `sub`, `mul`,
-//! `min`, `max`, `neg`, `abs`) require `sm_90+`.
+//! FMA, min, max, negation, and absolute value require `sm_80+`. Add,
+//! subtract, and multiply require `sm_90+`.
 
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
@@ -108,7 +108,7 @@ impl MulBf16x2Op {
 
 /// Packed bf16x2 minimum: `d = min(a, b)`.
 ///
-/// PTX: `min.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+/// PTX: `min.bf16x2 $0, $1, $2;`  (requires `sm_80+`)
 #[pliron_op(
     name = "nvvm.min_bf16x2",
     format,
@@ -126,7 +126,7 @@ impl MinBf16x2Op {
 
 /// Packed bf16x2 maximum: `d = max(a, b)`.
 ///
-/// PTX: `max.bf16x2 $0, $1, $2;`  (requires `sm_90+`)
+/// PTX: `max.bf16x2 $0, $1, $2;`  (requires `sm_80+`)
 #[pliron_op(
     name = "nvvm.max_bf16x2",
     format,
@@ -144,7 +144,7 @@ impl MaxBf16x2Op {
 
 /// Packed bf16x2 negation: `d = -a`.
 ///
-/// PTX: `neg.bf16x2 $0, $1;`  (requires `sm_90+`)
+/// PTX: `neg.bf16x2 $0, $1;`  (requires `sm_80+`)
 #[pliron_op(
     name = "nvvm.neg_bf16x2",
     format,
@@ -162,7 +162,7 @@ impl NegBf16x2Op {
 
 /// Packed bf16x2 absolute value: `d = |a|`.
 ///
-/// PTX: `abs.bf16x2 $0, $1;`  (requires `sm_90+`)
+/// PTX: `abs.bf16x2 $0, $1;`  (requires `sm_80+`)
 #[pliron_op(
     name = "nvvm.abs_bf16x2",
     format,

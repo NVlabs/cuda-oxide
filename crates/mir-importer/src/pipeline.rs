@@ -29,6 +29,8 @@
 //! | TMA multicast                 | sm_100a | Blackwell datacenter |
 //! | WGMMA                         | sm_90a  | Hopper only          |
 //! | TMA/mbarrier                  | sm_100  | Hopper+ compatible   |
+//! | bf16x2 add/sub/mul            | sm_90   | Hopper+ compatible   |
+//! | other bf16x2 ALU              | sm_80   | Ampere+ compatible   |
 //! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
 //! | Basic CUDA                    | sm_80   | Ampere+ (max compat) |
 //!
@@ -1057,15 +1059,34 @@ fn contains_cluster_features(contents: &str) -> bool {
         || contents.contains("mapa.shared::cluster")
 }
 
-/// Checks for features whose target floor is sm_80.
+/// Checks for forward-compatible instructions whose minimum target is sm_90.
 ///
-/// Non-bulk asynchronous copies are the current feature with an sm_80 floor.
-/// Match both the PTX spellings used in inline assembly and the dotted LLVM
-/// NVVM intrinsic names. Bulk and tensor-copy forms have stronger target
-/// requirements and are classified before this feature in
-/// [`detect_features_in_llvm_text`].
+/// Keep this category architecture-neutral: unlike WGMMA, these instructions
+/// are not Hopper-specific and remain available on newer architectures.
+fn contains_sm90_features(contents: &str) -> bool {
+    ["add.rn.bf16x2 ", "sub.rn.bf16x2 ", "mul.rn.bf16x2 "]
+        .iter()
+        .any(|mnemonic| contents.contains(mnemonic))
+}
+
+/// Checks for features whose minimum target is sm_80.
+///
+/// This category includes packed bf16 operations introduced on Ampere and
+/// non-bulk asynchronous copies. Match both the PTX spellings used in inline
+/// assembly and the dotted LLVM NVVM intrinsic names for `cp.async`. Bulk and
+/// tensor-copy forms have stronger requirements and are classified first.
 fn contains_sm80_features(contents: &str) -> bool {
-    contents.contains("cp.async.ca.shared")
+    [
+        "fma.rn.bf16x2 ",
+        "fma.rn.relu.bf16x2 ",
+        "min.bf16x2 ",
+        "max.bf16x2 ",
+        "neg.bf16x2 ",
+        "abs.bf16x2 ",
+    ]
+    .iter()
+    .any(|mnemonic| contents.contains(mnemonic))
+        || contents.contains("cp.async.ca.shared")
         || contents.contains("cp.async.cg.shared")
         || contents.contains("cp.async.commit_group")
         || contents.contains("cp.async.commit.group")
@@ -1139,7 +1160,9 @@ enum DetectedFeatures {
     Tma,
     /// Thread Block Clusters (sm_90+, forward-compatible).
     Cluster,
-    /// Features requiring sm_80+, currently non-bulk `cp.async` copies.
+    /// Forward-compatible instructions with an sm_90 floor.
+    Sm90,
+    /// Forward-compatible instructions with an sm_80 floor.
     Sm80,
     /// No special features (Volta+, with an sm_80 cross-compile default).
     Basic,
@@ -1157,14 +1180,16 @@ fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
         contains_wgmma_features(contents),
         contains_tma_features(contents),
         contains_cluster_features(contents),
+        contains_sm90_features(contents),
         contains_sm80_features(contents),
     ) {
-        (true, _, _, _, _, _) => DetectedFeatures::Blackwell,
-        (_, true, _, _, _, _) => DetectedFeatures::TmaMulticast,
-        (_, _, true, _, _, _) => DetectedFeatures::Wgmma,
-        (_, _, _, true, _, _) => DetectedFeatures::Tma,
-        (_, _, _, _, true, _) => DetectedFeatures::Cluster,
-        (_, _, _, _, _, true) => DetectedFeatures::Sm80,
+        (true, _, _, _, _, _, _) => DetectedFeatures::Blackwell,
+        (_, true, _, _, _, _, _) => DetectedFeatures::TmaMulticast,
+        (_, _, true, _, _, _, _) => DetectedFeatures::Wgmma,
+        (_, _, _, true, _, _, _) => DetectedFeatures::Tma,
+        (_, _, _, _, true, _, _) => DetectedFeatures::Cluster,
+        (_, _, _, _, _, true, _) => DetectedFeatures::Sm90,
+        (_, _, _, _, _, _, true) => DetectedFeatures::Sm80,
         _ => DetectedFeatures::Basic,
     }
 }
@@ -1194,6 +1219,7 @@ fn select_target(features: DetectedFeatures) -> &'static str {
         // Cluster features require sm_90+ but are forward-compatible.
         // Use sm_90 for Hopper compatibility, works on Blackwell too.
         DetectedFeatures::Cluster => "sm_90",
+        DetectedFeatures::Sm90 => "sm_90",
         DetectedFeatures::Sm80 => "sm_80",
         DetectedFeatures::Basic => "sm_80",
     }
@@ -1206,8 +1232,8 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 /// datacenter-Blackwell family: consumer Blackwell (sm_120) and Hopper (sm_90)
 /// lack them, so an sm_120 GPU cannot run an sm_100 tcgen05 kernel even though
 /// 120 > 100. WGMMA is Hopper-only. The remaining features are forward
-/// compatible from their floor (TMA / cluster need sm_90+, sm_80 features need
-/// sm_80+, and basic kernels need sm_70+).
+/// compatible from their floor (TMA / cluster / sm_90 features need sm_90+,
+/// sm_80 features need sm_80+, and basic needs sm_70+).
 ///
 /// Used to decide whether the GPU in this machine (the `CUDA_OXIDE_DEVICE_ARCH`
 /// hint) can actually run the kernel, or whether we must build for the arch the
@@ -1219,7 +1245,7 @@ fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
     match features {
         DetectedFeatures::Blackwell | DetectedFeatures::TmaMulticast => major == 10,
         DetectedFeatures::Wgmma => major == 9,
-        DetectedFeatures::Tma | DetectedFeatures::Cluster => major >= 9,
+        DetectedFeatures::Tma | DetectedFeatures::Cluster | DetectedFeatures::Sm90 => major >= 9,
         DetectedFeatures::Sm80 => major >= 8,
         // Basic kernels are supported on the project's Volta+ floor. The
         // cross-compilation default remains sm_80, but a detected sm_70/sm_75
@@ -1791,6 +1817,7 @@ mod tests {
         for (features, expected, is_legacy) in [
             (DetectedFeatures::Basic, "sm_80", true),
             (DetectedFeatures::Sm80, "sm_80", true),
+            (DetectedFeatures::Sm90, "sm_90", true),
             (DetectedFeatures::Cluster, "sm_90", true),
             (DetectedFeatures::Wgmma, "sm_90a", true),
             (DetectedFeatures::Tma, "sm_100", false),
@@ -1820,6 +1847,18 @@ mod tests {
         let sm80_on_blackwell =
             resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Sm80)).unwrap();
         assert_eq!(sm80_on_blackwell.sm(), "sm_120a");
+
+        let ampere =
+            resolve_nvvm_target(None, Some("sm_80"), Some(DetectedFeatures::Sm80)).unwrap();
+        assert_eq!(ampere.sm(), "sm_80");
+
+        let hopper_floor =
+            resolve_nvvm_target(None, Some("sm_80"), Some(DetectedFeatures::Sm90)).unwrap();
+        assert_eq!(hopper_floor.sm(), "sm_90");
+
+        let forward_compatible =
+            resolve_nvvm_target(None, Some("sm_120"), Some(DetectedFeatures::Sm90)).unwrap();
+        assert_eq!(forward_compatible.sm(), "sm_120");
 
         let hopper =
             resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Wgmma)).unwrap();
@@ -1926,6 +1965,62 @@ mod tests {
     }
 
     #[test]
+    fn test_bf16x2_detection_matches_exact_architecture_floors() {
+        for mnemonic in [
+            "add.rn.bf16x2 $0, $1, $2;",
+            "sub.rn.bf16x2 $0, $1, $2;",
+            "mul.rn.bf16x2 $0, $1, $2;",
+        ] {
+            assert!(contains_sm90_features(mnemonic));
+            assert!(!contains_sm80_features(mnemonic));
+            assert_eq!(
+                detect_features_in_llvm_text(mnemonic),
+                DetectedFeatures::Sm90
+            );
+        }
+
+        for mnemonic in [
+            "fma.rn.bf16x2 $0, $1, $2, $3;",
+            "fma.rn.relu.bf16x2 $0, $1, $2, $3;",
+            "min.bf16x2 $0, $1, $2;",
+            "max.bf16x2 $0, $1, $2;",
+            "neg.bf16x2 $0, $1;",
+            "abs.bf16x2 $0, $1;",
+        ] {
+            assert!(!contains_sm90_features(mnemonic));
+            assert!(contains_sm80_features(mnemonic));
+            assert_eq!(
+                detect_features_in_llvm_text(mnemonic),
+                DetectedFeatures::Sm80
+            );
+        }
+
+        for near_miss in [
+            "add.rn.bf16x2x $0, $1, $2;",
+            "fma.rn.bf16x2x $0, $1, $2, $3;",
+        ] {
+            assert!(!contains_sm90_features(near_miss));
+            assert!(!contains_sm80_features(near_miss));
+            assert_eq!(
+                detect_features_in_llvm_text(near_miss),
+                DetectedFeatures::Basic
+            );
+        }
+    }
+
+    #[test]
+    fn test_sm90_floor_wins_when_sm80_features_are_also_present() {
+        let llvm = r#"
+            call i32 asm pure "add.rn.bf16x2 $0, $1, $2;", "=r,r,r"(i32 %a, i32 %b)
+            call void asm sideeffect "cp.async.ca.shared.global [%0], [%1], 4;", "l,l"()
+        "#;
+
+        assert!(contains_sm90_features(llvm));
+        assert!(contains_sm80_features(llvm));
+        assert_eq!(detect_features_in_llvm_text(llvm), DetectedFeatures::Sm90);
+    }
+
+    #[test]
     fn test_tma_multicast_detection_requires_cta_mask() {
         let multicast = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 1, i1 false)";
         let unicast = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 0, i1 false)";
@@ -1946,6 +2041,7 @@ mod tests {
         assert_eq!(select_target(DetectedFeatures::Wgmma), "sm_90a");
         assert_eq!(select_target(DetectedFeatures::Tma), "sm_100");
         assert_eq!(select_target(DetectedFeatures::Cluster), "sm_90");
+        assert_eq!(select_target(DetectedFeatures::Sm90), "sm_90");
         assert_eq!(select_target(DetectedFeatures::Sm80), "sm_80");
         assert_eq!(select_target(DetectedFeatures::Basic), "sm_80");
     }
@@ -1989,13 +2085,15 @@ mod tests {
 
     #[test]
     fn test_arch_satisfies_forward_compatible_features() {
-        // Plain TMA / cluster lower on any sm_90+ device, non-bulk cp.async on
-        // any sm_80+ device, and basic kernels on Volta+.
+        // Plain TMA / cluster / sm_90-floor instructions lower on any sm_90+
+        // device, sm_80-floor instructions on any sm_80+ device, and basic
+        // kernels on Volta+.
         // So a consumer sm_120 GPU is a valid target for these (it runs locally
         // instead of being downgraded to the feature floor).
         for arch in ["sm_90a", "sm_100a", "sm_120a"] {
             assert!(arch_satisfies(arch, DetectedFeatures::Tma));
             assert!(arch_satisfies(arch, DetectedFeatures::Cluster));
+            assert!(arch_satisfies(arch, DetectedFeatures::Sm90));
             assert!(arch_satisfies(arch, DetectedFeatures::Sm80));
             assert!(arch_satisfies(arch, DetectedFeatures::Basic));
         }
@@ -2005,6 +2103,7 @@ mod tests {
         assert!(arch_satisfies("sm_75", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_70", DetectedFeatures::Basic));
         assert!(!arch_satisfies("sm_80", DetectedFeatures::Tma));
+        assert!(!arch_satisfies("sm_80", DetectedFeatures::Sm90));
     }
 
     /// Build a minimal LLVM dialect module containing a single function

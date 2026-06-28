@@ -2225,80 +2225,160 @@ fn assert_cp_async_zfill_inline_asm_lowering(
 // =============================================================================
 
 #[test]
-fn test_fma_relu_bf16x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
 
-    let a_val = entry.deref(&ctx).get_argument(0);
-    let b_val = entry.deref(&ctx).get_argument(1);
-    let c_val = entry.deref(&ctx).get_argument(2);
-
-    // FmaReluBf16x2Op: 3 i32 operands, 1 i32 result
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::FmaReluBf16x2Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val, b_val, c_val],
-        vec![],
-        0,
+    type OpInfo = (
+        fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
     );
-    op.insert_at_back(entry, &ctx);
+    let cases: [(OpInfo, usize, &str, &str); 9] = [
+        (
+            nvvm::FmaBf16x2Op::get_concrete_op_info(),
+            3,
+            "fma.rn.bf16x2 $0, $1, $2, $3;",
+            "=r,r,r,r",
+        ),
+        (
+            nvvm::FmaReluBf16x2Op::get_concrete_op_info(),
+            3,
+            "fma.rn.relu.bf16x2 $0, $1, $2, $3;",
+            "=r,r,r,r",
+        ),
+        (
+            nvvm::AddBf16x2Op::get_concrete_op_info(),
+            2,
+            "add.rn.bf16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::SubBf16x2Op::get_concrete_op_info(),
+            2,
+            "sub.rn.bf16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MulBf16x2Op::get_concrete_op_info(),
+            2,
+            "mul.rn.bf16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MinBf16x2Op::get_concrete_op_info(),
+            2,
+            "min.bf16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MaxBf16x2Op::get_concrete_op_info(),
+            2,
+            "max.bf16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::NegBf16x2Op::get_concrete_op_info(),
+            1,
+            "neg.bf16x2 $0, $1;",
+            "=r,r",
+        ),
+        (
+            nvvm::AbsBf16x2Op::get_concrete_op_info(),
+            1,
+            "abs.bf16x2 $0, $1;",
+            "=r,r",
+        ),
+    ];
+
+    let operands = [
+        entry.deref(&ctx).get_argument(0),
+        entry.deref(&ctx).get_argument(1),
+        entry.deref(&ctx).get_argument(2),
+    ];
+    for &(op_info, operand_count, _, _) in &cases {
+        let op = Operation::new(
+            &mut ctx,
+            op_info,
+            vec![i32_ty.into()],
+            operands[..operand_count].to_vec(),
+            vec![],
+            0,
+        );
+        op.insert_at_back(entry, &ctx);
+    }
     append_return(&mut ctx, entry);
 
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "fma.rn.relu.bf16x2")
-}
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-#[test]
-fn test_add_bf16x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
+    let mut lowered = Vec::new();
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let inline_asm_op = inline_asm.get_operation();
+                let operand_count = inline_asm_op.deref(&ctx).operands().count();
+                let result_count = inline_asm_op.deref(&ctx).get_num_results();
+                lowered.push((
+                    inline_asm
+                        .get_attr_inline_asm_template(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .expect("bf16x2 inline asm must have a template"),
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .expect("bf16x2 inline asm must have constraints"),
+                    llvm::asm_kind_opt(&ctx, &inline_asm),
+                    inline_asm
+                        .get_attr_inline_asm_convergent(&ctx)
+                        .map(|b| bool::from((*b).clone())),
+                    operand_count,
+                    result_count,
+                ));
+            }
+        }
+    }
 
-    let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into()]);
-
-    let a_val = entry.deref(&ctx).get_argument(0);
-    let b_val = entry.deref(&ctx).get_argument(1);
-
-    // AddBf16x2Op: 2 i32 operands, 1 i32 result
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::AddBf16x2Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val, b_val],
-        vec![],
-        0,
+    assert_eq!(
+        lowered.len(),
+        cases.len(),
+        "each bf16x2 operation must lower to exactly one inline-asm op"
     );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
+    for &(_, expected_operand_count, expected_template, expected_constraints) in &cases {
+        let matches: Vec<_> = lowered
+            .iter()
+            .filter(|(template, _, _, _, _, _)| template == expected_template)
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one exact `{expected_template}` lowering"
+        );
+        let (_, constraints, kind, convergent, operand_count, result_count) = matches[0];
+        assert_eq!(constraints, expected_constraints, "{expected_template}");
+        assert_eq!(*kind, Some(llvm::AsmKind::Pure), "{expected_template}");
+        assert_eq!(*convergent, Some(false), "{expected_template}");
+        assert_eq!(
+            *operand_count, expected_operand_count,
+            "{expected_template} input arity"
+        );
+        assert_eq!(*result_count, 1, "{expected_template} result arity");
+    }
 
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "add.rn.bf16x2")
-}
-
-#[test]
-fn test_neg_bf16x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
-
-    let a_val = entry.deref(&ctx).get_argument(0);
-
-    // NegBf16x2Op: 1 i32 operand, 1 i32 result
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::NegBf16x2Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "neg.bf16x2")
+    Ok(())
 }

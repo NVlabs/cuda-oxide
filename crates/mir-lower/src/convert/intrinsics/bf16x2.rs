@@ -3,8 +3,8 @@
 
 //! Packed bf16x2 ALU intrinsic conversions.
 //!
-//! FMA (`fma.rn.bf16x2`) requires `sm_80+`. The remaining arithmetic ops
-//! (`add`, `sub`, `mul`, `min`, `max`, `neg`, `abs`) require `sm_90+`.
+//! FMA, min, max, negation, and absolute value require `sm_80+`. Add,
+//! subtract, and multiply require `sm_90+`.
 
 use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
 use pliron::builtin::types::{IntegerType, Signedness};
