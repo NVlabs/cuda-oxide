@@ -1,0 +1,5 @@
+error: cuda_program operation `fill` passes 1 arguments, but the kernel takes 2
+  --> tests/compile_fail/cuda_program_arg_count.rs:20:9
+   |
+20 |         fill(output).grid_len(n);
+   |         ^^^^^^^^^^^^
