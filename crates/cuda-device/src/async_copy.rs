@@ -30,21 +30,29 @@
 ///
 /// # PTX Instruction
 ///
-/// `cp.async.ca.shared.global [%smem32], [$1], 4;`
+/// `cp.async.ca.shared.global [shared_dst], [global_src], 4;`
 ///
 /// # Safety
 ///
-/// - `shared_dst` must point to valid shared memory.
-/// - `global_src` must point to valid global memory.
-/// - Both pointers must be naturally aligned to 4 bytes.
-/// - Must be followed by `cp.async.commit_group` and `cp.async.wait_group`.
+/// - `shared_dst` must point to 4 writable bytes in shared memory.
+/// - `global_src` must point to 4 readable bytes in global memory.
+/// - Both pointers must be aligned to 4 bytes.
+/// - Both memory ranges must remain valid, and `global_src` must not be
+///   modified, until the copy completes.
+/// - `shared_dst` must not be read or written, including by an overlapping
+///   asynchronous copy in the same group, until the copy completes.
+/// - Before accessing the destination, the caller must complete this copy with
+///   `cp.async.wait_all`, `cp.async.commit_group` followed by a matching
+///   `cp.async.wait_group`, or an mbarrier that tracks this operation.
+/// - Group waits cover copies issued by the executing thread. If another thread
+///   will access the destination, synchronize the threads after completion.
 ///
 /// # See also
 ///
 /// - [`cp_async_ca_8`]: 8-byte variant.
 #[inline(never)]
 pub unsafe fn cp_async_ca_4(_shared_dst: *mut u32, _global_src: *const u32) {
-    // Lowered to inline PTX: cp.async.ca.shared.global [%smem32], [$1], 4;
+    // Lowered to inline PTX: cp.async.ca.shared.global [shared_dst], [global_src], 4;
     unreachable!("cp_async_ca_4 called outside CUDA kernel context")
 }
 
@@ -55,21 +63,28 @@ pub unsafe fn cp_async_ca_4(_shared_dst: *mut u32, _global_src: *const u32) {
 ///
 /// # PTX Instruction
 ///
-/// `cp.async.ca.shared.global [%smem32], [$1], 8;`
+/// `cp.async.ca.shared.global [shared_dst], [global_src], 8;`
 ///
 /// # Safety
 ///
-/// - `shared_dst` must point to valid shared memory.
-/// - `global_src` must point to valid global memory.
-/// - Both pointers must be naturally aligned to 4 bytes (the base alignment
-///   requirement for `cp.async`).
-/// - Must be followed by `cp.async.commit_group` and `cp.async.wait_group`.
+/// - `shared_dst` must point to 8 writable bytes in shared memory.
+/// - `global_src` must point to 8 readable bytes in global memory.
+/// - Both pointers must be aligned to 8 bytes.
+/// - Both memory ranges must remain valid, and `global_src` must not be
+///   modified, until the copy completes.
+/// - `shared_dst` must not be read or written, including by an overlapping
+///   asynchronous copy in the same group, until the copy completes.
+/// - Before accessing the destination, the caller must complete this copy with
+///   `cp.async.wait_all`, `cp.async.commit_group` followed by a matching
+///   `cp.async.wait_group`, or an mbarrier that tracks this operation.
+/// - Group waits cover copies issued by the executing thread. If another thread
+///   will access the destination, synchronize the threads after completion.
 ///
 /// # See also
 ///
 /// - [`cp_async_ca_4`]: 4-byte variant.
 #[inline(never)]
 pub unsafe fn cp_async_ca_8(_shared_dst: *mut u32, _global_src: *const u32) {
-    // Lowered to inline PTX: cp.async.ca.shared.global [%smem32], [$1], 8;
+    // Lowered to inline PTX: cp.async.ca.shared.global [shared_dst], [global_src], 8;
     unreachable!("cp_async_ca_8 called outside CUDA kernel context")
 }

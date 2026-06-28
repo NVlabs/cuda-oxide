@@ -1912,11 +1912,14 @@ fn test_dp2a_u32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
 #[test]
 fn test_cp_async_ca_4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let dst_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let src_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![dst_ty.into(), src_ty.into()]);
 
     let dst = entry.deref(&ctx).get_argument(0);
     let src = entry.deref(&ctx).get_argument(1);
@@ -1932,16 +1935,19 @@ fn test_cp_async_ca_4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     op.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+    assert_cp_async_inline_asm_lowering(&mut ctx, module_ptr, 4)
 }
 
 #[test]
 fn test_cp_async_ca_8_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let dst_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let src_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![dst_ty.into(), src_ty.into()]);
 
     let dst = entry.deref(&ctx).get_argument(0);
     let src = entry.deref(&ctx).get_argument(1);
@@ -1957,5 +1963,78 @@ fn test_cp_async_ca_8_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     op.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cp.async.ca.shared.global")
+    assert_cp_async_inline_asm_lowering(&mut ctx, module_ptr, 8)
+}
+
+fn assert_cp_async_inline_asm_lowering(
+    ctx: &mut Context,
+    module_ptr: pliron::context::Ptr<Operation>,
+    copy_size: u32,
+) -> Result<(), anyhow::Error> {
+    use pliron::r#type::Typed;
+
+    mir_lower::lower_mir_to_llvm(ctx, module_ptr).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let expected_template = format!(
+        "{{ .reg .u64 %smem64; .reg .u32 %smem32; .reg .u64 %gmem64; \
+         cvta.to.shared.u64 %smem64, $0; cvt.u32.u64 %smem32, %smem64; \
+         cvta.to.global.u64 %gmem64, $1; \
+         cp.async.ca.shared.global [%smem32], [%gmem64], {copy_size}; }}"
+    );
+    let mut matches = 0;
+    let module_region = module_ptr.deref(ctx).get_region(0);
+    let module_block = module_region.deref(ctx).iter(ctx).next().unwrap();
+
+    for op in module_block.deref(ctx).iter(ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(ctx).to_string() != "kernel_func" {
+            continue;
+        }
+
+        let func_region = func_op.get_operation().deref(ctx).get_region(0);
+        for func_block in func_region.deref(ctx).iter(ctx) {
+            for body_op in func_block.deref(ctx).iter(ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, ctx) else {
+                    continue;
+                };
+                let template = inline_asm
+                    .get_attr_inline_asm_template(ctx)
+                    .map(|s| String::from((*s).clone()));
+                if template.as_deref() != Some(expected_template.as_str()) {
+                    continue;
+                }
+
+                matches += 1;
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_constraints(ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .as_deref(),
+                    Some("l,l,~{memory}")
+                );
+                assert_eq!(llvm::asm_kind(ctx, &inline_asm), llvm::AsmKind::SideEffect);
+                assert!(
+                    inline_asm
+                        .get_attr_inline_asm_convergent(ctx)
+                        .is_some_and(|value| !bool::from((*value).clone()))
+                );
+
+                let operands: Vec<_> = inline_asm.get_operation().deref(ctx).operands().collect();
+                assert_eq!(operands.len(), 2);
+                for operand in operands {
+                    let ty = operand.get_type(ctx);
+                    let ty = ty.deref(ctx);
+                    let ptr_ty = ty
+                        .downcast_ref::<llvm_export::types::PointerType>()
+                        .expect("cp.async operands must lower to LLVM pointers");
+                    assert_eq!(ptr_ty.address_space(), 0);
+                }
+            }
+        }
+    }
+
+    assert_eq!(matches, 1, "missing exact {copy_size}-byte cp.async asm");
+    Ok(())
 }

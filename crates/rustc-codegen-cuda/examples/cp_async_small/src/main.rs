@@ -36,7 +36,7 @@ mod kernels {
         let gid = thread::index_1d();
 
         // Obtain shared-memory and global-memory pointers.
-        let dst_ptr = unsafe { SMEM.as_mut_ptr().add(tid) };
+        let dst_ptr = unsafe { (core::ptr::addr_of_mut!(SMEM) as *mut u32).add(tid) };
         let src_ptr = unsafe { input.as_ptr().add(gid.get()) };
 
         // Initiate the 4-byte async copy, commit, and wait.
@@ -62,7 +62,7 @@ mod kernels {
     #[kernel]
     pub fn test_cp_async_8(input: &[u32], mut out: DisjointSlice<u32>) {
         // 64 elements: thread i owns elements [2*i] and [2*i+1].
-        static mut SMEM: SharedArray<u32, 64> = SharedArray::UNINIT;
+        static mut SMEM: SharedArray<u32, 64, 8> = SharedArray::UNINIT;
 
         let tid = thread::threadIdx_x() as usize;
         let gid = thread::index_1d().get();
@@ -70,7 +70,7 @@ mod kernels {
         let smem_idx = tid * 2;
         let gmem_idx = gid * 2;
 
-        let dst_ptr = unsafe { SMEM.as_mut_ptr().add(smem_idx) };
+        let dst_ptr = unsafe { (core::ptr::addr_of_mut!(SMEM) as *mut u32).add(smem_idx) };
         let src_ptr = unsafe { input.as_ptr().add(gmem_idx) };
 
         // Initiate the 8-byte async copy, commit, and wait.

@@ -23,13 +23,14 @@
 //! The pipeline auto-detects GPU features in the generated LLVM IR and selects
 //! an appropriate target:
 //!
-//! | Feature           | Target    | Architecture         |
-//! |-------------------|-----------|----------------------|
-//! | tcgen05/TMEM      | sm_100a   | Blackwell datacenter |
-//! | TMA multicast     | sm_100a   | Blackwell datacenter |
-//! | WGMMA             | sm_90a    | Hopper only          |
-//! | TMA/mbarrier      | sm_100    | Hopper+ compatible   |
-//! | Basic CUDA        | sm_80     | Ampere+ (max compat) |
+//! | Feature                       | Target  | Architecture         |
+//! |-------------------------------|---------|----------------------|
+//! | tcgen05/TMEM                  | sm_100a | Blackwell datacenter |
+//! | TMA multicast                 | sm_100a | Blackwell datacenter |
+//! | WGMMA                         | sm_90a  | Hopper only          |
+//! | TMA/mbarrier                  | sm_100  | Hopper+ compatible   |
+//! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
+//! | Basic CUDA                    | sm_80   | Ampere+ (max compat) |
 //!
 //! Override with `CUDA_OXIDE_TARGET=<target>` environment variable.
 
@@ -1056,6 +1057,24 @@ fn contains_cluster_features(contents: &str) -> bool {
         || contents.contains("mapa.shared::cluster")
 }
 
+/// Checks for features whose target floor is sm_80.
+///
+/// Non-bulk asynchronous copies are the current feature with an sm_80 floor.
+/// Match both the PTX spellings used in inline assembly and the dotted LLVM
+/// NVVM intrinsic names. Bulk and tensor-copy forms have stronger target
+/// requirements and are classified before this feature in
+/// [`detect_features_in_llvm_text`].
+fn contains_sm80_features(contents: &str) -> bool {
+    contents.contains("cp.async.ca.shared")
+        || contents.contains("cp.async.cg.shared")
+        || contents.contains("cp.async.commit_group")
+        || contents.contains("cp.async.commit.group")
+        || contents.contains("cp.async.wait_group")
+        || contents.contains("cp.async.wait.group")
+        || contents.contains("cp.async.wait_all")
+        || contents.contains("cp.async.wait.all")
+}
+
 /// Checks for TMA/mbarrier instructions (Hopper+ compatible with Blackwell).
 ///
 /// These instructions work on BOTH Hopper and Blackwell:
@@ -1120,7 +1139,9 @@ enum DetectedFeatures {
     Tma,
     /// Thread Block Clusters (sm_90+, forward-compatible).
     Cluster,
-    /// No special features (maximum compatibility, sm_80).
+    /// Features requiring sm_80+, currently non-bulk `cp.async` copies.
+    Sm80,
+    /// No special features (Volta+, with an sm_80 cross-compile default).
     Basic,
 }
 
@@ -1136,12 +1157,14 @@ fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
         contains_wgmma_features(contents),
         contains_tma_features(contents),
         contains_cluster_features(contents),
+        contains_sm80_features(contents),
     ) {
-        (true, _, _, _, _) => DetectedFeatures::Blackwell,
-        (_, true, _, _, _) => DetectedFeatures::TmaMulticast,
-        (_, _, true, _, _) => DetectedFeatures::Wgmma,
-        (_, _, _, true, _) => DetectedFeatures::Tma,
-        (_, _, _, _, true) => DetectedFeatures::Cluster,
+        (true, _, _, _, _, _) => DetectedFeatures::Blackwell,
+        (_, true, _, _, _, _) => DetectedFeatures::TmaMulticast,
+        (_, _, true, _, _, _) => DetectedFeatures::Wgmma,
+        (_, _, _, true, _, _) => DetectedFeatures::Tma,
+        (_, _, _, _, true, _) => DetectedFeatures::Cluster,
+        (_, _, _, _, _, true) => DetectedFeatures::Sm80,
         _ => DetectedFeatures::Basic,
     }
 }
@@ -1171,6 +1194,7 @@ fn select_target(features: DetectedFeatures) -> &'static str {
         // Cluster features require sm_90+ but are forward-compatible.
         // Use sm_90 for Hopper compatibility, works on Blackwell too.
         DetectedFeatures::Cluster => "sm_90",
+        DetectedFeatures::Sm80 => "sm_80",
         DetectedFeatures::Basic => "sm_80",
     }
 }
@@ -1182,7 +1206,8 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 /// datacenter-Blackwell family: consumer Blackwell (sm_120) and Hopper (sm_90)
 /// lack them, so an sm_120 GPU cannot run an sm_100 tcgen05 kernel even though
 /// 120 > 100. WGMMA is Hopper-only. The remaining features are forward
-/// compatible from their floor (TMA / cluster need sm_90+, basic needs sm_70+).
+/// compatible from their floor (TMA / cluster need sm_90+, sm_80 features need
+/// sm_80+, and basic kernels need sm_70+).
 ///
 /// Used to decide whether the GPU in this machine (the `CUDA_OXIDE_DEVICE_ARCH`
 /// hint) can actually run the kernel, or whether we must build for the arch the
@@ -1195,6 +1220,7 @@ fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
         DetectedFeatures::Blackwell | DetectedFeatures::TmaMulticast => major == 10,
         DetectedFeatures::Wgmma => major == 9,
         DetectedFeatures::Tma | DetectedFeatures::Cluster => major >= 9,
+        DetectedFeatures::Sm80 => major >= 8,
         // Basic kernels are supported on the project's Volta+ floor. The
         // cross-compilation default remains sm_80, but a detected sm_70/sm_75
         // GPU is a valid and more useful target for `cargo oxide run`.
@@ -1764,6 +1790,7 @@ mod tests {
     fn automatic_nvvm_target_uses_the_module_feature_floor() {
         for (features, expected, is_legacy) in [
             (DetectedFeatures::Basic, "sm_80", true),
+            (DetectedFeatures::Sm80, "sm_80", true),
             (DetectedFeatures::Cluster, "sm_90", true),
             (DetectedFeatures::Wgmma, "sm_90a", true),
             (DetectedFeatures::Tma, "sm_100", false),
@@ -1782,9 +1809,17 @@ mod tests {
             resolve_nvvm_target(None, Some("sm_75"), Some(DetectedFeatures::Basic)).unwrap();
         assert_eq!(turing.sm(), "sm_75");
 
+        let sm80_on_turing =
+            resolve_nvvm_target(None, Some("sm_75"), Some(DetectedFeatures::Sm80)).unwrap();
+        assert_eq!(sm80_on_turing.sm(), "sm_80");
+
         let blackwell =
             resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Basic)).unwrap();
         assert_eq!(blackwell.sm(), "sm_120a");
+
+        let sm80_on_blackwell =
+            resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Sm80)).unwrap();
+        assert_eq!(sm80_on_blackwell.sm(), "sm_120a");
 
         let hopper =
             resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Wgmma)).unwrap();
@@ -1862,17 +1897,32 @@ mod tests {
             call void @llvm.nvvm.tcgen05.alloc()
             call void asm sideeffect "cluster.sync.aligned", ""()
             call void asm sideeffect "cp.async.bulk.tensor.2d.shared::cluster.global", ""()
+            call void asm sideeffect "cp.async.ca.shared.global", ""()
         "#;
 
         assert!(contains_wgmma_features(llvm));
         assert!(contains_blackwell_features(llvm));
         assert!(contains_cluster_features(llvm));
         assert!(contains_tma_features(llvm));
+        assert!(contains_sm80_features(llvm));
         assert_eq!(
             detect_features_in_llvm_text(llvm),
             DetectedFeatures::Blackwell,
             "the strongest requirement must win"
         );
+    }
+
+    #[test]
+    fn test_sm80_detection_accepts_inline_ptx_and_nvvm_intrinsics() {
+        for llvm in [
+            r#"call void asm sideeffect "cp.async.ca.shared.global [%0], [%1], 4;", "l,l"()"#,
+            "call void @llvm.nvvm.cp.async.ca.shared.global.8(ptr addrspace(3) %dst, ptr addrspace(1) %src)",
+            r#"call void asm sideeffect "cp.async.commit_group;", ""()"#,
+            "call void @llvm.nvvm.cp.async.wait.all()",
+        ] {
+            assert!(contains_sm80_features(llvm), "missed cp.async in {llvm}");
+            assert_eq!(detect_features_in_llvm_text(llvm), DetectedFeatures::Sm80);
+        }
     }
 
     #[test]
@@ -1896,6 +1946,7 @@ mod tests {
         assert_eq!(select_target(DetectedFeatures::Wgmma), "sm_90a");
         assert_eq!(select_target(DetectedFeatures::Tma), "sm_100");
         assert_eq!(select_target(DetectedFeatures::Cluster), "sm_90");
+        assert_eq!(select_target(DetectedFeatures::Sm80), "sm_80");
         assert_eq!(select_target(DetectedFeatures::Basic), "sm_80");
     }
 
@@ -1938,14 +1989,18 @@ mod tests {
 
     #[test]
     fn test_arch_satisfies_forward_compatible_features() {
-        // Plain TMA / cluster lower on any sm_90+ device; basic on Volta+.
+        // Plain TMA / cluster lower on any sm_90+ device, non-bulk cp.async on
+        // any sm_80+ device, and basic kernels on Volta+.
         // So a consumer sm_120 GPU is a valid target for these (it runs locally
         // instead of being downgraded to the feature floor).
         for arch in ["sm_90a", "sm_100a", "sm_120a"] {
             assert!(arch_satisfies(arch, DetectedFeatures::Tma));
             assert!(arch_satisfies(arch, DetectedFeatures::Cluster));
+            assert!(arch_satisfies(arch, DetectedFeatures::Sm80));
             assert!(arch_satisfies(arch, DetectedFeatures::Basic));
         }
+        assert!(arch_satisfies("sm_80", DetectedFeatures::Sm80));
+        assert!(!arch_satisfies("sm_75", DetectedFeatures::Sm80));
         assert!(arch_satisfies("sm_80", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_75", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_70", DetectedFeatures::Basic));
