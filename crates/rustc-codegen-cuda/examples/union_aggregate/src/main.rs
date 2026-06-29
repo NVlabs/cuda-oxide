@@ -284,9 +284,7 @@ mod kernels {
                 }
                 // A pointer-preserving carrier must also retain bytes written
                 // through a smaller non-pointer field.
-                16 => unsafe {
-                    pass_pointer_small(PointerSmall { small: 0xaabb_ccdd }).small
-                },
+                16 => unsafe { pass_pointer_small(PointerSmall { small: 0xaabb_ccdd }).small },
                 // ZST returns are erased from the LLVM call ABI, but their MIR
                 // values may still be returned, projected, and passed onward.
                 17 => {
