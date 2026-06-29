@@ -27,6 +27,7 @@ use pliron_derive::pliron_op;
 use crate::attributes::FieldIndexAttr;
 use crate::types::{
     MirArrayType, MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirTupleType,
+    MirUnionType,
 };
 
 // ============================================================================
@@ -203,6 +204,27 @@ impl Verify for MirExtractFieldOp {
                     res_ty.disp(ctx)
                 );
             }
+        } else if let Some(union_ty) = operand_ty_obj.downcast_ref::<MirUnionType>() {
+            let field_count = union_ty.field_count();
+            if index >= field_count {
+                return verify_err!(
+                    op.loc(),
+                    "MirExtractFieldOp index {} out of bounds for union '{}' with {} fields",
+                    index,
+                    union_ty.name(),
+                    field_count
+                );
+            }
+            let expected_ty = union_ty.get_field_type(index).unwrap();
+            if res_ty != expected_ty {
+                return verify_err!(
+                    op.loc(),
+                    "MirExtractFieldOp result type mismatch for union field '{}'. Expected: {}, Actual: {}",
+                    union_ty.field_names()[index],
+                    expected_ty.disp(ctx),
+                    res_ty.disp(ctx)
+                );
+            }
         } else if let Some(array_ty) = operand_ty_obj.downcast_ref::<MirArrayType>() {
             // Array element extraction with constant index
             // This works because LLVM's extractvalue supports arrays with constant indices
@@ -365,6 +387,27 @@ impl Verify for MirInsertFieldOp {
                     op.loc(),
                     "MirInsertFieldOp field type mismatch for struct field '{}'. Expected: {}, Actual: {}",
                     struct_ty.field_names()[index],
+                    expected_ty.disp(ctx),
+                    new_value_ty.disp(ctx)
+                );
+            }
+        } else if let Some(union_ty) = aggregate_ty_obj.downcast_ref::<MirUnionType>() {
+            let field_count = union_ty.field_count();
+            if index >= field_count {
+                return verify_err!(
+                    op.loc(),
+                    "MirInsertFieldOp index {} out of bounds for union '{}' with {} fields",
+                    index,
+                    union_ty.name(),
+                    field_count
+                );
+            }
+            let expected_ty = union_ty.get_field_type(index).unwrap();
+            if new_value_ty != expected_ty {
+                return verify_err!(
+                    op.loc(),
+                    "MirInsertFieldOp field type mismatch for union field '{}'. Expected: {}, Actual: {}",
+                    union_ty.field_names()[index],
                     expected_ty.disp(ctx),
                     new_value_ty.disp(ctx)
                 );
@@ -1033,27 +1076,28 @@ impl Verify for MirFieldAddrOp {
             }
         };
 
-        // Pointee must be a struct type
+        // Pointee must be a struct or union type.
         let pointee_ty = ptr_type.pointee;
         let pointee_ty_obj = pointee_ty.deref(ctx);
-        let struct_ty = match pointee_ty_obj.downcast_ref::<MirStructType>() {
-            Some(s) => s,
-            None => {
-                return verify_err!(
-                    op.loc(),
-                    "MirFieldAddrOp pointer must point to a struct type, got: {}",
-                    pointee_ty.disp(ctx)
-                );
-            }
-        };
 
         let index = match self.get_attr_field_index(ctx) {
             Some(attr) => attr.0 as usize,
             None => return verify_err!(op.loc(), "MirFieldAddrOp missing field_index attribute"),
         };
 
-        // Index must be valid
-        let field_types = struct_ty.field_types();
+        let field_types = if let Some(struct_ty) = pointee_ty_obj.downcast_ref::<MirStructType>() {
+            struct_ty.field_types()
+        } else if let Some(union_ty) = pointee_ty_obj.downcast_ref::<MirUnionType>() {
+            union_ty.field_types()
+        } else {
+            return verify_err!(
+                op.loc(),
+                "MirFieldAddrOp pointer must point to a struct or union type, got: {}",
+                pointee_ty.disp(ctx)
+            );
+        };
+
+        // Index must be valid.
         if index >= field_types.len() {
             return verify_err!(
                 op.loc(),

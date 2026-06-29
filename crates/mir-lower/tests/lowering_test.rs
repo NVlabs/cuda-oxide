@@ -868,6 +868,173 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
     Ok(())
 }
 
+/// A zero-sized MIR result is erased from the NVPTX function ABI, but its
+/// typed value can remain live inside MIR (for example, when one ZST-returning
+/// function returns the result of another). Lowering must keep the void call
+/// for side effects and replace only its value result with a typed LLVM undef.
+#[test]
+fn zst_union_call_result_keeps_void_call_and_replaces_live_uses() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::{MirTupleType, MirUnionType};
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::attributes::{StringAttr, TypeAttr};
+    use pliron::builtin::types::FunctionType;
+    use pliron::r#type::{TypeHandle, Typed};
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let unit_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![]).into();
+    let union_ty: TypeHandle = MirUnionType::get(
+        &mut ctx,
+        "AlignedZeroUnion".into(),
+        vec!["unit".into()],
+        vec![unit_ty],
+        0,
+        16,
+    )
+    .into();
+
+    let module = ModuleOp::new(&mut ctx, "test_zst_union_call".try_into().unwrap());
+    let module_ptr = module.get_operation();
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+
+    let callee_ty = FunctionType::get(&ctx, vec![], vec![union_ty]);
+    let callee_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let callee = mir::MirFuncOp::new(&mut ctx, callee_ptr, TypeAttr::new(callee_ty.into()));
+    callee.set_symbol_name(&mut ctx, "make_zero".try_into().unwrap());
+    {
+        let region = callee.get_operation().deref(&ctx).get_region(0);
+        let block = BasicBlock::new(&mut ctx, None, vec![]);
+        block.insert_at_back(region, &ctx);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, union_ty);
+        undef.get_operation().insert_at_back(block, &ctx);
+        let value = undef.get_operation().deref(&ctx).get_result(0);
+
+        let ret = Operation::new(
+            &mut ctx,
+            mir::MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![value],
+            vec![],
+            0,
+        );
+        ret.insert_at_back(block, &ctx);
+    }
+    callee.get_operation().insert_at_back(module_block, &ctx);
+
+    let caller_ty = FunctionType::get(&ctx, vec![], vec![union_ty]);
+    let caller_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let caller = mir::MirFuncOp::new(&mut ctx, caller_ptr, TypeAttr::new(caller_ty.into()));
+    caller.set_symbol_name(&mut ctx, "return_called_zero".try_into().unwrap());
+    {
+        let region = caller.get_operation().deref(&ctx).get_region(0);
+        let block = BasicBlock::new(&mut ctx, None, vec![]);
+        block.insert_at_back(region, &ctx);
+
+        let call_ptr = Operation::new(
+            &mut ctx,
+            mir::MirCallOp::get_concrete_op_info(),
+            vec![union_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        let call = mir::MirCallOp::new(call_ptr);
+        call.set_attr_callee(&ctx, StringAttr::new("make_zero".to_string()));
+        call_ptr.insert_at_back(block, &ctx);
+        let value = call_ptr.deref(&ctx).get_result(0);
+
+        let ret = Operation::new(
+            &mut ctx,
+            mir::MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![value],
+            vec![],
+            0,
+        );
+        ret.insert_at_back(block, &ctx);
+    }
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut found_void_call = false;
+    let mut caller_undefs = 0;
+    let mut found_void_return = false;
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(func) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func.get_symbol_name(&ctx).to_string() != "return_called_zero" {
+            continue;
+        }
+        let region = func.get_operation().deref(&ctx).get_region(0);
+        for block in region.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                if let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx)
+                    && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+                    && callee.to_string() == "make_zero"
+                {
+                    let call_op = call.get_operation().deref(&ctx);
+                    assert_eq!(call_op.get_num_results(), 1);
+                    assert!(
+                        call_op
+                            .get_result(0)
+                            .get_type(&ctx)
+                            .deref(&ctx)
+                            .is::<llvm_export::types::VoidType>(),
+                        "the ZST-returning call must use the void ABI"
+                    );
+                    found_void_call = true;
+                }
+                if Operation::get_op::<llvm::UndefOp>(body_op, &ctx).is_some() {
+                    caller_undefs += 1;
+                }
+                if let Some(ret) = Operation::get_op::<llvm::ReturnOp>(body_op, &ctx) {
+                    assert_eq!(
+                        ret.get_operation().deref(&ctx).get_num_operands(),
+                        0,
+                        "the caller's ZST return must also use the void ABI"
+                    );
+                    found_void_return = true;
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_void_call,
+        "the LLVM call must be retained because the callee may have side effects"
+    );
+    assert_eq!(
+        caller_undefs, 1,
+        "the live MIR result must be replaced by one typed LLVM undef"
+    );
+    assert!(
+        found_void_return,
+        "the caller must retain its return terminator"
+    );
+    Ok(())
+}
+
 /// Lock the comparison-predicate lowering table to the rustc_codegen_ssa
 /// reference (`bin_op_to_fcmp_predicate` / `bin_op_to_icmp_predicate`):
 ///

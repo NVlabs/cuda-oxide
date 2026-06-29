@@ -36,14 +36,14 @@
 
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
-    convert_type, is_zero_sized_type, make_slice_struct,
+    build_union_storage_type, convert_type, is_zero_sized_type, make_slice_struct,
 };
 use dialect_mir::ops::{
     MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp, MirInsertFieldOp,
 };
 use dialect_mir::types::{
     MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirStructType,
-    MirTupleType,
+    MirTupleType, MirUnionType,
 };
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -158,6 +158,26 @@ pub(crate) fn convert_extract_field(
 ) -> Result<()> {
     let aggregate = op.deref(ctx).get_operand(0);
 
+    let extract_op = MirExtractFieldOp::new(op);
+    let decl_index = match extract_op.get_attr_index(ctx) {
+        Some(attr) => attr.0 as usize,
+        None => return pliron::input_err_noloc!("Missing index attribute on extract_field"),
+    };
+
+    if operands_info
+        .lookup_most_recent_of_type::<MirUnionType>(ctx, aggregate)
+        .is_some()
+    {
+        return convert_extract_union_field(
+            ctx,
+            rewriter,
+            op,
+            aggregate,
+            decl_index,
+            operands_info,
+        );
+    }
+
     let is_scalar = aggregate
         .get_type(ctx)
         .deref(ctx)
@@ -168,12 +188,6 @@ pub(crate) fn convert_extract_field(
         rewriter.replace_operation_with_values(ctx, op, vec![aggregate]);
         return Ok(());
     }
-
-    let extract_op = MirExtractFieldOp::new(op);
-    let decl_index = match extract_op.get_attr_index(ctx) {
-        Some(attr) => attr.0 as usize,
-        None => return pliron::input_err_noloc!("Missing index attribute on extract_field"),
-    };
 
     let llvm_index = match resolve_aggregate_slots(ctx, operands_info, aggregate)? {
         AggregateSlots::Mapped(map) => match map.decl_to_llvm.get(decl_index) {
@@ -228,6 +242,21 @@ pub(crate) fn convert_insert_field(
         None => return pliron::input_err_noloc!("Missing insert_index attribute on insert_field"),
     };
 
+    if operands_info
+        .lookup_most_recent_of_type::<MirUnionType>(ctx, aggregate)
+        .is_some()
+    {
+        return convert_insert_union_field(
+            ctx,
+            rewriter,
+            op,
+            aggregate,
+            new_value,
+            decl_index,
+            operands_info,
+        );
+    }
+
     let llvm_index = match resolve_aggregate_slots(ctx, operands_info, aggregate)? {
         AggregateSlots::Mapped(map) => match map.decl_to_llvm.get(decl_index) {
             Some(Some(slot)) => *slot,
@@ -252,6 +281,96 @@ pub(crate) fn convert_insert_field(
     rewriter.insert_operation(ctx, llvm_insert.get_operation());
     rewriter.replace_operation(ctx, op, llvm_insert.get_operation());
 
+    Ok(())
+}
+
+fn union_type_of_operand(
+    ctx: &Context,
+    operands_info: &OperandsInfo,
+    value: Value,
+) -> Result<MirUnionType> {
+    operands_info
+        .lookup_most_recent_of_type::<MirUnionType>(ctx, value)
+        .map(|union_ty| union_ty.clone())
+        .ok_or_else(|| {
+            pliron::create_error!(
+                pliron::location::Location::Unknown,
+                pliron::result::ErrorKind::VerificationFailed,
+                pliron::result::StringError(
+                    "Expected MirUnionType conversion history for union value".to_string()
+                )
+            )
+        })
+}
+
+/// Read one typed view of a union's shared bytes.
+fn convert_extract_union_field(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    union_value: Value,
+    field_index: usize,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let union_ty = union_type_of_operand(ctx, operands_info, union_value)?;
+    let Some(field_mir_ty) = union_ty.get_field_type(field_index) else {
+        return pliron::input_err_noloc!(
+            "union field index {} is out of bounds for `{}`",
+            field_index,
+            union_ty.name()
+        );
+    };
+    let field_llvm_ty = convert_type(ctx, field_mir_ty).map_err(anyhow_to_pliron)?;
+    if is_zero_sized_type(ctx, field_llvm_ty) {
+        let undef = llvm::UndefOp::new(ctx, field_llvm_ty);
+        rewriter.insert_operation(ctx, undef.get_operation());
+        rewriter.replace_operation(ctx, op, undef.get_operation());
+        return Ok(());
+    }
+
+    let storage_ty = build_union_storage_type(ctx, &union_ty).map_err(anyhow_to_pliron)?;
+    let ptr = spill_enum_value(ctx, rewriter, union_value, storage_ty, union_ty.abi_align());
+    let load = llvm::LoadOp::new(ctx, ptr, field_llvm_ty);
+    llvm_export::ops::set_op_alignment(ctx, load.get_operation(), union_ty.abi_align() as u32);
+    rewriter.insert_operation(ctx, load.get_operation());
+    rewriter.replace_operation(ctx, op, load.get_operation());
+    Ok(())
+}
+
+/// Write one typed view at byte zero while preserving the rest of the union.
+fn convert_insert_union_field(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    union_value: Value,
+    new_value: Value,
+    field_index: usize,
+    operands_info: &OperandsInfo,
+) -> Result<()> {
+    let union_ty = union_type_of_operand(ctx, operands_info, union_value)?;
+    let Some(field_mir_ty) = union_ty.get_field_type(field_index) else {
+        return pliron::input_err_noloc!(
+            "union field index {} is out of bounds for `{}`",
+            field_index,
+            union_ty.name()
+        );
+    };
+    let field_llvm_ty = convert_type(ctx, field_mir_ty).map_err(anyhow_to_pliron)?;
+    if is_zero_sized_type(ctx, field_llvm_ty) {
+        rewriter.replace_operation_with_values(ctx, op, vec![union_value]);
+        return Ok(());
+    }
+
+    let storage_ty = build_union_storage_type(ctx, &union_ty).map_err(anyhow_to_pliron)?;
+    let ptr = spill_enum_value(ctx, rewriter, union_value, storage_ty, union_ty.abi_align());
+    let store = llvm::StoreOp::new(ctx, new_value, ptr);
+    llvm_export::ops::set_op_alignment(ctx, store.get_operation(), union_ty.abi_align() as u32);
+    rewriter.insert_operation(ctx, store.get_operation());
+
+    let load = llvm::LoadOp::new(ctx, ptr, storage_ty);
+    llvm_export::ops::set_op_alignment(ctx, load.get_operation(), union_ty.abi_align() as u32);
+    rewriter.insert_operation(ctx, load.get_operation());
+    rewriter.replace_operation(ctx, op, load.get_operation());
     Ok(())
 }
 
@@ -942,21 +1061,46 @@ pub(crate) fn convert_field_addr(
         None => return pliron::input_err_noloc!("MirFieldAddrOp missing field_index attribute"),
     };
 
-    let layout = {
-        let mir_ptr_pointee =
-            match operands_info.lookup_most_recent_of_type::<MirPtrType>(ctx, ptr_operand) {
-                Some(r) => r.pointee,
-                None => {
-                    return pliron::input_err_noloc!("MirFieldAddrOp operand must be pointer type");
-                }
-            };
+    let mir_ptr_pointee =
+        match operands_info.lookup_most_recent_of_type::<MirPtrType>(ctx, ptr_operand) {
+            Some(r) => r.pointee,
+            None => {
+                return pliron::input_err_noloc!("MirFieldAddrOp operand must be pointer type");
+            }
+        };
 
+    let union_field_count = mir_ptr_pointee
+        .deref(ctx)
+        .downcast_ref::<MirUnionType>()
+        .map(MirUnionType::field_count);
+    if let Some(field_count) = union_field_count {
+        if field_index >= field_count {
+            return pliron::input_err_noloc!(
+                "field_addr index {} out of bounds for union with {} fields",
+                field_index,
+                field_count
+            );
+        }
+        // Every union field begins at byte zero. Emit an explicit zero-offset
+        // GEP instead of forwarding the base SSA value directly: the distinct
+        // result keeps dialect conversion's pointer-type history unambiguous
+        // for repeated field accesses and for `union.struct_field.inner`.
+        use llvm_export::ops::GepIndex;
+        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
+        let gep = llvm::GetElementPtrOp::new(ctx, ptr_operand, vec![GepIndex::Constant(0)], i8_ty);
+        rewriter.insert_operation(ctx, gep.get_operation());
+        rewriter.replace_operation(ctx, op, gep.get_operation());
+        return Ok(());
+    }
+
+    let layout = {
         let pointee_ref = mir_ptr_pointee.deref(ctx);
         match pointee_ref.downcast_ref::<MirStructType>() {
             Some(struct_ty) => StructLayoutInfo::of_struct(struct_ty),
             None => {
                 return pliron::input_err_noloc!(
-                    "MirFieldAddrOp pointer must point to struct type"
+                    "MirFieldAddrOp pointer must point to struct or union type, got {}",
+                    mir_ptr_pointee.deref(ctx).disp(ctx)
                 );
             }
         }

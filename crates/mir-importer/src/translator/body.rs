@@ -333,6 +333,9 @@ fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
         TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) if depth < MAX_DEBUG_TYPE_DEPTH => {
             // Only plain structs (one variant) are described as composites here;
             // enums and unions need DWARF variant parts (deferred).
+            if !matches!(adt_def.kind(), rustc_public::ty::AdtKind::Struct) {
+                return None;
+            }
             let variants = adt_def.variants();
             if variants.len() != 1 {
                 return None;

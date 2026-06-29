@@ -63,6 +63,7 @@
 
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
+    is_zero_sized_type,
 };
 use crate::helpers;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
@@ -536,6 +537,7 @@ pub fn convert(
         None
     };
 
+    let mut zst_replacement_type = None;
     let result_type = if let Some(mir_ty) = mir_result_ty_ptr {
         // Only the empty tuple `()` is the unit type. `is::<MirTupleType>()`
         // also matches `(T, U, ...)`, so we have to peek at the field count.
@@ -545,10 +547,15 @@ pub fn convert(
             .deref(ctx)
             .downcast_ref::<MirTupleType>()
             .is_some_and(|t| t.get_types().is_empty());
-        if is_unit {
+        let converted = convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?;
+        if is_unit || is_zero_sized_type(ctx, converted) {
+            // NVPTX cannot carry a ZST in a function signature, so the call
+            // itself returns void. Keep the converted ZST type so any MIR uses
+            // of the result can be replaced with a typed undef below.
+            zst_replacement_type = Some(converted);
             llvm_types::VoidType::get(ctx).into()
         } else {
-            convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?
+            converted
         }
     } else {
         llvm_types::VoidType::get(ctx).into()
@@ -611,12 +618,21 @@ pub fn convert(
     let is_void = result_type.deref(ctx).is::<llvm_types::VoidType>();
     if has_result && !is_void && llvm_call.get_operation().deref(ctx).get_num_results() > 0 {
         rewriter.replace_operation(ctx, op, llvm_call.get_operation());
+    } else if op.deref(ctx).has_use()
+        && let Some(zst_type) = zst_replacement_type
+    {
+        // The ABI intentionally erases ZST returns, but MIR may still use the
+        // typed result (return it again, pass it to another call, or project a
+        // zero-sized field). Preserve the side-effecting void call and replace
+        // only its value result with an undef of the converted ZST type.
+        let undef = llvm::UndefOp::new(ctx, zst_type);
+        rewriter.insert_operation(ctx, undef.get_operation());
+        rewriter.replace_operation(ctx, op, undef.get_operation());
     } else {
         // The LLVM call has no usable result so the MIR op must be erased.
-        // That is only safe if the MIR op itself has no live uses. If it
-        // does, the result-type computation above silently dropped a real
-        // result (e.g. a non-unit return misclassified as `()`); surface
-        // that as a cuda-oxide diagnostic rather than letting pliron's
+        // This is safe for a result-less call or an unused ZST result. Any
+        // other live result means the result-type computation silently
+        // dropped a real value; report that instead of letting pliron's
         // erase-with-uses invariant panic and escape into rustc as an ICE.
         if op.deref(ctx).has_use() {
             let loc = op.deref(ctx).loc();
@@ -1273,6 +1289,9 @@ fn flatten_arguments(
                 }
             }
             FlattenKind::None => {
+                if is_zero_sized_type(ctx, arg_ty) {
+                    continue;
+                }
                 let (final_arg, final_ty) = coerce_arg_to_param_ty(
                     ctx,
                     rewriter,

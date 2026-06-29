@@ -37,9 +37,9 @@ use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
     MirCheckedSubOp, MirCmpOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
-    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirLeOp, MirLoadOp,
-    MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp,
-    MirShrOp, MirSubOp,
+    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirInsertFieldOp,
+    MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
+    MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
 };
 use dialect_mir::types::MirFP16Type;
 use pliron::basic_block::BasicBlock;
@@ -770,12 +770,13 @@ pub fn translate_rvalue(
                         }
                         (op.deref(ctx).get_result(0), Some(op))
                     } else {
-                        let op = create_zst_aggregate(ctx, ty_ptr, loc.clone());
-                        match prev_op {
-                            Some(p) => op.insert_after(ctx, p),
-                            None => op.insert_at_front(block_ptr, ctx),
-                        }
-                        (op.deref(ctx).get_result(0), Some(op))
+                        translate_zero_sized_constant_value(
+                            ctx,
+                            ty_ptr,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        )?
                     };
                 let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, ty_ptr, is_mutable);
                 let ref_op = Operation::new(
@@ -942,27 +943,33 @@ pub fn translate_rvalue(
             // - Array construction: [a, b, c]
 
             match aggregate_kind {
-                mir::AggregateKind::Adt(adt_def, variant_idx, substs, _, _) => {
+                mir::AggregateKind::Adt(adt_def, variant_idx, substs, _, active_field_idx) => {
                     let adt_kind = adt_def.kind();
 
                     // Get the type using adt_def.ty_with_args()
                     let adt_ty_rust = adt_def.ty_with_args(substs);
                     let adt_ty = types::translate_type(ctx, &adt_ty_rust)?;
-                    let (field_values, current_prev_op) = translate_adt_aggregate_field_values(
-                        ctx,
-                        body,
-                        *adt_def,
-                        *variant_idx,
-                        substs,
-                        operands,
-                        value_map,
-                        block_ptr,
-                        prev_op,
-                        loc.clone(),
-                    )?;
+                    let translated_field_values = if matches!(adt_kind, AdtKind::Union) {
+                        None
+                    } else {
+                        Some(translate_adt_aggregate_field_values(
+                            ctx,
+                            body,
+                            *adt_def,
+                            *variant_idx,
+                            substs,
+                            operands,
+                            value_map,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        )?)
+                    };
 
                     match adt_kind {
                         AdtKind::Struct => {
+                            let (field_values, current_prev_op) = translated_field_values
+                                .expect("non-union ADT fields should have been translated");
                             // Check if the translated type is a struct type.
                             // Scalar-lowered newtypes like ThreadIndex are translated to
                             // their single runtime field type. They may still have ZST
@@ -1037,6 +1044,8 @@ pub fn translate_rvalue(
                             }
                         }
                         AdtKind::Enum => {
+                            let (field_values, current_prev_op) = translated_field_values
+                                .expect("non-union ADT fields should have been translated");
                             // Get the variant index for the enum
                             // NOTE: variant_idx IS the index (0, 1, 2, ...), NOT the discriminant!
                             // discriminant_for_variant returns the discriminant VALUE which may differ
@@ -1079,15 +1088,18 @@ pub fn translate_rvalue(
 
                             Ok((Some(op), result, prev_after_casts))
                         }
-                        AdtKind::Union => {
-                            input_err!(
-                                loc,
-                                TranslationErr::unsupported(format!(
-                                    "Union aggregate not yet supported: {}",
-                                    adt_def.trimmed_name()
-                                ))
-                            )
-                        }
+                        AdtKind::Union => translate_union_aggregate(
+                            ctx,
+                            body,
+                            *adt_def,
+                            adt_ty,
+                            *active_field_idx,
+                            operands,
+                            value_map,
+                            block_ptr,
+                            prev_op,
+                            loc,
+                        ),
                     }
                 }
                 mir::AggregateKind::Tuple => {
@@ -1834,48 +1846,17 @@ pub fn translate_operand(
 
             let const_ty_ptr = types::translate_type(ctx, &rust_ty)?;
 
-            // Check if this is a ZST (Zero-Sized Type) like PhantomData<T>
-            // ZSTs have no runtime representation, so we create a value of the appropriate type.
-            // This is critical for iterator support (Iter contains PhantomData).
+            // ZSTs have no runtime bytes, but they still need a value with the
+            // exact translated type. This is critical for marker structs,
+            // unit, and zero-sized unions.
             if types::is_zst_type(ctx, const_ty_ptr) {
-                // Determine if this is a struct ZST (like PhantomData) or tuple ZST
-                let is_struct_zst = const_ty_ptr
-                    .deref(ctx)
-                    .is::<dialect_mir::types::MirStructType>();
-
-                let op = if is_struct_zst {
-                    // Create empty struct constructor for struct ZSTs (e.g., PhantomData<T>)
-                    Operation::new(
-                        ctx,
-                        MirConstructStructOp::get_concrete_op_info(),
-                        vec![const_ty_ptr], // Use the actual struct type
-                        vec![],             // No operands for ZST
-                        vec![],
-                        0,
-                    )
-                } else {
-                    // Create empty tuple constructor for tuple ZSTs
-                    use dialect_mir::ops::MirConstructTupleOp;
-                    let empty_tuple_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
-                    Operation::new(
-                        ctx,
-                        MirConstructTupleOp::get_concrete_op_info(),
-                        vec![empty_tuple_ty],
-                        vec![], // No operands for ZST
-                        vec![],
-                        0,
-                    )
-                };
-                op.deref_mut(ctx).set_loc(loc);
-
-                if let Some(prev) = prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                let val = op.deref(ctx).get_result(0);
-                return Ok((val, Some(op)));
+                return translate_zero_sized_constant_value(
+                    ctx,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                );
             }
 
             // Check if this is a struct type (non-ZST)
@@ -2927,13 +2908,7 @@ fn translate_place_value_fallback(
             return Ok((val, Some(op)));
         }
         if types::is_zst_type(ctx, ty_ptr) {
-            let op = create_zst_aggregate(ctx, ty_ptr, loc.clone());
-            match prev_op {
-                Some(p) => op.insert_after(ctx, p),
-                None => op.insert_at_front(block_ptr, ctx),
-            }
-            let val = op.deref(ctx).get_result(0);
-            return Ok((val, Some(op)));
+            return translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc);
         }
         input_err!(
             loc,
@@ -4316,33 +4291,34 @@ pub fn translate_place_iterative(
     // unsupported locals fall back to the same ghost-enum / empty-aggregate
     // synthesis as [`translate_place`].
     let local = place.local;
-    let (mut current_value, mut current_prev_op) =
-        match value_map.load_local(ctx, local, block_ptr, prev_op) {
-            Some((load_op, val)) => (val, Some(load_op)),
-            None => {
-                let local_decl = &body.locals()[local];
-                let ty_ptr = types::translate_type(ctx, &local_decl.ty)?;
-                let synth_op = if ty_ptr.deref(ctx).is::<dialect_mir::types::MirEnumType>() {
-                    create_ghost_enum_default(ctx, ty_ptr, loc.clone())
-                } else if types::is_zst_type(ctx, ty_ptr) {
-                    create_zst_aggregate(ctx, ty_ptr, loc.clone())
-                } else {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "Local {} has no alloca slot and is not a ZST",
-                            Into::<usize>::into(local)
-                        ))
-                    );
-                };
+    let (mut current_value, mut current_prev_op) = match value_map
+        .load_local(ctx, local, block_ptr, prev_op)
+    {
+        Some((load_op, val)) => (val, Some(load_op)),
+        None => {
+            let local_decl = &body.locals()[local];
+            let ty_ptr = types::translate_type(ctx, &local_decl.ty)?;
+            if ty_ptr.deref(ctx).is::<dialect_mir::types::MirEnumType>() {
+                let synth_op = create_ghost_enum_default(ctx, ty_ptr, loc.clone());
                 match prev_op {
                     Some(p) => synth_op.insert_after(ctx, p),
                     None => synth_op.insert_at_front(block_ptr, ctx),
                 }
                 let val = synth_op.deref(ctx).get_result(0);
                 (val, Some(synth_op))
+            } else if types::is_zst_type(ctx, ty_ptr) {
+                translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc.clone())?
+            } else {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Local {} has no alloca slot and is not a ZST",
+                        Into::<usize>::into(local)
+                    ))
+                );
             }
-        };
+        }
+    };
 
     // Track the Rust type of `current_value` alongside the pliron value.
     // Each iteration below advances it through rustc_public's own projection
@@ -5303,8 +5279,7 @@ fn translate_struct_constant(
     for (field_idx, field_ty_ptr) in field_types.iter().copied().enumerate() {
         // First, gather type information we need while holding immutable borrow
         enum FieldTypeKind {
-            ZstStruct, // Struct ZST like PhantomData<T>
-            ZstTuple,  // Tuple ZST like ()
+            ZeroSized,
             Integer { width: u32, signedness: Signedness },
             Float16,
             Float32,
@@ -5315,14 +5290,8 @@ fn translate_struct_constant(
         let field_kind = {
             let field_ty = field_ty_ptr.deref(ctx);
 
-            // Check for ZST
             if types::is_zst_type(ctx, field_ty_ptr) {
-                // Distinguish between struct ZSTs and tuple ZSTs
-                if field_ty.is::<dialect_mir::types::MirStructType>() {
-                    FieldTypeKind::ZstStruct
-                } else {
-                    FieldTypeKind::ZstTuple
-                }
+                FieldTypeKind::ZeroSized
             } else if let Some(int_ty) = field_ty.downcast_ref::<IntegerType>() {
                 FieldTypeKind::Integer {
                     width: int_ty.width(),
@@ -5341,53 +5310,16 @@ fn translate_struct_constant(
 
         // Now handle each field type kind with mutable operations
         match field_kind {
-            FieldTypeKind::ZstStruct => {
-                // Struct ZST fields (like PhantomData<T>) produce empty struct values
-                let op = Operation::new(
+            FieldTypeKind::ZeroSized => {
+                let (value, new_prev_op) = translate_zero_sized_constant_value(
                     ctx,
-                    MirConstructStructOp::get_concrete_op_info(),
-                    vec![field_ty_ptr], // Use the actual struct type
-                    vec![],             // No operands for ZST
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                if let Some(prev) = current_prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(op);
-                field_values.push(op.deref(ctx).get_result(0));
-                // ZST takes no bytes
-            }
-
-            FieldTypeKind::ZstTuple => {
-                // Tuple ZST fields produce empty tuple values
-                let empty_tuple_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
-
-                use dialect_mir::ops::MirConstructTupleOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstructTupleOp::get_concrete_op_info(),
-                    vec![empty_tuple_ty],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                if let Some(prev) = current_prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(op);
-                field_values.push(op.deref(ctx).get_result(0));
-                // ZST takes no bytes
+                    field_ty_ptr,
+                    block_ptr,
+                    current_prev_op,
+                    loc.clone(),
+                )?;
+                current_prev_op = new_prev_op;
+                field_values.push(value);
             }
 
             FieldTypeKind::Integer { width, signedness } => {
@@ -6469,7 +6401,7 @@ fn translate_constant_value_from_bytes(
     }
 }
 
-/// Build a zero-sized struct or tuple value.
+/// Build a zero-sized value while preserving its exact translated type.
 fn translate_zero_sized_constant_value(
     ctx: &mut Context,
     ty_ptr: TypeHandle,
@@ -6480,6 +6412,7 @@ fn translate_zero_sized_constant_value(
     enum ZeroSizedKind {
         Struct,
         EmptyTuple,
+        Union,
         Unsupported(String),
     }
 
@@ -6487,6 +6420,8 @@ fn translate_zero_sized_constant_value(
         let ty_ref = ty_ptr.deref(ctx);
         if ty_ref.is::<dialect_mir::types::MirStructType>() {
             ZeroSizedKind::Struct
+        } else if ty_ref.is::<dialect_mir::types::MirUnionType>() {
+            ZeroSizedKind::Union
         } else if let Some(tuple_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirTupleType>() {
             if tuple_ty.get_types().is_empty() {
                 ZeroSizedKind::EmptyTuple
@@ -6554,6 +6489,7 @@ fn translate_zero_sized_constant_value(
                 0,
             )
         }
+        ZeroSizedKind::Union => MirUndefOp::new(ctx, ty_ptr).get_operation(),
         ZeroSizedKind::Unsupported(message) => {
             return input_err!(loc, TranslationErr::unsupported(message));
         }
@@ -6673,6 +6609,115 @@ fn translate_adt_aggregate_field_values(
     }
 
     Ok((field_values, current_prev_op))
+}
+
+/// Construct a union by writing the one active field into shared storage.
+///
+/// MIR supplies exactly one operand plus the declaration index of its active
+/// field. Start with undefined union storage and use `mir.insert_field` to
+/// write that typed view at byte zero. The union-specific lowering preserves
+/// every other byte as undefined; it never invents one independent slot per
+/// field.
+#[allow(clippy::too_many_arguments)]
+fn translate_union_aggregate(
+    ctx: &mut Context,
+    body: &mir::Body,
+    adt_def: rustc_public::ty::AdtDef,
+    union_ty: TypeHandle,
+    active_field_idx: Option<usize>,
+    operands: &[mir::Operand],
+    value_map: &mut ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    let active_field_idx = active_field_idx.ok_or_else(|| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "Union aggregate '{}' did not identify an active field",
+            adt_def.trimmed_name()
+        )))
+    })?;
+
+    if operands.len() != 1 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Union aggregate '{}' expected exactly one operand for active field {}, found {}",
+                adt_def.trimmed_name(),
+                active_field_idx,
+                operands.len()
+            ))
+        );
+    }
+
+    let (field_count, expected_field_ty) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Union aggregate '{}' did not translate to MirUnionType",
+                    adt_def.trimmed_name()
+                )))
+            })?;
+        (union.field_count(), union.get_field_type(active_field_idx))
+    };
+    if active_field_idx >= field_count {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Union aggregate '{}' active field {} is out of bounds for {} fields",
+                adt_def.trimmed_name(),
+                active_field_idx,
+                field_count
+            ))
+        );
+    }
+    let expected_field_ty = expected_field_ty.expect("active union field was bounds-checked");
+
+    let (active_value, current_prev_op) = translate_operand(
+        ctx,
+        body,
+        &operands[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (active_value, current_prev_op) = cast_to_generic_addrspace_if_needed(
+        ctx,
+        active_value,
+        expected_field_ty,
+        block_ptr,
+        current_prev_op,
+        loc.clone(),
+    );
+
+    let undef_op = MirUndefOp::new(ctx, union_ty).get_operation();
+    undef_op.deref_mut(ctx).set_loc(loc.clone());
+    if let Some(prev) = current_prev_op {
+        undef_op.insert_after(ctx, prev);
+    } else {
+        undef_op.insert_at_front(block_ptr, ctx);
+    }
+    let undef_value = undef_op.deref(ctx).get_result(0);
+
+    let insert_op = Operation::new(
+        ctx,
+        MirInsertFieldOp::get_concrete_op_info(),
+        vec![union_ty],
+        vec![undef_value, active_value],
+        vec![],
+        0,
+    );
+    insert_op.deref_mut(ctx).set_loc(loc);
+    MirInsertFieldOp::new(insert_op).set_attr_insert_index(
+        ctx,
+        dialect_mir::attributes::FieldIndexAttr(active_field_idx as u32),
+    );
+    let result = insert_op.deref(ctx).get_result(0);
+
+    Ok((Some(insert_op), result, Some(undef_op)))
 }
 
 /// Fetch the raw bytes backing a constant, following provenance for promoted
@@ -7342,46 +7387,6 @@ fn extract_shared_array_info(
         }
         _ => input_err_noloc!(TranslationErr::unsupported("Expected raw pointer type")),
     }
-}
-
-/// Create a placeholder ZST aggregate (struct / tuple) value.
-///
-/// Used for locals whose Rust type is zero-sized: these get no alloca slot
-/// (the alloca model skips ZST locals), yet they may still flow through the
-/// translator as SSA values (e.g. unit-type temporaries, closure-capture
-/// ZSTs). We synthesise an empty aggregate on demand so that every read of
-/// a ZST local produces a usable `Value`.
-///
-/// The caller is responsible for inserting the returned op into a block.
-fn create_zst_aggregate(
-    ctx: &mut Context,
-    ty_ptr: pliron::r#type::TypeHandle,
-    loc: Location,
-) -> Ptr<Operation> {
-    use dialect_mir::ops::{MirConstructStructOp, MirConstructTupleOp};
-    use dialect_mir::types::MirStructType;
-
-    let op = if ty_ptr.deref(ctx).is::<MirStructType>() {
-        Operation::new(
-            ctx,
-            MirConstructStructOp::get_concrete_op_info(),
-            vec![ty_ptr],
-            vec![],
-            vec![],
-            0,
-        )
-    } else {
-        Operation::new(
-            ctx,
-            MirConstructTupleOp::get_concrete_op_info(),
-            vec![ty_ptr],
-            vec![],
-            vec![],
-            0,
-        )
-    };
-    op.deref_mut(ctx).set_loc(loc);
-    op
 }
 
 /// Create a placeholder `MirConstructEnumOp` for a ghost local.

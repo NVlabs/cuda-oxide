@@ -53,12 +53,9 @@ pub(crate) fn convert_return(
         [val] => {
             let ty = val.get_type(ctx);
 
-            let is_empty_struct = ty
-                .deref(ctx)
-                .downcast_ref::<llvm_export::types::StructType>()
-                .is_some_and(|st| st.num_fields() == 0);
-
-            if ty.deref(ctx).is::<llvm_export::types::VoidType>() || is_empty_struct {
+            if ty.deref(ctx).is::<llvm_export::types::VoidType>()
+                || crate::convert::types::is_zero_sized_type(ctx, ty)
+            {
                 None
             } else {
                 Some(*val)
