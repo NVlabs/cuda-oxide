@@ -58,6 +58,29 @@ union StructView {
     word: u32,
 }
 
+#[derive(Clone, Copy)]
+union ZeroUnion {
+    unit: (),
+    marker: core::marker::PhantomData<u64>,
+}
+
+#[repr(align(16))]
+#[derive(Clone, Copy)]
+struct AlignedZero;
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+union AlignedZeroUnion {
+    zero: AlignedZero,
+    unit: (),
+}
+
+#[allow(dead_code)]
+union TupleBytes {
+    value: (u8, u64),
+    bytes: [u8; 16],
+}
+
 struct Wrapper {
     tag: u8,
     bits: Bits,
@@ -72,6 +95,24 @@ fn make_bits(word: u32) -> Bits {
 #[inline(never)]
 fn read_word(bits: Bits) -> u32 {
     unsafe { bits.word }
+}
+
+#[inline(never)]
+fn pass_zero(value: ZeroUnion) -> ZeroUnion {
+    value
+}
+
+#[inline(never)]
+fn use_aligned_zero(value: AlignedZeroUnion) -> u32 {
+    unsafe {
+        let () = value.unit;
+    }
+    0xa11e
+}
+
+#[inline(never)]
+fn pass_tuple_bytes(value: TupleBytes) -> TupleBytes {
+    value
 }
 
 #[cuda_module]
@@ -161,6 +202,24 @@ mod kernels {
                         view.word
                     }
                 }
+                // A zero-sized union remains zero-sized across a call.
+                12 => {
+                    let value = pass_zero(ZeroUnion { unit: () });
+                    unsafe {
+                        let () = value.unit;
+                    }
+                    0x0a0a
+                }
+                // Over-alignment changes the address requirement, not size.
+                13 => use_aligned_zero(AlignedZeroUnion { unit: () }),
+                // An aggregate carrier with implicit LLVM padding would lose
+                // bytes 1..7 when copied as SSA. Keep raw-byte storage instead.
+                14 => unsafe {
+                    pass_tuple_bytes(TupleBytes {
+                        bytes: [0xaa, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+                    })
+                    .bytes[3] as u32
+                },
                 _ => 0,
             };
         }
@@ -178,7 +237,7 @@ mod kernels {
 }
 
 fn main() {
-    const EXPECTED: [u32; 12] = [
+    const EXPECTED: [u32; 15] = [
         0,
         0x1122_3344,
         0x5566_7788,
@@ -191,6 +250,9 @@ fn main() {
         0x4433_2211,
         3,
         0x5566_7788,
+        0x0a0a,
+        0xa11e,
+        3,
     ];
     const N: usize = EXPECTED.len();
 

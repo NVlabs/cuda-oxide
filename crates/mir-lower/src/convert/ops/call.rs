@@ -63,6 +63,7 @@
 
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
+    is_zero_sized_type,
 };
 use crate::helpers;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
@@ -548,7 +549,12 @@ pub fn convert(
         if is_unit {
             llvm_types::VoidType::get(ctx).into()
         } else {
-            convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?
+            let converted = convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?;
+            if is_zero_sized_type(ctx, converted) {
+                llvm_types::VoidType::get(ctx).into()
+            } else {
+                converted
+            }
         }
     } else {
         llvm_types::VoidType::get(ctx).into()
@@ -1273,6 +1279,9 @@ fn flatten_arguments(
                 }
             }
             FlattenKind::None => {
+                if is_zero_sized_type(ctx, arg_ty) {
+                    continue;
+                }
                 let (final_arg, final_ty) = coerce_arg_to_param_ty(
                     ctx,
                     rewriter,

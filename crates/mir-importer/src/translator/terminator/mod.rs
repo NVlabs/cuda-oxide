@@ -116,7 +116,9 @@ pub fn translate_terminator(
     let loc = span_to_location(ctx, term.span);
 
     match &term.kind {
-        mir::TerminatorKind::Return => translate_return(ctx, value_map, block_ptr, prev_op, loc),
+        mir::TerminatorKind::Return => {
+            translate_return(ctx, body, value_map, block_ptr, prev_op, loc)
+        }
 
         mir::TerminatorKind::Goto { target } => {
             translate_goto(ctx, *target, block_ptr, prev_op, block_map, loc)
@@ -212,6 +214,7 @@ pub fn translate_terminator(
 /// transfers control back to the caller with this value.
 fn translate_return(
     ctx: &mut Context,
+    body: &mir::Body,
     value_map: &mut ValueMap,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -242,7 +245,28 @@ fn translate_return(
                 (vec![val], Some(load_op))
             }
         }
-        None => (vec![], prev_op),
+        None => {
+            let return_ty = types::translate_type(ctx, &body.locals()[return_local].ty)?;
+            let is_unit = return_ty
+                .deref(ctx)
+                .downcast_ref::<dialect_mir::types::MirTupleType>()
+                .is_some_and(|tuple| tuple.get_types().is_empty());
+            if types::is_zst_type(ctx, return_ty) && !is_unit {
+                // Non-unit ZST returns still need a MIR-level value so the
+                // `mir.return` verifier agrees with the function signature.
+                // LLVM lowering erases the value and emits a void return.
+                let undef = dialect_mir::ops::MirUndefOp::new(ctx, return_ty).get_operation();
+                undef.deref_mut(ctx).set_loc(loc.clone());
+                if let Some(prev) = prev_op {
+                    undef.insert_after(ctx, prev);
+                } else {
+                    undef.insert_at_front(block_ptr, ctx);
+                }
+                (vec![undef.deref(ctx).get_result(0)], Some(undef))
+            } else {
+                (vec![], prev_op)
+            }
+        }
     };
 
     let op = Operation::new(

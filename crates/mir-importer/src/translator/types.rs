@@ -148,6 +148,14 @@ pub fn is_rust_type_zst(rust_ty: &rustc_public::ty::Ty) -> bool {
         }
         // ADT - check if it has no fields (for structs)
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs)) => {
+            if matches!(adt_def.kind(), rustc_public::ty::AdtKind::Union) {
+                // A union can have declared fields and still own no bytes when
+                // every field is zero-sized. Source-level field count cannot
+                // answer this; use rustc's target layout.
+                return rust_ty
+                    .layout()
+                    .is_ok_and(|layout| layout.shape().size.bytes() == 0);
+            }
             let variants = adt_def.variants();
             // For structs (single variant), check if it has no fields
             if variants.len() == 1 {

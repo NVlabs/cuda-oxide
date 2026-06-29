@@ -167,6 +167,10 @@ pub fn is_kernel_func(ctx: &Context, op: Ptr<Operation>) -> bool {
 /// By stripping ZSTs at the LLVM type level, we avoid this issue regardless of
 /// inlining decisions.
 pub fn is_zero_sized_type(ctx: &Context, ty: TypeHandle) -> bool {
+    if let Some(array_ty) = ty.deref(ctx).downcast_ref::<llvm_types::ArrayType>() {
+        return array_ty.size() == 0 || is_zero_sized_type(ctx, array_ty.elem_type());
+    }
+
     // Check if LLVM StructType with zero fields
     if let Some(struct_ty) = ty.deref(ctx).downcast_ref::<llvm_types::StructType>() {
         let num_fields = struct_ty.num_fields();
@@ -649,7 +653,9 @@ pub(crate) fn build_union_storage_type(
         let representative = fields
             .iter()
             .filter(|(ty, field_size, _, _)| {
-                *field_size > 0 && llvm_type_is_byte_faithful(ctx, *ty)
+                *field_size > 0
+                    && llvm_type_is_byte_faithful(ctx, *ty)
+                    && (pointer_carrier.is_none() || llvm_type_contains_pointer(ctx, *ty))
             })
             .max_by_key(|(_, field_size, field_align, contains_pointer)| {
                 (*contains_pointer, *field_align, *field_size)
@@ -659,6 +665,11 @@ pub(crate) fn build_union_storage_type(
             if representative.1 < size {
                 storage_fields.push(make_padding_type(ctx, size - representative.1));
             }
+        } else if pointer_carrier.is_some() {
+            return Err(anyhow::anyhow!(
+                "union `{}` has pointer-bearing fields but no byte-faithful pointer carrier; lowering it as raw bytes would discard pointer provenance",
+                union_ty.name()
+            ));
         } else {
             // Pointer-free unions may safely use raw bytes as their SSA
             // carrier. Field loads/stores still use their declared types.
@@ -715,9 +726,27 @@ fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool {
         return llvm_type_is_byte_faithful(ctx, array.elem_type());
     }
     if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
-        return struct_ty
-            .fields()
-            .all(|field| llvm_type_is_byte_faithful(ctx, field));
+        let fields: Vec<_> = struct_ty.fields().collect();
+        let mut end = 0u64;
+        let mut max_align = 1u64;
+        for field in fields {
+            if !llvm_type_is_byte_faithful(ctx, field) {
+                return false;
+            }
+            let (field_size, field_align) = llvm_type_size_align(ctx, field);
+            let field_align = field_align.max(1);
+            let aligned_end = end.div_ceil(field_align) * field_align;
+            if aligned_end != end {
+                // LLVM would insert bytes that are not represented by an SSA
+                // field. Loading and re-storing the aggregate would lose them.
+                return false;
+            }
+            end += field_size;
+            max_align = max_align.max(field_align);
+        }
+        // Reject implicit trailing padding for the same reason. Explicit
+        // `[N x i8]` padding fields keep `end` equal to the allocation size.
+        return end.div_ceil(max_align) * max_align == end;
     }
     false
 }
@@ -1256,7 +1285,9 @@ mod tests {
     //! tests pin down both for the layout shapes from issue #128.
 
     use super::*;
-    use dialect_mir::types::{EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirUnionType};
+    use dialect_mir::types::{
+        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirUnionType,
+    };
 
     fn make_ctx() -> Context {
         let mut ctx = Context::new();
@@ -1355,6 +1386,38 @@ mod tests {
         let union_data = union_ty.deref(&ctx).clone();
         let err = build_union_storage_type(&mut ctx, &union_data).unwrap_err();
         assert!(err.to_string().contains("different LLVM representations"));
+    }
+
+    #[test]
+    fn union_storage_rejects_non_byte_faithful_pointer_carrier() {
+        let mut ctx = make_ctx();
+        let u8_ty = mir_uint(&mut ctx, 8);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let bool_ty = mir_uint(&mut ctx, 1);
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let ptr_bool: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PtrBool".into(),
+            vec!["ptr".into(), "flag".into()],
+            vec![ptr_ty, bool_ty],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let bytes_ty: TypeHandle = MirArrayType::get(&mut ctx, u8_ty, 16).into();
+        let union_ty = MirUnionType::get(
+            &mut ctx,
+            "PointerBoolBytes".into(),
+            vec!["view".into(), "bytes".into()],
+            vec![ptr_bool, bytes_ty],
+            16,
+            8,
+        );
+        let union_data = union_ty.deref(&ctx).clone();
+        let err = build_union_storage_type(&mut ctx, &union_data).unwrap_err();
+        assert!(err.to_string().contains("no byte-faithful pointer carrier"));
     }
 
     #[test]
