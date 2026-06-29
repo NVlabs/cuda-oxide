@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#![feature(never_type)]
+
 //! Regression for lowering function-item receivers in rust-call paths.
 //!
 //! Passing a function item to a generic `FnOnce` helper makes MIR call
@@ -10,8 +12,10 @@
 //! back to the concrete function body instead of emitting a dangling trait-shim
 //! callee symbol. The regression also covers `Fn`/`FnMut`, references,
 //! multiple and nested-tuple arguments, tuple returns, and type/const-generic
-//! function items. `call_once_decoy` proves that an ordinary function whose
-//! name contains trait-like text is not mistaken for a callable-trait shim.
+//! function items. Diverging function items and closures also verify that a
+//! direct Rust call returning `!` ends its MIR block with `unreachable`.
+//! `call_once_decoy` proves that an ordinary function whose name contains
+//! trait-like text is not mistaken for a callable-trait shim.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, device, kernel, thread};
@@ -46,6 +50,11 @@ fn nested_sum((a, (b, c)): (u32, (u32, u32))) -> u32 {
     a + b + c
 }
 
+#[inline(never)]
+fn spin_forever(_value: u32) -> ! {
+    loop {}
+}
+
 #[device]
 fn apply_once<F: FnOnce(u32) -> u32>(f: F, x: u32) -> u32 {
     f(x)
@@ -71,6 +80,11 @@ fn apply_value<T, R, F>(f: F, value: T) -> R
 where
     F: FnOnce(T) -> R,
 {
+    f(value)
+}
+
+#[device]
+fn apply_never<F: FnOnce(u32) -> !>(f: F, value: u32) -> ! {
     f(value)
 }
 
@@ -116,6 +130,23 @@ mod kernels {
                 + through_reference;
         }
     }
+
+    /// Compile both diverging callable paths without entering them on-device.
+    /// A Rust call returning `!` has no successor block, so the importer must
+    /// emit the direct call followed by `mir.unreachable`.
+    #[kernel]
+    pub fn diverging_callable(flag: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if flag == 1 {
+            apply_never(spin_forever, flag);
+        }
+        if flag == 2 {
+            apply_never(|_| loop {}, flag);
+        }
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = 0xd1ce;
+        }
+    }
 }
 
 fn main() {
@@ -134,6 +165,20 @@ fn main() {
     let expected: Vec<u32> = (0..N).map(|i| 11 * i as u32 + 1_049).collect();
     if out != expected {
         eprintln!("FAIL: got {out:?}, expected {expected:?}");
+        std::process::exit(1);
+    }
+
+    let mut diverging_out = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+    module
+        .diverging_callable(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            0,
+            &mut diverging_out,
+        )
+        .expect("diverging callable regression launch");
+    if diverging_out.to_host_vec(&stream).unwrap() != [0xd1ce] {
+        eprintln!("FAIL: diverging callable regression took the wrong path");
         std::process::exit(1);
     }
 

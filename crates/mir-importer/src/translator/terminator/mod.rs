@@ -1184,21 +1184,7 @@ fn translate_call(
     if target_usize.is_none() {
         // This is a diverging call (returns !) - emit unreachable
         // Examples: unwrap_failed(), panic!(), abort()
-        let op = Operation::new(
-            ctx,
-            dialect_mir::ops::MirUnreachableOp::get_concrete_op_info(),
-            vec![],
-            vec![],
-            vec![],
-            0,
-        );
-        op.deref_mut(ctx).set_loc(loc);
-        if let Some(prev) = prev_op {
-            op.insert_after(ctx, prev);
-        } else {
-            op.insert_at_front(block_ptr, ctx);
-        }
-        return Ok(op);
+        return Ok(emit_unreachable_after(ctx, block_ptr, prev_op, loc));
     }
 
     // A call to a rustc intrinsic that no dispatch arm above recognized can
@@ -1382,6 +1368,10 @@ fn translate_function_item_call(
         call_op.insert_after(ctx, prev);
     } else {
         call_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if target.is_none() {
+        return Ok(emit_unreachable_after(ctx, block_ptr, Some(call_op), loc));
     }
 
     let result_value = call_op.deref(ctx).get_result(0);
@@ -1621,6 +1611,10 @@ fn translate_closure_call(
         call_op
     };
 
+    if target.is_none() {
+        return Ok(emit_unreachable_after(ctx, block_ptr, Some(call_op), loc));
+    }
+
     // Store the call result into the destination local's slot.
     let result_value = call_op.deref(ctx).get_result(0);
     let last_inserted = value_map
@@ -1645,6 +1639,29 @@ fn translate_closure_call(
     } else {
         Ok(call_op)
     }
+}
+
+fn emit_unreachable_after(
+    ctx: &mut Context,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> Ptr<Operation> {
+    let op = Operation::new(
+        ctx,
+        dialect_mir::ops::MirUnreachableOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc);
+    if let Some(prev) = prev_op {
+        op.insert_after(ctx, prev);
+    } else {
+        op.insert_at_front(block_ptr, ctx);
+    }
+    op
 }
 
 /// True only when the rust-call receiver is itself a closure.
