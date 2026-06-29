@@ -1,0 +1,2 @@
+# Committed golden PTX files are intentional -- negate the workspace *.ptx rule.
+!*.ptx

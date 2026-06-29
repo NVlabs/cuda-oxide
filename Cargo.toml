@@ -24,6 +24,11 @@ members = [
     "crates/reserved-oxide-symbols",
     # Differential codegen fuzzer support
     "crates/fuzzer",
+    # In-process "library mode" compiler: Rust device-kernel crate -> PTX
+    "crates/cuda-oxide-compiler",
+    # cdylib C-ABI wrapper + a normal-app dlopen consumer demo
+    "crates/cuda-oxide-compiler-cdylib",
+    "crates/libmode-consumer",
 ]
 
 [workspace.package]

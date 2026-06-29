@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "cuda-oxide-compiler-cdylib"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "cdylib 'library mode' compiler: Rust device-kernel crate -> PTX, exposed via a C ABI for runtime dlopen (libloading)."
+publish = false
+
+# cdylib ONLY: a final, C-ABI artifact (like the bin, NOT an rlib library).
+# It links the rustc_driver dylib directly and exports one `extern "C"` entry.
+# NO rlib crate-type here: an rlib `rustc_private` library target poisons
+# dependency-format resolution ("std only shows up once"); a cdylib is a
+# complete artifact and resolves like the bin does.
+[lib]
+name = "cuda_oxide_compiler"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Same device-pipeline reuse as the bin crate: source-include collector.rs +
+# device_codegen.rs via #[path]; they need only these plain rlibs (NOT
+# oxide-artifacts/`object`).
+mir-importer = { path = "../mir-importer" }
+llvm-export = { path = "../llvm-export" }
+reserved-oxide-symbols = { path = "../reserved-oxide-symbols" }
+
+[package.metadata.rust-analyzer]
+rustc_private = true
