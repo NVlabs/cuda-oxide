@@ -50,6 +50,9 @@ fn nested_sum((a, (b, c)): (u32, (u32, u32))) -> u32 {
     a + b + c
 }
 
+// An empty loop gives this device function a `!` return without introducing
+// panic lowering or another callee, which would test a different code path.
+#[allow(clippy::empty_loop)]
 #[inline(never)]
 fn spin_forever(_value: u32) -> ! {
     loop {}
@@ -141,6 +144,9 @@ mod kernels {
             apply_never(spin_forever, flag);
         }
         if flag == 2 {
+            // Keep the closure body as the minimal non-returning expression;
+            // panic or thread sleeping would exercise unrelated lowering.
+            #[allow(clippy::empty_loop)]
             apply_never(|_| loop {}, flag);
         }
         if let Some(slot) = out.get_mut(idx) {
