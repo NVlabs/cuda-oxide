@@ -1138,27 +1138,19 @@ impl<'tcx> DeviceCollector<'tcx> {
             },
         };
 
-        // Special handling for callable trait method calls (FnOnce::call_once, etc.).
-        // When we see a call like `<Closure as FnOnce>::call_once` or
-        // `<fn item as FnOnce>::call_once`, collect the receiver body directly:
-        // the trait method itself may not have MIR, and mir-importer rewrites
-        // these calls to the concrete callable body.
-        let fn_name = self.tcx.def_path_str(*def_id);
-        if fn_name.contains("call_once")
-            || fn_name.contains("call_mut")
-            || fn_name.ends_with("::call")
+        // Callable-trait shims do not necessarily have a MIR body of their own.
+        // Identify the actual `Fn`, `FnMut`, or `FnOnce` trait through rustc's
+        // metadata, then collect only the trait's `Self` type (the receiver).
+        // Function-name matching is unsafe here: user functions may legally
+        // contain strings such as `call_once`.
+        let is_callable_trait_method = self
+            .tcx
+            .trait_of_assoc(*def_id)
+            .is_some_and(|trait_id| self.tcx.fn_trait_kind_from_def_id(trait_id).is_some());
+        if is_callable_trait_method
+            && let Some(receiver_ty) = args.iter().next().and_then(|arg| arg.as_type())
         {
-            // Check if any type arg is a concrete callable receiver.
-            for arg in args.iter() {
-                if let Some(ty) = arg.as_type() {
-                    self.enqueue_callable_trait_receiver_body(
-                        ty,
-                        call_span,
-                        caller,
-                        &callee_ctx,
-                    );
-                }
-            }
+            self.enqueue_callable_trait_receiver_body(receiver_ty, call_span, caller, &callee_ctx);
             // Don't return - continue to try resolving the trait method too
             // (even though it may fail, we still want to try).
         }
@@ -1319,6 +1311,42 @@ impl<'tcx> DeviceCollector<'tcx> {
             }
             _ => return,
         };
+
+        match self.should_collect_from_crate(instance.def_id()) {
+            CollectDecision::Collect => {}
+            CollectDecision::SkipIntentional => {
+                let target = self.tcx.def_path_str(instance.def_id());
+                self.tcx
+                    .dcx()
+                    .struct_span_fatal(
+                        call_span,
+                        format!(
+                            "`{target}` cannot be used as a function item in device code because it requires special call-site lowering"
+                        ),
+                    )
+                    .with_help(
+                        "wrap the call in a local `#[device]` function and pass that wrapper instead",
+                    )
+                    .emit()
+            }
+            CollectDecision::Forbidden {
+                crate_name,
+                fn_path,
+            } => self
+                .tcx
+                .dcx()
+                .struct_span_fatal(
+                    call_span,
+                    format!(
+                        "device code cannot call function item `{fn_path}` from forbidden crate `{crate_name}`"
+                    ),
+                )
+                .with_note(format!(
+                    "the call is reachable from `{}`",
+                    ctx.root_name
+                ))
+                .emit(),
+        }
 
         let mangled = self.tcx.symbol_name(instance).name.to_string();
         if self.seen.contains(&mangled) {

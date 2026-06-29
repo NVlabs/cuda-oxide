@@ -905,12 +905,10 @@ fn translate_call(
         }
     }
 
-    // Handle callable trait method calls whose receiver is a concrete callable.
-    // The receiver test matters: wrapper ADTs can carry a closure or function
-    // item in their generic substitutions while still expecting the rust-call
-    // tuple as one argument.
-    if let Some(ref name) = pattern_name
-        && (name.contains("call_once") || name.contains("call_mut") || name.ends_with("::call"))
+    // Identify the actual core callable-trait methods. Matching text in an
+    // arbitrary function name is not sufficient: a user function named, for
+    // example, `call_once_helper` must remain an ordinary call.
+    if let Some(call_info) = callable_trait_call_info(func)
         && !args.is_empty()
     {
         if receiver_is_closure(&args[0], body) {
@@ -918,6 +916,7 @@ fn translate_call(
                 ctx,
                 body,
                 &call_name,
+                call_info.resolved_is_shim,
                 args,
                 destination,
                 &target_usize,
@@ -929,11 +928,11 @@ fn translate_call(
                 legaliser,
             );
         }
-        if let Some(function_item_name) = extract_function_item_body_name(&args[0], body) {
+        if let Some(function_item) = extract_function_item_target(&args[0], body) {
             return translate_function_item_call(
                 ctx,
                 body,
-                &function_item_name,
+                &function_item,
                 args,
                 destination,
                 &target_usize,
@@ -1285,7 +1284,7 @@ fn translate_call(
 fn translate_function_item_call(
     ctx: &mut Context,
     body: &mir::Body,
-    function_item_name: &str,
+    function_item: &FunctionItemTarget,
     args: &[mir::Operand],
     destination: &mir::Place,
     target: &Option<usize>,
@@ -1300,8 +1299,18 @@ fn translate_function_item_call(
     use pliron::builtin::attributes::StringAttr;
     use pliron::identifier::Identifier;
 
+    if function_item.requires_direct_dispatch {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "calling `{}` through Fn/FnMut/FnOnce is not yet supported because that target requires intrinsic or external dispatch; wrap it in a local `#[device]` function and pass the wrapper instead",
+                function_item.name
+            ))
+        );
+    }
+
     let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
-    let callee = legaliser.legalise(function_item_name).to_string();
+    let callee = legaliser.legalise(&function_item.name).to_string();
 
     let mut unpacked_args = Vec::new();
     let mut last_op = prev_op;
@@ -1419,6 +1428,7 @@ fn translate_closure_call(
     ctx: &mut Context,
     body: &mir::Body,
     call_name: &Option<String>,
+    resolved_is_shim: bool,
     args: &[mir::Operand],
     destination: &mir::Place,
     target: &Option<usize>,
@@ -1475,7 +1485,7 @@ fn translate_closure_call(
     )?;
     last_op = tuple_last_op;
 
-    // Determine if this is call_once (by value) vs call_mut/call (by reference).
+    // Determine whether the resolved closure body expects a reference.
     //
     // In `std` mode, rustc generates `FnOnce::call_once(self, args)` which passes
     // the closure BY VALUE. But the closure body expects `&self` (a reference).
@@ -1486,14 +1496,20 @@ fn translate_closure_call(
     // When we have call_once, we need to create a reference to the closure value
     // before calling the closure body.
     //
-    // We check the ORIGINAL call_name (the trait method), not the resolved callee
-    // (which is the closure body name).
-    let is_call_once = call_name
-        .as_ref()
-        .map(|n| n.contains("call_once"))
-        .unwrap_or(false);
+    // A compiler shim for `FnOnce` over an `Fn`/`FnMut` closure receives the
+    // closure by value but calls a body that expects a reference. A genuine
+    // by-value `FnOnce` closure resolves directly to its body (`Item`) and must
+    // stay by value. Calls whose MIR receiver is already a reference need no
+    // extra borrow in either case.
+    let receiver_needs_borrow = resolved_is_shim
+        && operand_type(&args[0], body).is_some_and(|ty| {
+            !matches!(
+                ty.kind(),
+                rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, _, _))
+            )
+        });
 
-    let self_arg = if is_call_once {
+    let self_arg = if receiver_needs_borrow {
         // For call_once: self is passed by value, but closure body expects reference.
         // Create a MirRefOp to take a reference to the closure value.
         let self_ty = self_value.get_type(ctx);
@@ -1632,20 +1648,6 @@ fn translate_closure_call(
 }
 
 /// True only when the rust-call receiver is itself a closure.
-///
-/// We type the operand's base local (or constant) and ignore any
-/// `place.projection`, and we peel at most one reference. Both are safe for
-/// the rust-call receiver specifically: rustc lowers a closure-trait call
-/// (`Fn::call` / `FnMut::call_mut` / `FnOnce::call_once`) so that the receiver
-/// argument is the closure passed by value, or a single `&`/`&mut` borrow of
-/// it, materialized into its own temporary local, never an in-place projection
-/// of a larger aggregate and never behind multiple references. So a closure
-/// reached through a field (`(self.f)(x)`) still arrives here as a base local
-/// of type `&{closure}`, and one `Ref` peel plus a base-local type check covers
-/// every genuine closure-call shape. A wrapper ADT that merely carries a
-/// closure in its generic substitutions (the case this guard exists to reject)
-/// has a non-closure receiver type and is correctly left on the ordinary call
-/// path with its rust-call tuple intact.
 fn receiver_is_closure(receiver: &mir::Operand, body: &mir::Body) -> bool {
     let Some(ty) = operand_type(receiver, body) else {
         return false;
@@ -1662,7 +1664,15 @@ fn receiver_is_closure(receiver: &mir::Operand, body: &mir::Body) -> bool {
     )
 }
 
-fn extract_function_item_body_name(receiver: &mir::Operand, body: &mir::Body) -> Option<String> {
+struct FunctionItemTarget {
+    name: String,
+    requires_direct_dispatch: bool,
+}
+
+fn extract_function_item_target(
+    receiver: &mir::Operand,
+    body: &mir::Body,
+) -> Option<FunctionItemTarget> {
     let ty = operand_type(receiver, body)?;
     let inner = match ty.kind() {
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, inner, _)) => inner,
@@ -1675,9 +1685,15 @@ fn extract_function_item_body_name(receiver: &mir::Operand, body: &mir::Body) ->
         return None;
     };
 
-    rustc_public::mir::mono::Instance::resolve(fn_def, &substs)
-        .ok()
-        .map(function_item_call_name)
+    let instance = rustc_public::mir::mono::Instance::resolve(fn_def, &substs).ok()?;
+    let crate_name = fn_def.krate().name;
+    Some(FunctionItemTarget {
+        name: function_item_call_name(instance),
+        requires_direct_dispatch: fn_def.is_intrinsic()
+            || instance.is_foreign_item()
+            || !instance.has_body()
+            || matches!(crate_name.as_str(), "cuda_device" | "cuda-device" | "libm"),
+    })
 }
 
 fn function_item_call_name(instance: rustc_public::mir::mono::Instance) -> String {
@@ -1689,15 +1705,53 @@ fn function_item_call_name(instance: rustc_public::mir::mono::Instance) -> Strin
 }
 
 fn operand_type(receiver: &mir::Operand, body: &mir::Body) -> Option<rustc_public::ty::Ty> {
-    match receiver {
-        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            let local: usize = place.local;
-            let local_decls: Vec<_> = body.local_decls().collect();
-            local_decls.get(local).map(|(_, decl)| decl.ty)
-        }
-        mir::Operand::Constant(const_op) => Some(const_op.const_.ty()),
-        _ => None,
+    receiver.ty(body.locals()).ok()
+}
+
+struct CallableTraitCallInfo {
+    resolved_is_shim: bool,
+}
+
+/// Recognize the three callable traits by compiler identity available through
+/// `rustc_public`.
+///
+/// These methods are defined in `core`, use the rust-call ABI, and have an
+/// exact parent/method pair (`Fn::call`, `FnMut::call_mut`, or
+/// `FnOnce::call_once`). The combined check cannot be spoofed by a user item
+/// whose name merely contains one of those strings. The resolved instance may
+/// be either a shim or the closure body itself, so instance kind is returned as
+/// lowering information rather than used as the recognition predicate.
+fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo> {
+    use rustc_public::mir::mono::{Instance, InstanceKind};
+    use rustc_public::ty::{Abi, RigidTy, TyKind};
+
+    let mir::Operand::Constant(const_op) = func else {
+        return None;
+    };
+    let TyKind::RigidTy(RigidTy::FnDef(fn_def, substs)) = const_op.const_.ty().kind() else {
+        return None;
+    };
+    if fn_def.fn_sig().skip_binder().abi != Abi::RustCall || fn_def.krate().name.as_str() != "core"
+    {
+        return None;
     }
+
+    let method_name = fn_def.def_id().name();
+    let method = method_name.as_str().rsplit("::").next()?;
+    let parent_name = fn_def.def_id().parent()?.name();
+    let parent = parent_name.as_str().rsplit("::").next()?;
+    let is_callable_method = matches!(
+        (parent, method),
+        ("Fn", "call") | ("FnMut", "call_mut") | ("FnOnce", "call_once")
+    );
+    if !is_callable_method {
+        return None;
+    }
+
+    let instance = Instance::resolve(fn_def, &substs).ok()?;
+    Some(CallableTraitCallInfo {
+        resolved_is_shim: instance.kind == InstanceKind::Shim,
+    })
 }
 
 /// Extracts the closure body's mangled name from a closure operand.
@@ -1714,17 +1768,7 @@ fn operand_type(receiver: &mir::Operand, body: &mir::Body) -> Option<rustc_publi
 /// - A reference to a closure (type is `Ref(_, Closure(def, substs), _)`)
 /// - A mutable reference (same pattern)
 fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Option<String> {
-    // Get the type of the closure argument
-    let closure_ty = match closure_arg {
-        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            // Get the type from the place's local
-            let local: usize = place.local;
-            let local_decls: Vec<_> = body.local_decls().collect();
-            local_decls.get(local).map(|(_, decl)| decl.ty)
-        }
-        mir::Operand::Constant(const_op) => Some(const_op.const_.ty()),
-        _ => None,
-    }?;
+    let closure_ty = operand_type(closure_arg, body)?;
 
     // Unwrap references to get the actual closure type
     let inner_ty = match closure_ty.kind() {
