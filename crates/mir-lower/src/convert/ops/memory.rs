@@ -691,7 +691,26 @@ fn create_device_global(
     addr_space: u32,
     initializer_hex: Option<&str>,
 ) -> Result<pliron::identifier::Identifier> {
-    let llvm_global_type = convert_type(ctx, mir_global_type).map_err(anyhow_to_pliron)?;
+    // An explicit initializer is already the evaluated Rust allocation image.
+    // Keep it as `[N x i8]` all the way through LLVM instead of rebuilding a
+    // typed constant. Typed reconstruction can lose NaN payload bits and needs
+    // a second, easily-divergent implementation of Rust struct padding.
+    let semantic_llvm_type = convert_type(ctx, mir_global_type).map_err(anyhow_to_pliron)?;
+    let (llvm_global_type, alignment) = if let Some(initializer_hex) = initializer_hex {
+        let byte_count = initializer_hex_byte_count(initializer_hex).map_err(anyhow_to_pliron)?;
+        if alignment == 0 {
+            return Err(anyhow_to_pliron(anyhow::anyhow!(
+                "device global initializer is missing its evaluated Rust allocation alignment"
+            )));
+        }
+        let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+        (
+            ArrayType::get(ctx, i8_ty.into(), byte_count).into(),
+            alignment,
+        )
+    } else {
+        (semantic_llvm_type, alignment)
+    };
 
     // Constant-memory globals reuse the Rust-side mangled name so host code can
     // resolve them by name via `cuModuleGetGlobal`. Ordinary device globals
@@ -736,6 +755,20 @@ fn create_device_global(
     device_globals.insert(global_key.to_string(), name.clone());
 
     Ok(name)
+}
+
+fn initializer_hex_byte_count(hex: &str) -> std::result::Result<u64, anyhow::Error> {
+    if !hex.len().is_multiple_of(2) {
+        anyhow::bail!("device global initializer has an odd-length hex byte string");
+    }
+    if let Some(invalid) = hex.bytes().find(|byte| !byte.is_ascii_hexdigit()) {
+        anyhow::bail!(
+            "device global initializer contains invalid hex digit {:?}",
+            invalid as char
+        );
+    }
+    u64::try_from(hex.len() / 2)
+        .map_err(|_| anyhow::anyhow!("device global initializer is too large for LLVM"))
 }
 
 /// Convert `mir.extern_shared` to LLVM extern global variable in shared address space.
@@ -1825,7 +1858,7 @@ mod tests {
         block: Ptr<BasicBlock>,
         global_key: &str,
         constant: bool,
-    ) {
+    ) -> Ptr<Operation> {
         let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
         let result_ty = if constant {
             MirPtrType::get_constant(ctx, i32_ty, false)
@@ -1844,6 +1877,7 @@ mod tests {
         alloc.set_attr_global_type(ctx, TypeAttr::new(i32_ty));
         alloc.set_attr_global_key(ctx, StringAttr::new(global_key.to_string()));
         op.insert_at_back(block, ctx);
+        op
     }
 
     #[test]
@@ -1886,5 +1920,42 @@ mod tests {
                 .starts_with("__device_global_"),
             "ordinary device globals get the __device_global_ prefix"
         );
+    }
+
+    #[test]
+    fn initialized_global_lowers_to_byte_storage() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let op = append_global_alloc(&mut ctx, block, "nan_payload", false);
+        let alloc = mir::MirGlobalAllocOp::new(op);
+        alloc.set_alignment_value(&mut ctx, 4);
+        let initializer_key: Identifier = "global_initializer_hex".try_into().unwrap();
+        op.deref_mut(&ctx)
+            .attributes
+            .set(initializer_key, StringAttr::new("3412c07f".to_string()));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let global = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .find_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .expect("expected lowered device global");
+        let global_ty = global.get_type(&ctx);
+        let global_ty_ref = global_ty.deref(&ctx);
+        let array_ty = global_ty_ref
+            .downcast_ref::<ArrayType>()
+            .expect("initialized global must use byte-array storage");
+        assert_eq!(array_ty.size(), 4);
+        let elem_ty = array_ty.elem_type();
+        let elem_ty_ref = elem_ty.deref(&ctx);
+        let elem = elem_ty_ref
+            .downcast_ref::<IntegerType>()
+            .expect("byte-array element must be an integer");
+        assert_eq!(elem.width(), 8);
+        assert_eq!(global.get_alignment(&ctx), Some(4));
+        assert_eq!(global.initializer_hex(&ctx).as_deref(), Some("3412c07f"));
     }
 }

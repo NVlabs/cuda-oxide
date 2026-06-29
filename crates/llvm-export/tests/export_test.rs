@@ -15,9 +15,9 @@ use llvm_export::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
         DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourcePosition, DebugSourceScope,
         DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
-        GetElementPtrOp, GlobalOp, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
+        GetElementPtrOp, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
     },
-    types::{FuncType, PointerType, VoidType},
+    types::{ArrayType, FuncType, PointerType, VoidType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -1380,6 +1380,58 @@ fn nvvm_export_rejects_invalid_global_address_spaces() {
     // The ordinary LLVM/PTX exporter retains its prior behavior; this
     // restriction is specifically part of the NVVM IR contract.
     assert!(export_module_to_string(&ctx, &module).is_ok());
+}
+
+#[test]
+fn initialized_globals_export_exact_bytes() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "exact_global_bytes".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+
+    // 0x7fc01234 is a quiet f32 NaN with a non-canonical payload. Treating
+    // these bytes as an f32 before printing would collapse it to 0x7fc00000.
+    let nan_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+    let nan = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "nan_payload".try_into().unwrap(),
+        nan_ty.into(),
+        4,
+    );
+    nan.set_address_space(&mut ctx, 1);
+    nan.set_initializer_hex(&mut ctx, "3412c07f");
+    nan.get_operation().insert_at_back(module_block, &ctx);
+
+    // Byte 0 is a u8, bytes 1..4 are zeroed repr(C) padding, and bytes 4..8
+    // are a little-endian u32. The exporter must not recompute those offsets.
+    let padded_ty = ArrayType::get(&ctx, i8_ty.into(), 8);
+    let padded = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "padded_struct".try_into().unwrap(),
+        padded_ty.into(),
+        4,
+    );
+    padded.set_address_space(&mut ctx, 1);
+    padded.set_initializer_hex(&mut ctx, "ab00000078563412");
+    padded.get_operation().insert_at_back(module_block, &ctx);
+
+    for config in [
+        NvvmExportConfig::new(NvvmIrDialect::Modern),
+        NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    ] {
+        let ir = export_module_to_string_with_config(&ctx, &module, &config)
+            .expect("byte-exact global export succeeds");
+        assert!(
+            ir.contains(r#"@nan_payload = addrspace(1) global [4 x i8] c"\34\12\C0\7F", align 4"#),
+            "NaN payload bytes changed:\n{ir}"
+        );
+        assert!(
+            ir.contains(
+                r#"@padded_struct = addrspace(1) global [8 x i8] c"\AB\00\00\00\78\56\34\12", align 4"#
+            ),
+            "repr(C) layout bytes changed:\n{ir}"
+        );
+    }
 }
 
 #[test]

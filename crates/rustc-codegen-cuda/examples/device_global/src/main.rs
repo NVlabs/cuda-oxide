@@ -15,10 +15,32 @@ use cuda_host::cuda_module;
 static mut DEVICE_COUNTER: u64 = 0;
 static mut DEVICE_MARKER: u32 = 0;
 static STATIC_WEIGHTS: [[f32; 2]; 4] = [[0.25, 0.5], [1.0, 2.0], [4.0, 8.0], [16.0, 32.0]];
+static STATIC_NAN: f32 = f32::from_bits(0x7fc0_1234);
+
+#[repr(C)]
+struct PaddedStatic {
+    tag: u8,
+    value: u32,
+}
+
+static PADDED_STATIC: PaddedStatic = PaddedStatic {
+    tag: 0xab,
+    value: 0x1234_5678,
+};
 
 #[inline(never)]
 fn get_static_weights() -> &'static [[f32; 2]; 4] {
     &STATIC_WEIGHTS
+}
+
+#[inline(never)]
+fn get_static_nan() -> &'static f32 {
+    &STATIC_NAN
+}
+
+#[inline(never)]
+fn get_padded_static() -> &'static PaddedStatic {
+    &PADDED_STATIC
 }
 
 #[inline(always)]
@@ -55,6 +77,16 @@ mod kernels {
         let pair = unsafe { load_pair(&weights[0][0], 2) };
         unsafe {
             *out = pair[0] + pair[1];
+        }
+    }
+
+    /// Preserve exact initializer bits and Rust's evaluated field offsets.
+    #[kernel]
+    pub unsafe fn static_initializer_edges(nan_out: *mut f32, padded_out: *mut u64) {
+        let padded = get_padded_static();
+        unsafe {
+            *nan_out = *get_static_nan();
+            *padded_out = ((padded.value as u64) << 8) | padded.tag as u64;
         }
     }
 }
@@ -111,5 +143,37 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("\nSUCCESS: device globals and non-zero static table behaved correctly.");
+    let nan_out_dev =
+        DeviceBuffer::<f32>::zeroed(&stream, 1).expect("Failed to allocate NaN output");
+    let padded_out_dev =
+        DeviceBuffer::<u64>::zeroed(&stream, 1).expect("Failed to allocate padded output");
+    unsafe {
+        module.static_initializer_edges(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            nan_out_dev.cu_deviceptr() as *mut f32,
+            padded_out_dev.cu_deviceptr() as *mut u64,
+        )
+    }
+    .expect("Static initializer edge-case kernel launch failed");
+
+    let nan_bits = nan_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy NaN output")[0]
+        .to_bits();
+    let padded_result = padded_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy padded output")[0];
+    let padded_expected = (0x1234_5678u64 << 8) | 0xabu64;
+    println!("NaN payload: bits = {nan_bits:#010x}");
+    println!("Padded static: result = {padded_result:#x}");
+    if nan_bits != 0x7fc0_1234 || padded_result != padded_expected {
+        eprintln!(
+            "FAILED: expected NaN bits {:#010x} and padded value {padded_expected:#x}, got {nan_bits:#010x} and {padded_result:#x}",
+            0x7fc0_1234u32
+        );
+        std::process::exit(1);
+    }
+
+    println!("\nSUCCESS: device globals preserved their storage and initializer bytes.");
 }

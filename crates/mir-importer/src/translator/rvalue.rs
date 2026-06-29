@@ -4762,9 +4762,11 @@ fn translate_ptr_to_array_constant(
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let bytes = constant_bytes(constant, "array", loc.clone())?;
+    let expected_size = array_constant_type_byte_size(ctx, array_ty, loc.clone())?;
+    let (bytes, alignment) =
+        promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
     let initializer_hex = bytes_to_hex(&bytes);
-    let global_key = promoted_constant_global_key(ctx, array_ty, &bytes);
+    let global_key = promoted_constant_dedup_key(ctx, array_ty, &bytes);
     let global_ptr_ty = MirPtrType::get_global(ctx, array_ty, false);
 
     let global_op = Operation::new(
@@ -4781,6 +4783,9 @@ fn translate_ptr_to_array_constant(
     global_alloc.set_attr_global_type(ctx, TypeAttr::new(array_ty));
     global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
     set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
+    if alignment > 0 {
+        global_alloc.set_alignment_value(ctx, alignment);
+    }
 
     if let Some(prev) = prev_op {
         global_alloc.get_operation().insert_after(ctx, prev);
@@ -7140,11 +7145,168 @@ fn static_def_from_constant(
     }
 }
 
-/// Return rustc's evaluated static initializer bytes as lowercase hex.
-fn static_initializer_hex(
+/// The byte image and ABI alignment of a global initializer.
+///
+/// LLVM globals with explicit data are emitted as byte arrays. Keeping the
+/// evaluated allocation as bytes avoids reconstructing Rust layout in the
+/// exporter, which could otherwise change floating-point NaN payloads or put
+/// fields at the wrong offsets.
+struct GlobalInitializerData {
+    bytes: Vec<u8>,
+    alignment: u64,
+}
+
+/// Copy one evaluated allocation into a byte-exact global initializer.
+///
+/// Undefined bytes are Rust padding. They do not carry a Rust value, so make
+/// them deterministic zeros in the object image. Pointer provenance is
+/// different: it represents a relocation, not literal zero bytes. Until the
+/// exporter can emit relocations, accepting it would silently turn a valid
+/// pointer into null, so reject it here.
+fn allocation_initializer_data(
+    alloc: &rustc_public::ty::Allocation,
+    description: &str,
+    loc: Location,
+) -> TranslationResult<GlobalInitializerData> {
+    if !alloc.provenance.ptrs.is_empty() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "{} contains {} pointer relocation(s); cuda-oxide cannot yet emit pointer provenance in device global initializers",
+                description,
+                alloc.provenance.ptrs.len()
+            ))
+        );
+    }
+
+    Ok(GlobalInitializerData {
+        bytes: alloc.bytes.iter().map(|byte| byte.unwrap_or(0)).collect(),
+        alignment: alloc.align,
+    })
+}
+
+/// Follow the one outer pointer used for a promoted array, then copy the
+/// referenced array allocation into global storage.
+fn promoted_array_initializer(
+    constant: &mir::ConstOperand,
+    expected_size: usize,
+    kind_name: &str,
+    loc: Location,
+) -> TranslationResult<(Vec<u8>, u64)> {
+    use rustc_public::mir::alloc::GlobalAlloc;
+    use rustc_public::ty::TyConstKind;
+
+    fn initializer_from_allocation(
+        alloc: &rustc_public::ty::Allocation,
+        expected_size: usize,
+        kind_name: &str,
+        loc: Location,
+    ) -> TranslationResult<(Vec<u8>, u64)> {
+        let Some(&(provenance_offset, provenance)) = alloc.provenance.ptrs.first() else {
+            let data = allocation_initializer_data(
+                alloc,
+                &format!("promoted {kind_name} initializer"),
+                loc.clone(),
+            )?;
+            if data.bytes.len() != expected_size {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "promoted {kind_name} initializer is {} bytes, expected {expected_size}",
+                        data.bytes.len()
+                    ))
+                );
+            }
+            return Ok((data.bytes, data.alignment));
+        };
+
+        if alloc.provenance.ptrs.len() != 1 {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "promoted {kind_name} pointer contains {} provenance entries; expected exactly one backing allocation",
+                    alloc.provenance.ptrs.len()
+                ))
+            );
+        }
+
+        let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+        let target_offset = alloc
+            .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
+            .map_err(|e| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Failed to read promoted {kind_name} pointer offset: {e:?}"
+                )))
+            })? as usize;
+
+        let target_alloc = match GlobalAlloc::from(provenance.0) {
+            GlobalAlloc::Memory(target_alloc) => target_alloc,
+            GlobalAlloc::Static(static_def) => static_def.eval_initializer().map_err(|e| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Failed to evaluate promoted {kind_name} backing static {}: {e:?}",
+                    static_def.name()
+                )))
+            })?,
+            other => {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "promoted {kind_name} provenance points to unsupported allocation {other:?}"
+                    ))
+                );
+            }
+        };
+
+        let data = allocation_initializer_data(
+            &target_alloc,
+            &format!("promoted {kind_name} backing allocation"),
+            loc.clone(),
+        )?;
+        let end = target_offset.checked_add(expected_size).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "promoted {kind_name} initializer offset overflows its allocation"
+            )))
+        })?;
+        let bytes = data.bytes.get(target_offset..end).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "promoted {kind_name} initializer needs bytes {target_offset}..{end}, but its backing allocation is only {} bytes",
+                data.bytes.len()
+            )))
+        })?;
+        Ok((bytes.to_vec(), data.alignment))
+    }
+
+    match constant.const_.kind() {
+        ConstantKind::Allocated(alloc) => {
+            initializer_from_allocation(alloc, expected_size, kind_name, loc)
+        }
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            TyConstKind::Value(_, alloc) => {
+                initializer_from_allocation(alloc, expected_size, kind_name, loc)
+            }
+            TyConstKind::ZSTValue(_) if expected_size == 0 => Ok((Vec::new(), 1)),
+            other => input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "promoted {kind_name} initializer must be backed by bytes, found TyConstKind::{other:?}"
+                ))
+            ),
+        },
+        ConstantKind::ZeroSized if expected_size == 0 => Ok((Vec::new(), 1)),
+        other => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "promoted {kind_name} initializer must be allocated, found {other:?}"
+            ))
+        ),
+    }
+}
+
+/// Return rustc's evaluated static initializer bytes and alignment.
+fn static_initializer_data(
     static_def: &rustc_public::mir::mono::StaticDef,
-    _loc: Location,
-) -> TranslationResult<String> {
+    loc: Location,
+) -> TranslationResult<GlobalInitializerData> {
     let alloc = static_def.eval_initializer().map_err(|e| {
         input_error_noloc!(TranslationErr::unsupported(format!(
             "Failed to evaluate initializer for device static {}: {:?}",
@@ -7152,14 +7314,7 @@ fn static_initializer_hex(
             e
         )))
     })?;
-    let bytes = alloc.raw_bytes().map_err(|e| {
-        input_error_noloc!(TranslationErr::unsupported(format!(
-            "Device static {} has unsupported uninitialized bytes: {:?}",
-            static_def.name(),
-            e
-        )))
-    })?;
-    Ok(bytes_to_hex(&bytes))
+    allocation_initializer_data(&alloc, &format!("device static {}", static_def.name()), loc)
 }
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -7171,19 +7326,18 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     hex
 }
 
-fn promoted_constant_global_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> String {
-    fn update_hash(mut hash: u64, bytes: &[u8]) -> u64 {
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        hash
-    }
-
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    hash = update_hash(hash, ty.deref(ctx).disp(ctx).to_string().as_bytes());
-    hash = update_hash(hash, bytes);
-    format!("__cuda_oxide_promoted_{hash:016x}_{}b", bytes.len())
+fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> String {
+    // This string is only an in-pass map key; it never becomes the emitted
+    // symbol name. Keep the full type and byte image so deduplication is exact.
+    // A short hash would make a collision silently alias two different Rust
+    // constants to the same device global.
+    let ty = ty.deref(ctx).disp(ctx).to_string();
+    let bytes = bytes_to_hex(bytes);
+    format!(
+        "__cuda_oxide_promoted_type{}:{ty}:bytes{}:{bytes}",
+        ty.len(),
+        bytes.len() / 2
+    )
 }
 
 fn translate_static_global_pointer(
@@ -7195,7 +7349,8 @@ fn translate_static_global_pointer(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let initializer_hex = static_initializer_hex(static_def, loc.clone())?;
+    let initializer = static_initializer_data(static_def, loc.clone())?;
+    let initializer_hex = bytes_to_hex(&initializer.bytes);
     let is_constant = is_constant_wrapper_type(pointee_ty);
 
     let global_key: String = if is_constant {
@@ -7230,8 +7385,8 @@ fn translate_static_global_pointer(
     global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
     set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
 
-    if let Some(alignment) = static_alignment(static_def)? {
-        global_alloc.set_alignment_value(ctx, alignment);
+    if initializer.alignment > 0 {
+        global_alloc.set_alignment_value(ctx, initializer.alignment);
     }
 
     if let Some(prev) = prev_op {
@@ -7252,19 +7407,6 @@ fn set_global_initializer_hex_attr(ctx: &mut Context, op: Ptr<Operation>, initia
     op.deref_mut(ctx)
         .attributes
         .set(key, StringAttr::new(initializer_hex.to_string()));
-}
-
-fn static_alignment(
-    static_def: &rustc_public::mir::mono::StaticDef,
-) -> TranslationResult<Option<u64>> {
-    let alloc = static_def.eval_initializer().map_err(|e| {
-        input_error_noloc!(TranslationErr::unsupported(format!(
-            "Failed to evaluate initializer for device static {}: {:?}",
-            static_def.name(),
-            e
-        )))
-    })?;
-    Ok((alloc.align > 0).then_some(alloc.align))
 }
 
 /// Check if a type is a pointer/reference to a static allocation.

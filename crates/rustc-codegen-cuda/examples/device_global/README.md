@@ -16,7 +16,7 @@ static mut DEVICE_COUNTER: u64 = 0;
 static mut DEVICE_MARKER: u32 = 0;
 ```
 
-The second kernel reads a non-zero immutable static table through a flattened
+The other kernels read non-zero immutable statics. One uses a flattened table
 pointer, matching generated coefficient-table access patterns:
 
 ```rust
@@ -25,6 +25,13 @@ fn get_static_weights() -> &'static [[f32; 2]; 4] { &STATIC_WEIGHTS }
 let weights = get_static_weights();
 let pair = load_pair(&weights[0][0], 2);
 ```
+
+The edge-case kernel checks two byte-level details:
+
+- `STATIC_NAN` keeps the complete `0x7fc01234` NaN payload instead of being
+  rewritten to a canonical NaN.
+- `PADDED_STATIC`, a `#[repr(C)] { u8, u32 }`, reads the `u32` from its Rust
+  layout offset after three padding bytes.
 
 Expected behavior:
 
@@ -37,5 +44,6 @@ Expected behavior:
 The example launches the kernel twice. `DEVICE_COUNTER` should persist across
 launches, proving it is global device storage and not per-block shared memory.
 
-Non-zero immutable static initializers are emitted into the generated LLVM/PTX
-global so device code can read compile-time coefficient tables directly.
+Non-zero immutable static initializers are emitted as the exact evaluated byte
+image in LLVM/PTX, so device code can read compile-time data without losing
+padding, field offsets, or floating-point payload bits.
