@@ -37,9 +37,9 @@ use dialect_mir::attributes::MirFP16Attr;
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
     MirCheckedSubOp, MirCmpOp, MirConstructArrayOp, MirConstructEnumOp, MirConstructStructOp,
-    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirLeOp, MirLoadOp,
-    MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp,
-    MirShrOp, MirSubOp, MirUndefOp,
+    MirDivOp, MirEqOp, MirExtractFieldOp, MirGeOp, MirGlobalAllocOp, MirGtOp, MirInsertFieldOp,
+    MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
+    MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
 };
 use dialect_mir::types::MirFP16Type;
 use pliron::basic_block::BasicBlock;
@@ -1087,46 +1087,18 @@ pub fn translate_rvalue(
 
                             Ok((Some(op), result, prev_after_casts))
                         }
-                        AdtKind::Union => {
-                            let (field_values, current_prev_op) =
-                                translate_union_aggregate_field_values(
-                                    ctx,
-                                    body,
-                                    *adt_def,
-                                    *variant_idx,
-                                    substs,
-                                    *active_field_idx,
-                                    operands,
-                                    value_map,
-                                    block_ptr,
-                                    prev_op,
-                                    loc.clone(),
-                                )?;
-
-                            let (casted_field_values, prev_after_casts) =
-                                cast_struct_fields_to_expected_types(
-                                    ctx,
-                                    field_values,
-                                    adt_ty,
-                                    block_ptr,
-                                    current_prev_op,
-                                    loc.clone(),
-                                );
-
-                            let op = Operation::new(
-                                ctx,
-                                MirConstructStructOp::get_concrete_op_info(),
-                                vec![adt_ty],
-                                casted_field_values,
-                                vec![],
-                                0,
-                            );
-                            op.deref_mut(ctx).set_loc(loc);
-
-                            let result = op.deref(ctx).get_result(0);
-
-                            Ok((Some(op), result, prev_after_casts))
-                        }
+                        AdtKind::Union => translate_union_aggregate(
+                            ctx,
+                            body,
+                            *adt_def,
+                            adt_ty,
+                            *active_field_idx,
+                            operands,
+                            value_map,
+                            block_ptr,
+                            prev_op,
+                            loc,
+                        ),
                     }
                 }
                 mir::AggregateKind::Tuple => {
@@ -6714,25 +6686,26 @@ fn translate_adt_aggregate_field_values(
     Ok((field_values, current_prev_op))
 }
 
-/// Translate union aggregate operands into the struct-like storage shape used
-/// for union ADTs.
+/// Construct a union by writing the one active field into shared storage.
 ///
-/// MIR gives only the active field operand for a union aggregate, but
-/// downstream struct construction expects one value per field slot. Inactive
-/// fields are filled with `mir.undef` values of the corresponding field type.
-fn translate_union_aggregate_field_values(
+/// MIR supplies exactly one operand plus the declaration index of its active
+/// field. Start with undefined union storage and use `mir.insert_field` to
+/// write that typed view at byte zero. The union-specific lowering preserves
+/// every other byte as undefined; it never invents one independent slot per
+/// field.
+#[allow(clippy::too_many_arguments)]
+fn translate_union_aggregate(
     ctx: &mut Context,
     body: &mir::Body,
     adt_def: rustc_public::ty::AdtDef,
-    variant_idx: rustc_public::ty::VariantIdx,
-    substs: &rustc_public::ty::GenericArgs,
+    union_ty: TypeHandle,
     active_field_idx: Option<usize>,
     operands: &[mir::Operand],
     value_map: &mut ValueMap,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
-) -> TranslationResult<(Vec<Value>, Option<Ptr<Operation>>)> {
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
     let active_field_idx = active_field_idx.ok_or_else(|| {
         input_error_noloc!(TranslationErr::unsupported(format!(
             "Union aggregate '{}' did not identify an active field",
@@ -6752,9 +6725,18 @@ fn translate_union_aggregate_field_values(
         );
     }
 
-    let variant_index = variant_idx.to_index();
-    let variant = &adt_def.variants()[variant_index];
-    let field_count = variant.fields().len();
+    let (field_count, expected_field_ty) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "Union aggregate '{}' did not translate to MirUnionType",
+                    adt_def.trimmed_name()
+                )))
+            })?;
+        (union.field_count(), union.get_field_type(active_field_idx))
+    };
     if active_field_idx >= field_count {
         return input_err!(
             loc,
@@ -6766,41 +6748,51 @@ fn translate_union_aggregate_field_values(
             ))
         );
     }
+    let expected_field_ty = expected_field_ty.expect("active union field was bounds-checked");
 
-    let mut field_values = Vec::with_capacity(field_count);
-    let mut current_prev_op = prev_op;
+    let (active_value, current_prev_op) = translate_operand(
+        ctx,
+        body,
+        &operands[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (active_value, current_prev_op) = cast_to_generic_addrspace_if_needed(
+        ctx,
+        active_value,
+        expected_field_ty,
+        block_ptr,
+        current_prev_op,
+        loc.clone(),
+    );
 
-    for (field_index, field) in variant.fields().iter().enumerate() {
-        let field_rust_ty = field.ty_with_args(substs);
-        let translated_ty = types::translate_type(ctx, &field_rust_ty)?;
-
-        if field_index == active_field_idx {
-            let (value, new_prev_op) = translate_operand(
-                ctx,
-                body,
-                &operands[0],
-                value_map,
-                block_ptr,
-                current_prev_op,
-                loc.clone(),
-            )?;
-            field_values.push(value);
-            current_prev_op = new_prev_op;
-            continue;
-        }
-
-        let undef_op = MirUndefOp::new(ctx, translated_ty).get_operation();
-        undef_op.deref_mut(ctx).set_loc(loc.clone());
-        if let Some(prev) = current_prev_op {
-            undef_op.insert_after(ctx, prev);
-        } else {
-            undef_op.insert_at_front(block_ptr, ctx);
-        }
-        field_values.push(undef_op.deref(ctx).get_result(0));
-        current_prev_op = Some(undef_op);
+    let undef_op = MirUndefOp::new(ctx, union_ty).get_operation();
+    undef_op.deref_mut(ctx).set_loc(loc.clone());
+    if let Some(prev) = current_prev_op {
+        undef_op.insert_after(ctx, prev);
+    } else {
+        undef_op.insert_at_front(block_ptr, ctx);
     }
+    let undef_value = undef_op.deref(ctx).get_result(0);
 
-    Ok((field_values, current_prev_op))
+    let insert_op = Operation::new(
+        ctx,
+        MirInsertFieldOp::get_concrete_op_info(),
+        vec![union_ty],
+        vec![undef_value, active_value],
+        vec![],
+        0,
+    );
+    insert_op.deref_mut(ctx).set_loc(loc);
+    MirInsertFieldOp::new(insert_op).set_attr_insert_index(
+        ctx,
+        dialect_mir::attributes::FieldIndexAttr(active_field_idx as u32),
+    );
+    let result = insert_op.deref(ctx).get_result(0);
+
+    Ok((Some(insert_op), result, Some(undef_op)))
 }
 
 /// Fetch the raw bytes backing a constant, following provenance for promoted

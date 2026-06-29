@@ -493,6 +493,109 @@ impl Verify for MirStructType {
     }
 }
 
+/// A Rust union type.
+///
+/// Every declared field is a different typed view of the same bytes. Unlike a
+/// struct, the fields are never laid out one after another. `total_size` and
+/// `abi_align` come directly from rustc and describe that shared storage.
+#[pliron_type(
+    name = "mir.union",
+    format = "`<` $name `,` `[` vec($field_names, CharSpace(`,`)) `]` `,` `[` vec($field_types, CharSpace(`,`)) `]` `,` $total_size `,` $abi_align `>`"
+)]
+#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+pub struct MirUnionType {
+    /// The source-level union name.
+    pub name: String,
+    /// Field names in declaration order.
+    pub field_names: Vec<String>,
+    /// Field types in declaration order. All fields begin at byte zero.
+    pub field_types: Vec<TypeHandle>,
+    /// Exact stored size in bytes, including any tail padding.
+    pub total_size: u64,
+    /// Exact ABI alignment in bytes.
+    pub abi_align: u64,
+}
+
+impl MirUnionType {
+    pub fn get(
+        ctx: &mut Context,
+        name: String,
+        field_names: Vec<String>,
+        field_types: Vec<TypeHandle>,
+        total_size: u64,
+        abi_align: u64,
+    ) -> TypedHandle<Self> {
+        Type::register_instance(
+            MirUnionType {
+                name,
+                field_names,
+                field_types,
+                total_size,
+                abi_align,
+            },
+            ctx,
+        )
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn field_count(&self) -> usize {
+        self.field_types.len()
+    }
+
+    pub fn field_names(&self) -> &[String] {
+        &self.field_names
+    }
+
+    pub fn field_types(&self) -> &[TypeHandle] {
+        &self.field_types
+    }
+
+    pub fn get_field_type(&self, index: usize) -> Option<TypeHandle> {
+        self.field_types.get(index).copied()
+    }
+
+    pub fn total_size(&self) -> u64 {
+        self.total_size
+    }
+
+    pub fn abi_align(&self) -> u64 {
+        self.abi_align
+    }
+}
+
+impl Verify for MirUnionType {
+    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        if self.field_names.len() != self.field_types.len() {
+            return verify_err!(
+                Location::Unknown,
+                "MirUnionType field name/type counts must match"
+            );
+        }
+        if self.field_types.is_empty() {
+            return verify_err!(
+                Location::Unknown,
+                "MirUnionType must have at least one field"
+            );
+        }
+        if self.abi_align == 0 || !self.abi_align.is_power_of_two() {
+            return verify_err!(
+                Location::Unknown,
+                "MirUnionType ABI alignment must be a non-zero power of two"
+            );
+        }
+        if self.total_size > 0 && !self.total_size.is_multiple_of(self.abi_align) {
+            return verify_err!(
+                Location::Unknown,
+                "MirUnionType size must be a multiple of its ABI alignment"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// A fixed-size array type.
 ///
 /// Represents a contiguous sequence of N elements of the same type.
@@ -847,10 +950,13 @@ impl MirEnumType {
 
 impl Verify for MirEnumType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
-        // Zero-variant enums are valid Rust types. They show up in dead
-        // core-library paths such as `Result<T, Infallible>` residual arms.
-        // Constructing or extracting an actual value remains invalid through
-        // the operation-level variant bounds below.
+        // Enum types must have at least one variant
+        if self.variant_names.is_empty() {
+            return verify_err!(
+                Location::Unknown,
+                "MirEnumType must have at least one variant"
+            );
+        }
         if self.variant_names.len() != self.variant_discriminants.len() {
             return verify_err!(
                 Location::Unknown,
@@ -902,6 +1008,7 @@ pub fn register(ctx: &mut Context) {
     MirSliceType::register(ctx);
     MirDisjointSliceType::register(ctx);
     MirStructType::register(ctx);
+    MirUnionType::register(ctx);
     MirEnumType::register(ctx);
     MirArrayType::register(ctx);
 }

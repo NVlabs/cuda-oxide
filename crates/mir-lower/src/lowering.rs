@@ -34,7 +34,9 @@ use crate::convert::types::{
 };
 
 use dialect_mir::ops::MirFuncOp;
-use dialect_mir::types::{MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType};
+use dialect_mir::types::{
+    MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirUnionType,
+};
 use llvm_export::ops as llvm;
 use pliron::{
     basic_block::BasicBlock,
@@ -580,13 +582,15 @@ fn aggregate_over_align(ctx: &Context, ty: TypeHandle) -> Option<u64> {
     if let Some(e) = ty_ref.downcast_ref::<dialect_mir::types::MirEnumType>() {
         return Some(e.abi_align()).filter(|a| *a > 0);
     }
+    if let Some(u) = ty_ref.downcast_ref::<MirUnionType>() {
+        return Some(u.abi_align()).filter(|a| *a > 0);
+    }
     None
 }
 
 /// Stamp the true ABI alignment onto every `mir.load`, `mir.store`,
 /// `mir.alloca`, and `mir.ref` whose accessed/allocated type carries a
-/// rustc ABI alignment in `MirStructType.abi_align` /
-/// `MirEnumType.abi_align`.
+/// rustc ABI alignment in `MirStructType`, `MirEnumType`, or `MirUnionType`.
 ///
 /// Must run BEFORE `inline_region` moves the blocks and BEFORE dialect
 /// conversion replaces MIR types with LLVM types, since the alignment

@@ -20,6 +20,7 @@
 //! | `*const T`, `*mut T`| `MirPtrType` (generic addrspace)    |
 //! | `[T]`, `&[T]`       | `MirSliceType`                      |
 //! | `struct S { .. }`   | `MirStructType`                     |
+//! | `union U { .. }`    | `MirUnionType`                      |
 //! | `enum E { .. }`     | `MirEnumType`                       |
 //! | Closures            | `MirStructType` (captures as fields)|
 //!
@@ -43,6 +44,7 @@ use rustc_public_bridge::IndexedVal;
 // Re-export types from dialect_mir for convenience
 pub use dialect_mir::types::{
     EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirTupleType,
+    MirUnionType,
 };
 use rustc_public::mir::Mutability;
 
@@ -121,6 +123,10 @@ pub fn is_zst_type(ctx: &pliron::context::Context, ty: TypeHandle) -> bool {
     // Empty struct - structs with no fields (like PhantomData<T>)
     if let Some(struct_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirStructType>() {
         return struct_ty.field_types().is_empty();
+    }
+
+    if let Some(union_ty) = ty_ref.downcast_ref::<MirUnionType>() {
+        return union_ty.total_size() == 0;
     }
 
     false
@@ -582,7 +588,47 @@ pub fn translate_type(
                 // Generic ADT handling for user-defined structs and enums
                 let variants = adt_def.variants();
 
-                if variants.len() == 1 {
+                if matches!(adt_def.kind(), rustc_public::ty::AdtKind::Union) {
+                    let variant = variants.first().ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Union {} has no field variant",
+                            trimmed_name
+                        )))
+                    })?;
+                    let fields = variant.fields();
+                    let mut field_names = Vec::with_capacity(fields.len());
+                    let mut field_types = Vec::with_capacity(fields.len());
+                    for field in fields {
+                        field_names.push(field.name.to_string());
+                        field_types.push(translate_type(ctx, &field.ty_with_args(&substs))?);
+                    }
+
+                    let layout = rust_ty.layout().map_err(|e| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Failed to query union layout for {}: {:?}",
+                            trimmed_name, e
+                        )))
+                    })?;
+                    let shape = layout.shape();
+                    if let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields
+                        && offsets.iter().any(|offset| offset.bytes() != 0)
+                    {
+                        return input_err_noloc!(TranslationErr::unsupported(format!(
+                            "Union {} has a non-zero field offset in rustc's layout",
+                            trimmed_name
+                        )));
+                    }
+
+                    Ok(MirUnionType::get(
+                        ctx,
+                        trimmed_name.to_string(),
+                        field_names,
+                        field_types,
+                        shape.size.bytes() as u64,
+                        shape.abi_align,
+                    )
+                    .into())
+                } else if variants.len() == 1 {
                     // Structs have exactly one variant
                     let variant = &variants[0];
                     let fields = variant.fields();

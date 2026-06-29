@@ -12,7 +12,7 @@ use dialect_mir::{
         MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp, MirStoreOp,
         MirSubOp,
     },
-    types::{EnumVariant, MirEnumType, MirPtrType, MirSliceType, MirTupleType},
+    types::{EnumVariant, MirEnumType, MirPtrType, MirSliceType, MirTupleType, MirUnionType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -366,6 +366,28 @@ fn test_mir_extract_field_verify() {
     let extract_op_oob = MirExtractFieldOp::new(op_oob);
     extract_op_oob.set_attr_index(&ctx, dialect_mir::attributes::FieldIndexAttr(2));
     assert!(extract_op_oob.verify(&ctx).is_err(), "OOB Index");
+
+    let union_ty = MirUnionType::get(
+        &mut ctx,
+        "Bits".into(),
+        vec!["word".into(), "alias".into()],
+        vec![i32_ty.into(), i32_ty.into()],
+        4,
+        4,
+    );
+    let union_block = BasicBlock::new(&mut ctx, None, vec![union_ty.into()]);
+    let union_val = union_block.deref(&ctx).get_argument(0);
+    let union_extract = Operation::new(
+        &mut ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![union_val],
+        vec![],
+        0,
+    );
+    let union_extract = MirExtractFieldOp::new(union_extract);
+    union_extract.set_attr_index(&ctx, dialect_mir::attributes::FieldIndexAttr(1));
+    assert!(union_extract.verify(&ctx).is_ok(), "Valid union extract");
 }
 
 #[test]

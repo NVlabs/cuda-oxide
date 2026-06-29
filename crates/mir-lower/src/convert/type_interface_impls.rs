@@ -14,7 +14,7 @@
 
 use dialect_mir::types::{
     MirArrayType, MirDisjointSliceType, MirEnumType, MirFP16Type, MirPtrType, MirSliceType,
-    MirStructType, MirTupleType,
+    MirStructType, MirTupleType, MirUnionType,
 };
 use llvm_export::types as llvm_types;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
@@ -23,7 +23,8 @@ use pliron::derive::type_interface_impl;
 use crate::type_conversion_interface::{ConvertMirTypeFn, MirConvertibleType, MirTypeConversion};
 
 use super::types::{
-    StructLayoutInfo, build_struct_slot_map, convert_enum_to_llvm, convert_type, make_slice_struct,
+    StructLayoutInfo, build_struct_slot_map, build_union_storage_type, convert_enum_to_llvm,
+    convert_type, make_slice_struct,
 };
 
 // =============================================================================
@@ -105,6 +106,22 @@ impl MirTypeConversion for MirStructType {
                 StructLayoutInfo::of_struct(r.downcast_ref::<MirStructType>().unwrap())
             };
             Ok(build_struct_slot_map(ctx, &layout)?.llvm_struct_ty)
+        }
+    }
+}
+
+#[type_interface_impl]
+impl MirConvertibleType for MirUnionType {}
+
+#[type_interface_impl]
+impl MirTypeConversion for MirUnionType {
+    fn converter(&self) -> ConvertMirTypeFn {
+        |ty, ctx| {
+            let union_ty = {
+                let r = ty.deref(ctx);
+                r.downcast_ref::<MirUnionType>().unwrap().clone()
+            };
+            build_union_storage_type(ctx, &union_ty)
         }
     }
 }
