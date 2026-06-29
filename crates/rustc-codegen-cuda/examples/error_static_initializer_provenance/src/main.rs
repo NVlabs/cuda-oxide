@@ -14,7 +14,7 @@
 use cuda_device::kernel;
 
 static TARGET: u32 = 0x1234_5678;
-static REFERENCE: &'static u32 = &TARGET;
+static REFERENCE: &u32 = &TARGET;
 
 #[inline(never)]
 fn reference_slot() -> &'static &'static u32 {
@@ -23,6 +23,11 @@ fn reference_slot() -> &'static &'static u32 {
 
 /// This must fail during import. Emitting the pointer bytes as ordinary zeros
 /// would turn `REFERENCE` into null and silently miscompile the dereference.
+///
+/// # Safety
+///
+/// `out` must point to device-accessible storage that is properly aligned and
+/// writable for one `u32`. No other thread may race with this write.
 #[kernel]
 pub unsafe fn pointer_initializer(out: *mut u32) {
     unsafe {

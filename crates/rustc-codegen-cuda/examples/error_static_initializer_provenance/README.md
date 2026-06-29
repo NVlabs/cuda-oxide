@@ -4,10 +4,11 @@ Negative test for a device static whose initializer contains a pointer:
 
 ```rust
 static TARGET: u32 = 0x1234_5678;
-static REFERENCE: &'static u32 = &TARGET;
+static REFERENCE: &u32 = &TARGET;
 ```
 
-Rust stores the pointer as bytes plus a relocation (called *provenance*). The
+References stored in statics implicitly have the `'static` lifetime. Rust
+stores this pointer as bytes plus a relocation (called *provenance*). The
 current LLVM exporter can preserve literal bytes, but it cannot emit that
 relocation yet. Treating the placeholder bytes as the value would produce a
 null pointer and silently miscompile the kernel, so cuda-oxide must stop with a
