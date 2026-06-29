@@ -68,9 +68,11 @@ use dialect_mir::ops::{
     MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
-    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNtidXOp,
-    ReadPtxSregNtidYOp, ReadPtxSregTidXOp, ReadPtxSregTidYOp,
+    ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
+    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNtidXOp,
+    ReadPtxSregNtidYOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp,
+    ReadPtxSregTidYOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
@@ -2491,6 +2493,40 @@ fn try_dispatch_intrinsic(
                 loc,
             )?))
         }
+        // SM and grid identification
+        "cuda_device::thread::smid" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregSmIdOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::thread::nsmid" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregNsmIdOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::thread::gridid" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregGridIdOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         "cuda_device::grid::envreg1" => Ok(Some(helpers::emit_nvvm_intrinsic(
             ctx,
             dialect_nvvm::ops::ReadPtxSregEnvReg1Op::get_concrete_op_info(),
@@ -2505,6 +2541,29 @@ fn try_dispatch_intrinsic(
         "cuda_device::grid::envreg2" => Ok(Some(helpers::emit_nvvm_intrinsic(
             ctx,
             dialect_nvvm::ops::ReadPtxSregEnvReg2Op::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        // Shared memory size queries
+        "cuda_device::shared::dynamic_smem_size" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregDynamicSmemSizeOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::shared::total_smem_size" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregTotalSmemSizeOp::get_concrete_op_info(),
             destination,
             target,
             block_ptr,
@@ -3153,6 +3212,29 @@ fn try_dispatch_intrinsic(
         "cuda_device::warp::lanemask_gt" => Ok(Some(helpers::emit_nvvm_intrinsic(
             ctx,
             ReadPtxSregLanemaskGtOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        // Hardware warp identification
+        "cuda_device::warp::warpid" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregWarpIdOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::warp::nwarpid" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregNwarpIdOp::get_concrete_op_info(),
             destination,
             target,
             block_ptr,

@@ -455,3 +455,37 @@ impl<T, const ALIGN: usize> DynamicSharedArray<T, ALIGN> {
         unreachable!("DynamicSharedArray::offset called outside CUDA kernel context")
     }
 }
+
+// =============================================================================
+// Shared Memory Size Queries
+// =============================================================================
+
+/// Read the size (in bytes) of dynamic shared memory allocated for this kernel.
+///
+/// Returns the `%dynamic_smem_size` special register -- the number of bytes of
+/// shared memory requested at launch time via `LaunchConfig::shared_mem_bytes`
+/// (or the CUDA driver equivalent). This does *not* include statically allocated
+/// shared memory (`SharedArray`).
+///
+/// # PTX
+///
+/// `mov.u32 %r, %dynamic_smem_size;`
+#[inline(never)]
+pub fn dynamic_smem_size() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.dynamic.smem.size()
+    unreachable!("dynamic_smem_size called outside CUDA kernel context")
+}
+
+/// Read the total size (in bytes) of shared memory available to this kernel.
+///
+/// Returns the `%total_smem_size` special register -- the sum of statically
+/// allocated shared memory and the dynamic allocation requested at launch time.
+///
+/// # PTX
+///
+/// `mov.u32 %r, %total_smem_size;`
+#[inline(never)]
+pub fn total_smem_size() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.total.smem.size()
+    unreachable!("total_smem_size called outside CUDA kernel context")
+}

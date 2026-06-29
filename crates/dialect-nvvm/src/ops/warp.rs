@@ -1132,6 +1132,66 @@ impl ElectSyncOp {
     }
 }
 
+// =============================================================================
+// Hardware Warp Identification
+// =============================================================================
+
+/// Read the hardware warp ID within the current SM.
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.warpid` / PTX `%warpid`.
+///
+/// # Verification
+///
+/// - Must have 0 operands
+/// - Must have 1 result of type `i32`
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_warpid",
+    format,
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregWarpIdOp;
+
+impl ReadPtxSregWarpIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregWarpIdOp { op }
+    }
+}
+
+impl Verify for ReadPtxSregWarpIdOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_lanemask_result(ctx, self.get_operation(), "nvvm.read_ptx_sreg_warpid")
+    }
+}
+
+/// Read the maximum number of hardware warp slots per SM (max warp ID + 1).
+///
+/// Corresponds to `llvm.nvvm.read.ptx.sreg.nwarpid` / PTX `%nwarpid`.
+///
+/// # Verification
+///
+/// - Must have 0 operands
+/// - Must have 1 result of type `i32`
+#[pliron_op(
+    name = "nvvm.read_ptx_sreg_nwarpid",
+    format,
+    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
+)]
+pub struct ReadPtxSregNwarpIdOp;
+
+impl ReadPtxSregNwarpIdOp {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        ReadPtxSregNwarpIdOp { op }
+    }
+}
+
+impl Verify for ReadPtxSregNwarpIdOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_lanemask_result(ctx, self.get_operation(), "nvvm.read_ptx_sreg_nwarpid")
+    }
+}
+
 /// Register warp operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // Lane identification
@@ -1181,4 +1241,7 @@ pub(super) fn register(ctx: &mut Context) {
     ActiveMaskOp::register(ctx);
     // Warp-scoped barrier
     BarWarpSyncOp::register(ctx);
+    // Hardware warp identification
+    ReadPtxSregWarpIdOp::register(ctx);
+    ReadPtxSregNwarpIdOp::register(ctx);
 }

@@ -612,6 +612,56 @@ pub fn gridDim_z() -> u32 {
 }
 
 // =============================================================================
+// SM and Grid Identification
+// =============================================================================
+
+/// Read the SM (streaming multiprocessor) processor ID.
+///
+/// Returns the `%smid` special register -- the index of the SM executing the
+/// current thread block. Useful for SM-aware scheduling, profiling, or
+/// partitioning work by physical processor.
+///
+/// Valid range: `0 ..< nsmid()`.
+///
+/// # PTX
+///
+/// `mov.u32 %r, %smid;`
+#[inline(never)]
+pub fn smid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.smid()
+    unreachable!("smid called outside CUDA kernel context")
+}
+
+/// Read the maximum SM ID + 1 (number of SM slots).
+///
+/// Returns the `%nsmid` special register. Note that SM IDs may not be
+/// contiguous, so this is the upper bound, not the count of active SMs.
+///
+/// # PTX
+///
+/// `mov.u32 %r, %nsmid;`
+#[inline(never)]
+pub fn nsmid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.nsmid()
+    unreachable!("nsmid called outside CUDA kernel context")
+}
+
+/// Read the grid launch identifier.
+///
+/// Returns the `%gridid` special register -- a monotonically increasing value
+/// that uniquely identifies each kernel launch within a CUDA context. Useful
+/// for distinguishing repeated launches of the same kernel.
+///
+/// # PTX
+///
+/// `mov.u32 %r, %gridid;`
+#[inline(never)]
+pub fn gridid() -> u32 {
+    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.gridid()
+    unreachable!("gridid called outside CUDA kernel context")
+}
+
+// =============================================================================
 // Synchronization Intrinsics
 // =============================================================================
 

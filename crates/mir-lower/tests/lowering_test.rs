@@ -401,6 +401,54 @@ fn test_lanemask_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error
 }
 
 #[test]
+fn test_warpid_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregWarpIdOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_warpid",
+    )?;
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregNwarpIdOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_nwarpid",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn test_smid_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregSmIdOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_smid",
+    )?;
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregNsmIdOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_nsmid",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn test_gridid_op_lowers_to_sreg_intrinsic_call() -> Result<(), anyhow::Error> {
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregGridIdOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_gridid",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn test_smem_size_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregDynamicSmemSizeOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_dynamic_smem_size",
+    )?;
+    assert_sreg_i32_lowers_to_intrinsic(
+        nvvm::ReadPtxSregTotalSmemSizeOp::get_concrete_op_info(),
+        "llvm_nvvm_read_ptx_sreg_total_smem_size",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn test_threadfence_system_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
