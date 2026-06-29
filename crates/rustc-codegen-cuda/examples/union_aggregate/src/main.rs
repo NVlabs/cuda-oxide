@@ -45,6 +45,12 @@ union PointerBits {
     bits: u64,
 }
 
+#[allow(dead_code)]
+union PointerSmall {
+    ptr: *const u32,
+    small: u32,
+}
+
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct Pair {
@@ -63,6 +69,15 @@ union ZeroUnion {
     unit: (),
     marker: core::marker::PhantomData<u64>,
 }
+
+const ZERO_CONST: ZeroUnion = ZeroUnion { unit: () };
+
+#[derive(Clone, Copy)]
+struct ZeroHolder {
+    value: ZeroUnion,
+}
+
+const ZERO_HOLDER: ZeroHolder = ZeroHolder { value: ZERO_CONST };
 
 #[repr(align(16))]
 #[derive(Clone, Copy)]
@@ -103,6 +118,32 @@ fn pass_zero(value: ZeroUnion) -> ZeroUnion {
 }
 
 #[inline(never)]
+fn make_zero() -> ZeroUnion {
+    ZeroUnion { unit: () }
+}
+
+#[inline(never)]
+fn return_called_zero() -> ZeroUnion {
+    make_zero()
+}
+
+#[inline(never)]
+fn pass_called_zero() -> ZeroUnion {
+    pass_zero(make_zero())
+}
+
+#[inline(never)]
+fn make_side_effect_zero(marker: &mut u32) -> ZeroUnion {
+    *marker = 0x2222;
+    ZeroUnion { unit: () }
+}
+
+#[inline(never)]
+fn return_side_effect_zero(marker: &mut u32) -> ZeroUnion {
+    make_side_effect_zero(marker)
+}
+
+#[inline(never)]
 fn use_aligned_zero(value: AlignedZeroUnion) -> u32 {
     unsafe {
         let () = value.unit;
@@ -116,7 +157,17 @@ fn aligned_zero_address(value: &AlignedZeroUnion) -> u32 {
 }
 
 #[inline(never)]
+fn make_aligned_zero() -> AlignedZeroUnion {
+    AlignedZeroUnion { unit: () }
+}
+
+#[inline(never)]
 fn pass_tuple_bytes(value: TupleBytes) -> TupleBytes {
+    value
+}
+
+#[inline(never)]
+fn pass_pointer_small(value: PointerSmall) -> PointerSmall {
     value
 }
 
@@ -231,6 +282,41 @@ mod kernels {
                     let value = AlignedZeroUnion { unit: () };
                     aligned_zero_address(&value)
                 }
+                // A pointer-preserving carrier must also retain bytes written
+                // through a smaller non-pointer field.
+                16 => unsafe {
+                    pass_pointer_small(PointerSmall { small: 0xaabb_ccdd }).small
+                },
+                // ZST returns are erased from the LLVM call ABI, but their MIR
+                // values may still be returned, projected, and passed onward.
+                17 => {
+                    unsafe {
+                        let () = return_called_zero().unit;
+                        let () = pass_called_zero().unit;
+                    }
+                    0x1717
+                }
+                // Direct and nested compile-time ZST union constants must keep
+                // their union type instead of becoming empty tuples.
+                18 => {
+                    unsafe {
+                        let () = ZERO_CONST.unit;
+                        let () = ZERO_HOLDER.value.unit;
+                    }
+                    0x1818
+                }
+                // Erasing a ZST result must not erase its side-effecting call.
+                19 => {
+                    let mut marker = 0;
+                    let value = return_side_effect_zero(&mut marker);
+                    unsafe {
+                        let () = value.unit;
+                    }
+                    marker
+                }
+                // A synthetic value for a void-lowered call result must retain
+                // the union's 16-byte address requirement.
+                20 => aligned_zero_address(&make_aligned_zero()),
                 _ => 0,
             };
         }
@@ -248,7 +334,7 @@ mod kernels {
 }
 
 fn main() {
-    const EXPECTED: [u32; 16] = [
+    const EXPECTED: [u32; 21] = [
         0,
         0x1122_3344,
         0x5566_7788,
@@ -264,6 +350,11 @@ fn main() {
         0x0a0a,
         0xa11e,
         3,
+        0,
+        0xaabb_ccdd,
+        0x1717,
+        0x1818,
+        0x2222,
         0,
     ];
     const N: usize = EXPECTED.len();
