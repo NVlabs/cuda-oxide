@@ -209,7 +209,7 @@ mod tests {
 
     fn assert_i32_constant_lowers_to_signless(signedness: Signedness, value: APInt) {
         let mut ctx = make_ctx();
-        let mir_i32_ty = IntegerType::get(&mut ctx, 32, signedness);
+        let mir_i32_ty = IntegerType::get(&ctx, 32, signedness);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![mir_i32_ty.into()]);
         let const_op = Operation::new(
