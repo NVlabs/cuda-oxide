@@ -1138,54 +1138,21 @@ impl<'tcx> DeviceCollector<'tcx> {
             },
         };
 
-        // Special handling for closure trait method calls (FnOnce::call_once, etc.)
-        // When we see a call like `<Closure as FnOnce>::call_once`, we need to collect
-        // the closure body directly, because:
-        // 1. The trait method itself may not have MIR
-        // 2. The mir-importer transforms these calls to direct closure body calls
-        let fn_name = self.tcx.def_path_str(*def_id);
-        if fn_name.contains("call_once")
-            || fn_name.contains("call_mut")
-            || fn_name.ends_with("::call")
+        // Callable-trait shims do not necessarily have a MIR body of their own.
+        // Identify the actual `Fn`, `FnMut`, or `FnOnce` trait through rustc's
+        // metadata, then collect only the trait's `Self` type (the receiver).
+        // Function-name matching is unsafe here: user functions may legally
+        // contain strings such as `call_once`.
+        let is_callable_trait_method = self
+            .tcx
+            .trait_of_assoc(*def_id)
+            .is_some_and(|trait_id| self.tcx.fn_trait_kind_from_def_id(trait_id).is_some());
+        if is_callable_trait_method
+            && let Some(receiver_ty) = args.iter().next().and_then(|arg| arg.as_type())
         {
-            // Check if any type arg is a closure
-            for arg in args.iter() {
-                if let Some(ty) = arg.as_type()
-                    && let TyKind::Closure(closure_def_id, closure_substs) = ty.kind()
-                {
-                    // Found a closure - add its body to the collection
-                    let typing_env = TypingEnv::fully_monomorphized();
-                    if let Some(closure_instance) =
-                        Instance::try_resolve(self.tcx, typing_env, *closure_def_id, closure_substs)
-                            .ok()
-                            .flatten()
-                    {
-                        let mangled = self.tcx.symbol_name(closure_instance).name.to_string();
-                        if !self.seen.contains(&mangled) {
-                            let closure_name = self.fqdn(closure_instance);
-                            let export_name =
-                                self.compute_export_name(&closure_name, closure_instance);
-
-                            if self.verbose {
-                                eprintln!(
-                                    "[collector] Discovered closure body (via trait call): {} -> {}",
-                                    closure_name, export_name
-                                );
-                            }
-
-                            self.discovery.insert(mangled.clone(), callee_ctx.clone());
-                            self.seen.insert(mangled);
-                            self.worklist.push_back(CollectedFunction {
-                                instance: closure_instance,
-                                is_kernel: false,
-                                export_name,
-                            });
-                        }
-                    }
-                    // Don't return - continue to try resolving the trait method too
-                    // (even though it may fail, we still want to try)
-                }
-            }
+            self.enqueue_callable_trait_receiver_body(receiver_ty, call_span, caller, &callee_ctx);
+            // Don't return - continue to try resolving the trait method too
+            // (even though it may fail, we still want to try).
         }
 
         // Try to resolve the instance with substitutions first, so we can
@@ -1308,6 +1275,110 @@ impl<'tcx> DeviceCollector<'tcx> {
         self.seen.insert(mangled);
         self.worklist.push_back(CollectedFunction {
             instance: resolved,
+            is_kernel: false,
+            export_name,
+        });
+    }
+
+    fn enqueue_callable_trait_receiver_body(
+        &mut self,
+        ty: Ty<'tcx>,
+        call_span: Span,
+        caller: &CollectedFunction<'tcx>,
+        ctx: &DiscoveryCtx,
+    ) {
+        let typing_env = TypingEnv::fully_monomorphized();
+        let (kind, instance) = match ty.kind() {
+            TyKind::Closure(closure_def_id, closure_substs) => {
+                let Some(instance) =
+                    Instance::try_resolve(self.tcx, typing_env, *closure_def_id, closure_substs)
+                        .ok()
+                        .flatten()
+                else {
+                    return;
+                };
+                ("closure", instance)
+            }
+            TyKind::FnDef(fn_def_id, fn_args) => {
+                let Some(instance) =
+                    Instance::try_resolve(self.tcx, typing_env, *fn_def_id, fn_args)
+                        .ok()
+                        .flatten()
+                else {
+                    return;
+                };
+                ("function item", instance)
+            }
+            _ => return,
+        };
+
+        match self.should_collect_from_crate(instance.def_id()) {
+            CollectDecision::Collect => {}
+            CollectDecision::SkipIntentional => {
+                let target = self.tcx.def_path_str(instance.def_id());
+                self.tcx
+                    .dcx()
+                    .struct_span_fatal(
+                        call_span,
+                        format!(
+                            "`{target}` cannot be used as a function item in device code because it requires special call-site lowering"
+                        ),
+                    )
+                    .with_help(
+                        "wrap the call in a local `#[device]` function and pass that wrapper instead",
+                    )
+                    .emit()
+            }
+            CollectDecision::Forbidden {
+                crate_name,
+                fn_path,
+            } => self
+                .tcx
+                .dcx()
+                .struct_span_fatal(
+                    call_span,
+                    format!(
+                        "device code cannot call function item `{fn_path}` from forbidden crate `{crate_name}`"
+                    ),
+                )
+                .with_note(format!(
+                    "the call is reachable from `{}`",
+                    ctx.root_name
+                ))
+                .emit(),
+        }
+
+        let mangled = self.tcx.symbol_name(instance).name.to_string();
+        if self.seen.contains(&mangled) {
+            return;
+        }
+        if !is_fully_monomorphized(self.tcx, instance) {
+            return;
+        }
+        if !matches!(instance.def, InstanceKind::Item(_)) {
+            return;
+        }
+        if !self.tcx.is_mir_available(instance.def_id()) {
+            return;
+        }
+        if self.is_unreachable_body(instance.def_id()) {
+            self.check_unreachable_callee(instance, call_span, caller, ctx);
+            return;
+        }
+
+        let name = self.fqdn(instance);
+        let export_name = self.compute_export_name(&name, instance);
+
+        if self.verbose {
+            eprintln!(
+                "[collector] Discovered {kind} body (via trait call): {name} -> {export_name}"
+            );
+        }
+
+        self.discovery.insert(mangled.clone(), ctx.clone());
+        self.seen.insert(mangled);
+        self.worklist.push_back(CollectedFunction {
+            instance,
             is_kernel: false,
             export_name,
         });
