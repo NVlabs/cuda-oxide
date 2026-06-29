@@ -770,12 +770,13 @@ pub fn translate_rvalue(
                         }
                         (op.deref(ctx).get_result(0), Some(op))
                     } else {
-                        let op = create_zst_aggregate(ctx, ty_ptr, loc.clone());
-                        match prev_op {
-                            Some(p) => op.insert_after(ctx, p),
-                            None => op.insert_at_front(block_ptr, ctx),
-                        }
-                        (op.deref(ctx).get_result(0), Some(op))
+                        translate_zero_sized_constant_value(
+                            ctx,
+                            ty_ptr,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        )?
                     };
                 let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, ty_ptr, is_mutable);
                 let ref_op = Operation::new(
@@ -1845,48 +1846,17 @@ pub fn translate_operand(
 
             let const_ty_ptr = types::translate_type(ctx, &rust_ty)?;
 
-            // Check if this is a ZST (Zero-Sized Type) like PhantomData<T>
-            // ZSTs have no runtime representation, so we create a value of the appropriate type.
-            // This is critical for iterator support (Iter contains PhantomData).
+            // ZSTs have no runtime bytes, but they still need a value with the
+            // exact translated type. This is critical for marker structs,
+            // unit, and zero-sized unions.
             if types::is_zst_type(ctx, const_ty_ptr) {
-                // Determine if this is a struct ZST (like PhantomData) or tuple ZST
-                let is_struct_zst = const_ty_ptr
-                    .deref(ctx)
-                    .is::<dialect_mir::types::MirStructType>();
-
-                let op = if is_struct_zst {
-                    // Create empty struct constructor for struct ZSTs (e.g., PhantomData<T>)
-                    Operation::new(
-                        ctx,
-                        MirConstructStructOp::get_concrete_op_info(),
-                        vec![const_ty_ptr], // Use the actual struct type
-                        vec![],             // No operands for ZST
-                        vec![],
-                        0,
-                    )
-                } else {
-                    // Create empty tuple constructor for tuple ZSTs
-                    use dialect_mir::ops::MirConstructTupleOp;
-                    let empty_tuple_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
-                    Operation::new(
-                        ctx,
-                        MirConstructTupleOp::get_concrete_op_info(),
-                        vec![empty_tuple_ty],
-                        vec![], // No operands for ZST
-                        vec![],
-                        0,
-                    )
-                };
-                op.deref_mut(ctx).set_loc(loc);
-
-                if let Some(prev) = prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                let val = op.deref(ctx).get_result(0);
-                return Ok((val, Some(op)));
+                return translate_zero_sized_constant_value(
+                    ctx,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                );
             }
 
             // Check if this is a struct type (non-ZST)
@@ -2938,13 +2908,7 @@ fn translate_place_value_fallback(
             return Ok((val, Some(op)));
         }
         if types::is_zst_type(ctx, ty_ptr) {
-            let op = create_zst_aggregate(ctx, ty_ptr, loc.clone());
-            match prev_op {
-                Some(p) => op.insert_after(ctx, p),
-                None => op.insert_at_front(block_ptr, ctx),
-            }
-            let val = op.deref(ctx).get_result(0);
-            return Ok((val, Some(op)));
+            return translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc);
         }
         input_err!(
             loc,
@@ -4327,33 +4291,34 @@ pub fn translate_place_iterative(
     // unsupported locals fall back to the same ghost-enum / empty-aggregate
     // synthesis as [`translate_place`].
     let local = place.local;
-    let (mut current_value, mut current_prev_op) =
-        match value_map.load_local(ctx, local, block_ptr, prev_op) {
-            Some((load_op, val)) => (val, Some(load_op)),
-            None => {
-                let local_decl = &body.locals()[local];
-                let ty_ptr = types::translate_type(ctx, &local_decl.ty)?;
-                let synth_op = if ty_ptr.deref(ctx).is::<dialect_mir::types::MirEnumType>() {
-                    create_ghost_enum_default(ctx, ty_ptr, loc.clone())
-                } else if types::is_zst_type(ctx, ty_ptr) {
-                    create_zst_aggregate(ctx, ty_ptr, loc.clone())
-                } else {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "Local {} has no alloca slot and is not a ZST",
-                            Into::<usize>::into(local)
-                        ))
-                    );
-                };
+    let (mut current_value, mut current_prev_op) = match value_map
+        .load_local(ctx, local, block_ptr, prev_op)
+    {
+        Some((load_op, val)) => (val, Some(load_op)),
+        None => {
+            let local_decl = &body.locals()[local];
+            let ty_ptr = types::translate_type(ctx, &local_decl.ty)?;
+            if ty_ptr.deref(ctx).is::<dialect_mir::types::MirEnumType>() {
+                let synth_op = create_ghost_enum_default(ctx, ty_ptr, loc.clone());
                 match prev_op {
                     Some(p) => synth_op.insert_after(ctx, p),
                     None => synth_op.insert_at_front(block_ptr, ctx),
                 }
                 let val = synth_op.deref(ctx).get_result(0);
                 (val, Some(synth_op))
+            } else if types::is_zst_type(ctx, ty_ptr) {
+                translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc.clone())?
+            } else {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Local {} has no alloca slot and is not a ZST",
+                        Into::<usize>::into(local)
+                    ))
+                );
             }
-        };
+        }
+    };
 
     // Track the Rust type of `current_value` alongside the pliron value.
     // Each iteration below advances it through rustc_public's own projection
@@ -5314,8 +5279,7 @@ fn translate_struct_constant(
     for (field_idx, field_ty_ptr) in field_types.iter().copied().enumerate() {
         // First, gather type information we need while holding immutable borrow
         enum FieldTypeKind {
-            ZstStruct, // Struct ZST like PhantomData<T>
-            ZstTuple,  // Tuple ZST like ()
+            ZeroSized,
             Integer { width: u32, signedness: Signedness },
             Float16,
             Float32,
@@ -5326,14 +5290,8 @@ fn translate_struct_constant(
         let field_kind = {
             let field_ty = field_ty_ptr.deref(ctx);
 
-            // Check for ZST
             if types::is_zst_type(ctx, field_ty_ptr) {
-                // Distinguish between struct ZSTs and tuple ZSTs
-                if field_ty.is::<dialect_mir::types::MirStructType>() {
-                    FieldTypeKind::ZstStruct
-                } else {
-                    FieldTypeKind::ZstTuple
-                }
+                FieldTypeKind::ZeroSized
             } else if let Some(int_ty) = field_ty.downcast_ref::<IntegerType>() {
                 FieldTypeKind::Integer {
                     width: int_ty.width(),
@@ -5352,53 +5310,16 @@ fn translate_struct_constant(
 
         // Now handle each field type kind with mutable operations
         match field_kind {
-            FieldTypeKind::ZstStruct => {
-                // Struct ZST fields (like PhantomData<T>) produce empty struct values
-                let op = Operation::new(
+            FieldTypeKind::ZeroSized => {
+                let (value, new_prev_op) = translate_zero_sized_constant_value(
                     ctx,
-                    MirConstructStructOp::get_concrete_op_info(),
-                    vec![field_ty_ptr], // Use the actual struct type
-                    vec![],             // No operands for ZST
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                if let Some(prev) = current_prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(op);
-                field_values.push(op.deref(ctx).get_result(0));
-                // ZST takes no bytes
-            }
-
-            FieldTypeKind::ZstTuple => {
-                // Tuple ZST fields produce empty tuple values
-                let empty_tuple_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]).into();
-
-                use dialect_mir::ops::MirConstructTupleOp;
-                let op = Operation::new(
-                    ctx,
-                    MirConstructTupleOp::get_concrete_op_info(),
-                    vec![empty_tuple_ty],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                op.deref_mut(ctx).set_loc(loc.clone());
-
-                if let Some(prev) = current_prev_op {
-                    op.insert_after(ctx, prev);
-                } else {
-                    op.insert_at_front(block_ptr, ctx);
-                }
-
-                current_prev_op = Some(op);
-                field_values.push(op.deref(ctx).get_result(0));
-                // ZST takes no bytes
+                    field_ty_ptr,
+                    block_ptr,
+                    current_prev_op,
+                    loc.clone(),
+                )?;
+                current_prev_op = new_prev_op;
+                field_values.push(value);
             }
 
             FieldTypeKind::Integer { width, signedness } => {
@@ -6480,7 +6401,7 @@ fn translate_constant_value_from_bytes(
     }
 }
 
-/// Build a zero-sized struct or tuple value.
+/// Build a zero-sized value while preserving its exact translated type.
 fn translate_zero_sized_constant_value(
     ctx: &mut Context,
     ty_ptr: TypeHandle,
@@ -6491,6 +6412,7 @@ fn translate_zero_sized_constant_value(
     enum ZeroSizedKind {
         Struct,
         EmptyTuple,
+        Union,
         Unsupported(String),
     }
 
@@ -6498,6 +6420,8 @@ fn translate_zero_sized_constant_value(
         let ty_ref = ty_ptr.deref(ctx);
         if ty_ref.is::<dialect_mir::types::MirStructType>() {
             ZeroSizedKind::Struct
+        } else if ty_ref.is::<dialect_mir::types::MirUnionType>() {
+            ZeroSizedKind::Union
         } else if let Some(tuple_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirTupleType>() {
             if tuple_ty.get_types().is_empty() {
                 ZeroSizedKind::EmptyTuple
@@ -6565,6 +6489,7 @@ fn translate_zero_sized_constant_value(
                 0,
             )
         }
+        ZeroSizedKind::Union => MirUndefOp::new(ctx, ty_ptr).get_operation(),
         ZeroSizedKind::Unsupported(message) => {
             return input_err!(loc, TranslationErr::unsupported(message));
         }
@@ -7462,46 +7387,6 @@ fn extract_shared_array_info(
         }
         _ => input_err_noloc!(TranslationErr::unsupported("Expected raw pointer type")),
     }
-}
-
-/// Create a placeholder ZST aggregate (struct / tuple) value.
-///
-/// Used for locals whose Rust type is zero-sized: these get no alloca slot
-/// (the alloca model skips ZST locals), yet they may still flow through the
-/// translator as SSA values (e.g. unit-type temporaries, closure-capture
-/// ZSTs). We synthesise an empty aggregate on demand so that every read of
-/// a ZST local produces a usable `Value`.
-///
-/// The caller is responsible for inserting the returned op into a block.
-fn create_zst_aggregate(
-    ctx: &mut Context,
-    ty_ptr: pliron::r#type::TypeHandle,
-    loc: Location,
-) -> Ptr<Operation> {
-    use dialect_mir::ops::{MirConstructStructOp, MirConstructTupleOp};
-    use dialect_mir::types::MirStructType;
-
-    let op = if ty_ptr.deref(ctx).is::<MirStructType>() {
-        Operation::new(
-            ctx,
-            MirConstructStructOp::get_concrete_op_info(),
-            vec![ty_ptr],
-            vec![],
-            vec![],
-            0,
-        )
-    } else {
-        Operation::new(
-            ctx,
-            MirConstructTupleOp::get_concrete_op_info(),
-            vec![ty_ptr],
-            vec![],
-            vec![],
-            0,
-        )
-    };
-    op.deref_mut(ctx).set_loc(loc);
-    op
 }
 
 /// Create a placeholder `MirConstructEnumOp` for a ghost local.

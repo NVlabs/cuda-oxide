@@ -111,6 +111,11 @@ fn use_aligned_zero(value: AlignedZeroUnion) -> u32 {
 }
 
 #[inline(never)]
+fn aligned_zero_address(value: &AlignedZeroUnion) -> u32 {
+    (value as *const AlignedZeroUnion as usize & 15) as u32
+}
+
+#[inline(never)]
 fn pass_tuple_bytes(value: TupleBytes) -> TupleBytes {
     value
 }
@@ -220,6 +225,12 @@ mod kernels {
                     })
                     .bytes[3] as u32
                 },
+                // A slot-less ZST still needs a correctly typed, aligned
+                // address when it is borrowed.
+                15 => {
+                    let value = AlignedZeroUnion { unit: () };
+                    aligned_zero_address(&value)
+                }
                 _ => 0,
             };
         }
@@ -237,7 +248,7 @@ mod kernels {
 }
 
 fn main() {
-    const EXPECTED: [u32; 15] = [
+    const EXPECTED: [u32; 16] = [
         0,
         0x1122_3344,
         0x5566_7788,
@@ -253,6 +264,7 @@ fn main() {
         0x0a0a,
         0xa11e,
         3,
+        0,
     ];
     const N: usize = EXPECTED.len();
 
