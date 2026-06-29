@@ -81,6 +81,7 @@ pub mod convert;
 pub mod cp_async;
 pub mod debug;
 pub mod dotprod;
+pub mod ldmatrix;
 pub mod mbarrier;
 pub mod stmatrix;
 pub mod tcgen05;
