@@ -193,18 +193,16 @@ pub fn constant_symbol(base: &str) -> String {
     format!("{CONSTANT_PREFIX}{base}")
 }
 
-/// Build the artifact link-anchor symbol for a package name and version.
+/// Build the legacy artifact link-anchor symbol for a package and version.
 ///
 /// Both the codegen backend (which defines the symbol inside the embedded
 /// artifact object) and the `#[cuda_module]` macro (which references it
-/// from the generated `load_named()`) derive the name from the
-/// `CARGO_PKG_NAME` / `CARGO_PKG_VERSION` environment of the same rustc
-/// invocation, so the two sides always agree.
+/// from the generated `load_named()`) derive the name from `CARGO_PKG_NAME`
+/// and `CARGO_PKG_VERSION` in the same rustc invocation.
 ///
 /// The version is part of the name so that two different versions of one
 /// package in the same dependency graph each keep their own bundle. Any
-/// character that is not valid in a symbol name (for example the `-` in
-/// package names or the `.` in versions) is mapped to `_`.
+/// character that is not valid in a symbol name is mapped to `_`.
 ///
 /// ```
 /// use reserved_oxide_symbols::artifact_anchor_symbol;
@@ -218,6 +216,35 @@ pub fn artifact_anchor_symbol(package_name: &str, package_version: &str) -> Stri
     push_symbol_sanitized(&mut symbol, package_name);
     symbol.push('_');
     push_symbol_sanitized(&mut symbol, package_version);
+    symbol
+}
+
+/// Build the target-specific v2 artifact anchor.
+///
+/// V2 extends the legacy identity with rustc's crate target and Cargo's
+/// optional binary target name. This prevents a package's library, binaries,
+/// examples, and tests from satisfying one another's anchor references. The
+/// legacy builder remains available for mixed-version compatibility.
+pub fn artifact_anchor_symbol_v2(
+    package_name: &str,
+    package_version: &str,
+    crate_name: &str,
+    binary_name: Option<&str>,
+) -> String {
+    let mut symbol = String::from(ARTIFACT_ANCHOR_PREFIX);
+    symbol.push_str("v2_");
+    push_symbol_sanitized(&mut symbol, package_name);
+    symbol.push('_');
+    push_symbol_sanitized(&mut symbol, package_version);
+    symbol.push('_');
+    push_symbol_sanitized(&mut symbol, crate_name);
+    match binary_name {
+        Some(binary_name) => {
+            symbol.push_str("_bin_");
+            push_symbol_sanitized(&mut symbol, binary_name);
+        }
+        None => symbol.push_str("_nonbin"),
+    }
     symbol
 }
 
@@ -570,10 +597,10 @@ mod tests {
     /// name/version cargo can produce, and must live in the reserved root.
     #[test]
     fn artifact_anchor_symbol_is_sanitized_and_reserved() {
-        let anchor = artifact_anchor_symbol("my-kernels", "1.2.0-rc.3");
+        let anchor = artifact_anchor_symbol_v2("my-kernels", "1.2.0-rc.3", "kernel_lib", None);
         assert_eq!(
             anchor,
-            "cuda_oxide_artifact_anchor_246e25db_my_kernels_1_2_0_rc_3",
+            "cuda_oxide_artifact_anchor_246e25db_v2_my_kernels_1_2_0_rc_3_kernel_lib_nonbin",
         );
         assert!(anchor.starts_with(RESERVED_ROOT));
         assert!(
@@ -584,8 +611,28 @@ mod tests {
         // Distinct versions of one package must get distinct anchors, so
         // both archive members can be extracted into the same binary.
         assert_ne!(
-            artifact_anchor_symbol("my-kernels", "0.1.0"),
-            artifact_anchor_symbol("my-kernels", "0.2.0"),
+            artifact_anchor_symbol_v2("my-kernels", "0.1.0", "kernel_lib", None),
+            artifact_anchor_symbol_v2("my-kernels", "0.2.0", "kernel_lib", None),
+        );
+        // Distinct rustc targets from one package must not satisfy each
+        // other's anchor references.
+        assert_ne!(
+            artifact_anchor_symbol_v2("my-kernels", "0.1.0", "kernel_lib", None),
+            artifact_anchor_symbol_v2("my-kernels", "0.1.0", "host_bin", Some("host-bin")),
+        );
+        // Cargo permits a package's library and default binary to share the
+        // same crate name; CARGO_BIN_NAME still keeps their anchors distinct.
+        assert_ne!(
+            artifact_anchor_symbol_v2("my-kernels", "0.1.0", "same_name", None),
+            artifact_anchor_symbol_v2("my-kernels", "0.1.0", "same_name", Some("same_name")),
+        );
+        assert_eq!(
+            artifact_anchor_symbol("my-kernels", "1.2.0-rc.3"),
+            "cuda_oxide_artifact_anchor_246e25db_my_kernels_1_2_0_rc_3"
+        );
+        assert_ne!(
+            artifact_anchor_symbol("my-kernels", "1.2.0+kernel-lib.nonbin"),
+            artifact_anchor_symbol_v2("my-kernels", "1.2.0", "kernel-lib", None),
         );
     }
 

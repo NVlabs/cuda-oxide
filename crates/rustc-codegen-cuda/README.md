@@ -76,19 +76,24 @@ These are set automatically by `cargo oxide`. For manual invocations, all three 
 
 ### Environment Variables
 
-| Variable                    | Effect                         |
-|-----------------------------|--------------------------------|
-| `CUDA_OXIDE_VERBOSE`        | Verbose compilation output     |
-| `CUDA_OXIDE_PTX_DIR`        | Output directory for PTX files |
-| `CUDA_OXIDE_TARGET`         | GPU architecture override      |
-| `CUDA_OXIDE_LLC`            | Path to a specific `llc`       |
-| `CUDA_OXIDE_DUMP_MIR`       | Dump the `dialect-mir` module  |
-| `CUDA_OXIDE_DUMP_LLVM`      | Dump the LLVM dialect module   |
-| `CUDA_OXIDE_SHOW_RUSTC_MIR` | Dump raw rustc MIR             |
-| `CUDA_OXIDE_EMIT_NVVM_IR`   | Emit NVVM IR for libNVVM       |
+| Variable                             | Effect                                      |
+|--------------------------------------|---------------------------------------------|
+| `CUDA_OXIDE_VERBOSE`                 | Verbose compilation output                  |
+| `CUDA_OXIDE_PTX_DIR`                 | Output directory for PTX files              |
+| `CUDA_OXIDE_TARGET`                  | GPU architecture override                   |
+| `CUDA_OXIDE_LLC`                     | Path to a specific `llc`                    |
+| `CUDA_OXIDE_DUMP_MIR`                | Dump the `dialect-mir` module               |
+| `CUDA_OXIDE_DUMP_LLVM`               | Dump the LLVM dialect module                |
+| `CUDA_OXIDE_SHOW_RUSTC_MIR`          | Dump raw rustc MIR                          |
+| `CUDA_OXIDE_EMIT_NVVM_IR`            | Emit NVVM IR for libNVVM                    |
+| `CUDA_OXIDE_DEVICE_CODEGEN_CRATE`    | Comma-separated device owner crate filter   |
 
 `cargo oxide --arch <sm_XX>` sets `CUDA_OXIDE_TARGET`. When it is unset,
 PTX output auto-detects the required target from generated LLVM IR.
+Owner-filter names are normalized like Cargo crate names, so hyphens match
+underscores. Host LLVM codegen still runs for every crate. An excluded target
+must not call its generated module loader; the filter suppresses its device
+artifact but does not give sibling targets separate runtime bundle names.
 
 ## Source Layout
 

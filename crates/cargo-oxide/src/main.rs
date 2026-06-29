@@ -100,7 +100,7 @@ enum Commands {
         /// Cargo target directory for passthrough mode
         #[arg(long)]
         cargo_target_dir: Option<PathBuf>,
-        /// Optional cuda-oxide owner filter for passthrough device codegen
+        /// Comma-separated cuda-oxide owner crate filter for device codegen
         #[arg(long)]
         device_codegen_crate: Option<String>,
         /// Repeatable cfg appended as `--cfg NAME` for passthrough device codegen
@@ -118,7 +118,7 @@ enum Commands {
         /// Cargo target directory
         #[arg(long)]
         cargo_target_dir: Option<PathBuf>,
-        /// Optional cuda-oxide owner filter for device codegen
+        /// Comma-separated cuda-oxide owner crate filter for device codegen
         #[arg(long)]
         device_codegen_crate: Option<String>,
         /// Repeatable cfg appended as `--cfg NAME` for device codegen
@@ -127,7 +127,7 @@ enum Commands {
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
-        /// Cargo test arguments. Use after `--`.
+        /// Cargo test arguments. Use after `--`; empty runs plain `cargo test`.
         #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
         cargo_args: Vec<String>,
     },
@@ -205,6 +205,24 @@ enum Commands {
     Setup,
 }
 
+fn has_passthrough_separator(args: &[String]) -> bool {
+    args.iter().skip(2).any(|arg| arg == "--")
+}
+
+fn use_build_passthrough(
+    explicit_separator: bool,
+    cargo_target_dir_is_set: bool,
+    owner_filter_is_set: bool,
+    has_device_cfgs: bool,
+    has_cargo_args: bool,
+) -> bool {
+    explicit_separator
+        || cargo_target_dir_is_set
+        || owner_filter_is_set
+        || has_device_cfgs
+        || has_cargo_args
+}
+
 fn main() {
     // Handle both invocation methods:
     // 1. Cargo subcommand: `cargo oxide run vecadd` → argv = ["cargo-oxide", "oxide", "run", "vecadd"]
@@ -218,6 +236,7 @@ fn main() {
         args
     };
 
+    let explicit_passthrough = has_passthrough_separator(&effective_args);
     let cli = Cli::parse_from(effective_args);
 
     match cli.command {
@@ -257,7 +276,14 @@ fn main() {
             cargo_args,
         } => {
             let ctx = commands::resolve_context();
-            if cargo_args.is_empty() {
+            let passthrough = use_build_passthrough(
+                explicit_passthrough,
+                cargo_target_dir.is_some(),
+                device_codegen_crate.is_some(),
+                !device_cfgs.is_empty(),
+                !cargo_args.is_empty(),
+            );
+            if !passthrough {
                 let example = resolve_example_name(example, &ctx, "build");
                 validate_nvvm_ir_arch(&ctx, &example, emit_nvvm_ir, arch.as_deref());
                 commands::codegen_build(
@@ -284,6 +310,7 @@ fn main() {
                         verbose,
                         emit_nvvm_ir,
                         arch: arch.as_deref(),
+                        features: features.as_deref(),
                         cargo_target_dir: cargo_target_dir.as_deref(),
                         device_codegen_crate: device_codegen_crate.as_deref(),
                         device_cfgs: &device_cfgs,
@@ -309,6 +336,7 @@ fn main() {
                     verbose,
                     emit_nvvm_ir: false,
                     arch: arch.as_deref(),
+                    features: None,
                     cargo_target_dir: cargo_target_dir.as_deref(),
                     device_codegen_crate: device_codegen_crate.as_deref(),
                     device_cfgs: &device_cfgs,
@@ -316,8 +344,6 @@ fn main() {
                 },
                 &cargo_args,
             );
-            println!();
-            println!("✓ Build succeeded");
         }
         Commands::EmitLtoir {
             example,
@@ -404,10 +430,10 @@ fn resolve_example_name(name: Option<String>, ctx: &commands::Context, subcomman
     std::process::exit(1);
 }
 
-/// Ensures `--arch` is provided when `--emit-nvvm-ir` is used.
+/// Ensures an architecture is configured when `--emit-nvvm-ir` is used.
 ///
-/// NVVM IR output is architecture-specific, so omitting `--arch` would produce
-/// an unusable artifact. Exits with a descriptive error and usage example.
+/// NVVM IR output is architecture-specific, so omitting every target source
+/// would produce an unusable artifact. Exits with a descriptive error.
 fn validate_nvvm_ir_arch(
     ctx: &commands::Context,
     example: &str,
@@ -415,14 +441,85 @@ fn validate_nvvm_ir_arch(
     arch: Option<&str>,
 ) {
     if emit_nvvm_ir && !commands::has_configured_arch(ctx, arch) {
-        eprintln!("Error: --emit-nvvm-ir requires --arch=sm_XXX");
+        eprintln!("Error: --emit-nvvm-ir requires a target architecture");
         eprintln!();
-        eprintln!("NVVM IR output is architecture-specific. Please specify the target:");
+        eprintln!("NVVM IR output is architecture-specific. Pass --arch, set");
+        eprintln!("CUDA_OXIDE_TARGET, or configure default-arch. For example:");
         eprintln!("  --arch sm_120    Blackwell (RTX 50 series)");
         eprintln!("  --arch sm_100    Blackwell");
         eprintln!();
         eprintln!("Example:");
         eprintln!("  cargo oxide run {} --emit-nvvm-ir --arch sm_120", example);
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_string()).collect()
+    }
+
+    #[test]
+    fn build_parser_preserves_nested_cargo_and_test_separators() {
+        let args = strings(&[
+            "cargo-oxide",
+            "build",
+            "--cargo-target-dir",
+            "target/cuda",
+            "--",
+            "-p",
+            "gpu-app",
+            "--test",
+            "smoke",
+            "--",
+            "--nocapture",
+        ]);
+        assert!(has_passthrough_separator(&args));
+
+        let cli = Cli::try_parse_from(args).expect("passthrough CLI should parse");
+        let Commands::Build {
+            cargo_target_dir,
+            cargo_args,
+            ..
+        } = cli.command
+        else {
+            panic!("expected build command");
+        };
+        assert_eq!(cargo_target_dir, Some(PathBuf::from("target/cuda")));
+        assert_eq!(
+            cargo_args,
+            strings(&["-p", "gpu-app", "--test", "smoke", "--", "--nocapture"])
+        );
+    }
+
+    #[test]
+    fn empty_test_and_explicit_empty_build_passthrough_are_distinct() {
+        let test_cli = Cli::try_parse_from(["cargo-oxide", "test"])
+            .expect("cargo oxide test should accept no Cargo arguments");
+        let Commands::Test { cargo_args, .. } = test_cli.command else {
+            panic!("expected test command");
+        };
+        assert!(cargo_args.is_empty());
+
+        let build_args = strings(&["cargo-oxide", "build", "--"]);
+        assert!(has_passthrough_separator(&build_args));
+        let build_cli = Cli::try_parse_from(build_args).expect("empty passthrough should parse");
+        let Commands::Build { cargo_args, .. } = build_cli.command else {
+            panic!("expected build command");
+        };
+        assert!(cargo_args.is_empty());
+    }
+
+    #[test]
+    fn build_mode_uses_only_unambiguous_passthrough_signals() {
+        assert!(!use_build_passthrough(false, false, false, false, false));
+        assert!(use_build_passthrough(true, false, false, false, false));
+        assert!(use_build_passthrough(false, true, false, false, false));
+        assert!(use_build_passthrough(false, false, true, false, false));
+        assert!(use_build_passthrough(false, false, false, true, false));
+        assert!(use_build_passthrough(false, false, false, false, true));
     }
 }

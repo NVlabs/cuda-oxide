@@ -103,7 +103,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{
     DEVICE_EXTERN_PREFIX, DEVICE_PREFIX, INSTANTIATE_PREFIX, KERNEL_PREFIX, KERNEL_SCOPE_LOCAL,
-    RESERVED_ROOT, artifact_anchor_symbol, constant_symbol, kernel_symbol,
+    RESERVED_ROOT, artifact_anchor_symbol, artifact_anchor_symbol_v2, constant_symbol,
+    kernel_symbol,
 };
 use syn::{
     Expr, ExprCall, ExprMethodCall, ExprPath, FnArg, ForeignItem, GenericArgument, GenericParam,
@@ -461,10 +462,13 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
 /// Without this handshake the bundle was silently dropped and `load()`
 /// failed at runtime with `ModuleNotFound` (issue #72).
 ///
-/// Both sides derive the symbol name from `CARGO_PKG_NAME` and
-/// `CARGO_PKG_VERSION`: this proc macro reads them while rustc compiles
-/// the crate, and the codegen backend reads them inside the same rustc
-/// process, so the names always agree under cargo.
+/// Without an owner filter, both sides keep using the legacy package+version
+/// anchor for compatibility with older wrappers and backends. A non-empty
+/// owner filter activates the v2 package+version+crate+binary identity. That
+/// target-specific identity prevents an unselected binary from satisfying a
+/// selected library's reference (or vice versa); an unselected new macro emits
+/// no reference at all. The backend also keeps a weak legacy alias for older
+/// macro expansions in mixed-version builds.
 ///
 /// The reference is only emitted when the module is guaranteed to produce
 /// an artifact for this crate. Generic kernels are monomorphized (and
@@ -477,9 +481,10 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
 fn cuda_module_artifact_anchor_statements(
     kernels: &[CudaModuleKernel],
 ) -> syn::Result<TokenStream2> {
-    let (Ok(package_name), Ok(package_version)) = (
+    let (Ok(package_name), Ok(package_version), Ok(crate_name)) = (
         std::env::var("CARGO_PKG_NAME"),
         std::env::var("CARGO_PKG_VERSION"),
+        std::env::var("CARGO_CRATE_NAME"),
     ) else {
         // Not built by cargo (e.g. a raw rustc invocation): the backend
         // falls back to crate-name-based bundle naming and we cannot
@@ -487,6 +492,15 @@ fn cuda_module_artifact_anchor_statements(
         // undefined symbol.
         return Ok(TokenStream2::new());
     };
+
+    let owner_filter = std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE").ok();
+    let owner_selection = device_codegen_owner_selection(owner_filter.as_deref(), &crate_name);
+    if owner_selection == Some(false) {
+        // The backend deliberately omits this crate's artifact. Omitting the
+        // reference as well keeps the host link valid without pretending that
+        // a loadable bundle exists.
+        return Ok(TokenStream2::new());
+    }
 
     let non_generic: Vec<&CudaModuleKernel> =
         kernels.iter().filter(|kernel| !kernel.is_generic).collect();
@@ -517,7 +531,17 @@ fn cuda_module_artifact_anchor_statements(
         Some(quote! { #[cfg(any( #(#alternatives),* ))] })
     };
 
-    let anchor = artifact_anchor_symbol(&package_name, &package_version);
+    let binary_name = std::env::var("CARGO_BIN_NAME").ok();
+    let anchor = if owner_selection.is_some() {
+        artifact_anchor_symbol_v2(
+            &package_name,
+            &package_version,
+            &crate_name,
+            binary_name.as_deref(),
+        )
+    } else {
+        artifact_anchor_symbol(&package_name, &package_version)
+    };
     let anchor_name = LitStr::new(&anchor, proc_macro2::Span::call_site());
     Ok(quote! {
         // Keep-alive handshake with the codegen backend: see the macro
@@ -532,6 +556,18 @@ fn cuda_module_artifact_anchor_statements(
                 ::core::ptr::addr_of!(CUDA_OXIDE_BUNDLE_ANCHOR)
             })
         };
+    })
+}
+
+fn device_codegen_owner_selection(raw: Option<&str>, crate_name: &str) -> Option<bool> {
+    let crate_name = crate_name.trim().replace('-', "_");
+    raw.and_then(|raw| {
+        let owners: Vec<_> = raw
+            .split(',')
+            .map(|name| name.trim().replace('-', "_"))
+            .filter(|name| !name.is_empty())
+            .collect();
+        (!owners.is_empty()).then(|| owners.iter().any(|owner| owner == &crate_name))
     })
 }
 
@@ -4041,6 +4077,20 @@ mod tests {
             .expect("cuda_module expansion failed")
             .to_string()
             .replace(' ', "")
+    }
+
+    #[test]
+    fn device_codegen_owner_selection_matches_backend_name_rules() {
+        assert_eq!(device_codegen_owner_selection(None, "gpu_lib"), None);
+        assert_eq!(device_codegen_owner_selection(Some(" , "), "gpu_lib"), None);
+        assert_eq!(
+            device_codegen_owner_selection(Some("gpu-lib, math_gpu"), "gpu_lib"),
+            Some(true)
+        );
+        assert_eq!(
+            device_codegen_owner_selection(Some("gpu-lib, math_gpu"), "host_app"),
+            Some(false)
+        );
     }
 
     #[test]

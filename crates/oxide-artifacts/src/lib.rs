@@ -12,6 +12,8 @@
 use core::fmt;
 
 pub const ARTIFACT_SECTION_NAME: &str = ".oxart";
+#[cfg(feature = "object-write")]
+const ARTIFACT_ANCHOR_SECTION_NAME: &str = ".oxlink";
 pub const ARTIFACT_MAGIC: [u8; 8] = *b"OXIDEART";
 pub const ARTIFACT_VERSION: u16 = 1;
 
@@ -530,18 +532,86 @@ pub fn build_host_object_for_target(
     target: &str,
     anchor_symbol: Option<&str>,
 ) -> Result<Vec<u8>, ArtifactError> {
-    use object::write::{Object, Symbol, SymbolSection};
-    use object::{SectionFlags, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
-
     if section_data.is_empty() {
         return Err(ArtifactError::EmptyPayload);
     }
+
+    match anchor_symbol {
+        Some(anchor_symbol) => build_host_object_with_section(
+            ARTIFACT_SECTION_NAME,
+            section_data,
+            target,
+            &[(anchor_symbol, false)],
+        ),
+        None => build_host_object_with_section(ARTIFACT_SECTION_NAME, section_data, target, &[]),
+    }
+}
+
+/// Wrap an artifact blob with a target-specific anchor and a weak legacy alias.
+///
+/// New owner-filter-aware macros reference the target-specific symbol. The
+/// weak package-level alias keeps older macro expansions link-compatible while
+/// avoiding duplicate-symbol failures when one package has several targets.
+#[cfg(feature = "object-write")]
+pub fn build_host_object_for_target_with_legacy_anchor(
+    section_data: &[u8],
+    target: &str,
+    anchor_symbol: &str,
+    legacy_anchor_symbol: &str,
+) -> Result<Vec<u8>, ArtifactError> {
+    if section_data.is_empty() {
+        return Err(ArtifactError::EmptyPayload);
+    }
+    build_host_object_with_section(
+        ARTIFACT_SECTION_NAME,
+        section_data,
+        target,
+        &[(anchor_symbol, false), (legacy_anchor_symbol, true)],
+    )
+}
+
+/// Build a host object that only defines an artifact link-anchor symbol.
+///
+/// The CUDA backend uses this when an owner filter deliberately suppresses a
+/// crate's device artifact. Older `#[cuda_module]` expansions can still
+/// contain the legacy anchor reference, so the linker needs a matching weak
+/// definition even though no `.oxart` section should be embedded. Keeping the
+/// placeholder in a separate section means artifact discovery correctly sees
+/// no device bundle.
+#[cfg(feature = "object-write")]
+pub fn build_host_anchor_object_for_target(
+    target: &str,
+    anchor_symbol: &str,
+) -> Result<Vec<u8>, ArtifactError> {
+    if anchor_symbol.is_empty() {
+        return Err(ArtifactError::Malformed(
+            "embedded artifact anchor symbol is empty".to_string(),
+        ));
+    }
+
+    build_host_object_with_section(
+        ARTIFACT_ANCHOR_SECTION_NAME,
+        &[0],
+        target,
+        &[(anchor_symbol, true)],
+    )
+}
+
+#[cfg(feature = "object-write")]
+fn build_host_object_with_section(
+    section_name: &str,
+    section_data: &[u8],
+    target: &str,
+    anchor_symbols: &[(&str, bool)],
+) -> Result<Vec<u8>, ArtifactError> {
+    use object::write::{Object, Symbol, SymbolSection};
+    use object::{SectionFlags, SectionKind, SymbolFlags, SymbolKind, SymbolScope};
 
     let target = HostObjectTarget::parse(target)?;
     let mut object = Object::new(target.format, target.architecture, target.endianness);
     let section_id = object.add_section(
         Vec::new(),
-        ARTIFACT_SECTION_NAME.as_bytes().to_vec(),
+        section_name.as_bytes().to_vec(),
         SectionKind::Data,
     );
     let section = object.section_mut(section_id);
@@ -550,7 +620,7 @@ pub fn build_host_object_for_target(
         sh_flags: elf::SHF_ALLOC | elf::SHF_GNU_RETAIN,
     };
 
-    if let Some(anchor_symbol) = anchor_symbol {
+    for (anchor_symbol, weak) in anchor_symbols {
         // Global binding so the symbol can satisfy undefined references
         // from other objects (that is what triggers archive extraction);
         // `Linkage` scope so it stays hidden and never leaks into the
@@ -561,7 +631,7 @@ pub fn build_host_object_for_target(
             size: 0,
             kind: SymbolKind::Data,
             scope: SymbolScope::Linkage,
-            weak: false,
+            weak: *weak,
             section: SymbolSection::Section(section_id),
             flags: SymbolFlags::None,
         });
@@ -936,6 +1006,147 @@ mod tests {
 
         let file = object::File::parse(bytes.as_slice()).unwrap();
         assert_eq!(file.symbols().count(), 0);
+    }
+
+    /// A filtered crate still needs to satisfy the host macro's anchor
+    /// reference, but it must not look like it contains a device artifact.
+    #[cfg(all(feature = "object-read", feature = "object-write"))]
+    #[test]
+    fn anchor_only_object_defines_symbol_without_artifact_section() {
+        use object::{Object, ObjectSymbol};
+
+        let bytes = build_host_anchor_object_for_target(
+            "x86_64-unknown-linux-gnu",
+            "filtered_crate_anchor",
+        )
+        .unwrap();
+        let file = object::File::parse(bytes.as_slice()).unwrap();
+        let anchor = file
+            .symbols()
+            .find(|symbol| symbol.name() == Ok("filtered_crate_anchor"))
+            .expect("anchor symbol missing from placeholder object");
+
+        assert!(anchor.is_definition());
+        assert!(anchor.is_global());
+        assert!(anchor.is_weak());
+        assert!(
+            read_artifact_bundles_from_object_bytes(&bytes)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[cfg(feature = "object-write")]
+    #[test]
+    fn anchor_only_object_rejects_empty_symbol() {
+        assert!(matches!(
+            build_host_anchor_object_for_target("x86_64-unknown-linux-gnu", ""),
+            Err(ArtifactError::Malformed(_))
+        ));
+    }
+
+    #[cfg(all(feature = "object-read", feature = "object-write"))]
+    #[test]
+    fn target_anchor_object_also_defines_weak_legacy_alias() {
+        use object::{Object, ObjectSymbol};
+
+        let blob = sample_blob();
+        let bytes = build_host_object_for_target_with_legacy_anchor(
+            &blob,
+            "x86_64-unknown-linux-gnu",
+            "target_anchor",
+            "legacy_anchor",
+        )
+        .unwrap();
+        let file = object::File::parse(bytes.as_slice()).unwrap();
+        let target = file
+            .symbols()
+            .find(|symbol| symbol.name() == Ok("target_anchor"))
+            .expect("target-specific anchor missing");
+        let legacy = file
+            .symbols()
+            .find(|symbol| symbol.name() == Ok("legacy_anchor"))
+            .expect("legacy anchor alias missing");
+
+        assert!(target.is_definition());
+        assert!(!target.is_weak());
+        assert!(legacy.is_definition());
+        assert!(legacy.is_weak());
+        assert_eq!(
+            read_artifact_bundles_from_object_bytes(&bytes)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// A strong undefined reference must pull an archive member whose matching
+    /// compatibility alias is weak; otherwise old macros could link but lose
+    /// the actual `.oxart` payload.
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        feature = "object-read",
+        feature = "object-write"
+    ))]
+    #[test]
+    fn weak_legacy_alias_extracts_artifact_from_static_archive() {
+        use std::process::Command;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "oxide_artifact_weak_archive_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let object = build_host_object_for_target_with_legacy_anchor(
+            &sample_blob(),
+            "x86_64-unknown-linux-gnu",
+            "target_anchor",
+            "legacy_anchor",
+        )
+        .unwrap();
+        let object_path = root.join("artifact.o");
+        let archive_path = root.join("libartifact.a");
+        let source_path = root.join("main.c");
+        let binary_path = root.join("app");
+        std::fs::write(&object_path, object).unwrap();
+        std::fs::write(
+            &source_path,
+            b"extern const unsigned char legacy_anchor;\nint main(void) { return legacy_anchor; }\n",
+        )
+        .unwrap();
+
+        let ar = Command::new("ar")
+            .args(["crs"])
+            .arg(&archive_path)
+            .arg(&object_path)
+            .status()
+            .expect("`ar` is required for the static-archive anchor test");
+        assert!(ar.success(), "failed to create static archive");
+        let cc = Command::new("cc")
+            .arg(&source_path)
+            .arg(&archive_path)
+            .arg("-Wl,-z,noexecstack")
+            .arg("-o")
+            .arg(&binary_path)
+            .status()
+            .expect("a C linker driver is required for the anchor test");
+        assert!(
+            cc.success(),
+            "weak anchor did not resolve the host reference"
+        );
+
+        let executable = std::fs::read(&binary_path).unwrap();
+        let bundles = read_artifact_bundles_from_object_bytes(&executable).unwrap();
+        assert_eq!(bundles.len(), 1, "archive payload was not extracted");
+        assert_eq!(bundles[0].name, "demo");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(feature = "object-write")]

@@ -18,10 +18,10 @@
 //!
 //! `cargo install` always rewrites `~/.cargo/bin/cargo-oxide` on every
 //! upgrade, bumping its mtime. The cached `.so` is only ever written by
-//! step 4 below, so a binary newer than the cache is the canonical signal
+//! step 5 below, so a binary newer than the cache is the canonical signal
 //! that the user has just upgraded `cargo-oxide` and the cached backend
-//! no longer matches the binary loading it. When step 3 detects that, we
-//! drop both the cached `.so` *and* the cached source tree so that step 4
+//! no longer matches the binary loading it. When step 4 detects that, we
+//! drop both the cached `.so` *and* the cached source tree so that step 5
 //! re-clones fresh and rebuilds, rather than rebuilding from a clone that
 //! was taken whenever the user first installed.
 //!

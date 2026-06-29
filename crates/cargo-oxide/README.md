@@ -27,6 +27,7 @@ cargo oxide run vecadd              # build + run an example
 cargo oxide build vecadd            # compile only (no run)
 cargo oxide emit-ltoir vecadd --arch sm_100  # device code -> .ltoir (Tile/SIMT interop)
 cargo oxide build -- -p my_app      # arbitrary cargo build through cuda-oxide
+cargo oxide test                    # cargo test with cuda-oxide defaults
 cargo oxide test -- -p my_app       # arbitrary cargo test through cuda-oxide
 cargo oxide pipeline vecadd         # verbose pipeline dump
                                     # (MIR -> dialect-mir -> LLVM dialect -> LLVM IR -> PTX)
@@ -43,10 +44,10 @@ cargo oxide setup                   # explicitly build the codegen backend
 |------------------------------|----------------------------------|-------------------------------------------------|
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
 | `--arch <sm_XX>`             | run, build, test, pipeline, emit-ltoir | Target architecture override          |
-| `--features <F>`             | run, build examples, emit-ltoir  | Comma-separated cargo features to enable        |
+| `--features <F>`             | run, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
 | `-o, --output <P>`           | emit-ltoir                       | Output path for the `.ltoir` artifact           |
 | `--cargo-target-dir <PATH>`  | build/test passthrough           | Cargo target directory                          |
-| `--device-codegen-crate <LIST>` | build/test passthrough        | Device owner filter                             |
+| `--device-codegen-crate <LIST>` | build/test passthrough        | Comma-separated device owner crate filter       |
 | `--device-cfg <NAME>`        | build/test passthrough           | Append `--cfg NAME` to rustflags                |
 | `-v, --verbose`              | run, build, test, emit-ltoir     | Show detailed compilation output                |
 | `--no-fmad`                  | run, build, pipeline             | Disable FMA contraction (keep separate mul+add) |
@@ -107,9 +108,27 @@ arguments after `--`; cargo-oxide supplies the backend, target architecture,
 configured environment, and optional device owner filters.
 
 ```bash
+cargo oxide build --                           # plain `cargo build`
 cargo oxide build --arch sm_86 -- -p my_app --bin app --release
 cargo oxide build --cargo-target-dir target/cuda -- -p my_app --release
+cargo oxide build --device-codegen-crate gpu-kernels,math_gpu -- -p my_app
 ```
+
+The owner filter is matched against rustc crate names, so Cargo package hyphens
+are normalized to underscores (`gpu-kernels` matches `gpu_kernels`). The CUDA
+backend still compiles host code for every crate through LLVM; it emits device
+artifacts only for the listed owner crates.
+
+The filter controls compilation, not runtime module names. Code in an excluded
+crate or target must not call that target's generated `load()` function. In a
+package with several targets, embedded bundles still use the package name, so
+an excluded target's loader could otherwise find a selected sibling target's
+bundle.
+
+Passthrough builds include the effective codegen settings and backend build in
+Cargo's rustc fingerprint. Changing the target, output mode, FMA policy, owner
+list, configured codegen environment, or backend `.so` therefore regenerates
+device artifacts instead of reusing a stale Cargo result.
 
 ### `cargo oxide emit-ltoir <crate>`
 
@@ -135,11 +154,12 @@ alongside the artifact so the runtime uses the same format.
 
 ### `cargo oxide test`
 
-Runs arbitrary `cargo test` invocations through the cuda-oxide backend. Put all
-Cargo test arguments after `--`, including the test binary separator when
-needed.
+Runs `cargo test` through the cuda-oxide backend. With no extra arguments it
+runs the workspace's normal test selection. Put Cargo test arguments after
+`--`, including the test-binary separator when needed.
 
 ```bash
+cargo oxide test
 cargo oxide test -- -p my_app --release --test gpu_smoke -- --nocapture
 cargo oxide test --device-codegen-crate gpu_smoke -- -p my_app --test gpu_smoke
 ```
@@ -200,8 +220,8 @@ When `cargo oxide` needs the `librustc_codegen_cuda.so` backend, it searches in 
 4. **Cached `.so`** — checks `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`
 5. **Auto-fetch** — clones the cuda-oxide repo, builds, and caches (one-time)
 
-Project config can also provide the default architecture, extra rustflags, and
-child-process environment:
+Project config can also provide the default architecture, extra rustc flags,
+and child-process environment:
 
 ```toml
 backend = "/path/to/librustc_codegen_cuda.so"
@@ -211,6 +231,23 @@ extra-rustflags = ["--cfg", "my_device_cfg"]
 [env]
 MY_BUILD_FLAG = "1"
 ```
+
+Relative backend paths are resolved from the `.cargo` directory containing the
+config file. Each `extra-rustflags` array element remains one rustc argument,
+including values that contain spaces.
+
+Configuration values are defaults. Precedence is:
+
+1. explicit `cargo oxide` flags and internal artifact paths;
+2. environment variables inherited by `cargo oxide`;
+3. `.cargo/cuda-oxide.toml` defaults.
+
+Do not put `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` in the `[env]` table; use
+`extra-rustflags` for project defaults. cargo-oxide combines configured flags,
+inherited user flags, explicit `--device-cfg` values, and its required compiler
+flags in boundary-preserving `CARGO_ENCODED_RUSTFLAGS`. Required compiler flags
+are applied last so inherited settings cannot replace the cuda-oxide backend or
+disable its correctness-critical codegen options.
 
 ## Architecture
 

@@ -276,13 +276,14 @@
 //!
 //! ## Environment Variables
 //!
-//! | Variable               | Effect                               |
-//! |------------------------|--------------------------------------|
-//! | `CUDA_OXIDE_VERBOSE`   | Print detailed compilation progress  |
-//! | `CUDA_OXIDE_DUMP_MIR`  | Dump the `dialect-mir` module        |
-//! | `CUDA_OXIDE_DUMP_LLVM` | Dump the LLVM dialect module         |
-//! | `CUDA_OXIDE_PTX_DIR`   | Override PTX output directory        |
-//! | `CUDA_OXIDE_TARGET`    | Override GPU target (e.g., `sm_90a`) |
+//! | Variable                          | Effect                               |
+//! |-----------------------------------|--------------------------------------|
+//! | `CUDA_OXIDE_VERBOSE`              | Print detailed compilation progress  |
+//! | `CUDA_OXIDE_DUMP_MIR`             | Dump the `dialect-mir` module        |
+//! | `CUDA_OXIDE_DUMP_LLVM`            | Dump the LLVM dialect module         |
+//! | `CUDA_OXIDE_PTX_DIR`              | Override PTX output directory        |
+//! | `CUDA_OXIDE_TARGET`               | Override GPU target (e.g., `sm_90a`) |
+//! | `CUDA_OXIDE_DEVICE_CODEGEN_CRATE` | Filter device owner crate names      |
 //!
 //! ## Module Structure
 //!
@@ -329,6 +330,7 @@ use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_session::Session;
 use rustc_session::config::OutputFilenames;
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -376,18 +378,22 @@ pub struct CudaCodegenConfig {
     pub dump_llvm_dialect: bool,
     /// Override PTX output directory (defaults to current directory).
     pub ptx_output_dir: Option<std::path::PathBuf>,
+    /// When set, emit device code only for these normalized local crate names.
+    /// Host code still goes through the wrapped LLVM backend for every crate.
+    pub device_codegen_crates: Option<BTreeSet<String>>,
 }
 
 impl CudaCodegenConfig {
     /// Load configuration from environment variables.
     ///
-    /// | Variable                    | Config Field        |
-    /// |-----------------------------|---------------------|
-    /// | `CUDA_OXIDE_VERBOSE`        | `verbose`           |
-    /// | `CUDA_OXIDE_SHOW_RUSTC_MIR` | `dump_rustc_mir`    |
-    /// | `CUDA_OXIDE_DUMP_MIR`       | `dump_mir_dialect`  |
-    /// | `CUDA_OXIDE_DUMP_LLVM`      | `dump_llvm_dialect` |
-    /// | `CUDA_OXIDE_PTX_DIR`        | `ptx_output_dir`    |
+    /// | Variable                             | Config Field             |
+    /// |--------------------------------------|--------------------------|
+    /// | `CUDA_OXIDE_VERBOSE`                 | `verbose`                |
+    /// | `CUDA_OXIDE_SHOW_RUSTC_MIR`          | `dump_rustc_mir`         |
+    /// | `CUDA_OXIDE_DUMP_MIR`                | `dump_mir_dialect`       |
+    /// | `CUDA_OXIDE_DUMP_LLVM`               | `dump_llvm_dialect`      |
+    /// | `CUDA_OXIDE_PTX_DIR`                 | `ptx_output_dir`         |
+    /// | `CUDA_OXIDE_DEVICE_CODEGEN_CRATE`  | `device_codegen_crates`  |
     pub fn from_env() -> Self {
         Self {
             verbose: std::env::var("CUDA_OXIDE_VERBOSE").is_ok(),
@@ -397,8 +403,42 @@ impl CudaCodegenConfig {
             ptx_output_dir: std::env::var("CUDA_OXIDE_PTX_DIR")
                 .ok()
                 .map(std::path::PathBuf::from),
+            device_codegen_crates: parse_device_codegen_crates(
+                std::env::var("CUDA_OXIDE_DEVICE_CODEGEN_CRATE")
+                    .ok()
+                    .as_deref(),
+            ),
         }
     }
+
+    fn allows_device_codegen_for(&self, crate_name: &str) -> bool {
+        self.device_codegen_crates
+            .as_ref()
+            .is_none_or(|owners| owners.contains(&normalize_device_crate_name(crate_name)))
+    }
+}
+
+fn normalize_device_crate_name(name: &str) -> String {
+    name.trim().replace('-', "_")
+}
+
+fn parse_device_codegen_crates(raw: Option<&str>) -> Option<BTreeSet<String>> {
+    raw.and_then(|raw| {
+        let owners: BTreeSet<_> = raw
+            .split(',')
+            .map(normalize_device_crate_name)
+            .filter(|name| !name.is_empty())
+            .collect();
+        (!owners.is_empty()).then_some(owners)
+    })
+}
+
+fn should_codegen_device_crate(
+    config: &CudaCodegenConfig,
+    crate_name: &str,
+    contains_device_code: bool,
+) -> bool {
+    contains_device_code && config.allows_device_codegen_for(crate_name)
 }
 
 impl CodegenBackend for CudaCodegenBackend {
@@ -472,12 +512,49 @@ impl CodegenBackend for CudaCodegenBackend {
             let kernel_count = collector::count_kernels_in_cgus(tcx, mono_partitions.codegen_units);
             let device_fn_count =
                 collector::count_device_fns_in_cgus(tcx, mono_partitions.codegen_units);
-            let has_device_code = kernel_count > 0 || device_fn_count > 0;
+            let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
+            let owner_selected = self.config.allows_device_codegen_for(crate_name.as_str());
+            let contains_device_code = kernel_count > 0 || device_fn_count > 0;
+            let has_device_code = should_codegen_device_crate(
+                &self.config,
+                crate_name.as_str(),
+                contains_device_code,
+            );
             let mut artifact_objects = Vec::new();
+
+            if self.config.verbose && contains_device_code && !owner_selected {
+                eprintln!(
+                    "[rustc_codegen_cuda] Skipping device code for crate '{}' because it is not in CUDA_OXIDE_DEVICE_CODEGEN_CRATE",
+                    crate_name
+                );
+            }
+
+            // Older `#[cuda_module]` expansions always reference the legacy
+            // package-level anchor. An owner filter deliberately suppresses
+            // this crate's device artifact, but mixed-version host code must
+            // still link. Supply a weak legacy anchor-only object without an
+            // `.oxart` bundle. New owner-aware macros omit the reference for
+            // unselected crates and do not need the fallback.
+            if kernel_count > 0 && !owner_selected {
+                let output_dir = self
+                    .config
+                    .ptx_output_dir
+                    .clone()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+                match write_filtered_artifact_anchor_object(
+                    &output_dir,
+                    crate_name.as_str(),
+                    tcx.sess.target.llvm_target.as_ref(),
+                ) {
+                    Ok(path) => artifact_objects.push(path),
+                    Err(error) => tcx.dcx().fatal(format!(
+                        "[rustc_codegen_cuda] Failed to write filtered artifact anchor: {error}"
+                    )),
+                }
+            }
 
             // Only log for crates that have device code (reduces noise from dependency crates)
             if self.config.verbose && has_device_code {
-                let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
                 eprintln!(
                     "[rustc_codegen_cuda] Compiling crate '{}': {} CGUs, {} kernel(s), {} device fn(s)",
                     crate_name,
@@ -611,6 +688,7 @@ impl CodegenBackend for CudaCodegenBackend {
                                 &result,
                                 artifact,
                                 device_functions,
+                                self.config.device_codegen_crates.is_some(),
                             ) {
                                 Ok(path) => {
                                     if self.config.verbose {
@@ -709,6 +787,7 @@ fn write_device_artifact_object(
     result: &device_codegen::DeviceCodegenResult,
     artifact: &device_codegen::DeviceCodegenArtifact,
     functions: &[collector::CollectedFunction<'_>],
+    use_target_specific_anchor: bool,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let bundle_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| output_name.to_string());
     let payload_kind = match artifact.kind {
@@ -746,16 +825,56 @@ fn write_device_artifact_object(
     // this crate is a library, the artifact object becomes an rlib archive
     // member, and the linker only extracts it if some other object holds an
     // undefined reference to a symbol defined here. The `#[cuda_module]`
-    // macro emits that reference from the generated `load_named()`, derived
-    // from the same CARGO_PKG_NAME / CARGO_PKG_VERSION environment that this
-    // rustc invocation sees, so the two names always match. Without the
-    // anchor, library-crate bundles were dead-stripped and `load()` failed
-    // at runtime with ModuleNotFound (issue #72).
+    // macro emits that reference from the generated `load_named()`. Normal
+    // builds preserve the legacy package-level symbol. Owner-filtered builds
+    // use a target-specific v2 symbol plus a weak legacy alias, so an older
+    // macro still links without letting a filtered target hide a selected
+    // target's artifact. Without an anchor, library-crate bundles were
+    // dead-stripped and `load()` failed at runtime with ModuleNotFound
+    // (issue #72).
+    let package_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    let legacy_anchor =
+        reserved_oxide_symbols::artifact_anchor_symbol(&bundle_name, &package_version);
+    let object = if use_target_specific_anchor {
+        let binary_name = std::env::var("CARGO_BIN_NAME").ok();
+        let target_anchor = reserved_oxide_symbols::artifact_anchor_symbol_v2(
+            &bundle_name,
+            &package_version,
+            output_name,
+            binary_name.as_deref(),
+        );
+        oxide_artifacts::build_host_object_for_target_with_legacy_anchor(
+            &blob,
+            host_target,
+            &target_anchor,
+            &legacy_anchor,
+        )?
+    } else {
+        oxide_artifacts::build_host_object_for_target(&blob, host_target, Some(&legacy_anchor))?
+    };
+    write_artifact_object(output_dir, output_name, host_target, &object, "embed")
+}
+
+fn write_filtered_artifact_anchor_object(
+    output_dir: &Path,
+    output_name: &str,
+    host_target: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let bundle_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| output_name.to_string());
     let package_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
     let anchor_symbol =
         reserved_oxide_symbols::artifact_anchor_symbol(&bundle_name, &package_version);
-    let object =
-        oxide_artifacts::build_host_object_for_target(&blob, host_target, Some(&anchor_symbol))?;
+    let object = oxide_artifacts::build_host_anchor_object_for_target(host_target, &anchor_symbol)?;
+    write_artifact_object(output_dir, output_name, host_target, &object, "anchor")
+}
+
+fn write_artifact_object(
+    output_dir: &Path,
+    output_name: &str,
+    host_target: &str,
+    object: &[u8],
+    kind: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let safe_output_name = sanitize_path_component(output_name);
     let artifact_id = ARTIFACT_OBJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
     let object_dir = output_dir
@@ -764,7 +883,7 @@ fn write_device_artifact_object(
         .join(sanitize_path_component(host_target));
     std::fs::create_dir_all(&object_dir)?;
     let object_path = object_dir.join(format!(
-        "{safe_output_name}.{}.{artifact_id}.embed.o",
+        "{safe_output_name}.{}.{artifact_id}.{kind}.o",
         std::process::id(),
     ));
     std::fs::write(&object_path, object)?;
@@ -820,4 +939,47 @@ pub fn __rustc_codegen_backend() -> Box<dyn CodegenBackend> {
         config,
         llvm_backend,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_codegen_owner_filter_normalizes_and_matches_crate_names() {
+        let owners = parse_device_codegen_crates(Some(" gpu-kernels,math_gpu , gpu-kernels "))
+            .expect("an explicitly configured filter");
+        assert_eq!(
+            owners,
+            BTreeSet::from(["gpu_kernels".to_string(), "math_gpu".to_string()])
+        );
+
+        let config = CudaCodegenConfig {
+            device_codegen_crates: Some(owners),
+            ..CudaCodegenConfig::default()
+        };
+        assert!(config.allows_device_codegen_for("gpu_kernels"));
+        assert!(config.allows_device_codegen_for("gpu-kernels"));
+        assert!(config.allows_device_codegen_for("math_gpu"));
+        assert!(!config.allows_device_codegen_for("host_app"));
+        assert!(should_codegen_device_crate(&config, "gpu_kernels", true));
+        assert!(!should_codegen_device_crate(&config, "host_app", true));
+        assert!(!should_codegen_device_crate(&config, "gpu_kernels", false));
+    }
+
+    #[test]
+    fn absent_owner_filter_allows_device_codegen_for_every_crate() {
+        let config = CudaCodegenConfig::default();
+        assert!(config.allows_device_codegen_for("gpu_kernels"));
+        assert!(config.allows_device_codegen_for("host_app"));
+    }
+
+    #[test]
+    fn empty_owner_filter_is_treated_as_unset() {
+        let config = CudaCodegenConfig {
+            device_codegen_crates: parse_device_codegen_crates(Some(" , ")),
+            ..CudaCodegenConfig::default()
+        };
+        assert!(config.allows_device_codegen_for("gpu_kernels"));
+    }
 }
