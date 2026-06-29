@@ -48,7 +48,7 @@
 //! ```
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
-use crate::convert::types::{convert_type, get_type_size};
+use crate::convert::types::{convert_type, get_type_size, validate_initialized_global_layout};
 use crate::helpers;
 use dialect_mir::types::MirPtrType;
 use llvm_export::attributes::IntegerOverflowFlagsAttr;
@@ -666,11 +666,13 @@ pub fn convert_global_alloc_dc(
             ctx,
             op,
             device_globals,
-            &global_key,
-            mir_global_type,
-            alignment,
-            addr_space,
-            initializer_hex.as_deref(),
+            DeviceGlobalSpec {
+                key: &global_key,
+                mir_type: mir_global_type,
+                alignment,
+                addr_space,
+                initializer_hex: initializer_hex.as_deref(),
+            },
         )?
     };
 
@@ -681,45 +683,52 @@ pub fn convert_global_alloc_dc(
     Ok(())
 }
 
+struct DeviceGlobalSpec<'a> {
+    key: &'a str,
+    mir_type: TypeHandle,
+    alignment: u64,
+    addr_space: u32,
+    initializer_hex: Option<&'a str>,
+}
+
 fn create_device_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     device_globals: &mut DeviceGlobalsMap,
-    global_key: &str,
-    mir_global_type: TypeHandle,
-    alignment: u64,
-    addr_space: u32,
-    initializer_hex: Option<&str>,
+    spec: DeviceGlobalSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     // An explicit initializer is already the evaluated Rust allocation image.
     // Keep it as `[N x i8]` all the way through LLVM instead of rebuilding a
     // typed constant. Typed reconstruction can lose NaN payload bits and needs
     // a second, easily-divergent implementation of Rust struct padding.
-    let semantic_llvm_type = convert_type(ctx, mir_global_type).map_err(anyhow_to_pliron)?;
-    let (llvm_global_type, alignment) = if let Some(initializer_hex) = initializer_hex {
+    let semantic_llvm_type = convert_type(ctx, spec.mir_type).map_err(anyhow_to_pliron)?;
+    let (llvm_global_type, alignment) = if let Some(initializer_hex) = spec.initializer_hex {
         let byte_count = initializer_hex_byte_count(initializer_hex).map_err(anyhow_to_pliron)?;
-        if alignment == 0 {
+        if spec.alignment == 0 {
             return Err(anyhow_to_pliron(anyhow::anyhow!(
                 "device global initializer is missing its evaluated Rust allocation alignment"
             )));
         }
+        validate_initialized_global_layout(ctx, spec.mir_type, byte_count, spec.alignment)
+            .map_err(anyhow_to_pliron)?;
         let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
         (
             ArrayType::get(ctx, i8_ty.into(), byte_count).into(),
-            alignment,
+            spec.alignment,
         )
     } else {
-        (semantic_llvm_type, alignment)
+        (semantic_llvm_type, spec.alignment)
     };
 
     // Constant-memory globals reuse the Rust-side mangled name so host code can
     // resolve them by name via `cuModuleGetGlobal`. Ordinary device globals
     // are private to the kernel and get a counter-based unique name.
     let name: pliron::identifier::Identifier =
-        if addr_space == llvm_export::types::address_space::CONSTANT {
-            global_key.try_into().map_err(|e| {
+        if spec.addr_space == llvm_export::types::address_space::CONSTANT {
+            spec.key.try_into().map_err(|e| {
                 anyhow_to_pliron(anyhow::anyhow!(
-                    "constant global_key {global_key:?} is not a valid identifier: {e:?}"
+                    "constant global_key {:?} is not a valid identifier: {e:?}",
+                    spec.key
                 ))
             })?
         } else {
@@ -734,8 +743,8 @@ fn create_device_global(
     } else {
         llvm::GlobalOp::new(ctx, name.clone(), llvm_global_type)
     };
-    global_op.set_address_space(ctx, addr_space);
-    if let Some(initializer_hex) = initializer_hex {
+    global_op.set_address_space(ctx, spec.addr_space);
+    if let Some(initializer_hex) = spec.initializer_hex {
         global_op.set_initializer_hex(ctx, initializer_hex);
     }
 
@@ -752,7 +761,7 @@ fn create_device_global(
         .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("Module is empty")))?;
 
     global_op.get_operation().insert_at_front(module_block, ctx);
-    device_globals.insert(global_key.to_string(), name.clone());
+    device_globals.insert(spec.key.to_string(), name.clone());
 
     Ok(name)
 }

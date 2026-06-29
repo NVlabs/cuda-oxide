@@ -47,3 +47,11 @@ launches, proving it is global device storage and not per-block shared memory.
 Non-zero immutable static initializers are emitted as the exact evaluated byte
 image in LLVM/PTX, so device code can read compile-time data without losing
 padding, field offsets, or floating-point payload bits.
+
+Before emitting those bytes, cuda-oxide also proves that its typed field loads
+use the same offsets and size as rustc. Layouts that are not modeled exactly
+fail at compile time instead of producing a wrong value. This currently
+includes packed structs, non-empty tuples, niche-encoded enums, unions, and
+constant pointers to an interior byte offset of a static. Initializers that
+contain pointer relocations remain unsupported for the same reason: replacing a
+relocation with literal zero bytes would silently turn the pointer into null.

@@ -1771,13 +1771,36 @@ pub fn translate_operand(
             // statics have already been intercepted above and remain addrspace 3.
             // Statics tagged `#[constant]` (detected by the mangled symbol
             // prefix) instead lower into constant memory (addrspace 4).
-            if let Some(static_def) = static_def_from_constant(constant)?
-                && let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
+            if let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
+                && let Some(static_target) = static_target_from_constant(constant, loc.clone())?
             {
+                if static_target.byte_offset != 0 {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "constant pointer into device static {} has byte offset {}; cuda-oxide does not yet preserve interior-static pointer addends",
+                            static_target.static_def.name(),
+                            static_target.byte_offset
+                        ))
+                    );
+                }
+                let static_ty = static_target.static_def.ty();
+                let pointee_mir_ty = types::translate_type(ctx, &pointee_ty)?;
+                let static_mir_ty = types::translate_type(ctx, &static_ty)?;
+                if pointee_mir_ty != static_mir_ty {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "constant pointer to device static {} has pointee type {:?}, but the full static has type {:?}; pointers to static subobjects or unsized coercions are not yet supported",
+                            static_target.static_def.name(),
+                            pointee_ty,
+                            static_ty
+                        ))
+                    );
+                }
                 return translate_static_global_pointer(
                     ctx,
-                    &static_def,
-                    &pointee_ty,
+                    &static_target.static_def,
                     is_mutable,
                     block_ptr,
                     prev_op,
@@ -4759,6 +4782,22 @@ fn translate_ptr_to_array_constant(
         ptr_ty.pointee
     };
 
+    let rust_array_ty = match constant.const_.ty().kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(pointee, _))
+        | rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, pointee, _)) => {
+            pointee
+        }
+        _ => constant.const_.ty(),
+    };
+    if let Some(union_name) = stored_type_union_name(rust_array_ty, &mut Vec::new()) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "promoted array initializer contains union `{union_name}`; initialized union storage is not yet supported"
+            ))
+        );
+    }
+
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
@@ -7121,11 +7160,20 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
 
 /// Resolve a constant pointer/reference to the Rust static it points at, if any.
 ///
-/// Null pointers and pointers to anonymous memory allocations deliberately return
-/// `None`; they should continue through normal constant handling.
-fn static_def_from_constant(
+/// The outer allocation also stores the pointer's byte addend. Keep it next to
+/// the target definition so an interior pointer can never silently degrade to
+/// the static's base address. Null pointers and pointers to anonymous memory
+/// allocations deliberately return `None`; they continue through normal
+/// constant handling.
+struct StaticPointerTarget {
+    static_def: rustc_public::mir::mono::StaticDef,
+    byte_offset: u64,
+}
+
+fn static_target_from_constant(
     constant: &mir::ConstOperand,
-) -> TranslationResult<Option<rustc_public::mir::mono::StaticDef>> {
+    loc: Location,
+) -> TranslationResult<Option<StaticPointerTarget>> {
     use rustc_public::mir::alloc::GlobalAlloc;
 
     let ConstantKind::Allocated(alloc) = constant.const_.kind() else {
@@ -7135,12 +7183,33 @@ fn static_def_from_constant(
         return Ok(None);
     }
 
-    let Some((_, prov)) = alloc.provenance.ptrs.first() else {
+    let Some(&(provenance_offset, prov)) = alloc.provenance.ptrs.first() else {
         return Ok(None);
     };
+    if alloc.provenance.ptrs.len() != 1 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "constant pointer contains {} provenance entries; expected one static target",
+                alloc.provenance.ptrs.len()
+            ))
+        );
+    }
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let byte_offset = alloc
+        .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
+        .map_err(|e| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read constant static-pointer addend: {e:?}"
+            )))
+        })? as u64;
 
     match GlobalAlloc::from(prov.0) {
-        GlobalAlloc::Static(static_def) => Ok(Some(static_def)),
+        GlobalAlloc::Static(static_def) => Ok(Some(StaticPointerTarget {
+            static_def,
+            byte_offset,
+        })),
         _ => Ok(None),
     }
 }
@@ -7343,7 +7412,6 @@ fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> S
 fn translate_static_global_pointer(
     ctx: &mut Context,
     static_def: &rustc_public::mir::mono::StaticDef,
-    pointee_ty: &rustc_public::ty::Ty,
     is_mutable: bool,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -7351,7 +7419,17 @@ fn translate_static_global_pointer(
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     let initializer = static_initializer_data(static_def, loc.clone())?;
     let initializer_hex = bytes_to_hex(&initializer.bytes);
-    let is_constant = is_constant_wrapper_type(pointee_ty);
+    let static_ty = static_def.ty();
+    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} contains union `{union_name}`; initialized union storage is not yet supported",
+                static_def.name()
+            ))
+        );
+    }
+    let is_constant = is_constant_wrapper_type(&static_ty);
 
     let global_key: String = if is_constant {
         rustc_public::mir::mono::Instance::from(*static_def)
@@ -7361,7 +7439,7 @@ fn translate_static_global_pointer(
         static_def.name()
     };
 
-    let global_ty = types::translate_type(ctx, pointee_ty)?;
+    let global_ty = types::translate_type(ctx, &static_ty)?;
     let ptr_ty = if is_constant {
         dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
     } else {
@@ -7397,6 +7475,53 @@ fn translate_static_global_pointer(
 
     let val = global_alloc.get_operation().deref(ctx).get_result(0);
     Ok((val, Some(global_alloc.get_operation())))
+}
+
+/// Return the first union stored inline in `ty`.
+///
+/// Pointer pointees are deliberately not followed: their bytes are not part of
+/// the containing allocation (and non-null pointer provenance is rejected by a
+/// separate check). Arrays, tuples, structs, and enum payloads are inline and
+/// must be searched recursively.
+fn stored_type_union_name(
+    ty: rustc_public::ty::Ty,
+    visited: &mut Vec<rustc_public::ty::Ty>,
+) -> Option<String> {
+    use rustc_public::ty::{AdtKind, RigidTy, TyKind};
+
+    if visited.contains(&ty) {
+        return None;
+    }
+    visited.push(ty);
+
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) => {
+            if matches!(adt_def.kind(), AdtKind::Union) {
+                return Some(adt_def.trimmed_name());
+            }
+            for variant in adt_def.variants() {
+                for field in variant.fields() {
+                    if let Some(name) = stored_type_union_name(field.ty_with_args(&substs), visited)
+                    {
+                        return Some(name);
+                    }
+                }
+            }
+            None
+        }
+        TyKind::RigidTy(RigidTy::Array(element, _)) | TyKind::RigidTy(RigidTy::Slice(element)) => {
+            stored_type_union_name(element, visited)
+        }
+        TyKind::RigidTy(RigidTy::Tuple(elements)) => {
+            for element in elements.iter() {
+                if let Some(name) = stored_type_union_name(*element, visited) {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 fn set_global_initializer_hex_attr(ctx: &mut Context, op: Ptr<Operation>, initializer_hex: &str) {
