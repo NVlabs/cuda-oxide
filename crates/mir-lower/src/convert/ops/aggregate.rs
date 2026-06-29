@@ -1192,6 +1192,7 @@ mod tests {
     use dialect_mir::ops as mir;
     use dialect_mir::types::{EnumVariant, MirPtrType, MirSliceType, MirStructType};
     use pliron::builtin::attributes::IntegerAttr;
+    use pliron::common_traits::Verify;
 
     fn insert_indices(ctx: &Context, inserts: &[llvm::InsertValueOp]) -> Vec<Vec<u32>> {
         inserts.iter().map(|op| op.indices(ctx)).collect()
@@ -1243,8 +1244,8 @@ mod tests {
     fn construct_slice_lowers_to_ptr_len_insert_values() {
         let mut ctx = make_ctx();
 
-        let i8_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Unsigned).into();
-        let usize_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Unsigned).into();
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, i8_ty, false).into();
         let slice_ty: TypeHandle = MirSliceType::get(&mut ctx, i8_ty).into();
 
@@ -1273,6 +1274,27 @@ mod tests {
             vec![vec![0], vec![1]],
             "slice construction must insert data pointer at slot 0 and length at slot 1"
         );
+        let first_insert = inserts[0].get_operation();
+        let second_insert = inserts[1].get_operation();
+        assert_eq!(
+            first_insert.deref(&ctx).get_operand(1),
+            data_ptr,
+            "slice slot 0 must receive the original data pointer"
+        );
+        assert_eq!(
+            second_insert.deref(&ctx).get_operand(0),
+            first_insert.deref(&ctx).get_result(0),
+            "the length insertion must consume the aggregate produced by the pointer insertion"
+        );
+        assert_eq!(
+            second_insert.deref(&ctx).get_operand(1),
+            len,
+            "slice slot 1 must receive the original length"
+        );
+        assert!(
+            inserts.iter().all(|insert| insert.verify(&ctx).is_ok()),
+            "both slice insertions must satisfy LLVM dialect verification"
+        );
         assert_eq!(
             count_ops::<llvm::UndefOp>(&ctx, &body),
             1,
@@ -1287,8 +1309,8 @@ mod tests {
     fn construct_struct_uses_layout_slots_and_skips_zst() {
         let mut ctx = make_ctx();
 
-        let i8_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Signless).into();
-        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let (struct_ty, zst_ty) = padded_struct_with_zst_ty(&mut ctx);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![i8_ty, i64_ty], vec![]);
@@ -1317,6 +1339,27 @@ mod tests {
             vec![vec![0], vec![2]],
             "non-ZST fields must be inserted at their layout slots, skipping padding and ZSTs"
         );
+        let first_insert = inserts[0].get_operation();
+        let second_insert = inserts[1].get_operation();
+        assert_eq!(
+            first_insert.deref(&ctx).get_operand(1),
+            a,
+            "struct slot 0 must receive field `a`"
+        );
+        assert_eq!(
+            second_insert.deref(&ctx).get_operand(0),
+            first_insert.deref(&ctx).get_result(0),
+            "field `b` must be inserted into the aggregate containing field `a`"
+        );
+        assert_eq!(
+            second_insert.deref(&ctx).get_operand(1),
+            b,
+            "struct slot 2 must receive field `b`"
+        );
+        assert!(
+            inserts.iter().all(|insert| insert.verify(&ctx).is_ok()),
+            "both struct insertions must satisfy LLVM dialect verification"
+        );
     }
 
     /// Extracting a ZST field must not emit `extract_value`: the field has no
@@ -1326,8 +1369,8 @@ mod tests {
     fn extract_zst_field_lowers_to_undef_without_extract_value() {
         let mut ctx = make_ctx();
 
-        let i8_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Signless).into();
-        let i64_ty: TypeHandle = IntegerType::get(&mut ctx, 64, Signedness::Signless).into();
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
         let (struct_ty, zst_ty) = padded_struct_with_zst_ty(&mut ctx);
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![i8_ty, i64_ty], vec![]);
@@ -1389,7 +1432,7 @@ mod tests {
     fn construct_enum_uses_declared_discriminant_not_variant_index() {
         let mut ctx = make_ctx();
 
-        let discr_ty: TypeHandle = IntegerType::get(&mut ctx, 8, Signedness::Signed).into();
+        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signed).into();
         let enum_ty: TypeHandle = MirEnumType::get(
             &mut ctx,
             "OrderingLike".to_string(),
@@ -1428,18 +1471,25 @@ mod tests {
             vec![vec![0]],
             "unit enum construction should insert only the discriminant tag"
         );
-
-        let integer_constants: Vec<String> = find_all::<llvm::ConstantOp>(&ctx, &body)
-            .into_iter()
-            .filter_map(|op| {
-                op.get_value(&ctx)
-                    .downcast_ref::<IntegerAttr>()
-                    .map(|attr| attr.value().to_string_unsigned_decimal())
-            })
-            .collect();
-
+        let tag_insert = &inserts[0];
         assert!(
-            integer_constants.iter().any(|v| v == "255"),
+            tag_insert.verify(&ctx).is_ok(),
+            "the enum tag insertion must satisfy LLVM dialect verification"
+        );
+        let tag = tag_insert.get_operation().deref(&ctx).get_operand(1);
+        let tag_def = tag
+            .defining_op()
+            .expect("the inserted enum tag must have a defining operation");
+        let tag_constant = Operation::get_op::<llvm::ConstantOp>(tag_def, &ctx)
+            .expect("the inserted enum tag must be defined by llvm.constant");
+        let tag_attr = tag_constant.get_value(&ctx);
+        let tag_integer = tag_attr
+            .downcast_ref::<IntegerAttr>()
+            .expect("the inserted enum tag must be an integer constant");
+        assert_eq!(tag_integer.value().bw(), 8, "the enum tag must be 8-bit");
+        assert_eq!(
+            tag_integer.value().to_u64(),
+            255,
             "Less must lower to its declared i8 bit-pattern 255, not variant index 0"
         );
     }
