@@ -58,7 +58,8 @@ use dialect_nvvm::ops::{
     MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
     MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
     MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp,
-    MinBf16x2Op, MulBf16x2Op, NanosleepOp, NegBf16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
+    MinBf16x2Op, MovmatrixTransB16Op, MulBf16x2Op, NanosleepOp, NegBf16x2Op,
+    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
     NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp,
     ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp,
     ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp,
@@ -3855,6 +3856,25 @@ impl MirToLlvmConversion for StmatrixM8n8X2TransOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::stmatrix::convert_m8n8_x2_trans(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+// ---- NVVM WMMA ops ---------------------------------------------------------
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MovmatrixTransB16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_movmatrix_trans_b16(
             ctx,
             rewriter,
             self.get_operation(),

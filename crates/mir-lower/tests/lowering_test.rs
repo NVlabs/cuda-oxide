@@ -2873,3 +2873,35 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
 
     Ok(())
 }
+
+// =============================================================================
+// WMMA (movmatrix) lowering test
+// =============================================================================
+
+#[test]
+fn test_movmatrix_trans_b16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+
+    let a_val = entry.deref(&ctx).get_argument(0);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MovmatrixTransB16Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![a_val],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "movmatrix.sync.aligned.m8n8.trans.b16",
+    )
+}

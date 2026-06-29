@@ -3960,6 +3960,24 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
+        // WMMA (warp-level matrix) operations (from intrinsics::wmma)
+        // =================================================================
+        "cuda_device::wmma::movmatrix_trans_b16" => {
+            Ok(Some(intrinsics::wmma::emit_movmatrix_trans_b16(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+
+        // =================================================================
         // bf16x2 packed arithmetic (from intrinsics::bf16x2)
         // =================================================================
         "cuda_device::bf16x2::fma_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_fma_bf16x2(
