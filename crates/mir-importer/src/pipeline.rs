@@ -1225,6 +1225,24 @@ fn select_target(features: DetectedFeatures) -> &'static str {
     }
 }
 
+/// Maps the selected GPU target to the PTX ISA feature passed to LLVM's NVPTX
+/// backend.
+///
+/// `-mcpu=sm_XX` is not enough for `llc`: without an explicit PTX ISA feature,
+/// stack intrinsics such as `llvm.stacksave` / `llvm.stackrestore` are treated
+/// as unsupported even for modern SM targets. Keep Ampere on PTX 7.6 for broad
+/// compatibility and raise the ISA floor for architectures whose selected
+/// features require newer PTX.
+fn select_ptx_mattr(target: &str) -> &'static str {
+    match arch_major(target) {
+        Some(0..=8) => "+ptx76",
+        Some(9) => "+ptx80",
+        Some(10 | 11) => "+ptx86",
+        Some(_) => "+ptx87",
+        None => "+ptx76",
+    }
+}
+
 /// Does `arch` (e.g. `"sm_120a"`, `"sm_90"`) support the kernel's detected
 /// features?
 ///
@@ -1454,7 +1472,8 @@ fn generate_ptx(
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
     llc_cmd
         .arg("-march=nvptx64")
-        .arg(format!("-mcpu={}", target));
+        .arg(format!("-mcpu={}", target))
+        .arg(format!("-mattr={}", select_ptx_mattr(&target)));
     // Full-debug (`-G`-style): run llc at -O0 so its own mem2reg/SROA does not
     // promote the stack slots we deliberately kept in memory, which would
     // invalidate the `llvm.dbg.declare` locations cuda-gdb reads.
@@ -2053,6 +2072,17 @@ mod tests {
         assert_eq!(select_target(DetectedFeatures::Sm90), "sm_90");
         assert_eq!(select_target(DetectedFeatures::Sm80), "sm_80");
         assert_eq!(select_target(DetectedFeatures::Basic), "sm_80");
+    }
+
+    #[test]
+    fn test_select_ptx_mattr_tracks_arch_floor() {
+        assert_eq!(select_ptx_mattr("sm_80"), "+ptx76");
+        assert_eq!(select_ptx_mattr("sm_86"), "+ptx76");
+        assert_eq!(select_ptx_mattr("sm_90a"), "+ptx80");
+        assert_eq!(select_ptx_mattr("sm_100"), "+ptx86");
+        assert_eq!(select_ptx_mattr("sm_100a"), "+ptx86");
+        assert_eq!(select_ptx_mattr("sm_120"), "+ptx87");
+        assert_eq!(select_ptx_mattr("nvvm-ir"), "+ptx76");
     }
 
     #[test]
