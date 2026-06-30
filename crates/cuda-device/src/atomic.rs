@@ -563,3 +563,69 @@ define_float_atomic! {
     /// 64-bit float atomic, **system scope** (`.sys`).
     pub struct SystemAtomicF64(f64);
 }
+
+// =============================================================================
+// Packed Atomic Add (f16x2, bf16x2)
+//
+// These are standalone functions (not atomic-type methods) because the
+// hardware operates on raw `u32` words carrying two packed 16-bit lanes.
+// They bypass the scoped-type system and use `atom.global` directly.
+// =============================================================================
+
+/// Packed f16x2 atomic add on global memory.
+///
+/// Atomically adds two packed f16 lanes in `val` to the two packed f16 lanes
+/// at `*addr`, stores the element-wise sum, and returns the **previous** value.
+///
+/// Both `val` and the return value are `u32` words carrying two f16 values
+/// (low 16 bits = first lane, high 16 bits = second lane).
+///
+/// # PTX
+///
+/// ```ptx
+/// atom.global.add.noftz.f16x2 %old, [%addr], %val;
+/// ```
+///
+/// `.noftz` = no flush-to-zero: denormalized f16 values are preserved.
+///
+/// # Supported on
+///
+/// - `sm_70+` (Volta onwards).
+///
+/// # Safety
+///
+/// `addr` must point to a valid, naturally-aligned `u32` in global memory.
+#[inline(never)]
+pub fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
+    let _ = (addr, val);
+    unreachable!("atom_add_f16x2 called outside CUDA kernel context")
+}
+
+/// Packed bf16x2 atomic add on global memory.
+///
+/// Atomically adds two packed bf16 lanes in `val` to the two packed bf16 lanes
+/// at `*addr`, stores the element-wise sum, and returns the **previous** value.
+///
+/// Both `val` and the return value are `u32` words carrying two bf16 values
+/// (low 16 bits = first lane, high 16 bits = second lane).
+///
+/// # PTX
+///
+/// ```ptx
+/// atom.global.add.noftz.bf16x2 %old, [%addr], %val;
+/// ```
+///
+/// `.noftz` = no flush-to-zero: denormalized bf16 values are preserved.
+///
+/// # Supported on
+///
+/// - `sm_80+` (Ampere onwards).
+///
+/// # Safety
+///
+/// `addr` must point to a valid, naturally-aligned `u32` in global memory.
+#[inline(never)]
+pub fn atom_add_bf16x2(addr: *mut u32, val: u32) -> u32 {
+    let _ = (addr, val);
+    unreachable!("atom_add_bf16x2 called outside CUDA kernel context")
+}
