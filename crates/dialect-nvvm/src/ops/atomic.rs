@@ -513,6 +513,80 @@ impl NvvmAtomicOpInterface for NvvmAtomicCmpxchgOp {
 }
 
 // =============================================================================
+// NvvmAtomAddF16x2Op
+// =============================================================================
+
+/// Packed f16x2 atomic add on global memory.
+///
+/// Atomically adds two packed f16 lanes element-wise, stores the sum, and
+/// returns the **previous** packed value.
+///
+/// Lowered to inline PTX:
+/// ```ptx
+/// atom.global.add.noftz.f16x2 $0, [$1], $2;
+/// ```
+///
+/// # Operands
+///
+/// - `addr` (ptr): pointer to the packed f16x2 value in global memory
+/// - `val`  (u32): packed f16x2 addend
+///
+/// # Results
+///
+/// - `old` (u32): the previous packed f16x2 value at `*addr`
+#[pliron_op(
+    name = "nvvm.atom_add_f16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddF16x2Op;
+
+impl NvvmAtomAddF16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        NvvmAtomAddF16x2Op { op }
+    }
+}
+
+// =============================================================================
+// NvvmAtomAddBf16x2Op
+// =============================================================================
+
+/// Packed bf16x2 atomic add on global memory.
+///
+/// Atomically adds two packed bf16 lanes element-wise, stores the sum, and
+/// returns the **previous** packed value.
+///
+/// Lowered to inline PTX:
+/// ```ptx
+/// atom.global.add.noftz.bf16x2 $0, [$1], $2;
+/// ```
+///
+/// # Operands
+///
+/// - `addr` (ptr): pointer to the packed bf16x2 value in global memory
+/// - `val`  (u32): packed bf16x2 addend
+///
+/// # Results
+///
+/// - `old` (u32): the previous packed bf16x2 value at `*addr`
+#[pliron_op(
+    name = "nvvm.atom_add_bf16x2",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddBf16x2Op;
+
+impl NvvmAtomAddBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        NvvmAtomAddBf16x2Op { op }
+    }
+}
+
+// =============================================================================
 // Registration
 // =============================================================================
 
@@ -528,4 +602,6 @@ pub fn register(ctx: &mut Context) {
     NvvmAtomicStoreOp::register(ctx);
     NvvmAtomicRmwOp::register(ctx);
     NvvmAtomicCmpxchgOp::register(ctx);
+    NvvmAtomAddF16x2Op::register(ctx);
+    NvvmAtomAddBf16x2Op::register(ctx);
 }
