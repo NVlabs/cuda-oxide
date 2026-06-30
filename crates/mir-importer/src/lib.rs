@@ -81,10 +81,13 @@ extern crate rustc_span;
 pub mod error;
 mod llvm_tools;
 pub mod pipeline;
+mod ptx_error;
 pub mod translator;
 
 pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DeviceExternAttrs,
-    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, run_pipeline,
+    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, PtxConfig,
+    compile_module_to_ptx, run_pipeline,
 };
+pub use ptx_error::PtxError;
