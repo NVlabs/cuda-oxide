@@ -71,6 +71,33 @@ impl Verify for MovmatrixTransB16Op {
     }
 }
 
+/// Warp MMA: m8n8k4 with f64 accumulator and f64 inputs.
+///
+/// # Operands
+///
+/// - `acc_ptr` (ptr): pointer to `[f64; 2]` accumulator (read-modify-write)
+/// - `a_ptr` (ptr): pointer to `f64` A fragment
+/// - `b_ptr` (ptr): pointer to `f64` B fragment
+///
+/// # Results
+///
+/// - None (accumulator updated in-place via pointer)
+#[pliron_op(
+    name = "nvvm.mma_m8n8k4_f64",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+)]
+pub struct MmaM8N8K4F64Op;
+
+impl MmaM8N8K4F64Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MmaM8N8K4F64Op { op }
+    }
+}
+
 pub(super) fn register(ctx: &mut Context) {
     MovmatrixTransB16Op::register(ctx);
+    MmaM8N8K4F64Op::register(ctx);
 }
