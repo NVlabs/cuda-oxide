@@ -3404,3 +3404,34 @@ fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), any
 
     Ok(())
 }
+
+#[test]
+fn test_mma_m8n8k4_f64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use llvm_export::types::PointerType;
+
+    let mut ctx = make_test_ctx();
+    let ptr_ty = PointerType::get(&mut ctx, 0);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc_ptr = entry.deref(&ctx).get_argument(0);
+    let a_ptr = entry.deref(&ctx).get_argument(1);
+    let b_ptr = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM8N8K4F64Op::get_concrete_op_info(),
+        vec![],
+        vec![acc_ptr, a_ptr, b_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(
+        &mut ctx,
+        module_ptr,
+        "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64",
+    )
+}

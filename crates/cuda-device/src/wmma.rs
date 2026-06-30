@@ -213,3 +213,40 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
     let _ = (c, a, b);
     unreachable!("mma_m16n8k16_f32_bf16 called outside CUDA kernel context")
 }
+
+/// Warp MMA: D = A x B + C (m8n8k4, f64 output, f64 inputs).
+///
+/// Performs an 8x8x4 double-precision matrix multiplication using tensor cores.
+/// All 32 threads in the warp participate.
+///
+/// # Matrix Dimensions
+///
+/// - **A**: 8x4 (row-major, f64), distributed as 1 x f64 per thread
+/// - **B**: 4x8 (col-major, f64), distributed as 1 x f64 per thread
+/// - **D/C**: 8x8 (f64 accumulator), distributed as 2 x f64 per thread
+///
+/// # Parameters
+///
+/// - `acc`: Mutable accumulator (2 x f64 per thread, read-modify-write: D = A*B + acc)
+/// - `a`: A fragment (1 x f64)
+/// - `b`: B fragment (1 x f64)
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64
+///     {%d0, %d1},
+///     {%a0},
+///     {%b0},
+///     {%c0, %c1};
+/// ```
+///
+/// # Safety
+///
+/// - Must be called by all threads in a warp
+/// - Must be called from within a CUDA kernel context on sm_80+
+#[inline(never)]
+pub unsafe fn mma_m8n8k4_f64(acc: &mut [f64; 2], a: &f64, b: &f64) {
+    let _ = (acc, a, b);
+    unreachable!("mma_m8n8k4_f64 called outside CUDA kernel context")
+}
