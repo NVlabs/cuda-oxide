@@ -9,6 +9,7 @@ use crate::pipeline::PipelineError;
 
 /// Errors from the non-rustc PTX compilation entry point.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PtxError {
     /// The Pliron module failed verification before lowering.
     Verification(String),

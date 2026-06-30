@@ -1034,6 +1034,7 @@ impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
 
 /// Configuration for [`compile_module_to_ptx`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PtxConfig {
     /// Target arch string passed to `llc -mcpu=`, e.g. `"sm_120"`.
     pub target_arch: String,
@@ -1057,6 +1058,66 @@ impl PtxConfig {
     }
 }
 
+/// RAII guard that snapshots the three process-global `CUDA_OXIDE_*` env vars
+/// used by `opt`/`llc`, applies caller-derived values on construction, and
+/// restores the prior values on drop.
+///
+/// Defined locally here; it is never part of the crate's public API.
+struct EnvGuard {
+    target: Option<String>,
+    no_opt: Option<String>,
+    no_fma: Option<String>,
+}
+
+impl EnvGuard {
+    /// Snapshot the current values of the three env vars, then apply the
+    /// `cfg`-derived values. The returned guard must be held alive until
+    /// `opt`/`llc` finish.
+    fn apply(target_arch: &str, optimize: bool, fma: bool) -> Self {
+        let guard = Self {
+            target: std::env::var("CUDA_OXIDE_TARGET").ok(),
+            no_opt: std::env::var("CUDA_OXIDE_NO_OPT").ok(),
+            no_fma: std::env::var("CUDA_OXIDE_NO_FMA").ok(),
+        };
+        // SAFETY: the caller's not-concurrent contract (see `compile_module_to_ptx`
+        // docs) ensures no other thread races on these env vars.
+        unsafe {
+            std::env::set_var("CUDA_OXIDE_TARGET", target_arch);
+            if optimize {
+                std::env::remove_var("CUDA_OXIDE_NO_OPT");
+            } else {
+                std::env::set_var("CUDA_OXIDE_NO_OPT", "1");
+            }
+            if fma {
+                std::env::remove_var("CUDA_OXIDE_NO_FMA");
+            } else {
+                std::env::set_var("CUDA_OXIDE_NO_FMA", "1");
+            }
+        }
+        guard
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: same not-concurrent contract as construction.
+        unsafe {
+            match &self.target {
+                Some(v) => std::env::set_var("CUDA_OXIDE_TARGET", v),
+                None => std::env::remove_var("CUDA_OXIDE_TARGET"),
+            }
+            match &self.no_opt {
+                Some(v) => std::env::set_var("CUDA_OXIDE_NO_OPT", v),
+                None => std::env::remove_var("CUDA_OXIDE_NO_OPT"),
+            }
+            match &self.no_fma {
+                Some(v) => std::env::set_var("CUDA_OXIDE_NO_FMA", v),
+                None => std::env::remove_var("CUDA_OXIDE_NO_FMA"),
+            }
+        }
+    }
+}
+
 /// Compiles a `dialect-mir` module to PTX bytes without rustc.
 ///
 /// This is the front-end-agnostic hook into cuda-oxide's back end: it
@@ -1071,9 +1132,24 @@ impl PtxConfig {
 ///
 /// The backing `opt`/`llc` helpers read process-global environment variables
 /// (`CUDA_OXIDE_TARGET`, `CUDA_OXIDE_NO_OPT`, `CUDA_OXIDE_NO_FMA`), which this
-/// function sets from `cfg` for the duration of the call. It is therefore
-/// **not** safe to call concurrently from multiple threads of the same
-/// process; serialise calls or compile in separate processes.
+/// function sets from `cfg` for the duration of the call and restores to their
+/// prior values on return. It is therefore **not** safe to call concurrently
+/// from multiple threads of the same process; serialise calls or compile in
+/// separate processes.
+///
+/// # Linking
+///
+/// `mir-importer` is `#![feature(rustc_private)]` and links `rustc_driver` as
+/// an `extern crate`. Any consumer crate or binary that links `mir-importer`
+/// (to call this function) must therefore:
+///
+/// 1. Be compiled on the same nightly toolchain as `mir-importer`.
+/// 2. Declare `#![feature(rustc_private)]` at its crate root.
+/// 3. Declare `extern crate rustc_driver;` at its crate root to force a single
+///    copy of the `rustc_driver` dylib in the final binary.
+///
+/// Failing to do so produces a linker error of the form "cannot satisfy
+/// dependencies so `rustc_driver` only shows up once".
 pub fn compile_module_to_ptx(
     ctx: &mut Context,
     module_op: Ptr<Operation>,
@@ -1085,22 +1161,11 @@ pub fn compile_module_to_ptx(
         return Err(PtxError::InvalidConfig("empty target_arch".into()));
     }
 
-    // `optimize_ll` / `generate_ptx` read these process-global env vars. Set
-    // them from `cfg` for the duration of this call. Edition 2024 marks the
-    // env mutators `unsafe`; see the thread-safety note in the rustdoc.
-    unsafe {
-        std::env::set_var("CUDA_OXIDE_TARGET", &cfg.target_arch);
-        if cfg.optimize {
-            std::env::remove_var("CUDA_OXIDE_NO_OPT");
-        } else {
-            std::env::set_var("CUDA_OXIDE_NO_OPT", "1");
-        }
-        if cfg.fma {
-            std::env::remove_var("CUDA_OXIDE_NO_FMA");
-        } else {
-            std::env::set_var("CUDA_OXIDE_NO_FMA", "1");
-        }
-    }
+    // Snapshot the three process-global env vars that `opt`/`llc` read, apply
+    // `cfg`-derived values for the duration of this call, and restore on drop.
+    // Trim whitespace from target_arch so " sm_120 " cannot reach llc -mcpu.
+    // The `EnvGuard` drop runs after PTX bytes are in hand, before returning.
+    let _env_guard = EnvGuard::apply(cfg.target_arch.trim(), cfg.optimize, cfg.fma);
 
     let debug_kind = if cfg.debug {
         DebugKind::Full

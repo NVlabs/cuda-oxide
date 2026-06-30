@@ -274,7 +274,15 @@ fn spine_add_kernel_emits_entry_and_validates() {
     assert!(text.contains(".target sm_120"), "PTX targets sm_120:\n{text}");
 
     // ptxas must accept it for the real target.
-    let dir = std::env::temp_dir().join(format!("spine_kernel_ptx_{}", std::process::id()));
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!(
+        "spine_kernel_ptx_{}_{}",
+        std::process::id(),
+        unique
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let ptx_path = dir.join("spine.ptx");
     let cubin_path = dir.join("spine.cubin");
@@ -285,21 +293,23 @@ fn spine_add_kernel_emits_entry_and_validates() {
     } else {
         "ptxas"
     };
-    let out = std::process::Command::new(ptxas)
+    // Capture the Result before cleanup so the scratch dir is always removed,
+    // even when ptxas is absent and `.output()` would otherwise panic.
+    let ptxas_result = std::process::Command::new(ptxas)
         .arg("-arch=sm_120")
         .arg("--compile-only")
         .arg(&ptx_path)
         .arg("-o")
         .arg(&cubin_path)
-        .output()
-        .expect("ptxas runs");
+        .output();
 
-    let success = out.status.success();
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    // Cleanup before any assert or expect so the dir is reclaimed on all paths.
     let _ = std::fs::remove_dir_all(&dir);
 
+    let out = ptxas_result.expect("ptxas runs");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
-        success,
+        out.status.success(),
         "ptxas rejected PTX:\nstderr:\n{stderr}\n\nPTX:\n{text}"
     );
 }
