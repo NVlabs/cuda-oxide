@@ -85,10 +85,15 @@ impl Verify for MovmatrixTransB16Op {
 #[pliron_op(
     name = "nvvm.mma_m8n8k4_f64",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
 )]
 pub struct MmaM8N8K4F64Op;
+
+impl Verify for MmaM8N8K4F64Op {
+    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        Ok(())
+    }
+}
 
 impl MmaM8N8K4F64Op {
     /// Wrap an existing operation pointer.
