@@ -595,6 +595,7 @@ define_float_atomic! {
 /// # Safety
 ///
 /// `addr` must point to a valid, naturally-aligned `u32` in global memory.
+#[must_use]
 #[inline(never)]
 pub fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
     let _ = (addr, val);
@@ -624,6 +625,7 @@ pub fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
 /// # Safety
 ///
 /// `addr` must point to a valid, naturally-aligned `u32` in global memory.
+#[must_use]
 #[inline(never)]
 pub fn atom_add_bf16x2(addr: *mut u32, val: u32) -> u32 {
     let _ = (addr, val);
