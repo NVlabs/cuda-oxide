@@ -1,0 +1,5 @@
+error: device function parameters cannot use `impl Trait`; name the type parameter explicitly (for example, `fn named<T: Trait>(value: T)`) so host and device specialization identities agree
+ --> tests/compile_fail/device_impl_trait_parameter.rs:7:19
+  |
+7 | fn invalid(value: impl Copy) {
+  |                   ^^^^^^^^^

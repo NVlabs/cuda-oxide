@@ -90,7 +90,9 @@ pub use launch::{
     push_kernel_device_slice, push_kernel_scalar, read_only_device_buffer_arg,
     writable_device_buffer_arg,
 };
-pub use type_id::type_id_u128;
+#[doc(hidden)]
+pub use type_id::__intern_generic_kernel_name;
+pub use type_id::{type_id_u128, type_id_u128_of_val};
 
 #[cfg(feature = "async")]
 pub use launch::{

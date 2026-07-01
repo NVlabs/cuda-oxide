@@ -44,6 +44,21 @@ mod kernels {
     }
 
     #[kernel]
+    pub fn const_only<const N: usize>(output: &mut [u32]) {
+        let _ = (N, output);
+    }
+
+    #[kernel]
+    pub fn mixed<T: Copy, const N: usize>(value: T, output: &mut [T]) {
+        let _ = (value, N, output);
+    }
+
+    #[kernel]
+    pub fn lifetime_mixed<'a, T: Copy + 'a, const N: usize>(input: &'a [T], output: &mut [T]) {
+        let _ = (input, output, N);
+    }
+
+    #[kernel]
     pub unsafe fn unsafe_raw_pointer(raw: *mut f32) {
         let _ = raw;
     }
@@ -83,6 +98,7 @@ fn generated_methods_accept_kernel_scalar_types(
     stream: &CudaStream,
     config: LaunchConfig,
     input: &DeviceBuffer<f32>,
+    input_u32: &DeviceBuffer<u32>,
     output: &mut DeviceBuffer<f32>,
     output_u32: &mut DeviceBuffer<u32>,
 ) -> Result<(), cuda_core::DriverError> {
@@ -97,6 +113,9 @@ fn generated_methods_accept_kernel_scalar_types(
     let offset = 5u32;
     let op = move |x: u32| x + offset;
     module.copy_closure(stream, config, op, output_u32)?;
+    module.const_only::<4>(stream, config, output_u32)?;
+    module.mixed::<u32, 8>(stream, config, 7, output_u32)?;
+    module.lifetime_mixed::<u32, 4>(stream, config, input_u32, output_u32)?;
 
     let raw_mut = core::ptr::null_mut::<f32>();
     unsafe {
@@ -135,6 +154,12 @@ fn generated_async_methods_accept_borrowed_buffers(
     let offset_ref = &offset;
     let op = |x: u32| x + *offset_ref;
     let launch = module.copy_closure_async(config, op, async_output_u32)?;
+    assert_unit_operation(launch);
+
+    let launch = module.const_only_async::<4>(config, async_output_u32)?;
+    assert_unit_operation(launch);
+
+    let launch = module.mixed_async::<u32, 8>(config, 7, async_output_u32)?;
     assert_unit_operation(launch);
 
     unsafe {
@@ -187,6 +212,24 @@ fn generated_owned_async_methods_accept_owned_buffers(
     Ok(())
 }
 
+#[cfg(feature = "async")]
+fn generated_owned_async_methods_forward_const_generics(
+    module: &kernels::LoadedModule,
+    config: LaunchConfig,
+    const_output: DeviceBox<[u32]>,
+    mixed_output: DeviceBox<[u32]>,
+) -> Result<(), cuda_core::DriverError> {
+    let launch: cuda_host::OwnedAsyncKernelLaunch<DeviceBox<[u32]>> =
+        module.const_only_async_owned::<4, _>(config, const_output)?;
+    assert_owned_u32_buffer(launch);
+
+    let launch: cuda_host::OwnedAsyncKernelLaunch<DeviceBox<[u32]>> =
+        module.mixed_async_owned::<u32, 8, _>(config, 7, mixed_output)?;
+    assert_owned_u32_buffer(launch);
+
+    Ok(())
+}
+
 #[test]
 fn generated_cuda_module_api_typechecks() {
     let _ = generated_methods_accept_kernel_scalar_types;
@@ -194,19 +237,20 @@ fn generated_cuda_module_api_typechecks() {
     let _ = generated_async_methods_accept_borrowed_buffers;
     #[cfg(feature = "async")]
     let _ = generated_owned_async_methods_accept_owned_buffers;
+    #[cfg(feature = "async")]
+    let _ = generated_owned_async_methods_forward_const_generics;
 }
 
 // =============================================================================
 // PTX naming contract
 //
 // These tests pin down the shape of the host-side `GenericCudaKernel::ptx_name`
-// output. The backend's `compute_kernel_export_name` in
-// `crates/rustc-codegen-cuda/src/collector.rs` follows the same scheme, so
-// any drift here is the canary that the two sides have diverged again.
+// output. The const_generic and cross_crate_kernel executable verifiers compare
+// these host names with actual backend-generated PTX entries.
 //
-// On-wire shape: `<base>_TID_<hex32>`. The single `<hex32>` is the hash of
-// the tuple of generic args, not one hash per arg — so the length stays
-// constant regardless of generic arity.
+// On-wire shape: `<base>_TID_<hex32>`. The single `<hex32>` hashes the concrete
+// kernel function-item type, so it includes ordered type and const arguments
+// while staying fixed-length regardless of generic arity.
 // =============================================================================
 
 use cuda_host::GenericCudaKernel;
@@ -265,4 +309,27 @@ fn ptx_name_separates_distinct_closure_types() {
         n1, n2,
         "two distinct closure literals must produce different PTX names ({n1} vs {n2})"
     );
+}
+
+#[test]
+fn ptx_name_separates_const_specializations() {
+    let n0 = <kernels::__const_only_CudaKernel<0> as GenericCudaKernel>::ptx_name();
+    let n4 = <kernels::__const_only_CudaKernel<4> as GenericCudaKernel>::ptx_name();
+    let n8 = <kernels::__const_only_CudaKernel<8> as GenericCudaKernel>::ptx_name();
+
+    assert_ne!(n0, n4, "zero must remain a distinct const value");
+    assert_ne!(n4, n8, "const values must participate in kernel identity");
+    assert!(is_lowercase_hex_32(split_tid_name(n0, "const_only")));
+    assert!(is_lowercase_hex_32(split_tid_name(n4, "const_only")));
+    assert!(is_lowercase_hex_32(split_tid_name(n8, "const_only")));
+}
+
+#[test]
+fn ptx_name_separates_mixed_specializations() {
+    let u32_n4 = <kernels::__mixed_CudaKernel<u32, 4> as GenericCudaKernel>::ptx_name();
+    let u32_n8 = <kernels::__mixed_CudaKernel<u32, 8> as GenericCudaKernel>::ptx_name();
+    let i32_n4 = <kernels::__mixed_CudaKernel<i32, 4> as GenericCudaKernel>::ptx_name();
+
+    assert_ne!(u32_n4, u32_n8);
+    assert_ne!(u32_n4, i32_n4);
 }

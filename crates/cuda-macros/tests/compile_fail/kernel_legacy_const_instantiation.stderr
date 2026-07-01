@@ -1,0 +1,5 @@
+error: legacy #[kernel(Type, ...)] instantiation supports exactly one type parameter and no lifetime or const parameters; use #[kernel] and instantiate the kernel with a normal turbofish at the launch site
+ --> tests/compile_fail/kernel_legacy_const_instantiation.rs:7:11
+  |
+7 | fn invalid<const N: usize>() {}
+  |           ^^^^^^^^^^^^^^^^

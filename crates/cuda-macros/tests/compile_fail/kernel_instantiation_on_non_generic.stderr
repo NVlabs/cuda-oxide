@@ -1,0 +1,5 @@
+error: Instantiation types only apply to generic kernels
+ --> tests/compile_fail/kernel_instantiation_on_non_generic.rs:7:4
+  |
+7 | fn invalid(value: u32) {
+  |    ^^^^^^^

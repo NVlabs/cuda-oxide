@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use cuda_macros::cuda_module;
+
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[cuda_macros::kernel]
+    fn invalid(value: impl Copy) {
+        let _ = value;
+    }
+}
+
+fn main() {}

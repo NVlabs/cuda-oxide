@@ -36,7 +36,7 @@ pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
 **Generic kernels** work in two modes:
 
 ```rust
-// Mode 1: call-site instantiation (PTX name from type_name)
+// Mode 1: call-site specialization (PTX name from the function-item TypeId)
 #[kernel]
 pub fn scale<T: Copy + Mul<Output = T>>(factor: T, input: &[T], mut out: DisjointSlice<T>) { ... }
 // Launch: module.scale::<f32>(&stream, config, factor, &input, &mut out)?
@@ -46,6 +46,9 @@ pub fn scale<T: Copy + Mul<Output = T>>(factor: T, input: &[T], mut out: Disjoin
 pub fn scale<T: Copy + Mul<Output = T>>(factor: T, input: &[T], mut out: DisjointSlice<T>) { ... }
 // Generates named entry points: scale_f32, scale_i32
 ```
+
+The legacy explicit list supports exactly one type parameter. Use Mode 1 for
+const parameters, lifetimes, or mixed type/const kernels.
 
 ### `#[device]` -- Device Helper Functions and Externs
 
@@ -188,8 +191,8 @@ unsafe {
 | `expr`                | `T` (scalar)        | `&mut value` as `*mut c_void`       |
 | `slice(buf)`          | `&[T]`              | Device pointer + length (two args)  |
 | `slice_mut(buf)`      | `DisjointSlice<T>`  | Device pointer + length (two args)  |
-| `move \|..\| body`    | Closure `F`         | Each capture by value               |
-| `\|..\| body`         | Closure `F`         | Pointers to captures (HMM)          |
+| `move \|..\| body`    | Closure `F`         | Whole closure environment by value  |
+| `\|..\| body`         | Closure `F`         | Whole closure environment by value  |
 
 ### PTX Name Resolution
 
@@ -197,18 +200,19 @@ unsafe {
 |:--------------|:--------------------------------------------------------|
 | Non-generic   | Original function name (`vecadd`)                       |
 | Generic       | `{name}_TID_{hex32}` (fixed length regardless of arity) |
-| Closure-only  | Same as Generic — closure type is in the hashed tuple   |
+| Closure-only  | Same as Generic — closure type is in the function item |
 
-`{hex32}` is rustc's stable 128-bit type-id hash for the *tuple* of
-generic arguments `(T0, T1, ...)`, rendered as 32 lowercase hex chars.
-The backend computes it via
-`tcx.type_id_hash(Ty::new_tup(tcx, &args)).as_u128()`; the host computes
-the same value via `cuda_host::type_id_u128::<(T0, T1, ...,)>()`. Both
-sides share a single rustc invocation and go through the same
-`erase_and_anonymize_regions` + stable-hash pipeline, so the strings
-match byte-for-byte. Hashing the tuple (not each arg separately) keeps
-the on-wire name a fixed `base.len() + 37` chars regardless of how many
-generic parameters the kernel takes.
+`{hex32}` is rustc's stable 128-bit type-id hash for the concrete generated
+kernel function-item type, rendered as 32 lowercase hex chars. Its `FnDef`
+contains the function identity and every ordered type and const argument. The
+backend hashes `Instance::ty`; the host hashes
+`&kernel_entry::<T, N>` through `cuda_host::type_id_u128_of_val`. Both use the
+same region-erasing stable-hash pipeline, so lifetimes do not create variants
+and the on-wire name stays a fixed `base.len() + 37` characters regardless of
+generic arity.
+
+The suffix is a build-time rendezvous key, not a permanent ABI. Rebuild host
+code and PTX together when the pinned rustc toolchain or crate graph changes.
 
 For generics, the macro forces monomorphization with a volatile pointer
 trick so the kernel appears in the codegen unit even without a host-side

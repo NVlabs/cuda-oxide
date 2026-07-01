@@ -147,6 +147,44 @@ fn reject_reserved_name(name: &Ident) -> Option<TokenStream> {
     }
 }
 
+/// Reject argument-position `impl Trait`, which rustc represents as a hidden
+/// type parameter that procedural macros cannot name at launch sites.
+///
+/// Without this check the host emits a non-generic lookup name while the
+/// backend correctly emits a `_TID_...` specialization, causing a runtime
+/// function-not-found error. A named generic preserves the same source-level
+/// intent and gives both sides an explicit specialization identity.
+fn impl_trait_parameter_error(input: &ItemFn, item_kind: &str) -> Option<syn::Error> {
+    #[derive(Default)]
+    struct Finder {
+        first: Option<syn::TypeImplTrait>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Finder {
+        fn visit_type_impl_trait(&mut self, node: &'ast syn::TypeImplTrait) {
+            if self.first.is_none() {
+                self.first = Some(node.clone());
+            }
+        }
+    }
+
+    let mut finder = Finder::default();
+    for arg in &input.sig.inputs {
+        if let FnArg::Typed(pat_type) = arg {
+            syn::visit::Visit::visit_type(&mut finder, &pat_type.ty);
+        }
+    }
+
+    finder.first.map(|impl_trait| {
+        syn::Error::new_spanned(
+            impl_trait,
+            format!(
+                "{item_kind} parameters cannot use `impl Trait`; name the type parameter explicitly (for example, `fn named<T: Trait>(value: T)`) so host and device specialization identities agree"
+            ),
+        )
+    })
+}
+
 /// Attribute arguments for #[kernel(...)]
 /// Supports: #[kernel] or #[kernel(Type1, Type2, Type3)]
 struct KernelArgs {
@@ -420,15 +458,13 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
         if !has_attr_named(&item_fn.attrs, "kernel") {
             continue;
         }
+        if let Some(err) = impl_trait_parameter_error(item_fn, "kernel") {
+            return Err(err);
+        }
         let cluster_dim = cuda_module_cluster_dim(&item_fn.attrs)?;
         let cooperative = cuda_module_cooperative(&item_fn.attrs)?;
         let params = cuda_module_params(item_fn)?;
-        let is_generic = item_fn
-            .sig
-            .generics
-            .params
-            .iter()
-            .any(|param| matches!(param, GenericParam::Type(_)));
+        let is_generic = has_codegen_generics(&item_fn.sig.generics);
         kernels.push(CudaModuleKernel {
             vis: item_fn.vis.clone(),
             cfg_attrs: cuda_module_cfg_attrs(&item_fn.attrs),
@@ -1340,17 +1376,18 @@ fn cuda_module_function_binding(kernel: &CudaModuleKernel) -> TokenStream2 {
     if kernel.is_generic {
         let fn_name = &kernel.fn_name;
         let marker = cuda_kernel_marker_name(fn_name);
-        let type_params = cuda_module_type_param_names(&kernel.generics);
+        let codegen_args = codegen_generic_arguments(&kernel.generics);
+        let marker_args = generic_arguments(&kernel.generics);
         let kernel_entry = format_ident!("{}", kernel_symbol(&fn_name.to_string()));
-        let turbofish = if type_params.is_empty() {
+        let turbofish = if codegen_args.is_empty() {
             quote! {}
         } else {
-            quote! { ::<#(#type_params),*> }
+            quote! { ::<#(#codegen_args),*> }
         };
-        let marker_args = if type_params.is_empty() {
-            quote! {}
+        let marker_type = if marker_args.is_empty() {
+            quote! { #marker }
         } else {
-            quote! { <#(#type_params),*> }
+            quote! { #marker <#(#marker_args),*> }
         };
         quote! {
             let __kernel_ptr = #kernel_entry #turbofish as *const ();
@@ -1360,7 +1397,7 @@ fn cuda_module_function_binding(kernel: &CudaModuleKernel) -> TokenStream2 {
                 let _ = ::core::ptr::read_volatile(&__force_mono);
             }
             let __ptx_name =
-                <#marker #marker_args as ::cuda_host::GenericCudaKernel>::ptx_name();
+                <#marker_type as ::cuda_host::GenericCudaKernel>::ptx_name();
             let __func_storage = {
                 let mut __cache = self
                     .__generic_functions
@@ -1440,18 +1477,92 @@ fn cuda_module_launch_call(kernel: &CudaModuleKernel) -> TokenStream2 {
     }
 }
 
-fn cuda_module_type_param_names(generics: &syn::Generics) -> Vec<Ident> {
+/// Whether rustc must create distinct code for this generic parameter list.
+///
+/// Lifetimes are deliberately excluded: rustc erases them before codegen, so
+/// they cannot distinguish PTX entry points. Type and const parameters both
+/// participate in monomorphization and therefore in kernel identity.
+fn has_codegen_generics(generics: &syn::Generics) -> bool {
     generics
         .params
         .iter()
-        .filter_map(|param| {
-            if let GenericParam::Type(type_param) = param {
-                Some(type_param.ident.clone())
-            } else {
-                None
+        .any(|param| matches!(param, GenericParam::Type(_) | GenericParam::Const(_)))
+}
+
+/// Ordered generic arguments accepted by a function turbofish.
+///
+/// Rust function turbofish syntax omits lifetime arguments. Type and const
+/// identifiers must remain in declaration order so mixed `<T, const N>`
+/// kernels instantiate the exact function item requested by the caller.
+fn codegen_generic_arguments(generics: &syn::Generics) -> Vec<TokenStream2> {
+    generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            GenericParam::Type(type_param) => {
+                let ident = &type_param.ident;
+                Some(quote! { #ident })
+            }
+            GenericParam::Const(const_param) => {
+                let ident = &const_param.ident;
+                Some(quote! { #ident })
+            }
+            GenericParam::Lifetime(_) => None,
+        })
+        .collect()
+}
+
+/// Ordered arguments for applying a generated marker type.
+///
+/// Unlike function turbofish syntax, a type application retains lifetime
+/// parameters. The specialization hash still ignores their identity because
+/// rustc's `TypeId` pipeline erases regions.
+fn generic_arguments(generics: &syn::Generics) -> Vec<TokenStream2> {
+    generics
+        .params
+        .iter()
+        .map(|param| match param {
+            GenericParam::Lifetime(lifetime_param) => {
+                let lifetime = &lifetime_param.lifetime;
+                quote! { #lifetime }
+            }
+            GenericParam::Type(type_param) => {
+                let ident = &type_param.ident;
+                quote! { #ident }
+            }
+            GenericParam::Const(const_param) => {
+                let ident = &const_param.ident;
+                quote! { #ident }
             }
         })
         .collect()
+}
+
+/// Types used by `PhantomData` so generated marker types correctly witness
+/// every lifetime and type parameter. Const parameters are part of the marker
+/// type by construction and need no field-level witness.
+fn generic_phantom_type(generics: &syn::Generics) -> TokenStream2 {
+    let witnesses: Vec<TokenStream2> = generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            GenericParam::Lifetime(lifetime_param) => {
+                let lifetime = &lifetime_param.lifetime;
+                Some(quote! { &#lifetime () })
+            }
+            GenericParam::Type(type_param) => {
+                let ident = &type_param.ident;
+                Some(quote! { *const #ident })
+            }
+            GenericParam::Const(_) => None,
+        })
+        .collect();
+
+    if witnesses.is_empty() {
+        quote! { () }
+    } else {
+        quote! { (#(#witnesses,)*) }
+    }
 }
 
 fn cuda_module_function_field(fn_name: &Ident) -> Ident {
@@ -1535,6 +1646,9 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     if let Some(err) = reject_reserved_name(&input.sig.ident) {
         return err;
     }
+    if let Some(err) = impl_trait_parameter_error(&input, "kernel") {
+        return err.to_compile_error().into();
+    }
 
     // Consume any `#[unroll]` / `#[unroll(N)]` attributes written directly on
     // loops inside the kernel body. We strip the attribute from the loop
@@ -1547,13 +1661,39 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
         return err.to_compile_error().into();
     }
 
-    // Check if function has type parameters
-    let has_generics = input
-        .sig
-        .generics
-        .params
-        .iter()
-        .any(|p| matches!(p, GenericParam::Type(_)));
+    // Only type and const parameters create distinct codegen instances.
+    // Lifetimes are erased before monomorphization.
+    let has_generics = has_codegen_generics(&input.sig.generics);
+
+    if has_generics && !args.instantiate_types.is_empty() {
+        let type_param_count = input
+            .sig
+            .generics
+            .params
+            .iter()
+            .filter(|param| matches!(param, GenericParam::Type(_)))
+            .count();
+        let has_const_params = input
+            .sig
+            .generics
+            .params
+            .iter()
+            .any(|param| matches!(param, GenericParam::Const(_)));
+        let has_lifetime_params = input
+            .sig
+            .generics
+            .params
+            .iter()
+            .any(|param| matches!(param, GenericParam::Lifetime(_)));
+        if type_param_count != 1 || has_const_params || has_lifetime_params {
+            return syn::Error::new_spanned(
+                &input.sig.generics,
+                "legacy #[kernel(Type, ...)] instantiation supports exactly one type parameter and no lifetime or const parameters; use #[kernel] and instantiate the kernel with a normal turbofish at the launch site",
+            )
+            .to_compile_error()
+            .into();
+        }
+    }
 
     if has_generics && args.instantiate_types.is_empty() {
         // Generic kernel without explicit types - allow it!
@@ -1765,38 +1905,34 @@ fn find_closure_param<'a>(
     None
 }
 
-/// Strip `mut` from function argument patterns.
+/// Build wrapper parameters that can always be forwarded by value.
 ///
-/// The wrapper function just forwards arguments, so it doesn't need `mut`.
-/// Keeping `mut` causes "variable does not need to be mutable" warnings.
-fn strip_mut_from_inputs(
+/// User functions may use any irrefutable parameter pattern, including `_` or
+/// tuple destructuring. A generated wrapper cannot refer to those patterns
+/// again, so every parameter gets a private synthetic identifier while keeping
+/// its original type and attributes. The original implementation retains the
+/// user's pattern.
+fn forwarding_inputs(
     inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>,
-) -> Vec<FnArg> {
-    inputs
-        .iter()
-        .map(|arg| {
-            match arg {
-                FnArg::Typed(pat_type) => {
-                    let mut new_pat_type = pat_type.clone();
-                    if let Pat::Ident(pat_ident) = &*pat_type.pat
-                        && pat_ident.mutability.is_some()
-                    {
-                        // Create new PatIdent without mut
-                        let new_pat_ident = syn::PatIdent {
-                            attrs: pat_ident.attrs.clone(),
-                            by_ref: pat_ident.by_ref,
-                            mutability: None, // Strip mut
-                            ident: pat_ident.ident.clone(),
-                            subpat: pat_ident.subpat.clone(),
-                        };
-                        new_pat_type.pat = Box::new(Pat::Ident(new_pat_ident));
-                    }
-                    FnArg::Typed(new_pat_type)
-                }
-                other => other.clone(),
-            }
-        })
-        .collect()
+) -> syn::Result<(Vec<FnArg>, Vec<Ident>)> {
+    let mut wrapper_inputs = Vec::with_capacity(inputs.len());
+    let mut forwarding_names = Vec::with_capacity(inputs.len());
+
+    for (index, arg) in inputs.iter().enumerate() {
+        let FnArg::Typed(pat_type) = arg else {
+            return Err(syn::Error::new_spanned(
+                arg,
+                "CUDA kernels and device functions cannot take self parameters",
+            ));
+        };
+        let name = format_ident!("__cuda_oxide_arg_{index}");
+        let mut wrapper_param = pat_type.clone();
+        wrapper_param.pat = Box::new(parse_quote! { #name });
+        wrapper_inputs.push(FnArg::Typed(wrapper_param));
+        forwarding_names.push(name);
+    }
+
+    Ok((wrapper_inputs, forwarding_names))
 }
 
 /// True when `path`'s *last* segment is `name`.
@@ -2004,54 +2140,56 @@ fn inject_thread_index_scope(input: &mut ItemFn) {
 fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
     inject_thread_index_scope(&mut input);
 
+    // Attributes written below `#[kernel]` still belong to the source item
+    // when this macro runs. Route CUDA entry directives to the generated entry
+    // function, keep ordinary Rust attributes on the user-facing
+    // implementation, and copy cfg gates to every generated item.
+    let (implementation_attrs, entry_attrs, cfg_attrs) = route_generic_kernel_attrs(&input.attrs);
+
     let fn_name = &input.sig.ident;
     let vis = &input.vis;
     let generics = &input.sig.generics;
     let where_clause = &input.sig.generics.where_clause;
     let inputs = &input.sig.inputs;
     let output = &input.sig.output;
+    let constness = &input.sig.constness;
+    let unsafety = &input.sig.unsafety;
+    let abi = &input.sig.abi;
     let block = &input.block;
 
     let kernel_name = format_ident!("{}{}", KERNEL_PREFIX, fn_name);
     let instantiate_name = format_ident!("{}{}", INSTANTIATE_PREFIX, fn_name);
 
-    // For the wrapper function, strip `mut` from parameters since it just forwards them
-    let wrapper_inputs = strip_mut_from_inputs(inputs);
-
-    // Extract argument names and info for forwarding
-    let args_info: Vec<_> = input
-        .sig
-        .inputs
+    let (wrapper_inputs, arg_names) = match forwarding_inputs(inputs) {
+        Ok(forwarding) => forwarding,
+        Err(err) => return err.to_compile_error().into(),
+    };
+    let args_info: Vec<_> = arg_names
         .iter()
-        .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg
-                && let Pat::Ident(pat_ident) = &*pat_type.pat
-            {
-                return Some((&pat_ident.ident, &*pat_type.ty));
-            }
-            None
+        .zip(inputs.iter())
+        .filter_map(|(name, arg)| {
+            let FnArg::Typed(pat_type) = arg else {
+                return None;
+            };
+            Some((name, &*pat_type.ty))
         })
         .collect();
-
-    let arg_names: Vec<_> = args_info.iter().map(|(name, _)| *name).collect();
 
     // Find the closure generic type (looks for Fn/FnMut/FnOnce bounds)
     let closure_generic = find_closure_generic(generics);
 
-    // Extract generic type parameter names (T, F, etc.) for use in function pointer cast
-    let generic_param_names: Vec<&syn::Ident> = generics
-        .params
-        .iter()
-        .filter_map(|p| {
-            if let syn::GenericParam::Type(type_param) = p {
-                Some(&type_param.ident)
-            } else {
-                None
-            }
-        })
-        .collect();
+    // Function turbofish arguments contain both types and consts in source
+    // order. Marker applications additionally retain lifetime parameters.
+    let codegen_args = codegen_generic_arguments(generics);
+    let marker_args = generic_arguments(generics);
+    let kernel_turbofish = quote! { ::<#(#codegen_args),*> };
 
     let marker_name = format_ident!("__{}_CudaKernel", fn_name);
+    let marker_type = if marker_args.is_empty() {
+        quote! { #marker_name }
+    } else {
+        quote! { #marker_name <#(#marker_args),*> }
+    };
     let instantiate_helper = if let Some(closure_type_name) = closure_generic {
         if let Some((_closure_idx, (_closure_name, closure_type))) =
             find_closure_param(&args_info, &closure_type_name)
@@ -2080,15 +2218,16 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
                 /// launch — `cuda_host::type_id_u128` does not enforce
                 /// this.
                 #[doc(hidden)]
+                #(#cfg_attrs)*
                 #[inline(never)]
                 #vis fn #instantiate_name #generics (_f: &#closure_type) -> &'static str #where_clause {
-                    let __kernel_ptr = #kernel_name::<#(#generic_param_names),*> as fn(#(#arg_types),*) as *const ();
+                    let __kernel_ptr = #kernel_name #kernel_turbofish as #unsafety #abi fn(#(#arg_types),*) as *const ();
                     unsafe {
                         let mut __force_mono: *const () = core::ptr::null();
                         core::ptr::write_volatile(&mut __force_mono, __kernel_ptr);
                         let _ = core::ptr::read_volatile(&__force_mono);
                     }
-                    <#marker_name::<#(#generic_param_names),*> as cuda_host::GenericCudaKernel>::ptx_name()
+                    <#marker_type as cuda_host::GenericCudaKernel>::ptx_name()
                 }
             }
         } else {
@@ -2100,20 +2239,29 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
 
     // Generate the GenericCudaKernel trait implementation for unified compilation
     let generic_cuda_kernel_impl =
-        generate_generic_cuda_kernel_impl(fn_name, generics, where_clause);
+        generate_generic_cuda_kernel_impl(fn_name, generics, where_clause, &cfg_attrs);
+    let implementation_call = quote! { #fn_name #kernel_turbofish (#(#arg_names),*) };
+    let implementation_call = if unsafety.is_some() {
+        quote! { unsafe { #implementation_call } }
+    } else {
+        implementation_call
+    };
 
     let expanded = quote! {
         // Original generic kernel implementation
+        #(#implementation_attrs)*
         #[inline(always)]
-        #vis fn #fn_name #generics (#inputs) #output #where_clause
+        #vis #constness #unsafety #abi fn #fn_name #generics (#inputs) #output #where_clause
         #block
 
         // Entry point for collector - NOT inlined so we can detect it
         // When called with concrete types, this instantiates the kernel
-        // Note: wrapper_inputs has `mut` stripped since we just forward args
+        // Synthetic wrapper parameter names make every irrefutable source
+        // pattern forwardable without carrying local binding `mut`.
+        #(#entry_attrs)*
         #[inline(never)]
-        #vis fn #kernel_name #generics (#(#wrapper_inputs),*) #output #where_clause {
-            #fn_name(#(#arg_names),*)
+        #vis #constness #unsafety #abi fn #kernel_name #generics (#(#wrapper_inputs),*) #output #where_clause {
+            #implementation_call
         }
 
         #instantiate_helper
@@ -2122,6 +2270,44 @@ fn generate_generic_kernel_no_instantiation(mut input: ItemFn) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Route attributes when one generic source function becomes several items.
+///
+/// CUDA entry directives must decorate the generated collector entry, not the
+/// inline implementation helper. Configuration gates must decorate every item
+/// to avoid leaving a marker or helper behind for a disabled kernel. Other
+/// user-facing attributes (documentation, lints, deprecation, etc.) stay on
+/// the implementation with the original Rust name.
+fn route_generic_kernel_attrs(
+    attrs: &[syn::Attribute],
+) -> (
+    Vec<syn::Attribute>,
+    Vec<syn::Attribute>,
+    Vec<syn::Attribute>,
+) {
+    let is_cfg = |attr: &syn::Attribute| {
+        attr_path_ends_with(attr, "cfg") || attr_path_ends_with(attr, "cfg_attr")
+    };
+    let is_entry_directive = |attr: &syn::Attribute| {
+        attr_path_ends_with(attr, "launch_bounds")
+            || attr_path_ends_with(attr, "cluster_launch")
+            || attr_path_ends_with(attr, "cooperative_launch")
+    };
+
+    let cfg_attrs = attrs.iter().filter(|attr| is_cfg(attr)).cloned().collect();
+    let implementation_attrs = attrs
+        .iter()
+        .filter(|attr| !is_entry_directive(attr) && !attr_path_ends_with(attr, "inline"))
+        .cloned()
+        .collect();
+    let entry_attrs = attrs
+        .iter()
+        .filter(|attr| is_cfg(attr) || is_entry_directive(attr))
+        .cloned()
+        .collect();
+
+    (implementation_attrs, entry_attrs, cfg_attrs)
 }
 
 /// Generate a dummy binding for a given type.
@@ -2186,26 +2372,23 @@ fn generate_simple_kernel(mut input: ItemFn) -> TokenStream {
 
 /// Generate the GenericCudaKernel trait implementation for a generic kernel.
 ///
-/// For generic kernels like `fn scale<T>()`, emits:
+/// For generic kernels like `fn tile<T, const N: usize>()`, emits:
 ///
 /// ```ignore
-/// pub struct __scale_CudaKernel<T>(PhantomData<T>);
-/// impl<T> GenericCudaKernel for __scale_CudaKernel<T> {
+/// pub struct __tile_CudaKernel<T, const N: usize>(PhantomData<*const T>);
+/// impl<T, const N: usize> GenericCudaKernel for __tile_CudaKernel<T, N> {
 ///     fn ptx_name() -> &'static str {
-///         // "scale_TID_<hex32>" — one 32-char hex chunk for the
-///         // 1-tuple `(T,)`. For an N-generic kernel we hash the
-///         // N-tuple `(T0, T1, ...)` so the name length is constant
-///         // regardless of arity.
+///         // "tile_TID_<hex32>" — one 32-char hash of the concrete
+///         // generated kernel function-item type.
 ///     }
 /// }
 /// ```
 ///
 /// The body computes the same string the backend writes into the PTX:
 /// `<base>_TID_<hex32>`, where `<hex32>` is
-/// `cuda_host::type_id_u128::<(T0, T1, ...,)>()` rendered as 32
-/// lowercase hex chars. The backend's `compute_kernel_export_name`
-/// computes the same hash via `Ty::new_tup(tcx, &[T0, T1, ...])` +
-/// `tcx.type_id_hash(...)`, so the two strings match byte-for-byte.
+/// `cuda_host::type_id_u128_of_val(&kernel_entry::<T, N>)` rendered as 32
+/// lowercase hex chars. The backend hashes the same concrete `FnDef` type,
+/// whose ordered generic arguments include both types and const values.
 ///
 /// Bound on the impl is `where_clause` verbatim — typically `Copy` on
 /// each value-passed generic. We deliberately do not add `'static`:
@@ -2219,56 +2402,43 @@ fn generate_generic_cuda_kernel_impl(
     fn_name: &Ident,
     generics: &syn::Generics,
     where_clause: &Option<syn::WhereClause>,
+    cfg_attrs: &[syn::Attribute],
 ) -> TokenStream2 {
     let marker_name = format_ident!("__{}_CudaKernel", fn_name);
+    let kernel_name = format_ident!("{}{}", KERNEL_PREFIX, fn_name);
     let base_name = fn_name.to_string();
-
-    let type_params: Vec<_> = generics.params.iter().collect();
-    let type_param_names: Vec<_> = generics
-        .params
-        .iter()
-        .filter_map(|p| {
-            if let syn::GenericParam::Type(tp) = p {
-                Some(&tp.ident)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let ptx_name_body = if type_param_names.is_empty() {
-        quote! {
-            fn ptx_name() -> &'static str {
-                #base_name
-            }
-        }
+    let generic_params: Vec<_> = generics.params.iter().collect();
+    let marker_args = generic_arguments(generics);
+    let codegen_args = codegen_generic_arguments(generics);
+    let phantom_type = generic_phantom_type(generics);
+    let marker_type = if marker_args.is_empty() {
+        quote! { #marker_name }
     } else {
-        // Trailing comma in the tuple type expression keeps the
-        // arity-1 case `(T,)` a real 1-tuple — without it,
-        // `(T)` would just be a parenthesized type and the hash
-        // would differ from the backend's `Ty::new_tup(tcx, &[T])`.
-        quote! {
-            fn ptx_name() -> &'static str {
-                let __hash = ::cuda_host::type_id_u128::<( #(#type_param_names,)* )>();
-                let name = format!("{}_TID_{:032x}", #base_name, __hash);
-                Box::leak(name.into_boxed_str())
-            }
-        }
+        quote! { #marker_name <#(#marker_args),*> }
     };
+    let kernel_turbofish = quote! { ::<#(#codegen_args),*> };
+    let (impl_generics, _, _) = generics.split_for_impl();
 
     quote! {
         /// Marker type for a generic kernel; implements `GenericCudaKernel`.
-        /// The type parameters mirror the kernel's generic parameters.
+        /// Its generic parameters mirror the kernel's generic parameters.
+        #(#cfg_attrs)*
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
-        pub struct #marker_name<#(#type_params),*>(
-            core::marker::PhantomData<(#(#type_param_names),*)>
+        pub struct #marker_name<#(#generic_params),*>(
+            core::marker::PhantomData<#phantom_type>
         ) #where_clause;
 
-        impl<#(#type_params),*> cuda_host::GenericCudaKernel for #marker_name<#(#type_param_names),*>
+        #(#cfg_attrs)*
+        impl #impl_generics cuda_host::GenericCudaKernel for #marker_type
         #where_clause
         {
-            #ptx_name_body
+            fn ptx_name() -> &'static str {
+                let __hash = ::cuda_host::type_id_u128_of_val(
+                    &#kernel_name #kernel_turbofish
+                );
+                ::cuda_host::__intern_generic_kernel_name(#base_name, __hash)
+            }
         }
     }
 }
@@ -2951,6 +3121,9 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
     if let Some(err) = reject_reserved_name(&input.sig.ident) {
         return err;
     }
+    if let Some(err) = impl_trait_parameter_error(&input, "device function") {
+        return err.to_compile_error().into();
+    }
     if let Err(err) = rewrite_loop_unroll_attrs(&mut input) {
         return err.to_compile_error().into();
     }
@@ -2960,39 +3133,20 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
     let vis = input.vis.clone();
     let new_name = format_ident!("{}{}", DEVICE_PREFIX, fn_name);
 
-    // Check if the function has type parameters
-    let has_generics = input
-        .sig
-        .generics
-        .params
-        .iter()
-        .any(|p| matches!(p, GenericParam::Type(_)));
-
-    // Extract parameter names for forwarding
-    let params: Vec<_> = input
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg
-                && let Pat::Ident(pat_ident) = &*pat_type.pat
-            {
-                return Some(pat_ident.ident.clone());
-            }
-            None
-        })
-        .collect();
+    // Type and const parameters both create device monomorphizations.
+    let has_generics = has_codegen_generics(&input.sig.generics);
 
     let return_type = &input.sig.output;
     let generics = &input.sig.generics;
     let where_clause = &input.sig.generics.where_clause;
+    let constness = &input.sig.constness;
+    let unsafety = &input.sig.unsafety;
+    let abi = &input.sig.abi;
 
-    // Strip `mut` from wrapper parameters since the wrapper just forwards args.
-    // In Rust, `mut` on a by-value parameter is purely local binding mutability —
-    // it's not part of the function's type signature and callers don't need `mut`
-    // to pass a value. The original (renamed) function keeps `mut` for its body,
-    // but the wrapper only forwards the value and never mutates it locally.
-    let wrapper_inputs = strip_mut_from_inputs(&input.sig.inputs);
+    let (wrapper_inputs, params) = match forwarding_inputs(&input.sig.inputs) {
+        Ok(forwarding) => forwarding,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
     // Rename the original function with the prefix
     input.sig.ident = new_name.clone();
@@ -3011,18 +3165,14 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
         // - The wrapper forwards type parameters via turbofish:
         //   `cuda_oxide_device_<hash>_add::<T>(a, b)`.
 
-        // Extract type parameter names for turbofish forwarding (T, U, etc.)
-        let type_param_names: Vec<&syn::Ident> = generics
-            .params
-            .iter()
-            .filter_map(|p| {
-                if let GenericParam::Type(type_param) = p {
-                    Some(&type_param.ident)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let codegen_args = codegen_generic_arguments(generics);
+        let turbofish = quote! { ::<#(#codegen_args),*> };
+        let call = quote! { #new_name #turbofish (#(#params),*) };
+        let call = if unsafety.is_some() {
+            quote! { unsafe { #call } }
+        } else {
+            call
+        };
 
         let expanded = quote! {
             #[inline(never)]
@@ -3030,13 +3180,19 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
 
             /// Wrapper for the generic device function with the original name.
             #[inline(always)]
-            #vis fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
-                #new_name::<#(#type_param_names),*>(#(#params),*)
+            #vis #constness #unsafety #abi fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
+                #call
             }
         };
 
         TokenStream::from(expanded)
     } else {
+        let call = quote! { #new_name(#(#params),*) };
+        let call = if unsafety.is_some() {
+            quote! { unsafe { #call } }
+        } else {
+            call
+        };
         // Non-generic device function: simple case.
         let expanded = quote! {
             #[unsafe(no_mangle)]
@@ -3044,8 +3200,8 @@ fn generate_device_function(mut input: ItemFn) -> TokenStream {
 
             /// Wrapper for the device function with the original name.
             #[inline(always)]
-            #vis fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
-                #new_name(#(#params),*)
+            #vis #constness #unsafety #abi fn #fn_name #generics (#(#wrapper_inputs),*) #return_type #where_clause {
+                #call
             }
         };
 
@@ -3362,6 +3518,21 @@ struct CudaLaunchInput {
     cooperative: Option<syn::Expr>,
 }
 
+/// Return the generated sibling of a kernel while preserving its module path
+/// and explicit generic arguments.
+///
+/// For example, `kernels::map::<F, 4>` becomes
+/// `kernels::__map_CudaKernel::<F, 4>` when `sibling_name` is the marker name.
+fn kernel_sibling_path(kernel: &syn::Path, sibling_name: Ident) -> syn::Path {
+    let mut sibling = kernel.clone();
+    sibling
+        .segments
+        .last_mut()
+        .expect("kernel path must have segments")
+        .ident = sibling_name;
+    sibling
+}
+
 impl CudaLaunchInput {
     /// Extract the base kernel name (without generics) and generic arguments
     fn kernel_parts(&self) -> (Ident, Option<&syn::PathArguments>) {
@@ -3532,7 +3703,6 @@ impl Parse for CudaLaunchInput {
 pub fn cuda_launch(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as CudaLaunchInput);
 
-    let _kernel_path = &input.kernel;
     let stream = &input.stream;
     let module = &input.module;
     let config = &input.config;
@@ -3540,12 +3710,15 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
     let cooperative = &input.cooperative;
 
     // Get base kernel name and generic arguments
-    let (kernel_base, generics) = input.kernel_parts();
+    let (kernel_base, _generics) = input.kernel_parts();
 
-    let kernel_entry = format_ident!("{}{}", KERNEL_PREFIX, kernel_base);
+    let kernel_entry = kernel_sibling_path(
+        &input.kernel,
+        format_ident!("{}{}", KERNEL_PREFIX, kernel_base),
+    );
 
     // Build the marker type name for CudaKernel lookup
-    let marker_name = format_ident!("__{}_CudaKernel", kernel_base);
+    let marker = kernel_sibling_path(&input.kernel, format_ident!("__{}_CudaKernel", kernel_base));
 
     // Check if any argument is a closure (for special handling)
     let has_closure = input
@@ -3629,7 +3802,10 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         .collect();
 
     // Build the instantiate helper name (for closures)
-    let instantiate_name = format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base);
+    let instantiate = kernel_sibling_path(
+        &input.kernel,
+        format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base),
+    );
 
     // Generate the launch call — regular, cluster, or cooperative.
     //
@@ -3707,7 +3883,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
         quote! {
             {
                 let mut __closure = #closure_expr;
-                let __ptx_name: &'static str = #instantiate_name(&__closure);
+                let __ptx_name: &'static str = #instantiate(&__closure);
                 let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
                     panic!(
                         "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
@@ -3726,7 +3902,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
     } else if input.is_generic() {
         quote! {
             {
-                let __kernel_ptr = #kernel_entry #generics as *const ();
+                let __kernel_ptr = #kernel_entry as *const ();
                 // Caller-unsafe on purpose: the volatile write/read pair that
                 // forces monomorphization is covered by the same `unsafe { }`
                 // block the caller must already supply for the launch itself.
@@ -3734,7 +3910,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
                 core::ptr::write_volatile(&mut __force_mono, __kernel_ptr);
                 let _ = core::ptr::read_volatile(&__force_mono);
 
-                let __ptx_name = <#marker_name #generics as cuda_host::GenericCudaKernel>::ptx_name();
+                let __ptx_name = <#marker as cuda_host::GenericCudaKernel>::ptx_name();
                 let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
                     panic!(
                         "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
@@ -3753,7 +3929,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
     } else {
         quote! {
             {
-                const __PTX_NAME: &str = <#marker_name as cuda_host::CudaKernel>::PTX_NAME;
+                const __PTX_NAME: &str = <#marker as cuda_host::CudaKernel>::PTX_NAME;
                 let __func = #module.load_function(__PTX_NAME).unwrap_or_else(|err| {
                     panic!(
                         "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
@@ -3930,9 +4106,12 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
 
     let module = &input.module;
     let config = &input.config;
-    let (kernel_base, generics) = input.kernel_parts();
-    let marker_name = format_ident!("__{}_CudaKernel", kernel_base);
-    let instantiate_name = format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base);
+    let (kernel_base, _generics) = input.kernel_parts();
+    let marker = kernel_sibling_path(&input.kernel, format_ident!("__{}_CudaKernel", kernel_base));
+    let instantiate = kernel_sibling_path(
+        &input.kernel,
+        format_ident!("{}{}", INSTANTIATE_PREFIX, kernel_base),
+    );
     let has_closure = input
         .args
         .iter()
@@ -3995,7 +4174,7 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
         quote! {
             {
                 let __closure = #closure_expr;
-                let __ptx_name: &'static str = #instantiate_name(&__closure);
+                let __ptx_name: &'static str = #instantiate(&__closure);
                 let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
                     panic!(
                         "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
@@ -4013,16 +4192,19 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
             }
         }
     } else if input.is_generic() {
-        let kernel_entry = format_ident!("{}{}", KERNEL_PREFIX, kernel_base);
+        let kernel_entry = kernel_sibling_path(
+            &input.kernel,
+            format_ident!("{}{}", KERNEL_PREFIX, kernel_base),
+        );
         quote! {
             {
-                let __kernel_ptr = #kernel_entry #generics as *const ();
+                let __kernel_ptr = #kernel_entry as *const ();
                 unsafe {
                     let mut __force_mono: *const () = core::ptr::null();
                     core::ptr::write_volatile(&mut __force_mono, __kernel_ptr);
                     let _ = core::ptr::read_volatile(&__force_mono);
                 }
-                let __ptx_name = <#marker_name #generics as cuda_host::GenericCudaKernel>::ptx_name();
+                let __ptx_name = <#marker as cuda_host::GenericCudaKernel>::ptx_name();
                 let __func = #module.load_function(__ptx_name).unwrap_or_else(|err| {
                     panic!(
                         "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
@@ -4043,7 +4225,7 @@ pub fn cuda_launch_async(input: TokenStream) -> TokenStream {
         quote! {
             {
                 const __PTX_NAME: &str =
-                    <#marker_name as cuda_host::CudaKernel>::PTX_NAME;
+                    <#marker as cuda_host::CudaKernel>::PTX_NAME;
                 let __func = #module.load_function(__PTX_NAME).unwrap_or_else(|err| {
                     panic!(
                         "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
@@ -4077,6 +4259,43 @@ mod tests {
             .expect("cuda_module expansion failed")
             .to_string()
             .replace(' ', "")
+    }
+
+    #[test]
+    fn generated_kernel_siblings_preserve_qualified_paths_and_generics() {
+        let kernel: syn::Path = parse_quote! { kernels::map::<_, 4> };
+        let instantiate = kernel_sibling_path(&kernel, format_ident!("{}map", INSTANTIATE_PREFIX));
+        let marker = kernel_sibling_path(&kernel, format_ident!("__map_CudaKernel"));
+
+        let instantiate = quote! { #instantiate }.to_string().replace(' ', "");
+        let marker = quote! { #marker }.to_string().replace(' ', "");
+        assert_eq!(
+            instantiate,
+            format!("kernels::{}map::<_,4>", INSTANTIATE_PREFIX)
+        );
+        assert_eq!(marker, "kernels::__map_CudaKernel::<_,4>");
+    }
+
+    #[test]
+    fn forwarding_inputs_name_every_irrefutable_parameter_pattern() {
+        let function: ItemFn = parse_quote! {
+            fn patterns(_: u32, (left, right): (u16, u16), mut value: u8) {}
+        };
+        let (inputs, names) = forwarding_inputs(&function.sig.inputs).unwrap();
+        let forwarded = quote! {
+            fn wrapper(#(#inputs),*) {
+                target(#(#names),*)
+            }
+        }
+        .to_string()
+        .replace(' ', "");
+
+        assert!(forwarded.contains("__cuda_oxide_arg_0:u32"));
+        assert!(forwarded.contains("__cuda_oxide_arg_1:(u16,u16)"));
+        assert!(forwarded.contains("__cuda_oxide_arg_2:u8"));
+        assert!(
+            forwarded.contains("target(__cuda_oxide_arg_0,__cuda_oxide_arg_1,__cuda_oxide_arg_2)")
+        );
     }
 
     #[test]
@@ -4135,6 +4354,81 @@ mod tests {
             !expanded.contains("launch_kernel_cooperative_on_stream"),
             "cooperative call must not appear without #[cooperative_launch]:\n{expanded}"
         );
+    }
+
+    #[test]
+    fn cuda_module_forwards_type_and_const_generics_in_order() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn mixed<'a, T: Copy + 'a, const N: usize>(
+                    input: &'a [T],
+                    output: &mut [T],
+                ) {
+                }
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        let entry = kernel_symbol("mixed");
+
+        assert!(
+            expanded.contains(&format!("{entry}::<T,N>as*const()")),
+            "kernel monomorphization anchor must forward type and const arguments:\n{expanded}"
+        );
+        assert!(
+            expanded.contains("__mixed_CudaKernel<'a,T,N>as::cuda_host::GenericCudaKernel"),
+            "marker application must retain lifetime, type, and const arguments:\n{expanded}"
+        );
+    }
+
+    #[test]
+    fn generic_kernel_routes_entry_directives_without_losing_cfg() {
+        let function: ItemFn = parse_quote! {
+            #[doc = "configured kernel"]
+            #[cfg(feature = "configured")]
+            #[launch_bounds(256, 2)]
+            #[cluster_launch(2, 1, 1)]
+            fn configured<const N: usize>() {}
+        };
+
+        let (implementation, entry, cfg) = route_generic_kernel_attrs(&function.attrs);
+
+        assert!(
+            implementation
+                .iter()
+                .any(|attr| attr_path_ends_with(attr, "doc"))
+        );
+        assert!(
+            implementation
+                .iter()
+                .any(|attr| attr_path_ends_with(attr, "cfg"))
+        );
+        assert!(
+            !implementation
+                .iter()
+                .any(|attr| attr_path_ends_with(attr, "launch_bounds"))
+        );
+        assert!(
+            !implementation
+                .iter()
+                .any(|attr| attr_path_ends_with(attr, "cluster_launch"))
+        );
+
+        assert!(entry.iter().any(|attr| attr_path_ends_with(attr, "cfg")));
+        assert!(
+            entry
+                .iter()
+                .any(|attr| attr_path_ends_with(attr, "launch_bounds"))
+        );
+        assert!(
+            entry
+                .iter()
+                .any(|attr| attr_path_ends_with(attr, "cluster_launch"))
+        );
+        assert!(!entry.iter().any(|attr| attr_path_ends_with(attr, "doc")));
+
+        assert_eq!(cfg.len(), 1);
+        assert!(attr_path_ends_with(&cfg[0], "cfg"));
     }
 
     #[test]

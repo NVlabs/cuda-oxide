@@ -76,6 +76,21 @@ mod kernels {
         }
     }
 
+    /// Closure-generic kernel with a const parameter that cannot be inferred
+    /// from its runtime arguments. This exercises explicit generic forwarding
+    /// in both low-level launch macros.
+    #[kernel]
+    pub fn map_with_const<F, const OFFSET: u32>(f: F, input: &[u32], mut out: DisjointSlice<u32>)
+    where
+        F: Fn(u32) -> u32 + Copy,
+    {
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = out.get_mut(idx) {
+            *out_elem = f(input[idx_raw]) + OFFSET;
+        }
+    }
+
     #[kernel]
     pub fn map_where<T, F>(f: F, input: &[T], mut out: DisjointSlice<T>)
     where
@@ -542,6 +557,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             1e-5
         );
         println!();
+    }
+
+    // =========================================================================
+    // TEST 13: Closure type inference plus an explicit const argument
+    // =========================================================================
+    println!("Test 13: closure plus const-generic specialization");
+    {
+        let input: Vec<u32> = (0..N as u32).collect();
+        let input_dev_u32 = DeviceBuffer::from_host(&stream, &input)?;
+        let factor = 3u32;
+
+        let mut output_4 = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        unsafe {
+            cuda_launch! {
+                kernel: kernels::map_with_const::<_, 4>,
+                stream: stream,
+                module: module,
+                config: LaunchConfig::for_num_elems(N as u32),
+                args: [move |x: u32| x * factor, slice(input_dev_u32), slice_mut(output_4)]
+            }
+        }?;
+        let result_4 = output_4.to_host_vec(&stream)?;
+        assert!((0..N).all(|i| result_4[i] == input[i] * factor + 4));
+
+        let mut output_8 = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        cuda_launch_async! {
+            kernel: kernels::map_with_const::<_, 8>,
+            module: module,
+            config: LaunchConfig::for_num_elems(N as u32),
+            args: [move |x: u32| x * factor, slice(input_dev_u32), slice_mut(output_8)]
+        }
+        .sync_on(&stream)?;
+        let result_8 = output_8.to_host_vec(&stream)?;
+        assert!((0..N).all(|i| result_8[i] == input[i] * factor + 8));
+
+        println!("  ✓ SUCCESS: sync and async launch macros forwarded OFFSET");
     }
 
     println!("=== All Tests Complete ===");

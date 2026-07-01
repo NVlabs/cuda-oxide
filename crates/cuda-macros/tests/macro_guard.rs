@@ -1,23 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Compile-fail tests for the `#[kernel]` / `#[device]` macro guard
-//! against the reserved `cuda_oxide_*` namespace.
-//!
-//! These tests verify that the proc macros reject user-defined functions
-//! whose name starts with the reserved cuda-oxide prefix, before the
-//! compiler ever sees the (potentially-confusing) renamed form.
-//!
-//! See `crates/reserved-oxide-symbols/` for the source of truth on the
-//! reserved namespace.
+//! Compile-fail tests for `#[kernel]`, `#[device]`, and low-level launch API
+//! contracts. These keep invalid signatures and reserved names on clear macro
+//! diagnostics instead of allowing confusing generated-code failures.
 
 #[test]
-fn reserved_name_macro_guard() {
+fn macro_guards() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/kernel_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_extern_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_extern_wrong_abi.rs");
+    t.compile_fail("tests/compile_fail/kernel_legacy_const_instantiation.rs");
+    t.compile_fail("tests/compile_fail/kernel_legacy_lifetime_instantiation.rs");
+    t.compile_fail("tests/compile_fail/kernel_impl_trait_parameter.rs");
+    t.compile_fail("tests/compile_fail/cuda_module_impl_trait_parameter.rs");
+    t.compile_fail("tests/compile_fail/device_impl_trait_parameter.rs");
+    t.compile_fail("tests/compile_fail/kernel_instantiation_on_non_generic.rs");
 }
 
 /// `cuda_launch!` is a caller-unsafe API: its expansion calls the unsafe

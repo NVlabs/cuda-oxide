@@ -40,6 +40,16 @@ pub mod kernels {
         }
     }
 
+    /// Const-generic kernel instantiated by the consuming binary.
+    #[kernel]
+    pub fn add_const<const VALUE: u32>(input: &[u32], mut output: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = output.get_mut(idx) {
+            *out_elem = input[idx_raw] + VALUE;
+        }
+    }
+
     /// A device-side helper function (not a kernel).
     /// This tests that non-kernel functions from library crates also work.
     #[inline]

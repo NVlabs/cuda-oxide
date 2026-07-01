@@ -1,6 +1,7 @@
 # Cross-Crate Kernel Example
 
-This example demonstrates **defining kernels in a library crate** and using them from a binary crate.
+This example demonstrates **defining type- and const-generic kernels in a
+library crate** and instantiating them from a binary crate.
 
 ## Structure
 
@@ -11,7 +12,7 @@ cross_crate_kernel/
 ├── README.md            # This file
 └── kernel-lib/          # Library crate with #[kernel] functions
     ├── Cargo.toml
-    └── src/lib.rs       # Generic kernels: scale<T>, add<T>, etc.
+    └── src/lib.rs       # Generic kernels: scale<T>, add_const<N>, etc.
 ```
 
 ## What This Tests
@@ -19,13 +20,26 @@ cross_crate_kernel/
 1. **Generic kernels in library crates** - `kernel_lib::scale<T>` is defined externally
 2. **Monomorphization at use site** - `scale::<f32>`, `scale::<i32>` instantiated in binary
 3. **Cross-crate PTX generation** - All kernel monomorphizations compiled to PTX
-4. **Device helper functions** - `kernel_lib::device_scale_helper` called from kernel
+4. **Const specialization identity** - `add_const::<4>` and `<8>` remain distinct
+5. **Device helper functions** - `kernel_lib::device_scale_helper` called from kernel
 
 ## Run
 
 ```bash
 cargo oxide run cross_crate_kernel
 ```
+
+The cross-crate host lookup names can be checked against the generated PTX
+without initializing CUDA:
+
+```bash
+cargo oxide build cross_crate_kernel
+./crates/rustc-codegen-cuda/examples/cross_crate_kernel/target/release/cross_crate_kernel \
+  --verify-ptx
+```
+
+This covers `scale::<f32>`, `scale::<i32>`, `add_const::<4>`, and
+`add_const::<8>`.
 
 ## Expected Output
 
@@ -45,6 +59,9 @@ Test 3: kernel_lib::add::<f32>
 
 Test 4: kernel_lib::scale_with_helper::<f32> (uses device helper)
   ✓ PASSED: scale_with_helper uses device function from library!
+
+Test 5: kernel_lib::add_const::<4/8>
+  ✓ PASSED: const-generic library entries remain distinct!
 
 === All Cross-Crate Tests Passed! ===
 ```
@@ -101,32 +118,28 @@ The codegen backend:
 
 ### Generic Kernel Naming
 
-Each monomorphization gets a unique PTX name derived from rustc's stable
-128-bit type-id hash. The on-wire name is one fixed-length hex chunk per
-kernel, regardless of how many generic parameters the kernel takes —
-the hash is taken over the *tuple* of generic args, not each arg
-separately:
+Each specialization gets a unique PTX name derived from rustc's stable
+128-bit hash of the concrete kernel function-item type. That `FnDef` contains
+the function identity and every ordered type and const argument, while the
+on-wire name remains one fixed-length hex chunk:
 
-| Rust Code      | PTX Entry Point (hash of `(T,)`)             |
-|----------------|----------------------------------------------|
-| `scale::<f32>` | `scale_TID_<32 hex chars for `(f32,)`>`      |
-| `scale::<i32>` | `scale_TID_<32 hex chars for `(i32,)`>`      |
-| `add::<f32>`   | `add_TID_<32 hex chars for `(f32,)`>`        |
-
-The actual hex values come from rustc's
-`tcx.type_id_hash(Ty::new_tup(tcx, &args))` on the toolchain pinned in
-`rust-toolchain.toml`. Same toolchain, same Rust types, same hex.
+| Rust code       | PTX entry point                    |
+|-----------------|------------------------------------|
+| `scale::<f32>`  | `scale_TID_<32 hex characters>`    |
+| `scale::<i32>`  | `scale_TID_<different 32 hex>`     |
+| `add_const::<4>`| `add_const_TID_<32 hex characters>`|
+| `add_const::<8>`| `add_const_TID_<different 32 hex>` |
 
 The naming scheme:
 - Base name extracted from `cuda_oxide_kernel_<hash>_<name>` via
   `reserved_oxide_symbols::kernel_base_name`.
 - Suffix: `_TID_` + 32 lowercase hex chars.
-- Backend computes the hash as
-  `tcx.type_id_hash(Ty::new_tup(tcx, &generic_args)).as_u128()`.
-- Host computes the same hash as
-  `cuda_host::type_id_u128::<(T0, T1, ...,)>()`.
-- Both go through `erase_and_anonymize_regions` + stable hash within
-  one rustc invocation, so the values match byte-for-byte.
+- Backend hashes the concrete `Instance::ty`.
+- Host hashes `&kernel_entry::<T, N>` with
+  `cuda_host::type_id_u128_of_val`.
+- Both go through `erase_and_anonymize_regions` + stable hash with the pinned
+  rustc toolchain and the same crate identity, so the values match
+  byte-for-byte within one unified build.
 
 ### Cross-Crate Intrinsic Handling
 

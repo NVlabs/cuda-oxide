@@ -7,8 +7,9 @@ the host to customize GPU behavior, all without runtime overhead.
 
 ## Generic kernels
 
-A kernel can be generic over types and trait bounds, just like any Rust function.
-The compiler monomorphizes each instantiation into a separate PTX entry point:
+A kernel can be generic over types, const values, and trait bounds, just like
+any Rust function. The compiler monomorphizes each specialization into a
+separate PTX entry point:
 
 ```rust
 use cuda_device::{kernel, thread, DisjointSlice};
@@ -33,22 +34,27 @@ pub fn scale<T: Copy + Mul<Output = T>>(
 Each monomorphization produces a distinct PTX entry point. Non-generic kernels
 keep their plain function name. Generic kernels (including closure-generic
 kernels) get a `_TID_<hex32>` suffix where `<hex32>` is rustc's stable
-type-id hash of the *tuple* of generic arguments, rendered as 32 lowercase
-hex characters:
+type-id hash of the concrete generated kernel function item, rendered as 32
+lowercase hex characters:
 
 | Instantiation             | PTX entry point name |
 |:--------------------------|:---------------------|
 | `vecadd` (non-generic)    | `vecadd`             |
 | `scale::<f32>`            | `scale_TID_<hex32>`  |
 | `scale::<MyType>`         | `scale_TID_<hex32>`  |
+| `tile::<4>`               | `tile_TID_<hex32>`   |
+| `tile::<8>`               | `tile_TID_<hex32>`   |
 | `map::<f32, _>` (closure) | `map_TID_<hex32>`    |
 
-Both the host launcher and the device backend ask the same rustc invocation
-for the same hash, so the strings match byte-for-byte. Hashing the tuple
-(not each argument independently) keeps the on-wire name a fixed length
-regardless of how many generic parameters the kernel takes. Borrow
-lifetimes are erased before hashing, so `&'a T` and `&'static T` produce
-the same hash for the same shape `T`.
+Both the host launcher and the device backend ask the pinned rustc toolchain
+for the same `FnDef` hash within one unified build, so the strings match
+byte-for-byte. The function item contains its definition plus every ordered
+type and const argument. The on-wire name therefore remains fixed-length
+regardless of generic arity. Borrow lifetimes are erased before hashing, so
+they do not create duplicate GPU code.
+
+Treat the suffix as a build artifact, not a permanent ABI: host code and PTX
+must be built together with cuda-oxide's pinned rustc toolchain.
 
 ### Launching generic kernels
 
@@ -73,6 +79,36 @@ module
 The generated method forces monomorphization of `scale::<f32>` so the
 instantiation appears in the compiled PTX even though it is never called
 directly on the CPU.
+
+### Const-generic kernels
+
+Const parameters work on kernel and device-function entry points:
+
+```rust
+#[kernel]
+pub fn add_value<const VALUE: u32>(mut output: DisjointSlice<u32>) {
+    let index = thread::index_1d();
+    if let Some(element) = output.get_mut(index) {
+        *element += VALUE;
+    }
+}
+```
+
+```text
+add_value::<4> -> add_value_TID_<hash A>
+add_value::<8> -> add_value_TID_<hash B>
+```
+
+Use ordinary Rust turbofish syntax on the generated launch method:
+
+```rust
+module.add_value::<4>(&stream, config, &mut output)?;
+module.add_value::<{ Config::VALUE }>(&stream, config, &mut output)?;
+```
+
+The older `#[kernel(f32, i32)]` convenience form only supports one type
+parameter. For const or mixed generics, use bare `#[kernel]` and specialize at
+the launch site.
 
 ## Host closures as kernel arguments
 
@@ -131,8 +167,8 @@ stays aligned.
 ### PTX naming for closures
 
 A closure-generic kernel gets the same `_TID_<hex32>` suffix as any other
-generic kernel. The closure's anonymous type is one of the entries in the
-hashed tuple, so two distinct closure literals -- even ones with the
+generic kernel. The closure's anonymous type is part of the concrete function
+item, so two distinct closure literals -- even ones with the
 same `Fn` signature -- produce two distinct entry points:
 
 | Closure                                | PTX entry point   |

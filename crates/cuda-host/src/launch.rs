@@ -58,7 +58,8 @@ pub trait CudaKernel {
 /// Trait for generic kernel functions.
 ///
 /// Unlike `CudaKernel`, this trait provides a function to get the PTX name
-/// because generic kernels have different PTX names for each type instantiation.
+/// because generic kernels have different PTX names for each type/const
+/// specialization.
 ///
 /// # Example
 ///
@@ -74,24 +75,22 @@ pub trait CudaKernel {
 ///
 /// impl<T: Copy + Mul<Output = T>> GenericCudaKernel for __scale_CudaKernel<T> {
 ///     fn ptx_name() -> &'static str {
-///         // "scale_TID_<hex32>" — one 32-char hex chunk for the entire
-///         // tuple of generic args. The hash matches what the backend
-///         // wrote into the .ptx for the same monomorphization.
+///         // "scale_TID_<hex32>" — one 32-char hash of the concrete
+///         // generated kernel function-item type. The hash matches what the
+///         // backend wrote into the .ptx for the same specialization.
 ///     }
 /// }
 /// ```
 ///
 /// # PTX Naming Scheme
 ///
-/// Generic kernels are named `<base>_TID_<hex32>`, where `<hex32>` is
-/// `cuda_host::type_id_u128::<(T0, T1, ...,)>()` for the *tuple* of the
-/// kernel's generic type parameters, rendered as 32 lowercase hex chars.
-/// The backend computes the same hash via
-/// `tcx.type_id_hash(Ty::new_tup(tcx, &args)).as_u128()`, so both ends of
-/// a single rustc invocation produce the same string for the same types.
-/// Hashing the tuple keeps the name fixed-length regardless of generic
-/// arity — PTX identifiers can be ~1024 chars but the name is repeated
-/// per kernel parameter, so a per-arg layout would blow up quickly.
+/// Generic kernels are named `<base>_TID_<hex32>`, where `<hex32>` hashes the
+/// concrete generated kernel function-item type. That `FnDef` contains the
+/// function identity plus every ordered type and const argument. The host uses
+/// `cuda_host::type_id_u128_of_val(&kernel_entry::<T, N>)`; the backend hashes
+/// `Instance::ty` for the same entry. Both use rustc's region-erasing stable
+/// type hash, so lifetimes do not create spurious PTX variants and the name
+/// remains fixed-length regardless of generic arity.
 ///
 /// The bound on `ptx_name` is intentionally just whatever the kernel
 /// itself declared — typically `Copy` on the value-passed generics. No
@@ -104,7 +103,7 @@ pub trait GenericCudaKernel {
     /// Get the PTX entry point name for this specific instantiation.
     ///
     /// Unlike `CudaKernel::PTX_NAME`, this is a function because the name
-    /// depends on the type parameters.
+    /// depends on the concrete type and const specialization.
     fn ptx_name() -> &'static str;
 }
 

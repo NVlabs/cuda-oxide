@@ -1,0 +1,5 @@
+error: kernel parameters cannot use `impl Trait`; name the type parameter explicitly (for example, `fn named<T: Trait>(value: T)`) so host and device specialization identities agree
+  --> tests/compile_fail/cuda_module_impl_trait_parameter.rs:11:23
+   |
+11 |     fn invalid(value: impl Copy) {
+   |                       ^^^^^^^^^
