@@ -2875,7 +2875,7 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
 }
 
 // =============================================================================
-// WMMA (movmatrix) lowering test
+// Warp-level matrix (`movmatrix`) lowering test
 // =============================================================================
 
 #[test]
@@ -2899,9 +2899,53 @@ fn test_movmatrix_trans_b16_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
     op.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 
-    assert_inline_asm_lowering(
-        &mut ctx,
-        module_ptr,
-        "movmatrix.sync.aligned.m8n8.trans.b16",
-    )
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut found = 0;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for module_op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(function) = Operation::get_op::<llvm::FuncOp>(module_op, &ctx) else {
+            continue;
+        };
+        if function.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let body = function.get_operation().deref(&ctx).get_region(0);
+        for block in body.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                found += 1;
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                let constraints = asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                assert_eq!(
+                    template.as_deref(),
+                    Some("movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;")
+                );
+                assert_eq!(constraints.as_deref(), Some("=r,r"));
+                assert_eq!(
+                    llvm::asm_kind_opt(&ctx, &asm),
+                    Some(llvm::AsmKind::Convergent)
+                );
+                assert!(
+                    asm.get_attr_inline_asm_convergent(&ctx)
+                        .is_some_and(|value| bool::from((*value).clone()))
+                );
+                assert!(
+                    !constraints.as_deref().unwrap().contains("memory"),
+                    "register-only movmatrix must not claim a memory clobber"
+                );
+            }
+        }
+    }
+
+    assert_eq!(found, 1, "expected one movmatrix inline-asm operation");
+    Ok(())
 }

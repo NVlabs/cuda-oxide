@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! WMMA intrinsics (movmatrix).
+//! Warp-level matrix intrinsics (`movmatrix`).
 
 use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};

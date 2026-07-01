@@ -4,22 +4,71 @@
  */
 
 use dialect_nvvm::ops::{
-    Barrier0Op, ElectSyncOp, FmaBf16x2Op, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
-    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
-    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
-    ShflSyncUpI64Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    Barrier0Op, ElectSyncOp, FmaBf16x2Op, MovmatrixTransB16Op, ReadPtxSregDynamicSmemSizeOp,
+    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
+    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
+    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
+    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
+    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
+    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, ThreadfenceBlockOp, ThreadfenceOp,
+    ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
-    builtin::types::{IntegerType, Signedness},
+    builtin::types::{FP32Type, IntegerType, Signedness},
     common_traits::Verify,
     context::Context,
     op::{Op, verify_op},
     operation::Operation,
 };
+
+#[test]
+fn test_movmatrix_requires_one_i32_operand_and_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+    let f32_value = block.deref(&ctx).get_argument(2);
+
+    let valid = Operation::new(
+        &mut ctx,
+        MovmatrixTransB16Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![i32_value],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MovmatrixTransB16Op::new(valid), &ctx).is_ok());
+
+    for (operand, result_type) in [
+        (i64_value, i32_ty.into()),
+        (f32_value, i32_ty.into()),
+        (i32_value, i64_ty.into()),
+        (i32_value, f32_ty.into()),
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            MovmatrixTransB16Op::get_concrete_op_info(),
+            vec![result_type],
+            vec![operand],
+            vec![],
+            0,
+        );
+        assert!(
+            verify_op(&MovmatrixTransB16Op::new(invalid), &ctx).is_err(),
+            "movmatrix must reject non-i32 carriers"
+        );
+    }
+}
 
 /// The `(constructor, TypeId)` pair returned by `get_concrete_op_info()`.
 type OpInfo = (

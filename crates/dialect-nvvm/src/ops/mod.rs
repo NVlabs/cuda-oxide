@@ -25,7 +25,7 @@
 //! │ wgmma       │ Warpgroup Matrix Multiply-Acc      │ Hopper+    │ 5    │
 //! │ tcgen05     │ Tensor Core Gen 5 operations       │ Blackwell+ │ 25+  │
 //! │ stmatrix    │ Shared memory matrix store         │ Hopper+    │ 5    │
-//! │ wmma        │ In-register matrix transpose       │ Hopper+    │ 1    │
+//! │ wmma        │ In-register matrix transpose       │ Turing+    │ 1    │
 //! └─────────────┴────────────────────────────────────┴────────────┴──────┘
 //! ```
 //!

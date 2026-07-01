@@ -449,26 +449,24 @@ pub fn run_pipeline(
         );
     }
 
-    // An ordinary zero-flag build may discover only now that libdevice makes
-    // NVVM IR necessary. Preserve the normal target policy in that case:
-    // explicit target, then a compatible local-GPU hint, then the compiler's
-    // feature-based target. Feature detection uses the
-    // same LLVM text that the ordinary PTX path would inspect, but keeps this
-    // preview in memory because the final pointer dialect is not known yet.
-    let automatic_features =
-        if needs_libdevice && !config.emit_nvvm_ir && config.target_arch.is_none() {
-            let preview = render_llvm_ir(
-                &ctx,
-                module_op_ptr,
-                device_externs,
-                false,
-                None,
-                config.debug_kind,
-            )?;
-            Some(detect_features_in_llvm_text(&preview))
-        } else {
-            None
-        };
+    // NVVM IR export must validate its explicit target against the same
+    // module feature floor as ordinary PTX generation. An ordinary zero-flag
+    // build can also discover only now that libdevice makes NVVM IR necessary.
+    // Render one in-memory preview before choosing the final pointer dialect;
+    // the preview is only inspected and is not written as an artifact.
+    let automatic_features = if emit_nvvm_ir {
+        let preview = render_llvm_ir(
+            &ctx,
+            module_op_ptr,
+            device_externs,
+            false,
+            None,
+            config.debug_kind,
+        )?;
+        Some(detect_features_in_llvm_text(&preview))
+    } else {
+        None
+    };
 
     // Pre-Blackwell and Blackwell GPUs use different NVVM IR pointer syntax.
     // Resolve one concrete target before export and record it with the
@@ -851,7 +849,11 @@ fn resolve_nvvm_target(
     };
 
     if let Some(target) = explicit_target {
-        return parse(target, "explicit CUDA target");
+        let parsed = parse(target, "explicit CUDA target")?;
+        if let Some(features) = automatic_features {
+            validate_target_features(&parsed, features).map_err(PipelineError::Export)?;
+        }
+        return Ok(parsed);
     }
 
     if let Some(features) = automatic_features {
@@ -1069,6 +1071,11 @@ fn contains_sm90_features(contents: &str) -> bool {
         .any(|mnemonic| contents.contains(mnemonic))
 }
 
+/// Checks for the register-only 8x8 matrix transpose (PTX 7.8, sm_75+).
+fn contains_movmatrix_features(contents: &str) -> bool {
+    contents.contains("movmatrix.sync.aligned.m8n8.trans.b16 ")
+}
+
 /// Checks for features whose minimum target is sm_80.
 ///
 /// This category includes packed bf16 operations introduced on Ampere and
@@ -1164,8 +1171,26 @@ enum DetectedFeatures {
     Sm90,
     /// Forward-compatible instructions with an sm_80 floor.
     Sm80,
+    /// Warp matrix register transpose introduced in PTX 7.8 on sm_75.
+    Movmatrix,
     /// No special features (Volta+, with an sm_80 cross-compile default).
     Basic,
+}
+
+/// PTX ISA requirements are independent of the GPU architecture floor.
+///
+/// For example, a module may need sm_80 because it uses `cp.async` and still
+/// need PTX 7.8 because it also uses `movmatrix`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PtxIsaRequirement {
+    Default,
+    Ptx78,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModuleRequirements {
+    features: DetectedFeatures,
+    ptx_isa: PtxIsaRequirement,
 }
 
 /// Detect the strongest architecture requirement in exported LLVM text.
@@ -1182,26 +1207,41 @@ fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
         contains_cluster_features(contents),
         contains_sm90_features(contents),
         contains_sm80_features(contents),
+        contains_movmatrix_features(contents),
     ) {
-        (true, _, _, _, _, _, _) => DetectedFeatures::Blackwell,
-        (_, true, _, _, _, _, _) => DetectedFeatures::TmaMulticast,
-        (_, _, true, _, _, _, _) => DetectedFeatures::Wgmma,
-        (_, _, _, true, _, _, _) => DetectedFeatures::Tma,
-        (_, _, _, _, true, _, _) => DetectedFeatures::Cluster,
-        (_, _, _, _, _, true, _) => DetectedFeatures::Sm90,
-        (_, _, _, _, _, _, true) => DetectedFeatures::Sm80,
+        (true, _, _, _, _, _, _, _) => DetectedFeatures::Blackwell,
+        (_, true, _, _, _, _, _, _) => DetectedFeatures::TmaMulticast,
+        (_, _, true, _, _, _, _, _) => DetectedFeatures::Wgmma,
+        (_, _, _, true, _, _, _, _) => DetectedFeatures::Tma,
+        (_, _, _, _, true, _, _, _) => DetectedFeatures::Cluster,
+        (_, _, _, _, _, true, _, _) => DetectedFeatures::Sm90,
+        (_, _, _, _, _, _, true, _) => DetectedFeatures::Sm80,
+        (_, _, _, _, _, _, _, true) => DetectedFeatures::Movmatrix,
         _ => DetectedFeatures::Basic,
     }
 }
 
-fn detect_features_in_llvm_file(ll_path: &Path) -> Result<DetectedFeatures, PipelineError> {
+fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements {
+    ModuleRequirements {
+        features: detect_features_in_llvm_text(contents),
+        ptx_isa: if contains_movmatrix_features(contents) {
+            PtxIsaRequirement::Ptx78
+        } else {
+            PtxIsaRequirement::Default
+        },
+    }
+}
+
+fn detect_module_requirements_in_llvm_file(
+    ll_path: &Path,
+) -> Result<ModuleRequirements, PipelineError> {
     let contents = std::fs::read_to_string(ll_path).map_err(|error| {
         PipelineError::PtxGeneration(format!(
             "failed to inspect generated LLVM IR {}: {error}",
             ll_path.display()
         ))
     })?;
-    Ok(detect_features_in_llvm_text(&contents))
+    Ok(detect_module_requirements_in_llvm_text(&contents))
 }
 
 /// Maps detected features to GPU target architecture.
@@ -1221,6 +1261,7 @@ fn select_target(features: DetectedFeatures) -> &'static str {
         DetectedFeatures::Cluster => "sm_90",
         DetectedFeatures::Sm90 => "sm_90",
         DetectedFeatures::Sm80 => "sm_80",
+        DetectedFeatures::Movmatrix => "sm_75",
         DetectedFeatures::Basic => "sm_80",
     }
 }
@@ -1239,6 +1280,9 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 /// hint) can actually run the kernel, or whether we must build for the arch the
 /// IR requires instead.
 fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
+    let Some(capability) = arch_compute_capability(arch) else {
+        return false;
+    };
     let Some(major) = arch_major(arch) else {
         return false;
     };
@@ -1247,11 +1291,56 @@ fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
         DetectedFeatures::Wgmma => major == 9,
         DetectedFeatures::Tma | DetectedFeatures::Cluster | DetectedFeatures::Sm90 => major >= 9,
         DetectedFeatures::Sm80 => major >= 8,
+        DetectedFeatures::Movmatrix => capability >= 75,
         // Basic kernels are supported on the project's Volta+ floor. The
         // cross-compilation default remains sm_80, but a detected sm_70/sm_75
         // GPU is a valid and more useful target for `cargo oxide run`.
         DetectedFeatures::Basic => major >= 7,
     }
+}
+
+fn validate_target_features(target: &CudaArch, features: DetectedFeatures) -> Result<(), String> {
+    if arch_satisfies(&target.sm(), features) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "CUDA target {} cannot lower detected feature {features:?}; \
+         cuda-oxide currently requires {} or newer for this module",
+        target.sm(),
+        select_target(features)
+    ))
+}
+
+fn resolve_ptx_target(
+    explicit_override: Option<&str>,
+    device_hint: Option<&str>,
+    detected: DetectedFeatures,
+) -> Result<(String, &'static str), PipelineError> {
+    if let Some(target) = explicit_override {
+        let parsed = target.parse::<CudaArch>().map_err(|error| {
+            PipelineError::PtxGeneration(format!("invalid CUDA_OXIDE_TARGET `{target}`: {error}"))
+        })?;
+        validate_target_features(&parsed, detected).map_err(PipelineError::PtxGeneration)?;
+        return Ok((parsed.sm(), "CUDA_OXIDE_TARGET"));
+    }
+
+    if let Some(device) = device_hint.filter(|target| arch_satisfies(target, detected)) {
+        return Ok((device.to_string(), "detected GPU"));
+    }
+
+    Ok((select_target(detected).to_string(), "feature requirement"))
+}
+
+/// Select the PTX ISA independently from the GPU architecture.
+///
+/// `movmatrix` runs on sm_75+, but LLVM's pre-Hopper CPUs select older PTX
+/// versions by default. Request PTX 7.8 on sm_75 through sm_89; sm_90+ already
+/// selects PTX 7.8 or newer and must not be downgraded.
+fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<&'static str> {
+    (requirement == PtxIsaRequirement::Ptx78
+        && arch_compute_capability(target).is_some_and(|capability| capability < 90))
+    .then_some("+ptx78")
 }
 
 /// Extract the compute-capability *major* version from an `sm_…` target string.
@@ -1260,12 +1349,17 @@ fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
 /// (major 12), `"sm_90"` is cc 9.0, `"sm_103a"` is cc 10.3. We read the digit
 /// run after `sm_` and divide by ten. Returns `None` when there are no digits.
 fn arch_major(arch: &str) -> Option<u32> {
+    arch_compute_capability(arch).map(|capability| capability / 10)
+}
+
+/// Extract the numeric compute capability from an `sm_…` target.
+fn arch_compute_capability(arch: &str) -> Option<u32> {
     let digits: String = arch
-        .trim_start_matches("sm_")
+        .strip_prefix("sm_")?
         .chars()
         .take_while(|c| c.is_ascii_digit())
         .collect();
-    digits.parse::<u32>().ok().map(|n| n / 10)
+    (digits.len() >= 2).then(|| digits.parse().ok()).flatten()
 }
 
 /// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
@@ -1353,34 +1447,22 @@ fn generate_ptx(
     // `cargo oxide run`. Used only when that GPU can actually run the kernel.
     let device_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
 
-    let detected = detect_features_in_llvm_file(ll_path)?;
-
-    // Arch the IR actually requires (the hard floor).
-    let feature_arch = select_target(detected);
+    let requirements = detect_module_requirements_in_llvm_file(ll_path)?;
+    let detected = requirements.features;
 
     // Resolve the final target:
-    //   1. explicit override -- honored as-is. If it cannot lower the kernel's
-    //      features we warn (otherwise llc aborts with a cryptic backend error).
+    //   1. explicit override -- accepted only if it can lower the kernel's
+    //      features; reject an invalid floor before llc emits unusable PTX.
     //   2. detected-device hint -- used only if that GPU can run the kernel;
     //      otherwise we build for `feature_arch`. The resulting PTX will not
     //      load on this GPU, but feature-gated examples handle that at load time
     //      (cuModuleLoad reports INVALID_PTX and they skip execution).
     //   3. neither set -- the feature floor.
-    let (target, target_source): (String, &str) = if let Some(t) = explicit_override {
-        if !arch_satisfies(&t, detected) {
-            eprintln!(
-                "warning: CUDA_OXIDE_TARGET={t} cannot lower the detected feature \
-                 {detected:?} (needs {feature_arch}); PTX generation will likely \
-                 fail. Unset CUDA_OXIDE_TARGET to let cuda-oxide select \
-                 {feature_arch} automatically."
-            );
-        }
-        (t, "CUDA_OXIDE_TARGET")
-    } else if let Some(dev) = device_hint.filter(|d| arch_satisfies(d, detected)) {
-        (dev, "detected GPU")
-    } else {
-        (feature_arch.to_string(), "feature requirement")
-    };
+    let (target, target_source) = resolve_ptx_target(
+        explicit_override.as_deref(),
+        device_hint.as_deref(),
+        detected,
+    )?;
 
     // Log target selection
     if std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {
@@ -1455,6 +1537,9 @@ fn generate_ptx(
     llc_cmd
         .arg("-march=nvptx64")
         .arg(format!("-mcpu={}", target));
+    if let Some(feature) = required_ptx_feature(&target, requirements.ptx_isa) {
+        llc_cmd.arg(format!("-mattr={feature}"));
+    }
     // Full-debug (`-G`-style): run llc at -O0 so its own mem2reg/SROA does not
     // promote the stack slots we deliberately kept in memory, which would
     // invalidate the `llvm.dbg.declare` locations cuda-gdb reads.
@@ -1825,6 +1910,7 @@ mod tests {
     fn automatic_nvvm_target_uses_the_module_feature_floor() {
         for (features, expected, is_legacy) in [
             (DetectedFeatures::Basic, "sm_80", true),
+            (DetectedFeatures::Movmatrix, "sm_75", true),
             (DetectedFeatures::Sm80, "sm_80", true),
             (DetectedFeatures::Sm90, "sm_90", true),
             (DetectedFeatures::Cluster, "sm_90", true),
@@ -1848,6 +1934,10 @@ mod tests {
         let sm80_on_turing =
             resolve_nvvm_target(None, Some("sm_75"), Some(DetectedFeatures::Sm80)).unwrap();
         assert_eq!(sm80_on_turing.sm(), "sm_80");
+
+        let movmatrix_on_volta =
+            resolve_nvvm_target(None, Some("sm_70"), Some(DetectedFeatures::Movmatrix)).unwrap();
+        assert_eq!(movmatrix_on_volta.sm(), "sm_75");
 
         let blackwell =
             resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Basic)).unwrap();
@@ -1879,13 +1969,25 @@ mod tests {
     }
 
     #[test]
-    fn explicit_nvvm_target_wins_over_automatic_selection() {
-        let target = resolve_nvvm_target(
-            Some("sm_86"),
-            Some("sm_120a"),
-            Some(DetectedFeatures::Blackwell),
-        )
-        .unwrap();
+    fn explicit_nvvm_target_rejects_a_detected_feature_below_its_floor() {
+        let error = resolve_nvvm_target(Some("sm_70"), None, Some(DetectedFeatures::Movmatrix))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("cannot lower detected feature Movmatrix"),
+            "{error}"
+        );
+
+        let target =
+            resolve_nvvm_target(Some("sm_75"), None, Some(DetectedFeatures::Movmatrix)).unwrap();
+        assert_eq!(target.sm(), "sm_75");
+    }
+
+    #[test]
+    fn compatible_explicit_nvvm_target_wins_over_automatic_selection() {
+        let target =
+            resolve_nvvm_target(Some("sm_86"), Some("sm_120a"), Some(DetectedFeatures::Sm80))
+                .unwrap();
         assert_eq!(target.sm(), "sm_86");
     }
 
@@ -2018,6 +2120,72 @@ mod tests {
     }
 
     #[test]
+    fn test_movmatrix_detection_separates_sm75_from_the_ptx78_floor() {
+        let mnemonic = "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;";
+        assert!(contains_movmatrix_features(mnemonic));
+        assert_eq!(
+            detect_features_in_llvm_text(mnemonic),
+            DetectedFeatures::Movmatrix
+        );
+        assert_eq!(select_target(DetectedFeatures::Movmatrix), "sm_75");
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(mnemonic).ptx_isa,
+            PtxIsaRequirement::Ptx78
+        );
+
+        for near_miss in [
+            "movmatrix.sync.aligned.m8n8.b16 $0, $1;",
+            "movmatrix.sync.aligned.m16n8.trans.b16 $0, $1;",
+            "movmatrix.sync.aligned.m8n8.trans.b32 $0, $1;",
+        ] {
+            assert!(
+                !contains_movmatrix_features(near_miss),
+                "matched {near_miss}"
+            );
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(near_miss),
+                ModuleRequirements {
+                    features: DetectedFeatures::Basic,
+                    ptx_isa: PtxIsaRequirement::Default,
+                }
+            );
+        }
+
+        let combined = format!("{mnemonic}\ncp.async.ca.shared.global [$0], [$1], 4;");
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&combined),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            },
+            "the architecture and PTX ISA floors must compose independently"
+        );
+
+        let sm_70: CudaArch = "sm_70".parse().unwrap();
+        let sm_75: CudaArch = "sm_75".parse().unwrap();
+        let sm_80: CudaArch = "sm_80".parse().unwrap();
+        assert!(validate_target_features(&sm_70, DetectedFeatures::Movmatrix).is_err());
+        assert!(validate_target_features(&sm_75, DetectedFeatures::Movmatrix).is_ok());
+        assert!(validate_target_features(&sm_80, DetectedFeatures::Movmatrix).is_ok());
+
+        for target in ["sm_75", "sm_80", "sm_86", "sm_89"] {
+            assert_eq!(
+                required_ptx_feature(target, PtxIsaRequirement::Ptx78),
+                Some("+ptx78"),
+                "{target} needs an explicit PTX 7.8 floor"
+            );
+        }
+        assert_eq!(
+            required_ptx_feature("sm_90", PtxIsaRequirement::Ptx78),
+            None
+        );
+        assert_eq!(
+            required_ptx_feature("sm_75", PtxIsaRequirement::Default),
+            None
+        );
+    }
+
+    #[test]
     fn test_sm90_floor_wins_when_sm80_features_are_also_present() {
         let llvm = r#"
             call i32 asm pure "add.rn.bf16x2 $0, $1, $2;", "=r,r,r"(i32 %a, i32 %b)
@@ -2052,11 +2220,14 @@ mod tests {
         assert_eq!(select_target(DetectedFeatures::Cluster), "sm_90");
         assert_eq!(select_target(DetectedFeatures::Sm90), "sm_90");
         assert_eq!(select_target(DetectedFeatures::Sm80), "sm_80");
+        assert_eq!(select_target(DetectedFeatures::Movmatrix), "sm_75");
         assert_eq!(select_target(DetectedFeatures::Basic), "sm_80");
     }
 
     #[test]
     fn test_arch_major_parses_cuda_spelling() {
+        assert_eq!(arch_compute_capability("sm_75"), Some(75));
+        assert_eq!(arch_compute_capability("sm_100a"), Some(100));
         assert_eq!(arch_major("sm_75"), Some(7));
         assert_eq!(arch_major("sm_80"), Some(8));
         assert_eq!(arch_major("sm_90a"), Some(9));
@@ -2095,8 +2266,8 @@ mod tests {
     #[test]
     fn test_arch_satisfies_forward_compatible_features() {
         // Plain TMA / cluster / sm_90-floor instructions lower on any sm_90+
-        // device, sm_80-floor instructions on any sm_80+ device, and basic
-        // kernels on Volta+.
+        // device, sm_80-floor instructions on any sm_80+ device, movmatrix on
+        // sm_75+, and basic kernels on Volta+.
         // So a consumer sm_120 GPU is a valid target for these (it runs locally
         // instead of being downgraded to the feature floor).
         for arch in ["sm_90a", "sm_100a", "sm_120a"] {
@@ -2104,10 +2275,14 @@ mod tests {
             assert!(arch_satisfies(arch, DetectedFeatures::Cluster));
             assert!(arch_satisfies(arch, DetectedFeatures::Sm90));
             assert!(arch_satisfies(arch, DetectedFeatures::Sm80));
+            assert!(arch_satisfies(arch, DetectedFeatures::Movmatrix));
             assert!(arch_satisfies(arch, DetectedFeatures::Basic));
         }
         assert!(arch_satisfies("sm_80", DetectedFeatures::Sm80));
         assert!(!arch_satisfies("sm_75", DetectedFeatures::Sm80));
+        assert!(arch_satisfies("sm_75", DetectedFeatures::Movmatrix));
+        assert!(arch_satisfies("sm_80", DetectedFeatures::Movmatrix));
+        assert!(!arch_satisfies("sm_70", DetectedFeatures::Movmatrix));
         assert!(arch_satisfies("sm_80", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_75", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_70", DetectedFeatures::Basic));

@@ -3960,7 +3960,7 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
-        // WMMA (warp-level matrix) operations (from intrinsics::wmma)
+        // Warp-level matrix operations (from intrinsics::wmma)
         // =================================================================
         "cuda_device::wmma::movmatrix_trans_b16" => {
             Ok(Some(intrinsics::wmma::emit_movmatrix_trans_b16(

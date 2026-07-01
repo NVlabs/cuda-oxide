@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! WMMA intrinsic lowering (movmatrix).
+//! Warp-level matrix intrinsic lowering (`movmatrix`).
 
 use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -27,8 +27,11 @@ pub(crate) fn convert_movmatrix_trans_b16(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.is_empty() {
-        return pliron::input_err_noloc!("movmatrix_trans_b16 requires 1 operand");
+    if operands.len() != 1 {
+        return pliron::input_err_noloc!(
+            "movmatrix_trans_b16 requires 1 operand, got {}",
+            operands.len()
+        );
     }
 
     let a_val = operands[0];
