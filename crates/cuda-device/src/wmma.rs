@@ -192,9 +192,10 @@ pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
 ///
 /// # Safety
 ///
-/// - Must be called by all threads in a warp
-/// - Must be called from within a CUDA kernel context on sm_80+
-/// - Fragment values must come from `ldmatrix` or be correctly distributed
+/// - All 32 lanes in the warp must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
+///   automatically.
 #[inline(never)]
 pub unsafe fn mma_m16n8k16_f32_bf16(acc: &mut [f32; 4], a: &[u32; 4], b: &[u32; 2]) {
     let _ = (acc, a, b);
