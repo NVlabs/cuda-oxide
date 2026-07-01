@@ -5,6 +5,7 @@
 
 //! Warp-level matrix dialect operations.
 
+use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
     builtin::types::IntegerType,
@@ -71,6 +72,65 @@ impl Verify for MovmatrixTransB16Op {
     }
 }
 
+/// Warp MMA: m16n8k16 with f32 accumulator and bf16 inputs.
+///
+/// # Operands
+///
+/// - `acc_ptr` (ptr): pointer to `[f32; 4]` accumulator (read-modify-write)
+/// - `a_ptr` (ptr): pointer to `[u32; 4]` A fragment (packed bf16)
+/// - `b_ptr` (ptr): pointer to `[u32; 2]` B fragment (packed bf16)
+///
+/// # Results
+///
+/// - None (accumulator updated in-place via pointer)
+#[pliron_op(
+    name = "nvvm.mma_m16n8k16_f32_bf16",
+    format,
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+)]
+pub struct MmaM16N8K16F32Bf16Op;
+
+impl Verify for MmaM16N8K16F32Bf16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let operands: Vec<_> = op.operands().collect();
+
+        if operands.len() != 3 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mma_m16n8k16_f32_bf16 requires 3 pointer operands, got {}",
+                operands.len()
+            );
+        }
+
+        for (i, operand) in operands.iter().enumerate() {
+            let ty = operand.get_type(ctx);
+            if ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.mma_m16n8k16_f32_bf16 operand {} must be a MIR pointer",
+                    i
+                );
+            }
+        }
+
+        if op.get_num_results() != 0 {
+            return verify_err!(op.loc(), "nvvm.mma_m16n8k16_f32_bf16 must have 0 results");
+        }
+
+        Ok(())
+    }
+}
+
+impl MmaM16N8K16F32Bf16Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MmaM16N8K16F32Bf16Op { op }
+    }
+}
+
+/// Register WMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     MovmatrixTransB16Op::register(ctx);
+    MmaM16N8K16F32Bf16Op::register(ctx);
 }

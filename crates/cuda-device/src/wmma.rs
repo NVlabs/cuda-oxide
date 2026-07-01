@@ -162,3 +162,42 @@ pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
     let _ = smem_ptr;
     unreachable!("ldmatrix_x4_trans called outside CUDA kernel context")
 }
+
+/// Warp MMA: D = A x B + C (m16n8k16, f32 output, bf16 inputs).
+///
+/// Performs a 16x8x16 matrix multiplication using tensor cores with bf16 input
+/// fragments and f32 accumulator. All 32 threads in the warp participate.
+///
+/// # Matrix Dimensions
+///
+/// - **A**: 16x16 (row-major, bf16), distributed as 4 x u32 per thread
+/// - **B**: 16x8 (col-major, bf16), distributed as 2 x u32 per thread
+/// - **D/C**: 16x8 (f32 accumulator), distributed as 4 x f32 per thread
+///
+/// # Parameters
+///
+/// - `acc`: Mutable accumulator (4 x f32 per thread, read-modify-write: D = A*B + acc)
+/// - `a`: A fragment (4 x u32, each u32 contains 2 packed bf16 values)
+/// - `b`: B fragment (2 x u32, each u32 contains 2 packed bf16 values)
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
+///   automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k16_f32_bf16(acc: &mut [f32; 4], a: &[u32; 4], b: &[u32; 2]) {
+    let _ = (acc, a, b);
+    unreachable!("mma_m16n8k16_f32_bf16 called outside CUDA kernel context")
+}
