@@ -1744,12 +1744,11 @@ impl MirToLlvmConversion for ReadPtxSregClusterIdxOp {
         rewriter: &mut DialectConversionRewriter,
         operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::cluster::convert_cluster_sreg(
+        super::intrinsics::cluster::convert_cluster_idx(
             ctx,
             rewriter,
             self.get_operation(),
             operands_info,
-            "%cluster_idx",
         )
     }
 }
@@ -1762,12 +1761,11 @@ impl MirToLlvmConversion for ReadPtxSregNclusterIdOp {
         rewriter: &mut DialectConversionRewriter,
         operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::cluster::convert_cluster_sreg(
+        super::intrinsics::cluster::convert_num_clusters(
             ctx,
             rewriter,
             self.get_operation(),
             operands_info,
-            "%nclusterid",
         )
     }
 }

@@ -17,9 +17,9 @@
 //! │ ReadPtxSregClusterNctaidXOp  │ %cluster_nctaid.x     │ Cluster X dimension            │
 //! │ ReadPtxSregClusterNctaidYOp  │ %cluster_nctaid.y     │ Cluster Y dimension            │
 //! │ ReadPtxSregClusterNctaidZOp  │ %cluster_nctaid.z     │ Cluster Z dimension            │
-//! │ ReadPtxSregClusterIdxOp      │ %cluster_idx          │ Cluster's linear index in grid │
-//! │ ReadPtxSregNclusterIdOp      │ %nclusterid           │ Total clusters in grid         │
-//! │ ClusterSyncOp                │ cluster.sync.aligned  │ Cluster-wide barrier           │
+//! │ ReadPtxSregClusterIdxOp      │ %clusterid/%nclusterid│ Cluster's linear index in grid │
+//! │ ReadPtxSregNclusterIdOp      │ %nclusterid.{x,y,z}   │ Total clusters in grid         │
+//! │ ClusterSyncOp                │ barrier.cluster.*     │ Cluster-wide barrier           │
 //! │ MapaSharedClusterOp          │ mapa.shared::cluster  │ Distributed shared mem map     │
 //! └──────────────────────────────┴───────────────────────┴────────────────────────────────┘
 //! ```
@@ -320,7 +320,7 @@ impl Verify for ReadPtxSregClusterNctaidZOp {
 
 /// Read the cluster's linear index within the grid.
 ///
-/// Corresponds to PTX `%cluster_idx`.
+/// Computed from PTX `%clusterid.{x,y,z}` and `%nclusterid.{x,y}`.
 ///
 /// Returns a value in range `[0, nclusterid)`.
 #[pliron_op(
@@ -363,7 +363,7 @@ impl Verify for ReadPtxSregClusterIdxOp {
 
 /// Read the total number of clusters in the grid.
 ///
-/// Corresponds to PTX `%nclusterid`.
+/// Computed as the product of PTX `%nclusterid.{x,y,z}`.
 #[pliron_op(
     name = "nvvm.read_ptx_sreg_nclusterid",
     format,

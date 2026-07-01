@@ -154,7 +154,8 @@ pub fn cluster_nctaidZ() -> u32 {
 ///
 /// # PTX
 ///
-/// Lowers to: `mov.u32 %r, %cluster_idx`
+/// Lowers to documented `%clusterid.{x,y,z}` / `%nclusterid.{x,y}` reads and
+/// computes `x + y * nx + z * nx * ny`.
 #[inline(never)]
 pub fn cluster_idx() -> u32 {
     unreachable!("cluster_idx called outside CUDA kernel context")
@@ -164,7 +165,7 @@ pub fn cluster_idx() -> u32 {
 ///
 /// # PTX
 ///
-/// Lowers to: `mov.u32 %r, %nclusterid`
+/// Lowers to documented `%nclusterid.{x,y,z}` reads and computes `nx * ny * nz`.
 #[inline(never)]
 pub fn num_clusters() -> u32 {
     unreachable!("num_clusters called outside CUDA kernel context")

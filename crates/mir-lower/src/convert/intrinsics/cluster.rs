@@ -21,6 +21,22 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
+const CLUSTER_IDX_ASM: &str = concat!(
+    "{ .reg .u32 %cx, %cy, %cz, %nx, %ny, %nxy, %xy; ",
+    "mov.u32 %cx, %clusterid.x; mov.u32 %cy, %clusterid.y; ",
+    "mov.u32 %cz, %clusterid.z; mov.u32 %nx, %nclusterid.x; ",
+    "mov.u32 %ny, %nclusterid.y; mul.lo.u32 %nxy, %nx, %ny; ",
+    "mad.lo.u32 %xy, %cy, %nx, %cx; ",
+    "mad.lo.u32 $0, %cz, %nxy, %xy; }"
+);
+
+const NUM_CLUSTERS_ASM: &str = concat!(
+    "{ .reg .u32 %nx, %ny, %nz, %nxy; ",
+    "mov.u32 %nx, %nclusterid.x; mov.u32 %ny, %nclusterid.y; ",
+    "mov.u32 %nz, %nclusterid.z; mul.lo.u32 %nxy, %nx, %ny; ",
+    "mul.lo.u32 $0, %nxy, %nz; }"
+);
+
 /// Convert a cluster special register read to inline PTX.
 pub(crate) fn convert_cluster_sreg(
     ctx: &mut Context,
@@ -33,6 +49,35 @@ pub(crate) fn convert_cluster_sreg(
     let asm_template = format!("mov.u32 $0, {};", sreg_name);
 
     let asm_op = inline_asm_convergent(ctx, rewriter, i32_ty.into(), vec![], &asm_template, "=r");
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
+/// Convert the logical linear cluster index to documented PTX special
+/// registers. PTX has no scalar `%cluster_idx` register.
+pub(crate) fn convert_cluster_idx(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let asm_op = inline_asm_convergent(ctx, rewriter, i32_ty.into(), vec![], CLUSTER_IDX_ASM, "=r");
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
+/// Convert the total cluster count to the product of `%nclusterid.{x,y,z}`.
+/// PTX exposes `%nclusterid` as a vector, not a scalar register.
+pub(crate) fn convert_num_clusters(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let asm_op =
+        inline_asm_convergent(ctx, rewriter, i32_ty.into(), vec![], NUM_CLUSTERS_ASM, "=r");
     rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
 }
@@ -122,4 +167,19 @@ pub(crate) fn convert_dsmem_read_u32(
     rewriter.replace_operation(ctx, op, asm_op);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CLUSTER_IDX_ASM, NUM_CLUSTERS_ASM};
+
+    #[test]
+    fn derived_cluster_grid_values_use_documented_vector_components() {
+        assert!(CLUSTER_IDX_ASM.contains("%clusterid.x"));
+        assert!(CLUSTER_IDX_ASM.contains("%nclusterid.y"));
+        assert!(!CLUSTER_IDX_ASM.contains("%cluster_idx"));
+        assert!(NUM_CLUSTERS_ASM.contains("%nclusterid.x"));
+        assert!(NUM_CLUSTERS_ASM.contains("%nclusterid.z"));
+        assert!(!NUM_CLUSTERS_ASM.contains("mov.u32 $0, %nclusterid;"));
+    }
 }
