@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warp-level matrix intrinsic lowering (`movmatrix`).
+//! Warp-level matrix intrinsic lowering (`movmatrix`, `mma.sync`).
 
+use crate::convert::intrinsics::common::*;
 use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
+use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};

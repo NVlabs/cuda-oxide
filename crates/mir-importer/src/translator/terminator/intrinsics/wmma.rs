@@ -5,11 +5,11 @@
 
 //! Warp-level matrix intrinsics (`movmatrix`).
 
-use super::super::helpers::emit_store_result_and_goto;
+use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::MovmatrixTransB16Op;
+use dialect_nvvm::ops::{MmaM8N8K4F64Op, MovmatrixTransB16Op};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -18,7 +18,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-use dialect_nvvm::ops::MmaM8N8K4F64Op;
 
 /// Emit movmatrix_trans_b16: in-register 8×8 matrix transpose.
 ///
@@ -92,11 +91,12 @@ pub fn emit_movmatrix_trans_b16(
 /// Emit `mma_m8n8k4_f64`: Warp MMA with f64 accumulator and f64 inputs.
 ///
 /// Args:
-/// - `args[0]`: `&mut [f64; 2]` (accumulator pointer, read-modify-write)
-/// - `args[1]`: `&f64` (A fragment pointer)
-/// - `args[2]`: `&f64` (B fragment pointer)
+/// - arg 0: `&mut [f64; 2]` (accumulator pointer, read-modify-write)
+/// - arg 1: `&f64` (A fragment pointer)
+/// - arg 2: `&f64` (B fragment pointer)
 ///
 /// Returns: void (accumulator updated in-place)
+#[allow(clippy::too_many_arguments)]
 pub fn emit_mma_m8n8k4_f64(
     ctx: &mut Context,
     body: &mir::Body,
