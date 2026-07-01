@@ -34,11 +34,17 @@ use pliron::{
     builtin::op_interfaces::{
         NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface,
     },
+    builtin::types::IntegerType,
+    common_traits::Verify,
     context::{Context, Ptr},
     derive::{op_interface, op_interface_impl},
+    location::Located,
     op::Op,
     operation::Operation,
+    result::Error,
+    r#type::Typed,
     value::Value,
+    verify_err,
 };
 use pliron_derive::{pliron_attr, pliron_op};
 
@@ -513,6 +519,126 @@ impl NvvmAtomicOpInterface for NvvmAtomicCmpxchgOp {
 }
 
 // =============================================================================
+// Packed Atomic Helpers
+// =============================================================================
+
+/// Verify that a packed atomic op produces a single 32-bit integer result.
+fn verify_packed_atomic_result(
+    ctx: &Context,
+    op_ptr: Ptr<Operation>,
+    op_name: &str,
+) -> Result<(), Error> {
+    let op = &*op_ptr.deref(ctx);
+    let res = op.get_result(0);
+    let ty = res.get_type(ctx);
+
+    let ty_obj = ty.deref(ctx);
+    let int_ty = match ty_obj.downcast_ref::<IntegerType>() {
+        Some(ty) => ty,
+        None => {
+            return verify_err!(op.loc(), "{} result must be integer", op_name);
+        }
+    };
+
+    if int_ty.width() != 32 {
+        return verify_err!(op.loc(), "{} result must be 32-bit integer", op_name);
+    }
+    Ok(())
+}
+
+// =============================================================================
+// NvvmAtomAddF16x2Op
+// =============================================================================
+
+/// Packed f16x2 atomic add on global memory.
+///
+/// Atomically adds two packed f16 lanes element-wise, stores the sum, and
+/// returns the **previous** packed value.
+///
+/// Lowered to inline PTX:
+/// ```ptx
+/// atom.global.add.noftz.f16x2 $0, [$1], $2;
+/// ```
+///
+/// # Operands
+///
+/// - `addr` (ptr): pointer to the packed f16x2 value in global memory
+/// - `val`  (u32): packed f16x2 addend
+///
+/// # Results
+///
+/// - `old` (u32): the previous packed f16x2 value at `*addr`
+///
+/// # Verification
+///
+/// - Must have 2 operands and 1 result of type `i32`
+#[pliron_op(
+    name = "nvvm.atom_add_f16x2",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddF16x2Op;
+
+impl NvvmAtomAddF16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        NvvmAtomAddF16x2Op { op }
+    }
+}
+
+impl Verify for NvvmAtomAddF16x2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_result(ctx, self.get_operation(), "nvvm.atom_add_f16x2")
+    }
+}
+
+// =============================================================================
+// NvvmAtomAddBf16x2Op
+// =============================================================================
+
+/// Packed bf16x2 atomic add on global memory.
+///
+/// Atomically adds two packed bf16 lanes element-wise, stores the sum, and
+/// returns the **previous** packed value.
+///
+/// Lowered to inline PTX:
+/// ```ptx
+/// atom.global.add.noftz.bf16x2 $0, [$1], $2;
+/// ```
+///
+/// # Operands
+///
+/// - `addr` (ptr): pointer to the packed bf16x2 value in global memory
+/// - `val`  (u32): packed bf16x2 addend
+///
+/// # Results
+///
+/// - `old` (u32): the previous packed bf16x2 value at `*addr`
+///
+/// # Verification
+///
+/// - Must have 2 operands and 1 result of type `i32`
+#[pliron_op(
+    name = "nvvm.atom_add_bf16x2",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddBf16x2Op;
+
+impl NvvmAtomAddBf16x2Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        NvvmAtomAddBf16x2Op { op }
+    }
+}
+
+impl Verify for NvvmAtomAddBf16x2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_result(ctx, self.get_operation(), "nvvm.atom_add_bf16x2")
+    }
+}
+
+// =============================================================================
 // Registration
 // =============================================================================
 
@@ -528,4 +654,6 @@ pub fn register(ctx: &mut Context) {
     NvvmAtomicStoreOp::register(ctx);
     NvvmAtomicRmwOp::register(ctx);
     NvvmAtomicCmpxchgOp::register(ctx);
+    NvvmAtomAddF16x2Op::register(ctx);
+    NvvmAtomAddBf16x2Op::register(ctx);
 }
