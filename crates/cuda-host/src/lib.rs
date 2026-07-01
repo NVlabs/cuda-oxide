@@ -28,6 +28,8 @@
 //! - [`embedded`]: Load `#[cuda_module]` artifact bundles embedded in the host
 //!   binary (PTX, cubin, NVVM IR, LTOIR)
 //! - [`launch`]: Kernel launch traits (`CudaKernel`, `GenericCudaKernel`)
+//! - [`kernel_family`]: Bounded variant menus with validated selection,
+//!   overrides, and cache provenance
 //! - [`ltoir`]: libNVVM + nvJitLink wrappers (`load_kernel_module`, in-memory
 //!   cubin builders, and pre-Blackwell PTX compatibility)
 //! - [`tiling`]: Layout transformations for tensor core operations (tcgen05)
@@ -79,12 +81,18 @@
 //! ```
 
 pub mod embedded;
+pub mod kernel_family;
 pub mod launch;
 pub mod ltoir;
 mod ltoir_cache;
 pub mod tiling;
 pub mod type_id;
 
+pub use kernel_family::{
+    KernelFamily, KernelFamilyBuildError, KernelFamilyId, KernelProblem, KernelSelectionCache,
+    KernelSelectionError, KernelSelectionResult, KernelSelector, KernelVariant,
+    NoKernelSelectionCache, SelectedVariant, SelectionMode, SelectionSource,
+};
 pub use launch::{
     CudaKernel, GenericCudaKernel, HasLength, KernelScalar, ReadOnly, Scalar, WriteOnly,
     push_kernel_device_slice, push_kernel_scalar, read_only_device_buffer_arg,

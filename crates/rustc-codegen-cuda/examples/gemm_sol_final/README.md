@@ -10,8 +10,13 @@ workload or correctness check.
 ## Final design
 
 ```text
-4096 / 8192  -> M256xN256 entry
-16384        -> M512xN256 entry
+KernelFamily: gemm_sol_final/output_tile@1
+├── M256xN256 -> existing small resource envelope
+└── M512xN256 -> existing large resource envelope
+
+Auto selector:
+4096 / 8192  -> M256xN256
+16384        -> M512xN256
 ```
 
 Both entries use CLC work scheduling, a two-CTA cluster, `cta_group::2` UMMA,
@@ -41,6 +46,20 @@ Widening the cooperative tile to M256xN256 was the dominant optimization:
 
 The dedicated M512xN256 entry improved 16384 by **5.70%** while the smaller
 sizes retained their better M256xN256 resource envelope.
+
+Eligibility and preference stay separate:
+
+```text
+Eligibility: can this compiled entry safely run M×N×K?
+Preference:  which eligible entry measured best for this size?
+```
+
+Both variants are valid for the fixed 4K size, so a manual override can compare
+them. The automatic selector keeps the accepted performance threshold without
+hard-coding dispatch inside the timed loop.
+
+The family revision is part of its cache identity. A future change to this
+threshold or tuning methodology must bump revision `1`.
 
 ### 3. Drain the epilogue with wider stores
 
@@ -87,11 +106,21 @@ GEMM_SOL_MODE=validate cargo oxide run gemm_sol_final
 
 # Fixed 4096/8192/16384 benchmark; 16K dispatches to M512xN256.
 GEMM_SOL_MODE=bench cargo oxide run gemm_sol_final
+
+# Print the same dispatch decisions without opening a CUDA context.
+GEMM_SOL_MODE=plan cargo oxide run gemm_sol_final
+
+# Override the automatic policy with a validated, stable variant ID.
+GEMM_SOL_MODE=plan GEMM_SOL_VARIANT=m512xn256 cargo oxide run gemm_sol_final
 ```
 
 `GEMM_SOL_MODE=both` is the default. This example requires datacenter
 Blackwell `tcgen05`, CLC, and `cta_group::2` support. On unsupported GPUs it
 still verifies that PTX generation succeeded.
+
+`GEMM_SOL_VARIANT` accepts `auto` (the default), `m256xn256`, or
+`m512xn256`. Forced choices bypass the performance selector but still pass the
+kernel shape contract; an unsafe shape is rejected before launch.
 
 ## Live cuBLASLt reference
 

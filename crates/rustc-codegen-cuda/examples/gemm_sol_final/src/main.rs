@@ -40,9 +40,12 @@ use cuda_device::tcgen05::{
 };
 use cuda_device::tma::{TmaDescriptor, cp_async_bulk_tensor_2d_g2s_multicast_cg2};
 use cuda_device::{DisjointSlice, cluster_launch, kernel, thread, warp};
-use cuda_host::cuda_module;
+use cuda_host::{
+    KernelFamily, KernelFamilyBuildError, KernelFamilyId, KernelProblem, KernelSelector,
+    KernelVariant, NoKernelSelectionCache, SelectedVariant, SelectionMode, cuda_module,
+};
 use half::{bf16, f16};
-use std::mem::MaybeUninit;
+use std::mem::{MaybeUninit, size_of};
 use std::sync::Arc;
 
 // =============================================================================
@@ -262,6 +265,253 @@ type GemmKernelLauncher = unsafe fn(
     u32,
 ) -> Result<(), cuda_core::DriverError>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GemmVariantId {
+    M256xN256,
+    M512xN256,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GemmVariantMetadata {
+    kernel_name: &'static str,
+    output_tile: &'static str,
+    m_tile: usize,
+    n_tile: usize,
+    k_tile_multiple: usize,
+    preferred_from_tiles_m: usize,
+}
+
+type GemmKernelFamily = KernelFamily<GemmVariantId, GemmKernelLauncher, GemmVariantMetadata, 2>;
+type GemmVariant = KernelVariant<GemmVariantId, GemmKernelLauncher, GemmVariantMetadata>;
+
+fn gemm_kernel_family() -> Result<GemmKernelFamily, KernelFamilyBuildError> {
+    KernelFamily::try_new(
+        "gemm_sol_final/output_tile",
+        1,
+        [
+            KernelVariant::new(
+                GemmVariantId::M256xN256,
+                kernels::LoadedModule::gemm_sol_clc_multicast_4_stage_pipeline
+                    as GemmKernelLauncher,
+                GemmVariantMetadata {
+                    kernel_name: "gemm_sol_clc_multicast_4_stage_pipeline",
+                    output_tile: "M256xN256",
+                    m_tile: 256,
+                    n_tile: 256,
+                    k_tile_multiple: 256,
+                    preferred_from_tiles_m: 0,
+                },
+            ),
+            KernelVariant::new(
+                GemmVariantId::M512xN256,
+                kernels::LoadedModule::gemm_sol_clc_multicast_4_stage_pipeline_large
+                    as GemmKernelLauncher,
+                GemmVariantMetadata {
+                    kernel_name: "gemm_sol_clc_multicast_4_stage_pipeline_large",
+                    output_tile: "M512xN256",
+                    m_tile: 512,
+                    n_tile: 256,
+                    k_tile_multiple: 256,
+                    preferred_from_tiles_m: 64,
+                },
+            ),
+        ],
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GemmProblem {
+    m: usize,
+    n: usize,
+    k: usize,
+    tiles_m: usize,
+}
+
+impl GemmProblem {
+    fn new(m: usize, n: usize, k: usize) -> Self {
+        Self {
+            m,
+            n,
+            k,
+            tiles_m: m / 256,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GemmVariantIneligible {
+    variant: GemmVariantId,
+    reason: &'static str,
+    m: usize,
+    n: usize,
+    k: usize,
+    m_tile: usize,
+    n_tile: usize,
+    k_tile_multiple: usize,
+}
+
+impl std::fmt::Display for GemmVariantIneligible {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?} rejected {}x{}x{}: {}; tile contract is M >= {} and divisible by {}, N >= {} and divisible by {}, K >= {} and divisible by {}",
+            self.variant,
+            self.m,
+            self.n,
+            self.k,
+            self.reason,
+            self.m_tile,
+            self.m_tile,
+            self.n_tile,
+            self.n_tile,
+            self.k_tile_multiple,
+            self.k_tile_multiple,
+        )
+    }
+}
+
+impl std::error::Error for GemmVariantIneligible {}
+
+impl KernelProblem<GemmVariant> for GemmProblem {
+    type Rejection = GemmVariantIneligible;
+
+    fn validate(&self, variant: &GemmVariant) -> Result<(), Self::Rejection> {
+        let metadata = variant.metadata();
+        let reject = |reason| GemmVariantIneligible {
+            variant: *variant.id(),
+            reason,
+            m: self.m,
+            n: self.n,
+            k: self.k,
+            m_tile: metadata.m_tile,
+            n_tile: metadata.n_tile,
+            k_tile_multiple: metadata.k_tile_multiple,
+        };
+
+        if !(self.m >= metadata.m_tile
+            && self.m.is_multiple_of(metadata.m_tile)
+            && self.n >= metadata.n_tile
+            && self.n.is_multiple_of(metadata.n_tile)
+            && self.k >= metadata.k_tile_multiple
+            && self.k.is_multiple_of(metadata.k_tile_multiple))
+        {
+            return Err(reject("dimensions violate the compiled tile shape"));
+        }
+        let max_m = i32::MAX as usize + 1;
+        if self.m > max_m || self.n > i32::MAX as usize || self.k > i32::MAX as usize {
+            return Err(reject(
+                "M, N, or K exceeds the kernel's signed coordinate/launch ABI",
+            ));
+        }
+
+        let a_fits = self
+            .m
+            .checked_mul(self.k)
+            .is_some_and(|elements| elements <= usize::MAX / size_of::<u16>());
+        let b_fits = self
+            .n
+            .checked_mul(self.k)
+            .is_some_and(|elements| elements <= usize::MAX / size_of::<u16>());
+        let output_fits = self
+            .m
+            .checked_mul(self.n)
+            .is_some_and(|elements| elements <= usize::MAX / 2);
+        if !(a_fits && b_fits && output_fits) {
+            return Err(reject("matrix allocation size overflows usize"));
+        }
+
+        let grid_x = (self.m / 256)
+            .checked_mul(self.n / 128)
+            .and_then(|tiles| tiles.checked_mul(2));
+        if grid_x.is_none_or(|grid_x| grid_x > i32::MAX as usize) {
+            return Err(reject("grid.x exceeds the CUDA launch limit"));
+        }
+
+        Ok(())
+    }
+}
+
+struct GemmSelector;
+
+impl KernelSelector<GemmProblem, GemmVariant, GemmVariantId> for GemmSelector {
+    type Error = std::convert::Infallible;
+
+    fn select(
+        &mut self,
+        _family: KernelFamilyId,
+        problem: &GemmProblem,
+        eligible: &[&GemmVariant],
+    ) -> Result<GemmVariantId, Self::Error> {
+        let preferred = eligible
+            .iter()
+            .copied()
+            .filter(|variant| variant.metadata().preferred_from_tiles_m <= problem.tiles_m)
+            .max_by_key(|variant| variant.metadata().preferred_from_tiles_m)
+            .unwrap_or(eligible[0]);
+        Ok(*preferred.id())
+    }
+}
+
+fn gemm_selection_mode(value: Option<&str>) -> Result<SelectionMode<GemmVariantId>, String> {
+    match value.unwrap_or("auto") {
+        "auto" => Ok(SelectionMode::Auto),
+        "m256xn256" => Ok(SelectionMode::Force(GemmVariantId::M256xN256)),
+        "m512xn256" => Ok(SelectionMode::Force(GemmVariantId::M512xN256)),
+        other => Err(format!(
+            "invalid GEMM_SOL_VARIANT={other:?}; expected auto, m256xn256, or m512xn256"
+        )),
+    }
+}
+
+fn gemm_selection_mode_from_var(
+    value: Result<String, std::env::VarError>,
+) -> Result<SelectionMode<GemmVariantId>, String> {
+    match value {
+        Ok(value) => gemm_selection_mode(Some(&value)),
+        Err(std::env::VarError::NotPresent) => gemm_selection_mode(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("GEMM_SOL_VARIANT must be valid UTF-8".to_string())
+        }
+    }
+}
+
+type GemmSelectionError = cuda_host::KernelSelectionError<
+    GemmVariantId,
+    GemmVariantIneligible,
+    std::convert::Infallible,
+    std::convert::Infallible,
+>;
+type GemmSelectedVariant<'family> =
+    SelectedVariant<'family, GemmVariantId, GemmKernelLauncher, GemmVariantMetadata>;
+
+fn select_gemm_variant<'family>(
+    family: &'family GemmKernelFamily,
+    problem: &GemmProblem,
+    mode: SelectionMode<GemmVariantId>,
+) -> Result<GemmSelectedVariant<'family>, GemmSelectionError> {
+    let mut selector = GemmSelector;
+    let mut cache = NoKernelSelectionCache;
+    family.select(problem, mode, &mut selector, &mut cache)
+}
+
+fn print_gemm_dispatch_plan(
+    family: &GemmKernelFamily,
+    mode: SelectionMode<GemmVariantId>,
+) -> Result<(), GemmSelectionError> {
+    println!("Kernel family: {}", family.id());
+    for size in [4096, 8192, 16384] {
+        let problem = GemmProblem::new(size, size, size);
+        let selected = select_gemm_variant(family, &problem, mode)?;
+        println!(
+            "{size}x{size}x{size} -> {} ({}) [{}]",
+            selected.variant().metadata().output_tile,
+            selected.variant().metadata().kernel_name,
+            selected.source(),
+        );
+    }
+    Ok(())
+}
+
 // =============================================================================
 // HOST CODE
 // =============================================================================
@@ -272,17 +522,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("═══════════════════════════════════════════════════════\n");
 
     let mode = std::env::var("GEMM_SOL_MODE").unwrap_or_else(|_| "both".to_string());
-    let (do_validate, do_bench) = match mode.as_str() {
-        "validate" => (true, false),
-        "bench" => (false, true),
-        "both" => (true, true),
+    let (do_validate, do_bench, do_plan) = match mode.as_str() {
+        "validate" => (true, false, false),
+        "bench" => (false, true, false),
+        "both" => (true, true, false),
+        "plan" => (false, false, true),
         other => {
             return Err(format!(
-                "invalid GEMM_SOL_MODE={other:?}; expected validate, bench, or both"
+                "invalid GEMM_SOL_MODE={other:?}; expected validate, bench, both, or plan"
             )
             .into());
         }
     };
+    let family = gemm_kernel_family()?;
+    let selection_mode = if do_bench || do_plan {
+        gemm_selection_mode_from_var(std::env::var("GEMM_SOL_VARIANT"))?
+    } else {
+        SelectionMode::Auto
+    };
+
+    if do_plan {
+        print_gemm_dispatch_plan(&family, selection_mode)?;
+        return Ok(());
+    }
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
@@ -345,7 +607,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ];
         let mut measurements = Vec::with_capacity(sizes.len());
         for (m, n, k) in sizes {
-            let tflops = run_benchmark_clc_multicast_4_stage_pipeline(&stream, &module, m, n, k)?;
+            let tflops = run_benchmark_clc_multicast_4_stage_pipeline(
+                &stream,
+                &module,
+                &family,
+                selection_mode,
+                m,
+                n,
+                k,
+            )?;
             measurements.push((m, tflops));
         }
         print_benchmark_summary(&measurements);
@@ -600,6 +870,8 @@ fn run_correctness_test_clc_multicast_4_stage_pipeline(
 fn run_benchmark_clc_multicast_4_stage_pipeline(
     stream: &Arc<CudaStream>,
     module: &kernels::LoadedModule,
+    family: &GemmKernelFamily,
+    selection_mode: SelectionMode<GemmVariantId>,
     m: usize,
     n: usize,
     k: usize,
@@ -607,7 +879,12 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     const WARMUP: usize = 10;
     const ITERS: usize = 100;
 
-    assert!(m.is_multiple_of(256) && n.is_multiple_of(128) && k.is_multiple_of(256));
+    let problem = GemmProblem::new(m, n, k);
+    let selected = select_gemm_variant(family, &problem, selection_mode)?;
+    let launch_kernel = *selected.variant().entry();
+    let kernel_name = selected.variant().metadata().kernel_name;
+    let output_tile = selected.variant().metadata().output_tile;
+    let selection_source = selected.source();
 
     let dev_a = DeviceBuffer::<u16>::zeroed(stream, m * k)?;
     let dev_b = DeviceBuffer::<u16>::zeroed(stream, n * k)?;
@@ -646,21 +923,6 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
 
     let output_u32_count = m * n / 2;
     let mut dev_output = DeviceBuffer::<u32>::zeroed(stream, output_u32_count)?;
-
-    let (launch_kernel, kernel_name, output_tile): (GemmKernelLauncher, &str, &str) =
-        if tiles_m >= 64 {
-            (
-                kernels::LoadedModule::gemm_sol_clc_multicast_4_stage_pipeline_large,
-                "gemm_sol_clc_multicast_4_stage_pipeline_large",
-                "M512xN256",
-            )
-        } else {
-            (
-                kernels::LoadedModule::gemm_sol_clc_multicast_4_stage_pipeline,
-                "gemm_sol_clc_multicast_4_stage_pipeline",
-                "M256xN256",
-            )
-        };
 
     for _ in 0..WARMUP {
         unsafe {
@@ -713,8 +975,8 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
 
     println!("═══════════════════════════════════════════════════════");
     println!(
-        "  BENCHMARK: {} ({}, cg2) {}x{}x{} f16 -> bf16",
-        kernel_name, output_tile, m, n, k
+        "  BENCHMARK: {} ({}, cg2) {}x{}x{} f16 -> bf16 [{}]",
+        kernel_name, output_tile, m, n, k, selection_source
     );
     println!("═══════════════════════════════════════════════════════");
     println!(
@@ -849,4 +1111,186 @@ fn create_tma_descriptor_f16_swizzled_box(
 
 fn bf16_to_f32(h: u16) -> f32 {
     f32::from_bits((h as u32) << 16)
+}
+
+#[cfg(test)]
+mod kernel_family_tests {
+    use super::*;
+    use cuda_host::SelectionSource;
+
+    fn selected_id(
+        family: &GemmKernelFamily,
+        m: usize,
+        mode: SelectionMode<GemmVariantId>,
+    ) -> (GemmVariantId, SelectionSource) {
+        let problem = GemmProblem::new(m, m, m);
+        let selected = select_gemm_variant(family, &problem, mode).unwrap();
+        (*selected.variant().id(), selected.source())
+    }
+
+    #[test]
+    fn automatic_policy_preserves_the_measured_size_threshold() {
+        let family = gemm_kernel_family().unwrap();
+
+        assert_eq!(
+            selected_id(&family, 4096, SelectionMode::Auto),
+            (GemmVariantId::M256xN256, SelectionSource::Selector)
+        );
+        assert_eq!(
+            selected_id(&family, 8192, SelectionMode::Auto),
+            (GemmVariantId::M256xN256, SelectionSource::Selector)
+        );
+        assert_eq!(
+            selected_id(&family, 16384, SelectionMode::Auto),
+            (GemmVariantId::M512xN256, SelectionSource::Selector)
+        );
+    }
+
+    #[test]
+    fn manual_override_can_choose_either_valid_resource_envelope() {
+        let family = gemm_kernel_family().unwrap();
+
+        assert_eq!(
+            selected_id(
+                &family,
+                4096,
+                SelectionMode::Force(GemmVariantId::M512xN256),
+            ),
+            (GemmVariantId::M512xN256, SelectionSource::Override)
+        );
+        assert_eq!(
+            selected_id(
+                &family,
+                16384,
+                SelectionMode::Force(GemmVariantId::M256xN256),
+            ),
+            (GemmVariantId::M256xN256, SelectionSource::Override)
+        );
+    }
+
+    #[test]
+    fn forced_large_variant_rejects_an_odd_m256_tile_count() {
+        let family = gemm_kernel_family().unwrap();
+        let problem = GemmProblem::new(16640, 16384, 16384);
+        let error = select_gemm_variant(
+            &family,
+            &problem,
+            SelectionMode::Force(GemmVariantId::M512xN256),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            cuda_host::KernelSelectionError::IneligibleForcedVariant {
+                id: GemmVariantId::M512xN256,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn family_rejects_shapes_outside_both_kernel_contracts() {
+        let family = gemm_kernel_family().unwrap();
+        for problem in [
+            GemmProblem::new(0, 0, 0),
+            GemmProblem::new(4096, 4224, 4096),
+            GemmProblem::new(4096, 4096, 4224),
+        ] {
+            let error = select_gemm_variant(&family, &problem, SelectionMode::Auto).unwrap_err();
+            assert!(matches!(
+                error,
+                cuda_host::KernelSelectionError::NoEligibleVariants { .. }
+            ));
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn family_rejects_shapes_that_cannot_fit_the_launch_abi() {
+        let family = gemm_kernel_family().unwrap();
+        let n_too_large = (i32::MAX as usize / 256 + 1) * 256;
+        let problem = GemmProblem::new(4096, n_too_large, 4096);
+        let error = select_gemm_variant(
+            &family,
+            &problem,
+            SelectionMode::Force(GemmVariantId::M256xN256),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            cuda_host::KernelSelectionError::IneligibleForcedVariant {
+                rejection: GemmVariantIneligible {
+                    reason: "M, N, or K exceeds the kernel's signed coordinate/launch ABI",
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let m_too_large = (i32::MAX as usize / 256 + 2) * 256;
+        let problem = GemmProblem::new(m_too_large, 256, 256);
+        let error = select_gemm_variant(
+            &family,
+            &problem,
+            SelectionMode::Force(GemmVariantId::M256xN256),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            cuda_host::KernelSelectionError::IneligibleForcedVariant {
+                rejection: GemmVariantIneligible {
+                    reason: "M, N, or K exceeds the kernel's signed coordinate/launch ABI",
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let largest_tiled_i32 = (i32::MAX as usize / 256) * 256;
+        let problem = GemmProblem::new(16640, largest_tiled_i32, 256);
+        let error = select_gemm_variant(
+            &family,
+            &problem,
+            SelectionMode::Force(GemmVariantId::M256xN256),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            cuda_host::KernelSelectionError::IneligibleForcedVariant {
+                rejection: GemmVariantIneligible {
+                    reason: "grid.x exceeds the CUDA launch limit",
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn environment_values_map_to_explicit_selection_modes() {
+        assert_eq!(gemm_selection_mode(None).unwrap(), SelectionMode::Auto);
+        assert_eq!(
+            gemm_selection_mode(Some("m256xn256")).unwrap(),
+            SelectionMode::Force(GemmVariantId::M256xN256)
+        );
+        assert_eq!(
+            gemm_selection_mode(Some("m512xn256")).unwrap(),
+            SelectionMode::Force(GemmVariantId::M512xN256)
+        );
+        assert!(gemm_selection_mode(Some("largest")).is_err());
+        assert_eq!(
+            gemm_selection_mode_from_var(Err(std::env::VarError::NotPresent)).unwrap(),
+            SelectionMode::Auto
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let non_utf8 = std::ffi::OsString::from_vec(vec![0xff]);
+            assert!(
+                gemm_selection_mode_from_var(Err(std::env::VarError::NotUnicode(non_utf8)))
+                    .is_err()
+            );
+        }
+    }
 }
