@@ -754,9 +754,17 @@ pub fn sync_threads() {
 /// register-heavy kernels or kernels with specific occupancy requirements.
 #[inline(never)]
 pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
+    const { validate_launch_bounds(MAX_THREADS) }
     // This function is detected at compile time and removed.
     // The const generics are extracted to set launch bounds.
     // No runtime code is generated.
+}
+
+const fn validate_launch_bounds(max_threads: u32) {
+    assert!(
+        max_threads > 0,
+        "launch_bounds maximum threads must be greater than zero"
+    );
 }
 
 /// Compile-time loop-unroll request marker (internal, do not call directly).
@@ -804,8 +812,8 @@ pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
 /// are not unrolled.
 ///
 /// One annotation may create at most 1,024 body copies, 8,192 cloned basic
-/// blocks, and 65,536 cloned operations. Larger requests warn and are not
-/// unrolled.
+/// blocks, and 65,536 cloned operations. A partial factor above 1,024 is
+/// rejected; other unsupported loop shapes warn and are not unrolled.
 ///
 /// # Parameters
 ///
@@ -814,7 +822,15 @@ pub fn __launch_bounds_config<const MAX_THREADS: u32, const MIN_BLOCKS: u32>() {
 /// - `FACTOR >= 2` requests partial unrolling of this loop by that factor.
 #[inline(never)]
 pub fn __unroll_config<const FACTOR: u32>() {
+    const { validate_unroll_factor(FACTOR) }
     // This function is detected at compile time and removed.
     // The const generic FACTOR is extracted to set the loop-unroll request.
     // No runtime code is generated.
+}
+
+const fn validate_unroll_factor(factor: u32) {
+    assert!(
+        factor == 0 || (factor >= 2 && factor <= 1024),
+        "partial unroll factor must be in 2..=1024, or 0 for full unrolling"
+    );
 }

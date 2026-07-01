@@ -114,6 +114,7 @@ use syn::{
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
+    visit::{self, Visit},
     visit_mut::{self, VisitMut},
 };
 
@@ -794,7 +795,15 @@ fn collect_cuda_module_kernels(items: &[Item]) -> syn::Result<Vec<CudaModuleKern
         let params = cuda_module_params(item_fn)?;
         let launch_contract =
             cuda_module_launch_contract(&item_fn.attrs, &item_fn.sig.ident, &params, cluster_dim)?;
-        let mut generics = item_fn.sig.generics.clone();
+        // `#[cuda_module]` expands before the nested function attributes. Keep
+        // the same const-evaluatability predicates that `#[launch_bounds]` and
+        // `#[kernel]` will later add to the device entry, otherwise generated
+        // host methods would promise a broader generic surface than the entry
+        // actually accepts.
+        let mut configured_item = item_fn.clone();
+        rewrite_loop_unroll_attrs(&mut configured_item)?;
+        add_launch_bounds_evaluatability_from_attrs(&mut configured_item)?;
+        let mut generics = configured_item.sig.generics;
         if let Some(contract) = launch_contract {
             add_cuda_module_disjoint_contract_bounds(&mut generics, &params, contract.domain);
         }
@@ -1334,7 +1343,12 @@ fn cuda_module_launch_contract(
     }))
 }
 
-fn cuda_module_launch_bounds(attrs: &[syn::Attribute]) -> syn::Result<Option<LaunchBoundsArgs>> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LiteralLaunchBounds {
+    max_threads: u32,
+}
+
+fn cuda_module_launch_bounds(attrs: &[syn::Attribute]) -> syn::Result<Option<LiteralLaunchBounds>> {
     let matching: Vec<_> = attrs
         .iter()
         .filter(|attr| attr_path_ends_with(attr, "launch_bounds"))
@@ -1345,10 +1359,17 @@ fn cuda_module_launch_bounds(attrs: &[syn::Attribute]) -> syn::Result<Option<Lau
             "a kernel may have only one launch_bounds attribute",
         ));
     }
-    matching
-        .first()
-        .map(|attr| attr.parse_args::<LaunchBoundsArgs>())
-        .transpose()
+    let Some(attr) = matching.first() else {
+        return Ok(None);
+    };
+    let args = attr.parse_args::<LaunchBoundsArgs>()?;
+    let Some(max_threads) = args.max_threads.literal_value else {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "launch_bounds const expressions are supported for device compilation, but a kernel with launch_contract currently requires a literal maximum-thread bound so its host-side contract can be checked",
+        ));
+    };
+    Ok(Some(LiteralLaunchBounds { max_threads }))
 }
 
 fn validate_dimensions_for_domain(
@@ -2621,6 +2642,11 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// }
 /// ```
 ///
+/// A factor may also be a typed `u32` policy constant, such as
+/// `#[unroll(P::UNROLL)]`. A generic expression currently requires Rust's
+/// `generic_const_exprs` feature. Partial factors must be in `2..=1024`; an
+/// invalid specialization fails compilation instead of becoming a no-op.
+///
 /// The pass currently recognizes explicit counted `while` loops. Range-based
 /// `for` loops are not yet recognized.
 ///
@@ -2636,7 +2662,8 @@ fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
 /// Partial unrolling also requires a positive counter step, a `<` or `<=` test,
 /// and a limit that does not change inside the loop. One annotation may create
 /// at most 1,024 body copies, 8,192 cloned basic blocks, and 65,536 cloned
-/// operations. Unsupported or larger requests warn and are not unrolled.
+/// operations. Factors above 1,024 are rejected; unsupported loop shapes warn
+/// and are not unrolled.
 #[proc_macro_attribute]
 pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as KernelArgs);
@@ -2657,6 +2684,9 @@ pub fn kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     // hits a malformed attribute it records the error so we can surface it as a
     // compile error below.
     if let Err(err) = rewrite_loop_unroll_attrs(&mut input) {
+        return err.to_compile_error().into();
+    }
+    if let Err(err) = add_launch_bounds_evaluatability_from_attrs(&mut input) {
         return err.to_compile_error().into();
     }
 
@@ -3661,12 +3691,24 @@ fn substitute_type(ty: &Type, param: &syn::Ident, replacement: &Type) -> TokenSt
 /// #[kernel]
 /// #[launch_bounds(256, 2)]           // Max 256 threads, min 2 blocks per SM
 /// pub fn optimized_kernel(output: DisjointSlice<f32>) { ... }
+///
+/// trait Policy {
+///     const MAX_THREADS: u32;
+///     const MIN_BLOCKS: u32;
+/// }
+///
+/// #[kernel]
+/// #[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+/// pub fn configured<P: Policy>(output: DisjointSlice<f32>) { ... }
 /// ```
 ///
 /// # Parameters
 ///
 /// - First parameter (required): Maximum threads per block
 /// - Second parameter (optional): Minimum blocks per SM for occupancy hints
+/// - Both parameters may be typed `u32` const expressions. Expressions that
+///   depend on a generic parameter currently require Rust's
+///   `generic_const_exprs` feature.
 ///
 /// # Requirements
 ///
@@ -3691,12 +3733,15 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args: LaunchBoundsArgs = parse_macro_input!(attr as LaunchBoundsArgs);
     let mut input = parse_macro_input!(item as ItemFn);
 
-    let max_threads = args.max_threads;
-    let min_blocks = args.min_blocks;
+    let max_threads = &args.max_threads.expr;
+    let min_blocks = &args.min_blocks.expr;
+
+    add_const_evaluatable_bound(&mut input.sig.generics, &args.max_threads);
+    add_const_evaluatable_bound(&mut input.sig.generics, &args.min_blocks);
 
     // Inject the launch bounds config marker at the start of the function body
     let marker_call: syn::Stmt = syn::parse_quote! {
-        ::cuda_device::thread::__launch_bounds_config::<#max_threads, #min_blocks>();
+        ::cuda_device::thread::__launch_bounds_config::<{ #max_threads }, { #min_blocks }>();
     };
 
     // Prepend the marker to the function body
@@ -3765,29 +3810,39 @@ fn inject_launch_contract_alignment_marker(args: &LaunchContractArgs, input: &mu
 }
 
 /// Arguments for `#[launch_bounds(...)]` attribute.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 struct LaunchBoundsArgs {
-    max_threads: u32,
-    min_blocks: u32,
+    max_threads: ConstU32Expr,
+    min_blocks: ConstU32Expr,
 }
 
 impl Parse for LaunchBoundsArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let args: Punctuated<syn::LitInt, Token![,]> = Punctuated::parse_terminated(input)?;
-        let values: Vec<u32> = args
-            .iter()
-            .map(|lit| lit.base10_parse::<u32>())
-            .collect::<Result<Vec<_>, _>>()?;
+        let args: Punctuated<Expr, Token![,]> = Punctuated::parse_terminated(input)?;
+        let values = args
+            .into_iter()
+            .map(ConstU32Expr::new)
+            .collect::<syn::Result<Vec<_>>>()?;
 
         match values.len() {
-            1 => Ok(LaunchBoundsArgs {
-                max_threads: values[0],
-                min_blocks: 0, // Unspecified
-            }),
-            2 => Ok(LaunchBoundsArgs {
-                max_threads: values[0],
-                min_blocks: values[1],
-            }),
+            1 => {
+                let max_threads = values.into_iter().next().unwrap();
+                validate_literal_max_threads(&max_threads)?;
+                Ok(LaunchBoundsArgs {
+                    max_threads,
+                    min_blocks: ConstU32Expr::literal(0),
+                })
+            }
+            2 => {
+                let mut values = values.into_iter();
+                let max_threads = values.next().unwrap();
+                let min_blocks = values.next().unwrap();
+                validate_literal_max_threads(&max_threads)?;
+                Ok(LaunchBoundsArgs {
+                    max_threads,
+                    min_blocks,
+                })
+            }
             _ => Err(syn::Error::new(
                 input.span(),
                 "launch_bounds expects 1 or 2 parameters: #[launch_bounds(max_threads)] or #[launch_bounds(max_threads, min_blocks)]",
@@ -3796,35 +3851,178 @@ impl Parse for LaunchBoundsArgs {
     }
 }
 
+/// A source expression whose expected type is `u32` at the generated marker.
+///
+/// Literal values are retained only for source-time diagnostics and for the
+/// host `launch_contract` expansion, which cannot defer its checks to device
+/// monomorphization. Every other expression stays as typed Rust syntax: rustc,
+/// not this procedural macro, resolves associated constants and arithmetic.
+#[derive(Clone)]
+struct ConstU32Expr {
+    expr: Expr,
+    literal_value: Option<u32>,
+}
+
+impl ConstU32Expr {
+    fn new(expr: Expr) -> syn::Result<Self> {
+        let literal_value = match &expr {
+            Expr::Lit(expr_lit) => match &expr_lit.lit {
+                syn::Lit::Int(value) => Some(value.base10_parse::<u32>()?),
+                _ => None,
+            },
+            _ => None,
+        };
+        Ok(Self {
+            expr,
+            literal_value,
+        })
+    }
+
+    fn literal(value: u32) -> Self {
+        Self {
+            expr: parse_quote! { #value },
+            literal_value: Some(value),
+        }
+    }
+}
+
+fn validate_literal_max_threads(value: &ConstU32Expr) -> syn::Result<()> {
+    if value.literal_value == Some(0) {
+        Err(syn::Error::new_spanned(
+            &value.expr,
+            "launch_bounds maximum threads must be greater than zero",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Returns whether an expression names one of the function's type or const
+/// parameters and therefore needs a signature-level evaluatability witness.
+///
+/// Non-generic paths deliberately return false. In particular, a const item
+/// declared inside the function body is in scope at the generated marker but
+/// is not in scope in the function signature.
+fn const_expr_depends_on_generics(expr: &Expr, generics: &syn::Generics) -> bool {
+    let generic_names: Vec<&Ident> = generics
+        .params
+        .iter()
+        .filter_map(|parameter| match parameter {
+            GenericParam::Type(parameter) => Some(&parameter.ident),
+            GenericParam::Const(parameter) => Some(&parameter.ident),
+            GenericParam::Lifetime(_) => None,
+        })
+        .collect();
+    if generic_names.is_empty() {
+        return false;
+    }
+
+    struct GenericReference<'a> {
+        generic_names: &'a [&'a Ident],
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for GenericReference<'_> {
+        fn visit_path(&mut self, path: &'ast Path) {
+            if path.segments.iter().any(|segment| {
+                self.generic_names
+                    .iter()
+                    .any(|generic| segment.ident == **generic)
+            }) {
+                self.found = true;
+                return;
+            }
+            visit::visit_path(self, path);
+        }
+    }
+
+    let mut visitor = GenericReference {
+        generic_names: &generic_names,
+        found: false,
+    };
+    visitor.visit_expr(expr);
+    visitor.found
+}
+
+/// Make a generic constant expression evaluatable at each monomorphization.
+///
+/// rustc requires this bound for expressions such as `P::MAX_THREADS`. The
+/// marker itself supplies the expected `u32` type; the array length is only an
+/// evaluatability witness and never reaches device code.
+fn add_const_evaluatable_bound(generics: &mut syn::Generics, value: &ConstU32Expr) {
+    if value.literal_value.is_some() || !const_expr_depends_on_generics(&value.expr, generics) {
+        return;
+    }
+    let expr = &value.expr;
+    let predicate: syn::WherePredicate = parse_quote! {
+        [(); (#expr) as usize]:
+    };
+    generics.make_where_clause().predicates.push(predicate);
+}
+
+fn add_launch_bounds_evaluatability_from_attrs(input: &mut ItemFn) -> syn::Result<()> {
+    let matching: Vec<_> = input
+        .attrs
+        .iter()
+        .filter(|attr| attr_path_ends_with(attr, "launch_bounds"))
+        .collect();
+    if matching.len() > 1 {
+        return Err(syn::Error::new_spanned(
+            matching[1],
+            "a kernel may have only one launch_bounds attribute",
+        ));
+    }
+    let Some(attr) = matching.first() else {
+        return Ok(());
+    };
+    let bounds = attr.parse_args::<LaunchBoundsArgs>()?;
+    let max_threads = bounds.max_threads.clone();
+    let min_blocks = bounds.min_blocks.clone();
+    add_const_evaluatable_bound(&mut input.sig.generics, &max_threads);
+    add_const_evaluatable_bound(&mut input.sig.generics, &min_blocks);
+    Ok(())
+}
+
 /// Arguments for the `#[unroll]` / `#[unroll(N)]` attribute.
 ///
 /// Bare `#[unroll]` parses to factor `0` (full unroll); `#[unroll(N)]` requires
 /// `N >= 2`.
 struct UnrollArgs {
-    factor: u32,
+    factor: ConstU32Expr,
 }
 
 impl Parse for UnrollArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // Bare `#[unroll]` => full unroll (factor 0).
         if input.is_empty() {
-            return Ok(UnrollArgs { factor: 0 });
+            return Ok(UnrollArgs {
+                factor: ConstU32Expr::literal(0),
+            });
         }
 
-        let args: Punctuated<syn::LitInt, Token![,]> = Punctuated::parse_terminated(input)?;
-        let values: Vec<u32> = args
-            .iter()
-            .map(|lit| lit.base10_parse::<u32>())
-            .collect::<Result<Vec<_>, _>>()?;
+        let args: Punctuated<Expr, Token![,]> = Punctuated::parse_terminated(input)?;
+        let mut values = args
+            .into_iter()
+            .map(ConstU32Expr::new)
+            .collect::<syn::Result<Vec<_>>>()?;
 
         match values.len() {
-            1 if values[0] >= 2 => Ok(UnrollArgs { factor: values[0] }),
-            1 => Err(syn::Error::new_spanned(
-                args.first().unwrap(),
-                "partial unroll factor must be at least 2; use #[unroll] for full unrolling",
-            )),
-            _ => Err(syn::Error::new_spanned(
-                args.first().unwrap(),
+            1 => {
+                let factor = values.pop().unwrap();
+                match factor.literal_value {
+                    Some(0 | 1) => Err(syn::Error::new_spanned(
+                        &factor.expr,
+                        "partial unroll factor must be at least 2; use #[unroll] for full unrolling",
+                    )),
+                    Some(value) if value > 1024 => Err(syn::Error::new_spanned(
+                        &factor.expr,
+                        "partial unroll factor cannot exceed 1024",
+                    )),
+                    _ => Ok(UnrollArgs { factor }),
+                }
+            }
+            _ => Err(syn::Error::new(
+                input.span(),
                 "unroll expects no argument (full unroll) or one factor: #[unroll] or #[unroll(N)]",
             )),
         }
@@ -3860,6 +4058,7 @@ struct LoopUnrollAttrVisitor {
     /// First parse error encountered (e.g. a malformed `#[unroll(...)]`). The
     /// caller surfaces this as a compile error.
     error: Option<syn::Error>,
+    const_expressions: Vec<ConstU32Expr>,
 }
 
 impl LoopUnrollAttrVisitor {
@@ -3867,7 +4066,7 @@ impl LoopUnrollAttrVisitor {
     /// return the parsed factor. Returns `None` when no `unroll` attribute is
     /// present (leaving `attrs` untouched). Records a parse error and returns
     /// `None` if the attribute is malformed.
-    fn take_unroll_factor(&mut self, attrs: &mut Vec<syn::Attribute>) -> Option<u32> {
+    fn take_unroll_factor(&mut self, attrs: &mut Vec<syn::Attribute>) -> Option<ConstU32Expr> {
         let idx = attrs
             .iter()
             .position(|attr| attr.path().is_ident("unroll"))?;
@@ -3875,7 +4074,7 @@ impl LoopUnrollAttrVisitor {
 
         // `#[unroll]` (bare) is `Meta::Path`; `#[unroll(N)]` is `Meta::List`.
         let factor = match &attr.meta {
-            syn::Meta::Path(_) => 0u32,
+            syn::Meta::Path(_) => ConstU32Expr::literal(0),
             syn::Meta::List(list) => match list.parse_args::<UnrollArgs>() {
                 Ok(parsed) => parsed.factor,
                 Err(err) => {
@@ -3895,13 +4094,17 @@ impl LoopUnrollAttrVisitor {
                 return None;
             }
         };
+        if factor.literal_value.is_none() {
+            self.const_expressions.push(factor.clone());
+        }
         Some(factor)
     }
 
     /// Build the `__unroll_config::<FACTOR>()` marker statement.
-    fn marker_stmt(factor: u32) -> Stmt {
+    fn marker_stmt(factor: &ConstU32Expr) -> Stmt {
+        let expr = &factor.expr;
         parse_quote! {
-            cuda_device::thread::__unroll_config::<#factor>();
+            cuda_device::thread::__unroll_config::<{ #expr }>();
         }
     }
 }
@@ -3914,17 +4117,17 @@ impl VisitMut for LoopUnrollAttrVisitor {
         match expr {
             Expr::ForLoop(for_loop) => {
                 if let Some(factor) = self.take_unroll_factor(&mut for_loop.attrs) {
-                    for_loop.body.stmts.insert(0, Self::marker_stmt(factor));
+                    for_loop.body.stmts.insert(0, Self::marker_stmt(&factor));
                 }
             }
             Expr::While(while_loop) => {
                 if let Some(factor) = self.take_unroll_factor(&mut while_loop.attrs) {
-                    while_loop.body.stmts.insert(0, Self::marker_stmt(factor));
+                    while_loop.body.stmts.insert(0, Self::marker_stmt(&factor));
                 }
             }
             Expr::Loop(loop_expr) => {
                 if let Some(factor) = self.take_unroll_factor(&mut loop_expr.attrs) {
-                    loop_expr.body.stmts.insert(0, Self::marker_stmt(factor));
+                    loop_expr.body.stmts.insert(0, Self::marker_stmt(&factor));
                 }
             }
             _ => {}
@@ -3941,10 +4144,13 @@ impl VisitMut for LoopUnrollAttrVisitor {
 fn rewrite_loop_unroll_attrs(input: &mut ItemFn) -> syn::Result<()> {
     let mut visitor = LoopUnrollAttrVisitor::default();
     visitor.visit_block_mut(&mut input.block);
-    match visitor.error {
-        Some(err) => Err(err),
-        None => Ok(()),
+    if let Some(err) = visitor.error {
+        return Err(err);
     }
+    for expression in &visitor.const_expressions {
+        add_const_evaluatable_bound(&mut input.sig.generics, expression);
+    }
+    Ok(())
 }
 
 /// Specifies compile-time cluster dimensions for a kernel.
@@ -4159,8 +4365,8 @@ pub fn cooperative_launch(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// test, an unchanging limit, and no exit besides the normal header test.
 ///
 /// One annotation may create at most 1,024 body copies, 8,192 cloned basic
-/// blocks, and 65,536 cloned operations. Unsupported or larger requests warn
-/// and are not unrolled.
+/// blocks, and 65,536 cloned operations. Factors above 1,024 are rejected;
+/// unsupported loop shapes warn and are not unrolled.
 ///
 /// # Example: Device Function Definition
 ///
@@ -5958,7 +6164,7 @@ mod tests {
         let out = run_loop_unroll_visitor(func);
         // Bare #[unroll] => full unroll (factor 0).
         assert!(
-            out.contains("cuda_device::thread::__unroll_config::<0u32>()"),
+            out.contains("cuda_device::thread::__unroll_config::<{0u32}>()"),
             "expected factor-0 marker:\n{out}"
         );
         // The expression attribute must be stripped so rustc never sees it.
@@ -5978,7 +6184,7 @@ mod tests {
         };
         let out = run_loop_unroll_visitor(func);
         assert!(
-            out.contains("cuda_device::thread::__unroll_config::<4u32>()"),
+            out.contains("cuda_device::thread::__unroll_config::<{4}>()"),
             "expected factor-4 marker:\n{out}"
         );
         assert!(
@@ -5997,7 +6203,7 @@ mod tests {
         };
         let out = run_loop_unroll_visitor(func);
         assert!(
-            out.contains("cuda_device::thread::__unroll_config::<2u32>()"),
+            out.contains("cuda_device::thread::__unroll_config::<{2}>()"),
             "expected factor-2 marker on `loop`:\n{out}"
         );
     }
@@ -6016,7 +6222,7 @@ mod tests {
         };
         let out = run_loop_unroll_visitor(func);
         assert!(
-            out.contains("cuda_device::thread::__unroll_config::<3u32>()"),
+            out.contains("cuda_device::thread::__unroll_config::<{3}>()"),
             "expected marker injected into nested loop:\n{out}"
         );
     }
@@ -6066,6 +6272,132 @@ mod tests {
     fn partial_unroll_factor_must_be_at_least_two() {
         assert!(syn::parse_str::<UnrollArgs>("0").is_err());
         assert!(syn::parse_str::<UnrollArgs>("1").is_err());
-        assert_eq!(syn::parse_str::<UnrollArgs>("2").unwrap().factor, 2);
+        assert_eq!(
+            syn::parse_str::<UnrollArgs>("2")
+                .unwrap()
+                .factor
+                .literal_value,
+            Some(2)
+        );
+        assert!(syn::parse_str::<UnrollArgs>("1025").is_err());
+    }
+
+    #[test]
+    fn launch_bounds_keeps_policy_expressions_typed() {
+        let mut function: ItemFn = parse_quote! {
+            fn configured<P: Policy>() {}
+        };
+        let args: LaunchBoundsArgs = syn::parse_str("P::MAX_THREADS * 2, P::MIN_BLOCKS").unwrap();
+        add_const_evaluatable_bound(&mut function.sig.generics, &args.max_threads);
+        add_const_evaluatable_bound(&mut function.sig.generics, &args.min_blocks);
+
+        let max_threads = &args.max_threads.expr;
+        let min_blocks = &args.min_blocks.expr;
+        let marker: Stmt = parse_quote! {
+            ::cuda_device::thread::__launch_bounds_config::<
+                { #max_threads },
+                { #min_blocks },
+            >();
+        };
+        function.block.stmts.insert(0, marker);
+        let output = quote!(#function).to_string().replace(' ', "");
+
+        assert!(
+            output.contains("__launch_bounds_config"),
+            "missing marker: {output}"
+        );
+        assert!(output.contains("{P::MAX_THREADS*2}"), "{output}");
+        assert!(output.contains("{P::MIN_BLOCKS}"), "{output}");
+        assert!(output.contains("[();(P::MAX_THREADS*2)asusize]:"));
+        assert!(output.contains("[();(P::MIN_BLOCKS)asusize]:"));
+    }
+
+    #[test]
+    fn policy_unroll_expression_gets_marker_and_evaluatability_bound() {
+        let func: ItemFn = parse_quote! {
+            fn k<P: Policy>() {
+                let mut i = 0u32;
+                #[unroll(P::UNROLL)]
+                while i < 8 { i += 1; }
+            }
+        };
+        let output = run_loop_unroll_visitor(func);
+
+        assert!(output.contains("__unroll_config::<{P::UNROLL}>()"));
+        assert!(output.contains("[();(P::UNROLL)asusize]:"));
+    }
+
+    #[test]
+    fn function_local_unroll_const_stays_in_block_scope() {
+        let func: ItemFn = parse_quote! {
+            fn k() {
+                const FACTOR: u32 = 4;
+                let mut i = 0u32;
+                #[unroll(FACTOR)]
+                while i < 8 { i += 1; }
+            }
+        };
+        let output = run_loop_unroll_visitor(func);
+
+        assert!(output.contains("__unroll_config::<{FACTOR}>()"));
+        assert!(
+            !output.contains("[();(FACTOR)asusize]:"),
+            "a block-local const must not be copied into the function signature: {output}"
+        );
+    }
+
+    #[test]
+    fn cuda_module_host_methods_keep_policy_expression_bounds() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[launch_bounds(P::MAX_THREADS, P::MIN_BLOCKS)]
+                pub fn configured<P: Policy>() {
+                    let mut i = 0u32;
+                    #[unroll(P::UNROLL)]
+                    while i < 8 { i += 1; }
+                }
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        assert!(expanded.contains("[();(P::MAX_THREADS)asusize]:"));
+        assert!(expanded.contains("[();(P::MIN_BLOCKS)asusize]:"));
+        assert!(expanded.contains("[();(P::UNROLL)asusize]:"));
+        assert!(expanded.contains("pubfnconfigured<P:Policy>"));
+    }
+
+    #[test]
+    fn launch_contract_rejects_deferred_launch_bounds() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[launch_bounds(P::MAX_THREADS)]
+                #[launch_contract(domain = 1)]
+                pub fn configured<P: Policy>() {}
+            }
+        };
+        let error = expand_cuda_module(module).expect_err("host contract must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("launch_contract currently requires a literal maximum-thread bound")
+        );
+    }
+
+    #[test]
+    fn launch_contract_allows_deferred_minimum_blocks() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                #[launch_bounds(256, P::MIN_BLOCKS)]
+                #[launch_contract(domain = 1)]
+                pub fn configured<P: Policy>() {}
+            }
+        };
+
+        expand_cuda_module(module).expect(
+            "minimum blocks affects device occupancy metadata, not the host launch contract",
+        );
     }
 }
