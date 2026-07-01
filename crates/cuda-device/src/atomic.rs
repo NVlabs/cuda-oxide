@@ -594,10 +594,13 @@ define_float_atomic! {
 ///
 /// # Safety
 ///
-/// `addr` must point to a valid, naturally-aligned `u32` in global memory.
+/// - `addr` must point to 4 writable bytes in global memory, naturally
+///   aligned to 4 bytes.
+/// - Non-atomic reads or writes to `*addr` that race with this operation
+///   are undefined behavior.
 #[must_use]
 #[inline(never)]
-pub fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
+pub unsafe fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
     let _ = (addr, val);
     unreachable!("atom_add_f16x2 called outside CUDA kernel context")
 }
@@ -624,10 +627,13 @@ pub fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
 ///
 /// # Safety
 ///
-/// `addr` must point to a valid, naturally-aligned `u32` in global memory.
+/// - `addr` must point to 4 writable bytes in global memory, naturally
+///   aligned to 4 bytes.
+/// - Non-atomic reads or writes to `*addr` that race with this operation
+///   are undefined behavior.
 #[must_use]
 #[inline(never)]
-pub fn atom_add_bf16x2(addr: *mut u32, val: u32) -> u32 {
+pub unsafe fn atom_add_bf16x2(addr: *mut u32, val: u32) -> u32 {
     let _ = (addr, val);
     unreachable!("atom_add_bf16x2 called outside CUDA kernel context")
 }
