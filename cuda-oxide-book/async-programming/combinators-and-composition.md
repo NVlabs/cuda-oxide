@@ -254,6 +254,8 @@ every combinator working together. This function returns a single
 `DeviceOperation` describing the entire forward pass for one batch:
 
 ```rust
+use cuda_async::launch::{AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
+
 fn forward_pass(
     batch: Vec<f32>,
     w0: Arc<DeviceBox<[f32]>>,
@@ -265,39 +267,48 @@ fn forward_pass(
         // Stage 1: GEMM — hidden = input × W0
         .and_then(move |(input, hidden, output)| {
             let func = module.load_function("sgemm_naive").unwrap();
-            let mut launch = AsyncKernelLaunch::new(Arc::new(func));
-            launch
-                .push_args((DIM as u32, DIM as u32, DIM as u32,
-                            1.0f32,
-                            input.cu_deviceptr(), input.len() as u64,
-                            w0.cu_deviceptr(), w0.len() as u64,
-                            0.0f32,
-                            hidden.cu_deviceptr(), hidden.len() as u64))
-                .set_launch_config(gemm_cfg);
+            let mut builder = AsyncKernelLaunchBuilder::new(Arc::new(func));
+            builder.push_args((DIM as u32, DIM as u32, DIM as u32,
+                               1.0f32,
+                               input.cu_deviceptr(), input.len() as u64,
+                               w0.cu_deviceptr(), w0.len() as u64,
+                               0.0f32,
+                               hidden.cu_deviceptr(), hidden.len() as u64));
+            // SAFETY: packet/config match sgemm_naive, the scheduler uses the
+            // module's context, and the owned wrapper retains its allocations.
+            let launch = unsafe { builder.finalize_unchecked(gemm_cfg) };
+            let launch = OwnedAsyncKernelLaunch::new(launch, (input, w0, hidden));
             // Kernel returns (). Carry forward the buffers we still need.
-            launch.and_then(move |()| value((hidden, output, w1, module)))
+            launch.and_then(move |(_input, _w0, hidden)| {
+                value((hidden, output, w1, module))
+            })
         })
         // Stage 2: MatVec — output = hidden × W1
         .and_then(move |(hidden, output, w1, module)| {
             let func = module.load_function("matvec_naive").unwrap();
-            let mut launch = AsyncKernelLaunch::new(Arc::new(func));
-            launch
-                .push_args((DIM as u32, DIM as u32,
-                            hidden.cu_deviceptr(), hidden.len() as u64,
-                            w1.cu_deviceptr(), w1.len() as u64,
-                            output.cu_deviceptr(), output.len() as u64))
-                .set_launch_config(matvec_cfg);
-            launch.and_then(move |()| value((output, module)))
+            let mut builder = AsyncKernelLaunchBuilder::new(Arc::new(func));
+            builder.push_args((DIM as u32, DIM as u32,
+                               hidden.cu_deviceptr(), hidden.len() as u64,
+                               w1.cu_deviceptr(), w1.len() as u64,
+                               output.cu_deviceptr(), output.len() as u64));
+            // SAFETY: packet/config match matvec_naive, the scheduler uses the
+            // module's context, and the owned wrapper retains its allocations.
+            let launch = unsafe { builder.finalize_unchecked(matvec_cfg) };
+            let launch = OwnedAsyncKernelLaunch::new(launch, (hidden, w1, output));
+            launch.and_then(move |(_hidden, _w1, output)| {
+                value((output, module))
+            })
         })
         // Stage 3: ReLU — result = max(0, output)
         .and_then(move |(output, module)| {
             let func = module.load_function("relu").unwrap();
-            let mut launch = AsyncKernelLaunch::new(Arc::new(func));
-            launch
-                .push_args((output.cu_deviceptr(), output.len() as u64,
-                            output.cu_deviceptr(), output.len() as u64))
-                .set_launch_config(relu_cfg);
-            launch.and_then(move |()| value(output))
+            let mut builder = AsyncKernelLaunchBuilder::new(Arc::new(func));
+            builder.push_args((output.cu_deviceptr(), output.len() as u64,
+                               output.cu_deviceptr(), output.len() as u64));
+            // SAFETY: packet/config match relu, the scheduler uses the module's
+            // context, and the owned wrapper retains output.
+            let launch = unsafe { builder.finalize_unchecked(relu_cfg) };
+            OwnedAsyncKernelLaunch::new(launch, output)
         })
         // Stage 4: download result to host
         .and_then(d2h)
@@ -317,6 +328,13 @@ Study how data flows through this pipeline:
 The entire function returns `impl DeviceOperation<Output = Vec<f32>>`. Nothing
 has executed. You can `.sync()` it, `.await` it, or hand it to `tokio::spawn`
 and let the scheduling policy figure out which stream to use.
+
+`AsyncKernelLaunchBuilder` is inert and safe to populate. Only
+`finalize_unchecked(raw_config)` crosses the unsafe boundary and creates a
+runnable operation. `OwnedAsyncKernelLaunch` keeps each stage's buffers alive
+until that launch returns them. Application code should prefer generated
+owned-async methods with `PreparedLaunch<K>`; the low-level form above is useful
+when a module is loaded by name and no generated contract is available.
 
 ## Quick reference
 

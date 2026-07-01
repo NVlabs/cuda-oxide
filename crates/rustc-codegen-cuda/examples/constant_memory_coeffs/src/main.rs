@@ -51,7 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     module.set_coeffs(&stream, &h_coeffs)?;
 
     let mut out = DeviceBuffer::<f32>::zeroed(&stream, 10)?;
-    module.compute(&stream, LaunchConfig::for_num_elems(10), &mut out)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.compute(&stream, LaunchConfig::for_num_elems(10), &mut out) }?;
 
     let result = out.to_host_vec(&stream)?;
     println!("{:?}", result);

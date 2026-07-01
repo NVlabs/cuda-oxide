@@ -105,15 +105,17 @@ fn main() {
     let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
     // Launch kernel
-    module
-        .vecadd_with_helper(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.vecadd_with_helper(
             (stream).as_ref(),
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     // Get results
     let c_host = c_dev.to_host_vec(&stream).unwrap();

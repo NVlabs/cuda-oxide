@@ -76,7 +76,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
 
     let cfg = LaunchConfig::for_num_elems(N as u32);
-    module.pack_f16x2(&stream, cfg, &lo_dev, &hi_dev, &mut out_dev)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.pack_f16x2(&stream, cfg, &lo_dev, &hi_dev, &mut out_dev) }?;
 
     let out_host = out_dev.to_host_vec(&stream)?;
     let mut failures = 0;
@@ -95,7 +96,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Device-side scalar kernel must agree bit-for-bit with the intrinsic.
     let mut out_scalar_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-    module.pack_f16x2_scalar(&stream, cfg, &lo_dev, &hi_dev, &mut out_scalar_dev)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.pack_f16x2_scalar(&stream, cfg, &lo_dev, &hi_dev, &mut out_scalar_dev) }?;
     let out_scalar = out_scalar_dev.to_host_vec(&stream)?;
     for i in 0..N {
         if out_scalar[i] != out_host[i] {
@@ -113,7 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f16(1.5) = 0x3E00 (low half), f16(-2.25) = 0xC080 (high half).
     let mut out_const_dev = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
     let cfg1 = LaunchConfig::for_num_elems(1);
-    module.pack_f16x2_consts(&stream, cfg1, &mut out_const_dev)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.pack_f16x2_consts(&stream, cfg1, &mut out_const_dev) }?;
     let got_const = out_const_dev.to_host_vec(&stream)?[0];
     if got_const != 0xC080_3E00 {
         eprintln!("CONST MISMATCH: got={got_const:#010x} want=0xc0803e00");

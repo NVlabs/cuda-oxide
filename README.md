@@ -57,15 +57,19 @@ fn main() {
 
     // Launch with a closure — factor is captured and passed to the GPU automatically
     let factor = 2.5f32;
-    module
-        .map::<f32, _>(
+    // SAFETY: this raw configuration is fully 1-D, matches index_1d(), and
+    // launches one thread per output element. A launch contract can move this
+    // proof into the generated safe API.
+    unsafe {
+        module.map::<f32, _>(
             &stream,
             LaunchConfig::for_num_elems(1024),
             move |x: f32| x * factor,
             &input,
             &mut output,
         )
-        .unwrap();
+    }
+    .unwrap();
 
     let result = output.to_host_vec(&stream).unwrap();
     assert!((result[1] - 2.5).abs() < 1e-5);
@@ -76,7 +80,10 @@ The above example defines a generic `#[kernel]` function `map` that accepts any
 `Fn(T) -> T` closure. `#[cuda_module]` embeds the generated device artifact into
 the host binary and generates a typed `module.map::<f32, _>(...)` launch method.
 The closure `move |x| x * factor` is captured, scalarized, and passed as kernel
-parameters automatically.
+parameters automatically. `LaunchConfig` is intentionally raw data, so using
+it to launch a kernel is unsafe: the caller must prove that its dimensions and
+resources match the kernel. Kernels with `#[launch_contract(...)]` instead use
+a checked `PreparedLaunch` through the safe generated method.
 
 For composable async GPU work, `stream:` disappears, `{kernel}_async` returns a
 lazy `DeviceOperation`, and execution happens when you call `.sync()` or
@@ -87,14 +94,16 @@ use cuda_async::device_operation::DeviceOperation;
 
 // Assuming `module`, `input`, and `output` come from the cuda-async setup:
 let factor = 2.5f32;
-module
-    .map_async::<f32, _>(
+let launch = unsafe {
+    // SAFETY: the raw launch is 1-D and matches this kernel's index space.
+    module.map_async::<f32, _>(
         LaunchConfig::for_num_elems(1024),
         move |x: f32| x * factor,
         &input,
         &mut output,
     )?
-    .sync()?;
+};
+launch.sync()?;
 // or: .await?;
 ```
 

@@ -74,8 +74,8 @@ fn main() {
         block_dim: (N as u32, 1, 1),
         shared_mem_bytes: 0,
     };
-    module
-        .roundtrip(stream.as_ref(), config, &d_in, &mut d_out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.roundtrip(stream.as_ref(), config, &d_in, &mut d_out) }
         .expect("Kernel launch failed");
 
     let out = d_out.to_host_vec(&stream).unwrap();

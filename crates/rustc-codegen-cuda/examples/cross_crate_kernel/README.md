@@ -101,15 +101,17 @@ use kernel_lib::kernels;
 fn main() {
     // scale::<f32> is monomorphized HERE, not in kernel-lib
     let module = kernels::from_module(raw_module).expect("typed module");
-    module
-        .scale::<f32>(
+    // SAFETY: this is a 1D launch and both buffers contain N elements.
+    unsafe {
+        module.scale::<f32>(
             stream.as_ref(),
             LaunchConfig::for_num_elems(N as u32),
             factor,
             &input_dev,
             &mut output_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 }
 ```
 

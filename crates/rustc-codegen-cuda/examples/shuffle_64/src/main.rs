@@ -151,8 +151,8 @@ fn main() {
     // ===== Test 1: u64 broadcast (idx) =====
     println!("\n--- Test 1: shuffle_u64 (idx broadcast of lane {SRC_LANE}) ---");
     let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, WARP).unwrap();
-    module
-        .shuffle_u64_broadcast((stream).as_ref(), cfg, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.shuffle_u64_broadcast((stream).as_ref(), cfg, &mut out_dev) }
         .expect("Kernel launch failed");
     let out = out_dev.to_host_vec(&stream).unwrap();
 
@@ -169,8 +169,8 @@ fn main() {
     // ===== Test 2: f64 butterfly reduction (bfly) =====
     println!("\n--- Test 2: shuffle_xor_f64 (butterfly sum) ---");
     let mut sum_dev = DeviceBuffer::<f64>::zeroed(&stream, WARP).unwrap();
-    module
-        .shuffle_f64_butterfly_sum((stream).as_ref(), cfg, &mut sum_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.shuffle_f64_butterfly_sum((stream).as_ref(), cfg, &mut sum_dev) }
         .expect("Kernel launch failed");
     let sums = sum_dev.to_host_vec(&stream).unwrap();
 
@@ -187,8 +187,8 @@ fn main() {
     println!("\n--- Test 3: shuffle_down_u64 / shuffle_up_u64 (delta 1) ---");
     let mut down_dev = DeviceBuffer::<u64>::zeroed(&stream, WARP).unwrap();
     let mut up_dev = DeviceBuffer::<u64>::zeroed(&stream, WARP).unwrap();
-    module
-        .shuffle_u64_neighbor((stream).as_ref(), cfg, &mut down_dev, &mut up_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.shuffle_u64_neighbor((stream).as_ref(), cfg, &mut down_dev, &mut up_dev) }
         .expect("Kernel launch failed");
     let down = down_dev.to_host_vec(&stream).unwrap();
     let up = up_dev.to_host_vec(&stream).unwrap();
@@ -228,8 +228,8 @@ fn main() {
     // ===== Test 4: masked half-warp broadcast (subset membermask) =====
     println!("\n--- Test 4: shuffle_u64_sync (two independent 16-lane halves) ---");
     let mut half_dev = DeviceBuffer::<u64>::zeroed(&stream, WARP).unwrap();
-    module
-        .shuffle_u64_halfwarp((stream).as_ref(), cfg, &mut half_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.shuffle_u64_halfwarp((stream).as_ref(), cfg, &mut half_dev) }
         .expect("Kernel launch failed");
     let half = half_dev.to_host_vec(&stream).unwrap();
 

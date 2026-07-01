@@ -75,8 +75,9 @@ macro_rules! vector_suite {
                         .collect();
                     let in_dev = DeviceBuffer::from_host(stream, &input).unwrap();
                     let mut out_dev = DeviceBuffer::<$ty>::zeroed(stream, n).unwrap();
-                    module
-                        .$ty(stream, cfg, &in_dev, &mut out_dev)
+                    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                    unsafe { module
+                        .$ty(stream, cfg, &in_dev, &mut out_dev) }
                         .expect(concat!(stringify!($ty), " launch"));
                     let out = out_dev.to_host_vec(stream).unwrap();
                     rows.push(Row {

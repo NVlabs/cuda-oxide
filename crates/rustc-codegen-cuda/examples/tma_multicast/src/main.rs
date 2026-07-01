@@ -235,14 +235,17 @@ fn run_tma_multicast_test(
 
     let tensor_map_ptr = dev_tensor_map.cu_deviceptr() as *const TmaDescriptor;
 
-    module.tma_multicast_test(
-        (stream).as_ref(),
-        cfg,
-        tensor_map_ptr,
-        &mut dev_output,
-        tile_x,
-        tile_y,
-    )?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.tma_multicast_test(
+            (stream).as_ref(),
+            cfg,
+            tensor_map_ptr,
+            &mut dev_output,
+            tile_x,
+            tile_y,
+        )
+    }?;
 
     stream.synchronize()?;
 

@@ -194,7 +194,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.clock_test((stream).as_ref(), cfg, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.clock_test((stream).as_ref(), cfg, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<u64> = output_dev.to_host_vec(&stream)?;
@@ -214,12 +215,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let input_dev = DeviceBuffer::from_host(&stream, &input)?;
         let mut output_dev = DeviceBuffer::<i32>::zeroed(&stream, n)?;
 
-        module.trap_test(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &input_dev,
-            &mut output_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.trap_test(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &input_dev,
+                &mut output_dev,
+            )
+        }?;
         stream.synchronize()?;
 
         let output: Vec<i32> = output_dev.to_host_vec(&stream)?;
@@ -245,12 +249,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let input_dev = DeviceBuffer::from_host(&stream, &input)?;
         let mut output_dev = DeviceBuffer::<i32>::zeroed(&stream, n)?;
 
-        module.assert_test(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &input_dev,
-            &mut output_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.assert_test(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &input_dev,
+                &mut output_dev,
+            )
+        }?;
         stream.synchronize()?;
 
         let output: Vec<i32> = output_dev.to_host_vec(&stream)?;
@@ -288,12 +295,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let input_dev = DeviceBuffer::from_host(&stream, &input)?;
         let mut output_dev = DeviceBuffer::<f32>::zeroed(&stream, n)?;
 
-        module.profiler_test(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &input_dev,
-            &mut output_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.profiler_test(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &input_dev,
+                &mut output_dev,
+            )
+        }?;
         stream.synchronize()?;
 
         let output: Vec<f32> = output_dev.to_host_vec(&stream)?;
@@ -327,7 +337,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.launch_bounds_test((stream).as_ref(), cfg, &input_dev, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.launch_bounds_test((stream).as_ref(), cfg, &input_dev, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<i32> = output_dev.to_host_vec(&stream)?;

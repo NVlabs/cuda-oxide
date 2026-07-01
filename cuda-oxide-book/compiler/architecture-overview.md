@@ -307,7 +307,7 @@ handles before cuda-oxide ever sees the code:
 | :---------------- | :------------------------------------------------------------------------------------|
 | Type checking     | Catch errors before GPU compilation -- no cryptic PTX assembler failures             |
 | Lifetime tracking | Safety guarantees that span the host/device boundary                                 |
-| Borrow checking   | Prevent data races at compile time, even across GPU threads                          |
+| Borrow checking   | Enforce ordinary Rust aliasing; GPU-wide writes add `DisjointSlice` and launch proofs |
 | Monomorphization  | Generics "just work" on the GPU -- `map<f32, _>` becomes a concrete PTX kernel       |
 | MIR optimization  | Inlining, constant propagation, dead code elimination -- all applied before we begin |
 | Trait resolution  | Trait objects are resolved, vtables are gone, everything is static dispatch          |

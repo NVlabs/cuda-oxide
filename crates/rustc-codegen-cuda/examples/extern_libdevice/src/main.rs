@@ -102,7 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_asin = DeviceBuffer::<f32>::zeroed(&stream, n)?;
     let mut out_acos = DeviceBuffer::<f32>::zeroed(&stream, n)?;
 
-    module.asin_acos(&stream, cfg, &xs_dev, &mut out_asin, &mut out_acos)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.asin_acos(&stream, cfg, &xs_dev, &mut out_asin, &mut out_acos) }?;
 
     let got_asin = out_asin.to_host_vec(&stream)?;
     let got_acos = out_acos.to_host_vec(&stream)?;

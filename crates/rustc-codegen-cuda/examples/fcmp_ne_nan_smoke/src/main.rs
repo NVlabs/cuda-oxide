@@ -58,12 +58,15 @@ fn main() {
     let x = vec![f32::NAN, 1.0, 0.0, -1.0, f32::INFINITY];
     let xd = DeviceBuffer::from_host(&stream, &x).unwrap();
     let mut cd = DeviceBuffer::<f32>::zeroed(&stream, x.len()).unwrap();
-    m.is_nan(
-        &stream,
-        LaunchConfig::for_num_elems(x.len() as u32),
-        &xd,
-        &mut cd,
-    )
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        m.is_nan(
+            &stream,
+            LaunchConfig::for_num_elems(x.len() as u32),
+            &xd,
+            &mut cd,
+        )
+    }
     .expect("launch is_nan");
     let is_nan = cd.to_host_vec(&stream).unwrap();
     println!("input : {:?}", x);
@@ -77,13 +80,16 @@ fn main() {
     let ad = DeviceBuffer::from_host(&stream, &a).unwrap();
     let bd = DeviceBuffer::from_host(&stream, &b).unwrap();
     let mut nd = DeviceBuffer::<f32>::zeroed(&stream, a.len()).unwrap();
-    m.float_ne(
-        &stream,
-        LaunchConfig::for_num_elems(a.len() as u32),
-        &ad,
-        &bd,
-        &mut nd,
-    )
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        m.float_ne(
+            &stream,
+            LaunchConfig::for_num_elems(a.len() as u32),
+            &ad,
+            &bd,
+            &mut nd,
+        )
+    }
     .expect("launch float_ne");
     let ne = nd.to_host_vec(&stream).unwrap();
     println!("a     : {:?}", a);

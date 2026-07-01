@@ -42,8 +42,8 @@ fn main() {
         let input: Vec<f32> = (0..N).map(|i| i as f32).collect();
         let in_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
-        module
-            .scale::<f32>(&stream, cfg, factor, &in_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.scale::<f32>(&stream, cfg, factor, &in_dev, &mut out_dev) }
             .expect("scale::<f32> launch");
         let out = out_dev.to_host_vec(&stream).unwrap();
         for (i, (&got, &x)) in out.iter().zip(input.iter()).enumerate() {
@@ -67,8 +67,8 @@ fn main() {
         let input: Vec<i32> = (0..N as i32).collect();
         let in_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
-        module
-            .scale::<i32>(&stream, cfg, factor, &in_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.scale::<i32>(&stream, cfg, factor, &in_dev, &mut out_dev) }
             .expect("scale::<i32> launch");
         let out = out_dev.to_host_vec(&stream).unwrap();
         for (i, (&got, &x)) in out.iter().zip(input.iter()).enumerate() {

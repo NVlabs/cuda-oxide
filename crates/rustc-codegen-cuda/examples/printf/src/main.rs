@@ -192,7 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 1: Integer formats
     // ====================================================================
     println!("--- Test 1: Integer formats ---");
-    module.test_integers((stream).as_ref(), cfg)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_integers((stream).as_ref(), cfg) }?;
     stream.synchronize()?;
     println!();
 
@@ -200,7 +201,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 2: Float formats
     // ====================================================================
     println!("--- Test 2: Float formats ---");
-    module.test_floats((stream).as_ref(), cfg)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_floats((stream).as_ref(), cfg) }?;
     stream.synchronize()?;
     println!();
 
@@ -208,7 +210,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 3: Width and alignment
     // ====================================================================
     println!("--- Test 3: Width and alignment ---");
-    module.test_width_align((stream).as_ref(), cfg)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_width_align((stream).as_ref(), cfg) }?;
     stream.synchronize()?;
     println!();
 
@@ -216,7 +219,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 4: Sign and flags
     // ====================================================================
     println!("--- Test 4: Sign and flags ---");
-    module.test_flags((stream).as_ref(), cfg)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_flags((stream).as_ref(), cfg) }?;
     stream.synchronize()?;
     println!();
 
@@ -228,7 +232,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let data: Vec<f32> = vec![1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8];
         let data_dev = DeviceBuffer::from_host(&stream, &data)?;
 
-        module.test_thread_output((stream).as_ref(), cfg, &data_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_thread_output((stream).as_ref(), cfg, &data_dev) }?;
         stream.synchronize()?;
     }
     println!();
@@ -237,7 +242,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 6: Return value
     // ====================================================================
     println!("--- Test 6: Return value ---");
-    module.test_return_value((stream).as_ref(), cfg)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_return_value((stream).as_ref(), cfg) }?;
     stream.synchronize()?;
     println!();
 
@@ -245,7 +251,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Test 7: Boolean values
     // ====================================================================
     println!("--- Test 7: Boolean values ---");
-    module.test_booleans((stream).as_ref(), cfg)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_booleans((stream).as_ref(), cfg) }?;
     stream.synchronize()?;
     println!();
 

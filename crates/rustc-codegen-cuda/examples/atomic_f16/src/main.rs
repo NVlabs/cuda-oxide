@@ -123,8 +123,9 @@ fn run_device_hist(
 
     let hist = DeviceBuffer::<f16>::zeroed(stream, nbins as usize).unwrap();
     let mut old = DeviceBuffer::<f16>::zeroed(stream, n as usize).unwrap();
-    module
-        .device_hist_f16(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.device_hist_f16(
             stream,
             LaunchConfig::for_num_elems(n),
             &hist,
@@ -132,7 +133,8 @@ fn run_device_hist(
             n,
             nbins,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     stream.synchronize().unwrap();
 
@@ -158,8 +160,8 @@ fn run_device_sub(module: &kernels::LoadedModule, stream: &cuda_core::CudaStream
     let counter = DeviceBuffer::from_host(stream, &initial).unwrap();
     let mut old = DeviceBuffer::<f16>::zeroed(stream, n as usize).unwrap();
 
-    module
-        .device_sub_f16(stream, LaunchConfig::for_num_elems(n), &counter, &mut old)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.device_sub_f16(stream, LaunchConfig::for_num_elems(n), &counter, &mut old) }
         .expect("Kernel launch failed");
 
     stream.synchronize().unwrap();
@@ -180,8 +182,8 @@ fn run_system_add(module: &kernels::LoadedModule, stream: &cuda_core::CudaStream
     let counter = DeviceBuffer::<f16>::zeroed(stream, 1).unwrap();
     let mut old = DeviceBuffer::<f16>::zeroed(stream, n as usize).unwrap();
 
-    module
-        .system_add_f16(stream, LaunchConfig::for_num_elems(n), &counter, &mut old)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.system_add_f16(stream, LaunchConfig::for_num_elems(n), &counter, &mut old) }
         .expect("Kernel launch failed");
 
     stream.synchronize().unwrap();
@@ -207,8 +209,9 @@ fn run_device_swap(module: &kernels::LoadedModule, stream: &cuda_core::CudaStrea
     let vals = DeviceBuffer::from_host(stream, &host_vals).unwrap();
     let mut old = DeviceBuffer::<f16>::zeroed(stream, n as usize).unwrap();
 
-    module
-        .device_swap_f16(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.device_swap_f16(
             stream,
             LaunchConfig::for_num_elems(n),
             &cell,
@@ -216,7 +219,8 @@ fn run_device_swap(module: &kernels::LoadedModule, stream: &cuda_core::CudaStrea
             &mut old,
             n,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     stream.synchronize().unwrap();
 
@@ -247,9 +251,11 @@ fn run_device_store_load(module: &kernels::LoadedModule, stream: &cuda_core::Cud
     let cells = DeviceBuffer::from_host(stream, &host_init).unwrap();
     let mut out = DeviceBuffer::<f16>::zeroed(stream, n as usize).unwrap();
 
-    module
-        .device_store_load_f16(stream, LaunchConfig::for_num_elems(n), &cells, &mut out, n)
-        .expect("Kernel launch failed");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.device_store_load_f16(stream, LaunchConfig::for_num_elems(n), &cells, &mut out, n)
+    }
+    .expect("Kernel launch failed");
 
     stream.synchronize().unwrap();
 
@@ -291,9 +297,8 @@ fn run_block_hist(
         shared_mem_bytes: 0,
     };
 
-    module
-        .block_hist_f16(stream, cfg, &hist, &mut old)
-        .expect("Kernel launch failed");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.block_hist_f16(stream, cfg, &hist, &mut old) }.expect("Kernel launch failed");
 
     stream.synchronize().unwrap();
 

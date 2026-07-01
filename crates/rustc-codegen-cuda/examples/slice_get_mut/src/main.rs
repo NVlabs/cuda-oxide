@@ -316,43 +316,50 @@ fn main() {
         "write_get_mut_map",
         &stream,
         |_| 42.0,
-        |s, cfg, o| module.write_get_mut_map(s, cfg, o).expect("launch"),
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        |s, cfg, o| unsafe { module.write_get_mut_map(s, cfg, o) }.expect("launch"),
     );
     all_pass &= run_and_check(
         "write_get_mut_if_let",
         &stream,
         |i| 100.0 + i as f32,
-        |s, cfg, o| module.write_get_mut_if_let(s, cfg, o).expect("launch"),
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        |s, cfg, o| unsafe { module.write_get_mut_if_let(s, cfg, o) }.expect("launch"),
     );
     all_pass &= run_and_check(
         "write_index_assign",
         &stream,
         |i| 7.0 + i as f32,
-        |s, cfg, o| module.write_index_assign(s, cfg, o).expect("launch"),
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        |s, cfg, o| unsafe { module.write_index_assign(s, cfg, o) }.expect("launch"),
     );
     all_pass &= run_and_check(
         "write_slice_index_assign",
         &stream,
         |i| 3.0 * i as f32,
-        |s, cfg, o| module.write_slice_index_assign(s, cfg, o).expect("launch"),
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        |s, cfg, o| unsafe { module.write_slice_index_assign(s, cfg, o) }.expect("launch"),
     );
     all_pass &= run_and_check(
         "write_mut_ref_index",
         &stream,
         |i| 50.0 - i as f32,
-        |s, cfg, o| module.write_mut_ref_index(s, cfg, o).expect("launch"),
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        |s, cfg, o| unsafe { module.write_mut_ref_index(s, cfg, o) }.expect("launch"),
     );
 
     // Struct-field variant has its own buffer shape; check it inline.
     {
         let mut dev_cells = DeviceBuffer::<[Cell; 2]>::zeroed(&stream, N).unwrap();
-        module
-            .write_struct_field_get_mut(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.write_struct_field_get_mut(
                 &stream,
                 LaunchConfig::for_num_elems(N as u32),
                 &mut dev_cells,
             )
-            .expect("launch");
+        }
+        .expect("launch");
         let host_cells = dev_cells.to_host_vec(&stream).unwrap();
         let ok = host_cells.iter().all(|pair| {
             (0..2).all(|i| {
@@ -375,18 +382,16 @@ fn main() {
     // when a fat slice's element type is itself an array.
     all_pass &=
         run_nested_matrix_check("write_nested_slice_row_ref", &stream, 42.0, |s, cfg, o| {
-            module
-                .write_nested_slice_row_ref(s, cfg, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.write_nested_slice_row_ref(s, cfg, o) }.expect("launch")
         });
     all_pass &= run_nested_matrix_check(
         "write_nested_slice_const_row_ref",
         &stream,
         62.0,
         |s, cfg, o| {
-            module
-                .write_nested_slice_const_row_ref(s, cfg, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.write_nested_slice_const_row_ref(s, cfg, o) }.expect("launch")
         },
     );
     all_pass &= run_nested_matrix_check(
@@ -394,9 +399,8 @@ fn main() {
         &stream,
         52.0,
         |s, cfg, o| {
-            module
-                .write_nested_slice_row_assign(s, cfg, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.write_nested_slice_row_assign(s, cfg, o) }.expect("launch")
         },
     );
 
@@ -405,13 +409,15 @@ fn main() {
     // column 2, not column 0.
     {
         let mut dev = DeviceBuffer::<[[f32; 3]; 2]>::zeroed(&stream, N).unwrap();
-        module
-            .write_nested_slice_wide_nonzero_col(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.write_nested_slice_wide_nonzero_col(
                 &stream,
                 LaunchConfig::for_num_elems(N as u32),
                 &mut dev,
             )
-            .expect("launch");
+        }
+        .expect("launch");
         let host = dev.to_host_vec(&stream).unwrap();
         let ok = host.iter().enumerate().all(|(lane, m)| {
             (m[0][0] - 10.0).abs() < 1e-6

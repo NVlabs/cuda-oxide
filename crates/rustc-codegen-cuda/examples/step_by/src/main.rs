@@ -93,14 +93,13 @@ fn main() {
     };
 
     let mut d_out = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
-    module
-        .step_by_sum(stream.as_ref(), cfg, &mut d_out)
-        .expect("launch step_by_sum");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.step_by_sum(stream.as_ref(), cfg, &mut d_out) }.expect("launch step_by_sum");
     let got_step_by = d_out.to_host_vec(&stream).unwrap();
 
     let mut d_ctrl = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
-    module
-        .step_by_sum_control(stream.as_ref(), cfg, &mut d_ctrl)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.step_by_sum_control(stream.as_ref(), cfg, &mut d_ctrl) }
         .expect("launch step_by_sum_control");
     let got_ctrl = d_ctrl.to_host_vec(&stream).unwrap();
 

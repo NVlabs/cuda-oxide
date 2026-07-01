@@ -73,15 +73,17 @@ fn main() {
 
     // Load the embedded PTX bundle and launch through the typed module API.
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    module
-        .vecadd(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.vecadd(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     // Get results
     let c_host = c_dev.to_host_vec(&stream).unwrap();

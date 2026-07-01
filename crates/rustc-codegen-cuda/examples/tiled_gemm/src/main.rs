@@ -192,8 +192,9 @@ fn main() {
 
     // Warmup
     println!("\nWarmup...");
-    module
-        .sgemm_tiled(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.sgemm_tiled(
             (stream).as_ref(),
             cfg,
             m_arg,
@@ -205,7 +206,8 @@ fn main() {
             BETA,
             &mut c_dev,
         )
-        .unwrap();
+    }
+    .unwrap();
     stream.synchronize().unwrap();
 
     // Timed runs
@@ -213,8 +215,9 @@ fn main() {
     println!("Running {} iterations...", NUM_RUNS);
     let start = Instant::now();
     for _ in 0..NUM_RUNS {
-        module
-            .sgemm_tiled(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.sgemm_tiled(
                 (stream).as_ref(),
                 cfg,
                 m_arg,
@@ -226,7 +229,8 @@ fn main() {
                 BETA,
                 &mut c_dev,
             )
-            .unwrap();
+        }
+        .unwrap();
     }
     stream.synchronize().unwrap();
     let elapsed = start.elapsed();

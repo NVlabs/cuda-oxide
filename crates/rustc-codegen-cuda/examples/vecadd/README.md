@@ -46,17 +46,22 @@ generates the typed host-side loader and launch method.
 
 ```rust
 let module = kernels::load(&ctx)?;
-module.vecadd(
-    &stream,
-    LaunchConfig::for_num_elems(N as u32),
-    &a_dev,
-    &b_dev,
-    &mut c_dev,
-)?;
+// SAFETY: this is a 1D launch and all three buffers contain N elements.
+unsafe {
+    module.vecadd(
+        &stream,
+        LaunchConfig::for_num_elems(N as u32),
+        &a_dev,
+        &b_dev,
+        &mut c_dev,
+    )
+}?;
 ```
 
 The `vecadd` method is generated from the kernel signature, so the host call
 has autocomplete for the kernel name and typed `DeviceBuffer<T>` arguments.
+The raw configuration is still an explicit unsafe boundary because its launch
+dimensions are not tied to the kernel's 1D indexing model.
 
 ## Build and Run
 

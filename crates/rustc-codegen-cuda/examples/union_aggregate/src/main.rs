@@ -362,8 +362,8 @@ fn main() {
     let module = kernels::load(&ctx).expect("load module");
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .union_aggregate(&stream, LaunchConfig::for_num_elems(N as u32), &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.union_aggregate(&stream, LaunchConfig::for_num_elems(N as u32), &mut out_dev) }
         .expect("kernel launch");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
@@ -375,8 +375,9 @@ fn main() {
     }
 
     let mut argument_out = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
-    module
-        .union_argument(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.union_argument(
             &stream,
             LaunchConfig::for_num_elems(1),
             Bits {
@@ -384,7 +385,8 @@ fn main() {
             },
             &mut argument_out,
         )
-        .expect("union argument kernel launch");
+    }
+    .expect("union argument kernel launch");
     let argument_out = argument_out.to_host_vec(&stream).unwrap();
     if argument_out != [0x0102_0304] {
         eprintln!("FAIL union argument: got {argument_out:?}");

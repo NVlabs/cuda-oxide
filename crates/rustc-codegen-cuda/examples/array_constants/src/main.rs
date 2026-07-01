@@ -83,12 +83,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_f32 = DeviceBuffer::<f32>::zeroed(&stream, N)?;
     let mut out_u32 = DeviceBuffer::<u32>::zeroed(&stream, N)?;
 
-    module.check_array_constants(
-        &stream,
-        LaunchConfig::for_num_elems(N as u32),
-        &mut out_f32,
-        &mut out_u32,
-    )?;
+    // SAFETY: this is a 1D launch and the kernel bounds-checks each output
+    // access against the corresponding slice length.
+    unsafe {
+        module.check_array_constants(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &mut out_f32,
+            &mut out_u32,
+        )
+    }?;
 
     let got_f32 = out_f32.to_host_vec(&stream)?;
     let got_u32 = out_u32.to_host_vec(&stream)?;

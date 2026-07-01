@@ -99,22 +99,26 @@ fn main() {
     let mut o64_dev = DeviceBuffer::<f64>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    module
-        .libm_f32(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.libm_f32(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             &x32_dev,
             &mut o32_dev,
         )
-        .expect("libm_f32 launch failed");
-    module
-        .libm_f64(
+    }
+    .expect("libm_f32 launch failed");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.libm_f64(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             &x64_dev,
             &mut o64_dev,
         )
-        .expect("libm_f64 launch failed");
+    }
+    .expect("libm_f64 launch failed");
 
     let o32 = o32_dev.to_host_vec(&stream).unwrap();
     let o64 = o64_dev.to_host_vec(&stream).unwrap();

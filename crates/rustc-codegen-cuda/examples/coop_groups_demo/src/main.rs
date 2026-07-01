@@ -696,8 +696,8 @@ fn main() {
     };
     let mut markers = DeviceBuffer::<u32>::zeroed(&stream, BLOCKS as usize).unwrap();
     let mut sums = DeviceBuffer::<u32>::zeroed(&stream, BLOCKS as usize).unwrap();
-    grid_sync_module
-        .test_grid_sync(stream.as_ref(), coop_cfg, &mut markers, &mut sums)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { grid_sync_module.test_grid_sync(stream.as_ref(), coop_cfg, &mut markers, &mut sums) }
         .expect("test_grid_sync cooperative launch failed");
     let host = sums.to_host_vec(&stream).unwrap();
     let expected: u32 = (1..=BLOCKS).sum();
@@ -804,9 +804,11 @@ fn main() {
     println!("\n--- this_grid().sync() (cooperative launch) ---");
     let mut markers = DeviceBuffer::<u32>::zeroed(&stream, BLOCKS as usize).unwrap();
     let mut sums = DeviceBuffer::<u32>::zeroed(&stream, BLOCKS as usize).unwrap();
-    grid_sync_module
-        .test_typed_grid_sync(stream.as_ref(), coop_cfg, &mut markers, &mut sums)
-        .expect("test_typed_grid_sync cooperative launch failed");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        grid_sync_module.test_typed_grid_sync(stream.as_ref(), coop_cfg, &mut markers, &mut sums)
+    }
+    .expect("test_typed_grid_sync cooperative launch failed");
     let host = sums.to_host_vec(&stream).unwrap();
     let expected: u32 = (1..=BLOCKS).sum();
     let ok = host.iter().all(|&s| s == expected);

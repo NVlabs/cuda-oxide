@@ -106,15 +106,17 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut output_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-        module
-            .scale::<f32>(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.scale::<f32>(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &input_dev,
                 &mut output_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let output: Vec<f32> = output_dev.to_host_vec(&stream).unwrap();
 
@@ -141,15 +143,17 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut output_dev = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
 
-        module
-            .scale::<i32>(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.scale::<i32>(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &input_dev,
                 &mut output_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let output: Vec<i32> = output_dev.to_host_vec(&stream).unwrap();
 
@@ -175,15 +179,17 @@ fn main() {
         let b_dev = DeviceBuffer::from_host(&stream, &b).unwrap();
         let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-        module
-            .add::<f32>(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.add::<f32>(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 &a_dev,
                 &b_dev,
                 &mut c_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let c: Vec<f32> = c_dev.to_host_vec(&stream).unwrap();
 
@@ -210,15 +216,17 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut output_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-        module
-            .scale_with_helper::<f32>(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.scale_with_helper::<f32>(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &input_dev,
                 &mut output_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let output: Vec<f32> = output_dev.to_host_vec(&stream).unwrap();
 
@@ -245,11 +253,11 @@ fn main() {
         let mut output_8 = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
         let config = LaunchConfig::for_num_elems(N as u32);
 
-        module
-            .add_const::<4>((stream).as_ref(), config, &input_dev, &mut output_4)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.add_const::<4>((stream).as_ref(), config, &input_dev, &mut output_4) }
             .expect("add_const::<4> launch failed");
-        module
-            .add_const::<8>((stream).as_ref(), config, &input_dev, &mut output_8)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.add_const::<8>((stream).as_ref(), config, &input_dev, &mut output_8) }
             .expect("add_const::<8> launch failed");
 
         let result_4 = output_4.to_host_vec(&stream).unwrap();

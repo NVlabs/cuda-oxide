@@ -226,13 +226,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-            typed_module.$typed_method::<f32, _>(
-                stream.as_ref(),
-                LaunchConfig::for_num_elems(N as u32),
-                $closure,
-                &input_dev,
-                &mut output_dev,
-            )?;
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe {
+                typed_module.$typed_method::<f32, _>(
+                    stream.as_ref(),
+                    LaunchConfig::for_num_elems(N as u32),
+                    $closure,
+                    &input_dev,
+                    &mut output_dev,
+                )
+            }?;
             let output_host = output_dev.to_host_vec(&stream)?;
             verify_output(
                 concat!("typed launch ", $label),
@@ -244,11 +247,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-            cuda_launch_async! {
-                kernel: $kernel,
-                module: module,
-                config: LaunchConfig::for_num_elems(N as u32),
-                args: [$closure, slice(input_dev), slice_mut(output_dev)]
+            // SAFETY: this is a 1D launch and each kernel guards its 1D index
+            // against the length carried by the output slice.
+            unsafe {
+                cuda_launch_async! {
+                    kernel: $kernel,
+                    module: module,
+                    config: LaunchConfig::for_num_elems(N as u32),
+                    args: [$closure, slice(input_dev), slice_mut(output_dev)]
+                }
             }
             .sync_on(&stream)?;
             let output_host = output_dev.to_host_vec(&stream)?;
@@ -262,14 +269,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
 
             output_dev = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-            typed_module
-                .$typed_async_method::<f32, _>(
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe {
+                typed_module.$typed_async_method::<f32, _>(
                     LaunchConfig::for_num_elems(N as u32),
                     $closure,
                     &input_dev,
                     &mut output_dev,
-                )?
-                .sync_on(&stream)?;
+                )
+            }?
+            .sync_on(&stream)?;
             let output_host = output_dev.to_host_vec(&stream)?;
             verify_output(
                 concat!("typed async launch ", $label),
@@ -582,11 +591,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert!((0..N).all(|i| result_4[i] == input[i] * factor + 4));
 
         let mut output_8 = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        cuda_launch_async! {
-            kernel: kernels::map_with_const::<_, 8>,
-            module: module,
-            config: LaunchConfig::for_num_elems(N as u32),
-            args: [move |x: u32| x * factor, slice(input_dev_u32), slice_mut(output_8)]
+        // SAFETY: `map_with_const` uses a guarded 1D index and this config has
+        // no active Y or Z dimensions.
+        unsafe {
+            cuda_launch_async! {
+                kernel: kernels::map_with_const::<_, 8>,
+                module: module,
+                config: LaunchConfig::for_num_elems(N as u32),
+                args: [move |x: u32| x * factor, slice(input_dev_u32), slice_mut(output_8)]
+            }
         }
         .sync_on(&stream)?;
         let result_8 = output_8.to_host_vec(&stream)?;

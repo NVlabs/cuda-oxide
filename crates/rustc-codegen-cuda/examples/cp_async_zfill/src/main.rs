@@ -100,8 +100,8 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 32).unwrap();
 
-        module
-            .test_zfill_4(&stream, cfg, &input_dev, 4u32, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_zfill_4(&stream, cfg, &input_dev, 4u32, &mut out_dev) }
             .expect("launch failed");
 
         let mut test_pass = true;
@@ -131,8 +131,8 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 32).unwrap();
 
-        module
-            .test_zfill_4(&stream, cfg, &input_dev, 2u32, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_zfill_4(&stream, cfg, &input_dev, 2u32, &mut out_dev) }
             .expect("launch failed");
 
         let mut test_pass = true;
@@ -160,8 +160,8 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 32).unwrap();
 
-        module
-            .test_zfill_4(&stream, cfg, &input_dev, 0u32, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_zfill_4(&stream, cfg, &input_dev, 0u32, &mut out_dev) }
             .expect("launch failed");
 
         let mut test_pass = true;

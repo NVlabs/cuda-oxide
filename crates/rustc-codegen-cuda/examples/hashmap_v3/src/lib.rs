@@ -1136,7 +1136,10 @@ impl GpuSwissMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.insert_kernel(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.insert_kernel(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)
+        }?;
 
         Ok(())
     }
@@ -1175,7 +1178,10 @@ impl GpuSwissMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.insert_kernel_dedup(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.insert_kernel_dedup(stream, cfg, &self.ctrl, &self.slots, &keys_dev, &values_dev)
+        }?;
 
         Ok(())
     }
@@ -1205,15 +1211,18 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.try_insert_kernel(
-            stream,
-            cfg,
-            &self.ctrl,
-            &self.slots,
-            &keys_dev,
-            &values_dev,
-            &mut out_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.try_insert_kernel(
+                stream,
+                cfg,
+                &self.ctrl,
+                &self.slots,
+                &keys_dev,
+                &values_dev,
+                &mut out_dev,
+            )
+        }?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())
@@ -1235,14 +1244,17 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.find_kernel(
-            stream,
-            cfg,
-            &self.ctrl,
-            &self.slots,
-            &keys_dev,
-            &mut out_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.find_kernel(
+                stream,
+                cfg,
+                &self.ctrl,
+                &self.slots,
+                &keys_dev,
+                &mut out_dev,
+            )
+        }?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1274,14 +1286,17 @@ impl GpuSwissMap {
         // block size 256 means 8 tiles per block, 8 keys per block.
         let total_threads = (keys.len() as u32).saturating_mul(32);
         let cfg = LaunchConfig::for_num_elems(total_threads);
-        module.find_kernel_tile_32(
-            stream,
-            cfg,
-            &self.ctrl,
-            &self.slots,
-            &keys_dev,
-            &mut out_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.find_kernel_tile_32(
+                stream,
+                cfg,
+                &self.ctrl,
+                &self.slots,
+                &keys_dev,
+                &mut out_dev,
+            )
+        }?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1316,14 +1331,17 @@ impl GpuSwissMap {
         // block size 256 means 16 tiles per block, 16 keys per block.
         let total_threads = (keys.len() as u32).saturating_mul(16);
         let cfg = LaunchConfig::for_num_elems(total_threads);
-        module.find_kernel_tile_16(
-            stream,
-            cfg,
-            &self.ctrl,
-            &self.slots,
-            &keys_dev,
-            &mut out_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.find_kernel_tile_16(
+                stream,
+                cfg,
+                &self.ctrl,
+                &self.slots,
+                &keys_dev,
+                &mut out_dev,
+            )
+        }?;
 
         Ok(out_dev.to_host_vec(stream)?)
     }
@@ -1378,7 +1396,10 @@ impl GpuSwissMap {
 
         let rehash_threads = self.capacity.min(REHASH_MAX_THREADS) as u32;
         let cfg = LaunchConfig::for_num_elems(rehash_threads);
-        module.rehash_kernel(stream, cfg, &self.ctrl, &self.slots, &new_ctrl, &new_slots)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.rehash_kernel(stream, cfg, &self.ctrl, &self.slots, &new_ctrl, &new_slots)
+        }?;
 
         self.ctrl = new_ctrl;
         self.slots = new_slots;
@@ -1439,14 +1460,17 @@ impl GpuSwissMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.delete_kernel(
-            stream,
-            cfg,
-            &self.ctrl,
-            &self.slots,
-            &keys_dev,
-            &mut out_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.delete_kernel(
+                stream,
+                cfg,
+                &self.ctrl,
+                &self.slots,
+                &keys_dev,
+                &mut out_dev,
+            )
+        }?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == FLAG_FRESH_OR_OK).collect())

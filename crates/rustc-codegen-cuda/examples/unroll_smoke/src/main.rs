@@ -379,93 +379,90 @@ fn main() {
     };
 
     let mut d_full = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .full_unroll(stream.as_ref(), cfg, &mut d_full)
-        .expect("launch full_unroll");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.full_unroll(stream.as_ref(), cfg, &mut d_full) }.expect("launch full_unroll");
     let got_full = d_full.to_host_vec(&stream).unwrap();
 
     let trip: u32 = 10;
     let mut d_part = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .partial_unroll(stream.as_ref(), cfg, &mut d_part, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_unroll(stream.as_ref(), cfg, &mut d_part, trip) }
         .expect("launch partial_unroll");
     let got_part = d_part.to_host_vec(&stream).unwrap();
 
     let mut d_fold = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .partial_fold(stream.as_ref(), cfg, &mut d_fold, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_fold(stream.as_ref(), cfg, &mut d_fold, trip) }
         .expect("launch partial_fold");
     let got_fold = d_fold.to_host_vec(&stream).unwrap();
 
     let mut d_mod = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .partial_mod(stream.as_ref(), cfg, &mut d_mod, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_mod(stream.as_ref(), cfg, &mut d_mod, trip) }
         .expect("launch partial_mod");
     let got_mod = d_mod.to_host_vec(&stream).unwrap();
 
     let mut d_fullmb = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .full_mb(stream.as_ref(), cfg, &mut d_fullmb)
-        .expect("launch full_mb");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.full_mb(stream.as_ref(), cfg, &mut d_fullmb) }.expect("launch full_mb");
     let got_fullmb = d_fullmb.to_host_vec(&stream).unwrap();
 
     let mut d_partmb = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .partial_mb(stream.as_ref(), cfg, &mut d_partmb, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_mb(stream.as_ref(), cfg, &mut d_partmb, trip) }
         .expect("launch partial_mb");
     let got_partmb = d_partmb.to_host_vec(&stream).unwrap();
 
     let mut d_full_break = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .full_early_break(stream.as_ref(), cfg, &mut d_full_break)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.full_early_break(stream.as_ref(), cfg, &mut d_full_break) }
         .expect("launch full_early_break");
     let got_full_break = d_full_break.to_host_vec(&stream).unwrap();
 
     let mut d_continue = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .partial_continue_paths(stream.as_ref(), cfg, &mut d_continue, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_continue_paths(stream.as_ref(), cfg, &mut d_continue, trip) }
         .expect("launch partial_continue_paths");
     let got_continue = d_continue.to_host_vec(&stream).unwrap();
 
     let mut d_partial_break = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .partial_early_break_skipped(stream.as_ref(), cfg, &mut d_partial_break, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.partial_early_break_skipped(stream.as_ref(), cfg, &mut d_partial_break, trip) }
         .expect("launch partial_early_break_skipped");
     let got_partial_break = d_partial_break.to_host_vec(&stream).unwrap();
 
     let mut d_carried = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .carried_bound(stream.as_ref(), cfg, &mut d_carried, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.carried_bound(stream.as_ref(), cfg, &mut d_carried, trip) }
         .expect("launch carried_bound");
     let got_carried = d_carried.to_host_vec(&stream).unwrap();
 
     let mut d_nfull = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .nested_full(stream.as_ref(), cfg, &mut d_nfull, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.nested_full(stream.as_ref(), cfg, &mut d_nfull, trip) }
         .expect("launch nested_full");
     let got_nfull = d_nfull.to_host_vec(&stream).unwrap();
 
     let mut d_npart = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .nested_partial(stream.as_ref(), cfg, &mut d_npart, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.nested_partial(stream.as_ref(), cfg, &mut d_npart, trip) }
         .expect("launch nested_partial");
     let got_npart = d_npart.to_host_vec(&stream).unwrap();
 
     let mut d_nvar = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .nested_var_bound(stream.as_ref(), cfg, &mut d_nvar, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.nested_var_bound(stream.as_ref(), cfg, &mut d_nvar, trip) }
         .expect("launch nested_var_bound");
     let got_nvar = d_nvar.to_host_vec(&stream).unwrap();
 
     let mut d_ofull = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .outer_full(stream.as_ref(), cfg, &mut d_ofull)
-        .expect("launch outer_full");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.outer_full(stream.as_ref(), cfg, &mut d_ofull) }.expect("launch outer_full");
     let got_ofull = d_ofull.to_host_vec(&stream).unwrap();
 
     let mut d_opart = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .outer_partial(stream.as_ref(), cfg, &mut d_opart, trip)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.outer_partial(stream.as_ref(), cfg, &mut d_opart, trip) }
         .expect("launch outer_partial");
     let got_opart = d_opart.to_host_vec(&stream).unwrap();
 

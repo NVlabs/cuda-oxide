@@ -1,0 +1,11 @@
+error[E0451]: fields `grid_x`, `block_x` and `shared_mem_bytes` of struct `LaunchConfig1D` are private
+ --> tests/launch_contract/fail_private_construction.rs:5:9
+  |
+4 |     let _forged = LaunchConfig1D {
+  |                   -------------- in this type
+5 |         grid_x: 1,
+  |         ^^^^^^ private field
+6 |         block_x: 32,
+  |         ^^^^^^^ private field
+7 |         shared_mem_bytes: 0,
+  |         ^^^^^^^^^^^^^^^^ private field

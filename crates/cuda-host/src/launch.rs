@@ -11,13 +11,16 @@
 //! - **Macro** (`cuda_launch!`): Captures kernel identifier → PTX name string,
 //!   marshals arguments into a `Vec<*mut c_void>`, and calls
 //!   `cuda_core::launch_kernel` directly. The macro is caller-unsafe: it
-//!   cannot check argument count or types against the kernel, so every use
-//!   must sit inside an `unsafe { }` block. Prefer `#[cuda_module]` for
+//!   cannot check argument count, types, or whether the raw launch geometry
+//!   matches the kernel's indexing assumptions, so every use must sit inside
+//!   an `unsafe { }` block. Prefer `#[cuda_module]` with a launch contract for
 //!   kernels embedded in your own crate.
 //! - **Traits** (`CudaKernel`, `GenericCudaKernel`): Provide PTX entry-point
 //!   names for rust-analyzer and compile-time validation.
 
 use std::ffi::c_void;
+#[cfg(feature = "async")]
+use std::future::IntoFuture;
 #[cfg(feature = "async")]
 use std::sync::Arc;
 
@@ -186,8 +189,34 @@ pub fn push_kernel_device_slice(
 
 /// A typed device allocation that can be passed to an async kernel launch as a
 /// read-only device slice.
+///
+/// # Safety
+///
+/// For a nonzero byte extent, every value returned by
+/// [`cu_deviceptr`](Self::cu_deviceptr) must identify a live, correctly aligned
+/// device allocation covering at least `len()` consecutive `Elem` values. The
+/// allocation must remain valid for the full borrow or owned operation in
+/// which this value is used. When used as a read-only `KernelSliceArg`, the
+/// reported range must obey Rust's shared-reference rules: it cannot be
+/// mutated except through `UnsafeCell`-based or atomic element types under
+/// their synchronization contract.
+///
+/// Implementing this trait is unsafe because generated launch methods trust
+/// the pointer and length without inspecting the allocation:
+///
+/// ```compile_fail,E0200
+/// use cuda_host::KernelSliceArg;
+///
+/// struct Fake;
+///
+/// impl KernelSliceArg for Fake {
+///     type Elem = u32;
+///     fn cu_deviceptr(&self) -> cuda_core::sys::CUdeviceptr { 1 }
+///     fn len(&self) -> usize { 1_000_000 }
+/// }
+/// ```
 #[cfg(feature = "async")]
-pub trait KernelSliceArg {
+pub unsafe trait KernelSliceArg {
     /// Element type stored in the allocation.
     type Elem;
 
@@ -205,11 +234,21 @@ pub trait KernelSliceArg {
 
 /// A typed device allocation that can be passed to an async kernel launch as a
 /// writable device slice.
+///
+/// # Safety
+///
+/// The pointer, extent, alignment, and lifetime requirements from
+/// [`KernelSliceArg`] still apply. Its shared-read restriction is replaced by
+/// this rule: the implementor must own exclusive device-write authority for
+/// the entire reported element range for the lifetime of the mutable borrow or
+/// owned operation.
 #[cfg(feature = "async")]
-pub trait KernelSliceArgMut: KernelSliceArg {}
+pub unsafe trait KernelSliceArgMut: KernelSliceArg {}
 
 #[cfg(feature = "async")]
-impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
+// SAFETY: DeviceBuffer owns the reported allocation and keeps its CUDA context
+// alive; its pointer and length accessors describe that allocation exactly.
+unsafe impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
     type Elem = T;
 
     fn cu_deviceptr(&self) -> cuda_core::sys::CUdeviceptr {
@@ -222,10 +261,14 @@ impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
 }
 
 #[cfg(feature = "async")]
-impl<T> KernelSliceArgMut for cuda_core::DeviceBuffer<T> {}
+// SAFETY: &mut DeviceBuffer provides exclusive host authority to launch device
+// writes through this adapter for the duration of the operation.
+unsafe impl<T> KernelSliceArgMut for cuda_core::DeviceBuffer<T> {}
 
 #[cfg(feature = "async")]
-impl<T: Send> KernelSliceArg for cuda_async::device_box::DeviceBox<[T]> {
+// SAFETY: DeviceBox owns the reported allocation and its raw constructor
+// requires the pointer, element count, and device ordinal to be truthful.
+unsafe impl<T: Send> KernelSliceArg for cuda_async::device_box::DeviceBox<[T]> {
     type Elem = T;
 
     fn cu_deviceptr(&self) -> cuda_core::sys::CUdeviceptr {
@@ -238,10 +281,14 @@ impl<T: Send> KernelSliceArg for cuda_async::device_box::DeviceBox<[T]> {
 }
 
 #[cfg(feature = "async")]
-impl<T: Send> KernelSliceArgMut for cuda_async::device_box::DeviceBox<[T]> {}
+// SAFETY: &mut DeviceBox provides exclusive host authority to launch device
+// writes through this adapter for the duration of the operation.
+unsafe impl<T: Send> KernelSliceArgMut for cuda_async::device_box::DeviceBox<[T]> {}
 
 #[cfg(feature = "async")]
-impl<B> KernelSliceArg for Arc<B>
+// SAFETY: Arc only extends the lifetime of B and delegates both truthful
+// accessors unchanged to B's unsafe implementation.
+unsafe impl<B> KernelSliceArg for Arc<B>
 where
     B: KernelSliceArg + ?Sized,
 {
@@ -258,13 +305,10 @@ where
 
 #[doc(hidden)]
 #[cfg(feature = "async")]
-pub fn new_async_kernel_launch<'a>(
+pub fn new_async_kernel_launch_builder<'a>(
     func: cuda_core::CudaFunction,
-    config: cuda_core::LaunchConfig,
-) -> cuda_async::launch::AsyncKernelLaunch<'a> {
-    let mut launch = cuda_async::launch::AsyncKernelLaunch::new(Arc::new(func));
-    launch.set_launch_config(config);
-    launch
+) -> cuda_async::launch::AsyncKernelLaunchBuilder<'a> {
+    cuda_async::launch::AsyncKernelLaunchBuilder::new(Arc::new(func))
 }
 
 #[doc(hidden)]
@@ -276,10 +320,174 @@ pub fn new_owned_async_kernel_launch<R: Send>(
     cuda_async::launch::OwnedAsyncKernelLaunch::new(launch, resources)
 }
 
+/// Async operation carrying a validated, kernel-branded launch.
+///
+/// The underlying [`cuda_async::launch::AsyncKernelLaunch`] is immutable after
+/// its builder is finalized. This wrapper additionally carries the prepared
+/// contract and checks the stream selected by the async scheduler against the
+/// prepared function's CUDA context immediately before submission.
+#[cfg(feature = "async")]
+pub struct PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    launch: cuda_async::launch::AsyncKernelLaunch<'a>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+}
+
+#[cfg(feature = "async")]
+impl<Contract> std::fmt::Debug for PreparedAsyncKernelLaunch<'_, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedAsyncKernelLaunch")
+            .field("contract", &Contract::SPEC.kernel_name())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Owns async kernel resources while preserving an immutable prepared launch.
+#[cfg(feature = "async")]
+pub struct PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    launch: cuda_async::launch::OwnedAsyncKernelLaunch<R>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+}
+
+#[cfg(feature = "async")]
+impl<R, Contract> std::fmt::Debug for PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedOwnedAsyncKernelLaunch")
+            .field("contract", &Contract::SPEC.kernel_name())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Seals a fully marshalled async launch behind its prepared contract.
+///
+/// # Safety
+///
+/// `launch` must contain the same function and raw launch configuration as
+/// `prepared`, with the cluster/cooperative mode declared by its contract.
+#[doc(hidden)]
+#[cfg(feature = "async")]
+pub unsafe fn new_prepared_async_kernel_launch<'a, Contract>(
+    launch: cuda_async::launch::AsyncKernelLaunch<'a>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+) -> PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    PreparedAsyncKernelLaunch { launch, prepared }
+}
+
+/// Seals a fully marshalled owned async launch behind its prepared contract.
+///
+/// # Safety
+///
+/// `launch` must contain the same function and raw launch configuration as
+/// `prepared`, with the cluster/cooperative mode declared by its contract.
+#[doc(hidden)]
+#[cfg(feature = "async")]
+pub unsafe fn new_prepared_owned_async_kernel_launch<R, Contract>(
+    launch: cuda_async::launch::OwnedAsyncKernelLaunch<R>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+) -> PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    PreparedOwnedAsyncKernelLaunch { launch, prepared }
+}
+
+#[cfg(feature = "async")]
+impl<'a, Contract> cuda_async::device_operation::DeviceOperation
+    for PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = ();
+
+    unsafe fn execute(
+        self,
+        context: &cuda_async::device_operation::ExecutionContext,
+    ) -> Result<(), cuda_async::error::DeviceError> {
+        self.prepared
+            .validate_stream(context.get_cuda_stream())
+            .map_err(|error| cuda_async::error::DeviceError::Launch(error.to_string()))?;
+        unsafe { cuda_async::device_operation::DeviceOperation::execute(self.launch, context) }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<'a, Contract> IntoFuture for PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = Result<(), cuda_async::error::DeviceError>;
+    type IntoFuture = cuda_async::device_future::DeviceFuture<(), Self>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        match cuda_async::device_context::with_default_device_policy(|policy| {
+            cuda_async::scheduling_policies::SchedulingPolicy::schedule(policy, self)
+        }) {
+            Ok(Ok(future)) => future,
+            Ok(Err(error)) | Err(error) => cuda_async::device_future::DeviceFuture::failed(error),
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<R, Contract> cuda_async::device_operation::DeviceOperation
+    for PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send + 'static,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = R;
+
+    unsafe fn execute(
+        self,
+        context: &cuda_async::device_operation::ExecutionContext,
+    ) -> Result<R, cuda_async::error::DeviceError> {
+        self.prepared
+            .validate_stream(context.get_cuda_stream())
+            .map_err(|error| cuda_async::error::DeviceError::Launch(error.to_string()))?;
+        unsafe { cuda_async::device_operation::DeviceOperation::execute(self.launch, context) }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<R, Contract> IntoFuture for PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send + 'static,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = Result<R, cuda_async::error::DeviceError>;
+    type IntoFuture = cuda_async::device_future::DeviceFuture<R, Self>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        match cuda_async::device_context::with_default_device_policy(|policy| {
+            cuda_async::scheduling_policies::SchedulingPolicy::schedule(policy, self)
+        }) {
+            Ok(Ok(future)) => future,
+            Ok(Err(error)) | Err(error) => cuda_async::device_future::DeviceFuture::failed(error),
+        }
+    }
+}
+
 #[doc(hidden)]
 #[cfg(feature = "async")]
 pub fn set_async_kernel_cluster_dim(
-    launch: &mut cuda_async::launch::AsyncKernelLaunch<'_>,
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'_>,
     cluster_dim: (u32, u32, u32),
 ) {
     launch.set_cluster_dim(cluster_dim);
@@ -288,7 +496,7 @@ pub fn set_async_kernel_cluster_dim(
 #[doc(hidden)]
 #[cfg(feature = "async")]
 pub fn set_async_kernel_cooperative(
-    launch: &mut cuda_async::launch::AsyncKernelLaunch<'_>,
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'_>,
     cooperative: bool,
 ) {
     launch.set_cooperative(cooperative);
@@ -297,7 +505,7 @@ pub fn set_async_kernel_cooperative(
 #[doc(hidden)]
 #[cfg(feature = "async")]
 pub fn push_async_kernel_scalar<'a, T: KernelScalar + 'a>(
-    launch: &mut cuda_async::launch::AsyncKernelLaunch<'a>,
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'a>,
     value: T,
 ) {
     if std::mem::size_of::<T>() != 0 {
@@ -308,7 +516,7 @@ pub fn push_async_kernel_scalar<'a, T: KernelScalar + 'a>(
 #[doc(hidden)]
 #[cfg(feature = "async")]
 pub fn push_async_read_only_device_slice<B>(
-    launch: &mut cuda_async::launch::AsyncKernelLaunch<'_>,
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'_>,
     buffer: &B,
 ) where
     B: KernelSliceArg + ?Sized,
@@ -320,7 +528,7 @@ pub fn push_async_read_only_device_slice<B>(
 #[doc(hidden)]
 #[cfg(feature = "async")]
 pub fn push_async_writable_device_slice<B>(
-    launch: &mut cuda_async::launch::AsyncKernelLaunch<'_>,
+    launch: &mut cuda_async::launch::AsyncKernelLaunchBuilder<'_>,
     buffer: &mut B,
 ) where
     B: KernelSliceArgMut + ?Sized,

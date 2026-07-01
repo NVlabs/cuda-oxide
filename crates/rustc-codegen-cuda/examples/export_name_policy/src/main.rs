@@ -80,13 +80,15 @@ fn main() {
     const N: usize = 64;
     let mut out = DeviceBuffer::<u32>::zeroed(&stream, N).expect("failed to allocate output");
 
-    module
-        .export_name_policy(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.export_name_policy(
             stream.as_ref(),
             LaunchConfig::for_num_elems(N as u32),
             &mut out,
         )
-        .expect("export_name_policy launch failed");
+    }
+    .expect("export_name_policy launch failed");
 
     let got = out.to_host_vec(&stream).expect("failed to copy output");
     let failures = got

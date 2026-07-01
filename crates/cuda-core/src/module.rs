@@ -443,6 +443,212 @@ impl CudaModule {
 }
 
 impl CudaFunction {
+    fn attribute(
+        &self,
+        attribute: cuda_bindings::CUfunction_attribute,
+    ) -> Result<u32, DriverError> {
+        self.context().bind_to_thread()?;
+        let mut value = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuFuncGetAttribute(value.as_mut_ptr(), attribute, self.cu_function)
+                .result()?;
+            u32::try_from(value.assume_init())
+                .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))
+        }
+    }
+
+    /// Returns the context that owns this function.
+    pub fn context(&self) -> &Arc<CudaContext> {
+        self.module.context()
+    }
+
+    /// Queries the largest thread block accepted by this function.
+    pub fn max_threads_per_block(&self) -> Result<u32, DriverError> {
+        self.attribute(
+            cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+        )
+    }
+
+    /// Queries this function's statically allocated shared memory per block.
+    pub fn static_shared_memory_bytes(&self) -> Result<u32, DriverError> {
+        self.attribute(cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES)
+    }
+
+    /// Queries the currently configured dynamic shared-memory maximum.
+    pub fn max_dynamic_shared_memory_bytes(&self) -> Result<u32, DriverError> {
+        self.attribute(
+            cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+        )
+    }
+
+    /// Queries a cluster shape compiled into this function, if present.
+    ///
+    /// CUDA requires the three required-cluster attributes to be either all
+    /// zero or all positive. A partial tuple is treated as an invalid driver
+    /// response rather than silently normalizing it.
+    pub fn required_cluster_dimensions(&self) -> Result<Option<(u32, u32, u32)>, DriverError> {
+        let required = (
+            self.attribute(
+                cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_REQUIRED_CLUSTER_WIDTH,
+            )?,
+            self.attribute(
+                cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_REQUIRED_CLUSTER_HEIGHT,
+            )?,
+            self.attribute(
+                cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_REQUIRED_CLUSTER_DEPTH,
+            )?,
+        );
+        match required {
+            (0, 0, 0) => Ok(None),
+            (x, y, z) if x != 0 && y != 0 && z != 0 => Ok(Some(required)),
+            _ => Err(DriverError(
+                cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE,
+            )),
+        }
+    }
+
+    /// Opts this function into a larger dynamic shared-memory allocation.
+    ///
+    /// Typed launch preparation calls this at most once, and only after
+    /// checking static plus dynamic memory against the device opt-in limit.
+    pub(crate) fn set_max_dynamic_shared_memory_bytes(
+        &self,
+        bytes: u32,
+    ) -> Result<(), DriverError> {
+        self.context().bind_to_thread()?;
+        let bytes = i32::try_from(bytes)
+            .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))?;
+        unsafe {
+            cuda_bindings::cuFuncSetAttribute(
+                self.cu_function,
+                cuda_bindings::CUfunction_attribute_enum_CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                bytes,
+            )
+        }
+        .result()
+    }
+
+    /// Computes the maximum active blocks per streaming multiprocessor for a
+    /// concrete non-cluster launch shape.
+    pub fn max_active_blocks_per_multiprocessor(
+        &self,
+        block_threads: u32,
+        dynamic_shared_memory_bytes: u32,
+    ) -> Result<u32, DriverError> {
+        self.context().bind_to_thread()?;
+        let block_threads = i32::try_from(block_threads)
+            .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))?;
+        let mut blocks = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuOccupancyMaxActiveBlocksPerMultiprocessor(
+                blocks.as_mut_ptr(),
+                self.cu_function,
+                block_threads,
+                dynamic_shared_memory_bytes as usize,
+            )
+            .result()?;
+            u32::try_from(blocks.assume_init())
+                .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))
+        }
+    }
+
+    /// Queries the maximum cluster size for this function and launch shape on
+    /// the current device.
+    ///
+    /// CUDA documents that `cuOccupancyMaxPotentialClusterSize` ignores any
+    /// cluster-dimension attribute in the supplied launch configuration, so
+    /// this query intentionally supplies only grid, block, and dynamic shared
+    /// memory. It respects compile-time cluster launch bounds and any function
+    /// opt-in to non-portable cluster sizes.
+    pub fn max_potential_cluster_size(
+        &self,
+        grid_dim: (u32, u32, u32),
+        block_dim: (u32, u32, u32),
+        dynamic_shared_memory_bytes: u32,
+    ) -> Result<u32, DriverError> {
+        self.context().bind_to_thread()?;
+        let config = cuda_bindings::CUlaunchConfig_st {
+            gridDimX: grid_dim.0,
+            gridDimY: grid_dim.1,
+            gridDimZ: grid_dim.2,
+            blockDimX: block_dim.0,
+            blockDimY: block_dim.1,
+            blockDimZ: block_dim.2,
+            sharedMemBytes: dynamic_shared_memory_bytes,
+            hStream: std::ptr::null_mut(),
+            attrs: std::ptr::null_mut(),
+            numAttrs: 0,
+        };
+        let mut cluster_size = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuOccupancyMaxPotentialClusterSize(
+                cluster_size.as_mut_ptr(),
+                self.cu_function,
+                &config,
+            )
+            .result()?;
+            u32::try_from(cluster_size.assume_init())
+                .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))
+        }
+    }
+
+    /// Queries how many clusters with the exact requested shape can be active
+    /// on the target device.
+    ///
+    /// Unlike [`max_potential_cluster_size`](Self::max_potential_cluster_size),
+    /// this passes `cluster_dim` as a launch attribute. CUDA therefore checks
+    /// the concrete shape and any compiled required-cluster dimensions.
+    pub fn max_active_clusters(
+        &self,
+        grid_dim: (u32, u32, u32),
+        block_dim: (u32, u32, u32),
+        dynamic_shared_memory_bytes: u32,
+        cluster_dim: (u32, u32, u32),
+    ) -> Result<u32, DriverError> {
+        self.context().bind_to_thread()?;
+
+        // CUlaunchAttribute_st is opaque in the generated CUDA 13.2+
+        // bindings. Its C layout stores the id at offset 0 and the value union
+        // at offset 8; clusterDim.x/y/z occupy the first three u32 values in
+        // that union. This matches the launch helpers in cuda-core's root.
+        let mut cluster_attribute: cuda_bindings::CUlaunchAttribute_st =
+            unsafe { std::mem::zeroed() };
+        unsafe {
+            let base = &mut cluster_attribute as *mut _ as *mut u8;
+            (base as *mut u32).write(
+                cuda_bindings::CUlaunchAttributeID_enum_CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION,
+            );
+            let dimensions = base.add(8) as *mut u32;
+            dimensions.write(cluster_dim.0);
+            dimensions.add(1).write(cluster_dim.1);
+            dimensions.add(2).write(cluster_dim.2);
+        }
+
+        let config = cuda_bindings::CUlaunchConfig_st {
+            gridDimX: grid_dim.0,
+            gridDimY: grid_dim.1,
+            gridDimZ: grid_dim.2,
+            blockDimX: block_dim.0,
+            blockDimY: block_dim.1,
+            blockDimZ: block_dim.2,
+            sharedMemBytes: dynamic_shared_memory_bytes,
+            hStream: std::ptr::null_mut(),
+            attrs: &mut cluster_attribute,
+            numAttrs: 1,
+        };
+        let mut active_clusters = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuOccupancyMaxActiveClusters(
+                active_clusters.as_mut_ptr(),
+                self.cu_function,
+                &config,
+            )
+            .result()?;
+            u32::try_from(active_clusters.assume_init())
+                .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))
+        }
+    }
+
     /// Returns the raw `CUfunction` handle.
     ///
     /// # Safety

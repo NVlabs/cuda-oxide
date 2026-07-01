@@ -239,8 +239,9 @@ fn main() {
     println!("Launching test_cluster_compile_time via cuLaunchKernelEx");
     println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1\n");
 
-    module
-        .test_cluster_compile_time(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_cluster_compile_time(
             (stream).as_ref(),
             LaunchConfig {
                 grid_dim: (cluster_size, 1, 1),
@@ -249,7 +250,8 @@ fn main() {
             },
             &mut ct_output,
         )
-        .expect("Launch compile-time cluster kernel");
+    }
+    .expect("Launch compile-time cluster kernel");
     stream.synchronize().expect("Synchronize");
 
     let ct_results: Vec<u32> = ct_output.to_host_vec(&stream).unwrap();
@@ -296,8 +298,9 @@ fn main() {
     println!("Launching test_cluster_intrinsics...");
     println!("  Grid: 4x1x1 blocks, Block: 32 threads\n");
 
-    module
-        .test_cluster_intrinsics(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_cluster_intrinsics(
             (stream).as_ref(),
             LaunchConfig {
                 grid_dim: (n_blocks, 1, 1),
@@ -306,7 +309,8 @@ fn main() {
             },
             &mut output_dev,
         )
-        .expect("Launch kernel");
+    }
+    .expect("Launch kernel");
     stream.synchronize().expect("Synchronize");
 
     let output: Vec<u32> = output_dev.to_host_vec(&stream).unwrap();
@@ -340,8 +344,9 @@ fn main() {
     println!("Launching test_cluster_sync via cuLaunchKernelEx");
     println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1\n");
 
-    module
-        .test_cluster_sync(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_cluster_sync(
             (stream).as_ref(),
             LaunchConfig {
                 grid_dim: (cluster_size, 1, 1),
@@ -350,7 +355,8 @@ fn main() {
             },
             &mut sync_output,
         )
-        .expect("Launch sync kernel");
+    }
+    .expect("Launch sync kernel");
     stream.synchronize().expect("Synchronize");
 
     let sync_results: Vec<u32> = sync_output.to_host_vec(&stream).unwrap();
@@ -378,15 +384,18 @@ fn main() {
     println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1");
     println!("  Expected: Block 0 reads 1001, Block 1 reads 1002, ...\n");
 
-    let ring_result = module.test_dsmem_ring_exchange(
-        (stream).as_ref(),
-        LaunchConfig {
-            grid_dim: (cluster_size, 1, 1),
-            block_dim: (32, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        &mut ring_output,
-    );
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    let ring_result = unsafe {
+        module.test_dsmem_ring_exchange(
+            (stream).as_ref(),
+            LaunchConfig {
+                grid_dim: (cluster_size, 1, 1),
+                block_dim: (32, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            &mut ring_output,
+        )
+    };
 
     let (ring_pass, dsmem_context_error) = match ring_result {
         Ok(_) => match stream.synchronize() {
@@ -442,15 +451,18 @@ fn main() {
         println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1");
         println!("  Expected: Block 0 sums all blocks' values: 10+20+30+40 = 100\n");
 
-        let reduce_result = module.test_dsmem_reduction(
-            (stream).as_ref(),
-            LaunchConfig {
-                grid_dim: (cluster_size, 1, 1),
-                block_dim: (32, 1, 1),
-                shared_mem_bytes: 0,
-            },
-            &mut reduce_output,
-        );
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let reduce_result = unsafe {
+            module.test_dsmem_reduction(
+                (stream).as_ref(),
+                LaunchConfig {
+                    grid_dim: (cluster_size, 1, 1),
+                    block_dim: (32, 1, 1),
+                    shared_mem_bytes: 0,
+                },
+                &mut reduce_output,
+            )
+        };
 
         match reduce_result {
             Ok(_) => match stream.synchronize() {

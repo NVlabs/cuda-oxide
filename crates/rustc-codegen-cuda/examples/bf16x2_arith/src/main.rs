@@ -93,8 +93,8 @@ fn main() {
     let module = kernels::load(&ctx).expect("load embedded PTX");
     let mut out = DeviceBuffer::<[u32; NUM_OPS]>::zeroed(&stream, 1).unwrap();
 
-    module
-        .test_bf16x2_arith(&stream, LaunchConfig::for_num_elems(1), &mut out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_bf16x2_arith(&stream, LaunchConfig::for_num_elems(1), &mut out) }
         .expect("launch test_bf16x2_arith");
 
     let rows = out.to_host_vec(&stream).unwrap();

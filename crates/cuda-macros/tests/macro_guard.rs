@@ -21,11 +21,24 @@ fn macro_guards() {
     t.compile_fail("tests/compile_fail/kernel_instantiation_on_non_generic.rs");
 }
 
-/// `cuda_launch!` is a caller-unsafe API: its expansion calls the unsafe
-/// `cuda_core` launch functions without an internal `unsafe { }`, so a bare
-/// invocation must fail to compile with an unsafe-required error (E0133).
+/// Raw launch APIs leave their safety obligation at the call site. A bare
+/// `cuda_launch!`, `cuda_launch_async!`, or generated raw module launch must
+/// therefore fail to compile with an unsafe-required error (E0133).
 #[test]
 fn cuda_launch_requires_unsafe() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/launch_requires_unsafe.rs");
+    t.compile_fail("tests/compile_fail/async_launch_macro_requires_unsafe.rs");
+    t.pass("tests/pass/async_launch_macro_in_unsafe.rs");
+
+    // This case expands `#[cuda_module]`. The trybuild fixture depends on the
+    // non-async `cuda-host` API, so only compile it with the matching macro
+    // feature set. Async contract expansion is covered by the macro unit tests
+    // and the `cuda-host --all-features` integration tests.
+    #[cfg(not(feature = "async"))]
+    {
+        t.compile_fail("tests/compile_fail/contract_unchecked_requires_unsafe.rs");
+        t.compile_fail("tests/compile_fail/uncontracted_launch_requires_unsafe.rs");
+        t.pass("tests/pass/uncontracted_launch_in_unsafe.rs");
+    }
 }

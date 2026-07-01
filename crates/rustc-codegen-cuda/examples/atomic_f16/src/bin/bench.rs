@@ -106,12 +106,14 @@ fn bench_no_return(
 
     let f32_ms = time_gpu_iters(stream, ITERS, || {
         reset(&hist_f32, stream)?;
-        module.f32_add(stream, cfg, &hist_f32, N, bins)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.f32_add(stream, cfg, &hist_f32, N, bins) }?;
         Ok(())
     })?;
     let f16_ms = time_gpu_iters(stream, ITERS, || {
         reset(&hist_f16, stream)?;
-        module.f16_add(stream, cfg, &hist_f16, N, bins)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.f16_add(stream, cfg, &hist_f16, N, bins) }?;
         Ok(())
     })?;
 
@@ -133,12 +135,14 @@ fn bench_return(
 
     let f32_ms = time_gpu_iters(stream, ITERS, || {
         reset(&hist_f32, stream)?;
-        module.f32_add_return(stream, cfg, &hist_f32, &mut old_f32, N, bins)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.f32_add_return(stream, cfg, &hist_f32, &mut old_f32, N, bins) }?;
         Ok(())
     })?;
     let f16_ms = time_gpu_iters(stream, ITERS, || {
         reset(&hist_f16, stream)?;
-        module.f16_add_return(stream, cfg, &hist_f16, &mut old_f16, N, bins)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.f16_add_return(stream, cfg, &hist_f16, &mut old_f16, N, bins) }?;
         Ok(())
     })?;
 

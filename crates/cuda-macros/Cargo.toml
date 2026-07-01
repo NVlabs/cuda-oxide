@@ -27,3 +27,4 @@ trybuild = "1"
 # launch types.
 cuda-host = { workspace = true }
 cuda-core = { workspace = true }
+cuda-device = { workspace = true }

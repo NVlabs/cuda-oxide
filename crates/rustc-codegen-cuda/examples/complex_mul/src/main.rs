@@ -102,8 +102,8 @@ fn run_complex_square_add(module: &kernels::LoadedModule, stream: &Arc<CudaStrea
     };
 
     // c = (0.5, 0.0): z0 = (0,0) -> z1 = (0.5,0) -> z2 = (0.75,0); re+im = 0.75.
-    module
-        .complex_square_add(stream.as_ref(), config, 0.5_f32, 0.0_f32, &mut d_out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.complex_square_add(stream.as_ref(), config, 0.5_f32, 0.0_f32, &mut d_out) }
         .expect("Kernel launch failed");
 
     let result = d_out.to_host_vec(stream).unwrap()[0];

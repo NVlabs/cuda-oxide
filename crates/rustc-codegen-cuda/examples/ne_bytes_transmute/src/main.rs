@@ -137,7 +137,8 @@ fn main() {
     {
         let bytes_d = DeviceBuffer::from_host(&stream, &word_bytes).unwrap();
         let mut out_d = DeviceBuffer::<u32>::zeroed(&stream, n).unwrap();
-        m.u32_from_ne_bytes(&stream, cfg, &bytes_d, &mut out_d)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { m.u32_from_ne_bytes(&stream, cfg, &bytes_d, &mut out_d) }
             .expect("launch u32_from_ne_bytes");
         let got = out_d.to_host_vec(&stream).unwrap();
         ok &= check("u32::from_ne_bytes", &got, &words);
@@ -147,7 +148,8 @@ fn main() {
     {
         let words_d = DeviceBuffer::from_host(&stream, &words).unwrap();
         let mut out_d = DeviceBuffer::<u32>::zeroed(&stream, n).unwrap();
-        m.u32_to_ne_bytes(&stream, cfg, &words_d, &mut out_d)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { m.u32_to_ne_bytes(&stream, cfg, &words_d, &mut out_d) }
             .expect("launch u32_to_ne_bytes");
         let got = out_d.to_host_vec(&stream).unwrap();
         let expect: Vec<u32> = words.iter().map(|w| repack(w.to_ne_bytes())).collect();
@@ -158,7 +160,8 @@ fn main() {
     {
         let bytes_d = DeviceBuffer::from_host(&stream, &float_bytes).unwrap();
         let mut out_d = DeviceBuffer::<f32>::zeroed(&stream, n).unwrap();
-        m.f32_from_ne_bytes(&stream, cfg, &bytes_d, &mut out_d)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { m.f32_from_ne_bytes(&stream, cfg, &bytes_d, &mut out_d) }
             .expect("launch f32_from_ne_bytes");
         let got: Vec<u32> = out_d
             .to_host_vec(&stream)
@@ -174,7 +177,8 @@ fn main() {
     {
         let floats_d = DeviceBuffer::from_host(&stream, &floats).unwrap();
         let mut out_d = DeviceBuffer::<u32>::zeroed(&stream, n).unwrap();
-        m.f32_to_ne_bytes(&stream, cfg, &floats_d, &mut out_d)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { m.f32_to_ne_bytes(&stream, cfg, &floats_d, &mut out_d) }
             .expect("launch f32_to_ne_bytes");
         let got = out_d.to_host_vec(&stream).unwrap();
         let expect: Vec<u32> = floats.iter().map(|v| repack(v.to_ne_bytes())).collect();
@@ -185,8 +189,8 @@ fn main() {
     {
         let floats_d = DeviceBuffer::from_host(&stream, &floats).unwrap();
         let mut out_d = DeviceBuffer::<u32>::zeroed(&stream, n).unwrap();
-        m.f32_to_bits(&stream, cfg, &floats_d, &mut out_d)
-            .expect("launch f32_to_bits");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { m.f32_to_bits(&stream, cfg, &floats_d, &mut out_d) }.expect("launch f32_to_bits");
         let got = out_d.to_host_vec(&stream).unwrap();
         let expect: Vec<u32> = floats.iter().map(|v| v.to_bits()).collect();
         ok &= check("f32::to_bits      ", &got, &expect);

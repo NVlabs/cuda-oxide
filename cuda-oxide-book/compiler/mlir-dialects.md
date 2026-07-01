@@ -59,7 +59,7 @@ The dialect defines seven custom types that mirror Rust's compound types:
 | `mir.array`          | `mir.array<f32, 256>`                                     | Fixed-size arrays                                             |
 | `mir.struct`         | `mir.struct<"Point", [f32, f32]>`                         | Named structs with layout info                                |
 | `mir.slice`          | `mir.slice<f32, addrspace: 1>`                            | Fat pointers (ptr + length)                                   |
-| `mir.disjoint_slice` | `mir.disjoint_slice<f32>`                                 | Safety-checked slice -- each thread accesses a unique element |
+| `mir.disjoint_slice` | `mir.disjoint_slice<f32>`                                 | Bounds-checked slice carrying a typed index space              |
 | `mir.enum`           | `mir.enum<"Option_i32", [("None", []), ("Some", [i32])]>` | Rust enums with discriminant and variant payloads             |
 
 The address spaces on `mir.ptr` and `mir.slice` track where data lives in
@@ -140,11 +140,10 @@ Examples of what gets checked:
 - `mir.store` verifies that the value type matches the pointee type of the
   pointer.
 
-The `DisjointSlice` safety guarantee ("one thread, one element") is enforced
-at the type-system level via `ThreadIndex` -- only hardware-derived thread
-indices can access the slice. There is no separate compiler pass for
-disjoint-access verification; the safety comes from the Rust type system
-and `cuda-device`'s API design.
+`DisjointSlice` accepts only a matching `ThreadIndex`, so the type system checks
+the device-side index space. Host launch geometry completes the uniqueness
+proof through `PreparedLaunch<K>` or an unsafe raw-launch obligation. There is
+no separate disjoint-access compiler pass; the safety comes from these APIs.
 
 ---
 

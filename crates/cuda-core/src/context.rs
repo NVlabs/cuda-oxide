@@ -17,6 +17,7 @@
 //! callers do not need to manage the context stack manually.
 
 use crate::error::{DriverError, IntoResult};
+use crate::launch::DeviceLaunchLimits;
 use crate::stream::CudaStream;
 use std::ffi::c_int;
 use std::mem::MaybeUninit;
@@ -88,6 +89,20 @@ impl PartialEq for CudaContext {
 impl Eq for CudaContext {}
 
 impl CudaContext {
+    fn device_attribute(
+        &self,
+        attribute: cuda_bindings::CUdevice_attribute,
+    ) -> Result<u32, DriverError> {
+        self.bind_to_thread()?;
+        let mut value = MaybeUninit::uninit();
+        unsafe {
+            cuda_bindings::cuDeviceGetAttribute(value.as_mut_ptr(), attribute, self.cu_device)
+                .result()?;
+            u32::try_from(value.assume_init())
+                .map_err(|_| DriverError(cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE))
+        }
+    }
+
     /// Creates a new context for the device at `ordinal`.
     ///
     /// Calls [`cuInit`](crate::init), obtains the device handle, retains the
@@ -255,6 +270,78 @@ impl CudaContext {
             .result()?;
             Ok((major.assume_init(), minor.assume_init()))
         }
+    }
+
+    /// Queries dimension, thread-count, and portable shared-memory launch
+    /// limits for this device.
+    ///
+    /// Cooperative and cluster capabilities are deliberately not queried
+    /// here. Typed launch preparation asks for those newer attributes only
+    /// when the kernel contract requires the corresponding launch mode.
+    pub fn launch_limits(&self) -> Result<DeviceLaunchLimits, DriverError> {
+        Ok(DeviceLaunchLimits {
+            max_threads_per_block: self.device_attribute(
+                cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+            )?,
+            max_block_dim: (
+                self.device_attribute(
+                    cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X,
+                )?,
+                self.device_attribute(
+                    cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Y,
+                )?,
+                self.device_attribute(
+                    cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_Z,
+                )?,
+            ),
+            max_grid_dim: (
+                self.device_attribute(
+                    cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X,
+                )?,
+                self.device_attribute(
+                    cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y,
+                )?,
+                self.device_attribute(
+                    cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z,
+                )?,
+            ),
+            max_shared_memory_per_block: self.device_attribute(
+                cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK,
+            )?,
+        })
+    }
+
+    /// Queries the non-portable opt-in shared-memory limit per block.
+    ///
+    /// Typed launch preparation calls this only when static plus dynamic
+    /// shared memory exceeds the portable limit.
+    pub fn max_opt_in_shared_memory_per_block(&self) -> Result<u32, DriverError> {
+        self.device_attribute(
+            cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
+        )
+    }
+
+    /// Returns whether this device supports cooperative kernel launches.
+    pub fn supports_cooperative_launch(&self) -> Result<bool, DriverError> {
+        self.device_attribute(
+            cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH,
+        )
+        .map(|value| value != 0)
+    }
+
+    /// Returns whether this device supports thread-block cluster launches.
+    pub fn supports_cluster_launch(&self) -> Result<bool, DriverError> {
+        self.device_attribute(
+            cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_CLUSTER_LAUNCH,
+        )
+        .map(|value| value != 0)
+    }
+
+    /// Returns the number of streaming multiprocessors on this device.
+    pub fn multiprocessor_count(&self) -> Result<u32, DriverError> {
+        self.device_attribute(
+            cuda_bindings::CUdevice_attribute_enum_CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+        )
     }
 
     /// Atomically reads and clears the sticky error state.

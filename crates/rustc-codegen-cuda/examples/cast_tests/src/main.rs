@@ -436,7 +436,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 → u64
     {
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_cast_u32_to_u64((stream).as_ref(), cfg, 42u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_u32_to_u64((stream).as_ref(), cfg, 42u32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 42u64 {
             println!("  [PASS] u32 → u64: {} → {}", 42u32, r[0]);
@@ -453,7 +454,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let val: u64 = 0x1_0000_002A; // upper bits should be dropped, leaving 42
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_cast_u64_to_u32((stream).as_ref(), cfg, val, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_u64_to_u32((stream).as_ref(), cfg, val, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 42u32 {
             println!("  [PASS] u64 → u32 (trunc): 0x{:X} → {}", val, r[0]);
@@ -469,7 +471,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // i32 → i64 (sign extension)
     {
         let mut out = DeviceBuffer::<i64>::zeroed(&stream, N)?;
-        module.test_cast_i32_to_i64((stream).as_ref(), cfg, -7i32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_i32_to_i64((stream).as_ref(), cfg, -7i32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -7i64 {
             println!("  [PASS] i32 → i64 (sext): -7 → {}", r[0]);
@@ -485,7 +488,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 → f32
     {
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-        module.test_cast_u32_to_f32((stream).as_ref(), cfg, 42u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_u32_to_f32((stream).as_ref(), cfg, 42u32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if (r[0] - 42.0f32).abs() < 0.001 {
             println!("  [PASS] u32 → f32: 42 → {}", r[0]);
@@ -501,7 +505,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // i32 → f32 (signed)
     {
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-        module.test_cast_i32_to_f32((stream).as_ref(), cfg, -7i32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_i32_to_f32((stream).as_ref(), cfg, -7i32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if (r[0] - (-7.0f32)).abs() < 0.001 {
             println!("  [PASS] i32 → f32: -7 → {}", r[0]);
@@ -517,7 +522,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f32 → u32
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_cast_f32_to_u32((stream).as_ref(), cfg, 42.9f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f32_to_u32((stream).as_ref(), cfg, 42.9f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 42u32 {
             println!("  [PASS] f32 → u32: 42.9 → {}", r[0]);
@@ -533,7 +539,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f32 → i32
     {
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_cast_f32_to_i32((stream).as_ref(), cfg, -7.8f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f32_to_i32((stream).as_ref(), cfg, -7.8f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -7i32 {
             println!("  [PASS] f32 → i32: -7.8 → {}", r[0]);
@@ -549,7 +556,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f64 → u32
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_cast_f64_to_u32((stream).as_ref(), cfg, 42.9f64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f64_to_u32((stream).as_ref(), cfg, 42.9f64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 42u32 {
             println!("  [PASS] f64 → u32: 42.9 → {}", r[0]);
@@ -565,7 +573,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f64 → i32
     {
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_cast_f64_to_i32((stream).as_ref(), cfg, -7.8f64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f64_to_i32((stream).as_ref(), cfg, -7.8f64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -7i32 {
             println!("  [PASS] f64 → i32: -7.8 → {}", r[0]);
@@ -581,7 +590,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f64 → u64
     {
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_cast_f64_to_u64((stream).as_ref(), cfg, 100.5f64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f64_to_u64((stream).as_ref(), cfg, 100.5f64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 100u64 {
             println!("  [PASS] f64 → u64: 100.5 → {}", r[0]);
@@ -597,7 +607,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f64 → i64
     {
         let mut out = DeviceBuffer::<i64>::zeroed(&stream, N)?;
-        module.test_cast_f64_to_i64((stream).as_ref(), cfg, -100.5f64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f64_to_i64((stream).as_ref(), cfg, -100.5f64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -100i64 {
             println!("  [PASS] f64 → i64: -100.5 → {}", r[0]);
@@ -613,7 +624,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f32 → u64 (mixed precision)
     {
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_cast_f32_to_u64((stream).as_ref(), cfg, 42.9f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f32_to_u64((stream).as_ref(), cfg, 42.9f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 42u64 {
             println!("  [PASS] f32 → u64 (mixed): 42.9 → {}", r[0]);
@@ -629,7 +641,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f32 → i64 (mixed precision)
     {
         let mut out = DeviceBuffer::<i64>::zeroed(&stream, N)?;
-        module.test_cast_f32_to_i64((stream).as_ref(), cfg, -7.8f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f32_to_i64((stream).as_ref(), cfg, -7.8f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -7i64 {
             println!("  [PASS] f32 → i64 (mixed): -7.8 → {}", r[0]);
@@ -645,7 +658,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f32 → f64
     {
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, N)?;
-        module.test_cast_f32_to_f64((stream).as_ref(), cfg, 3.14f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f32_to_f64((stream).as_ref(), cfg, 3.14f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if (r[0] - 3.14f64).abs() < 0.001 {
             println!("  [PASS] f32 → f64: 3.14 → {}", r[0]);
@@ -661,7 +675,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f64 → f32
     {
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-        module.test_cast_f64_to_f32((stream).as_ref(), cfg, 3.14f64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_f64_to_f32((stream).as_ref(), cfg, 3.14f64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if (r[0] - 3.14f32).abs() < 0.01 {
             println!("  [PASS] f64 → f32: 3.14 → {}", r[0]);
@@ -677,7 +692,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // bool → u32
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_cast_bool_to_u32((stream).as_ref(), cfg, true, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_bool_to_u32((stream).as_ref(), cfg, true, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 1u32 {
             println!("  [PASS] bool → u32: true → {}", r[0]);
@@ -699,7 +715,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let bits: i32 = 0x3F800000_u32 as i32; // bit pattern for 1.0f32
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-        module.test_transmute_i32_to_f32((stream).as_ref(), cfg, bits, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_transmute_i32_to_f32((stream).as_ref(), cfg, bits, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         let expected = 1.0f32;
         if (r[0] - expected).abs() < f32::EPSILON {
@@ -719,7 +736,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // transmute f32 → u32: 1.0f32 should become 0x3F800000
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_transmute_f32_to_u32((stream).as_ref(), cfg, 1.0f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_transmute_f32_to_u32((stream).as_ref(), cfg, 1.0f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         let expected = 0x3F800000u32;
         if r[0] == expected {
@@ -740,7 +758,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let bits: u64 = 0x4000000000000000; // bit pattern for 2.0f64
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, N)?;
-        module.test_transmute_u64_to_f64((stream).as_ref(), cfg, bits, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_transmute_u64_to_f64((stream).as_ref(), cfg, bits, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         let expected = 2.0f64;
         if (r[0] - expected).abs() < f64::EPSILON {
@@ -761,7 +780,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let val: u32 = 0xFFFFFFFF; // should become -1 as i32
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_transmute_u32_to_i32((stream).as_ref(), cfg, val, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_transmute_u32_to_i32((stream).as_ref(), cfg, val, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -1i32 {
             println!("  [PASS] transmute u32(0xFFFFFFFF) → i32: {}", r[0]);
@@ -785,7 +805,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let bits: i32 = 0x3F800000_u32 as i32;
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-        module.test_from_bits_i32_to_f32((stream).as_ref(), cfg, bits, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_from_bits_i32_to_f32((stream).as_ref(), cfg, bits, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         let expected = 1.0f32;
         if (r[0] - expected).abs() < f32::EPSILON {
@@ -805,7 +826,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f32::to_bits — same as transmute f32→u32
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_to_bits_f32((stream).as_ref(), cfg, 1.0f32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_to_bits_f32((stream).as_ref(), cfg, 1.0f32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         let expected = 0x3F800000u32;
         if r[0] == expected {
@@ -826,7 +848,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let bits: u64 = 0x4000000000000000;
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, N)?;
-        module.test_from_bits_u64_to_f64((stream).as_ref(), cfg, bits, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_from_bits_u64_to_f64((stream).as_ref(), cfg, bits, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         let expected = 2.0f64;
         if (r[0] - expected).abs() < f64::EPSILON {
@@ -844,7 +867,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let val: u32 = 0xFFFFFFFF;
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_cast_signed_u32_to_i32((stream).as_ref(), cfg, val, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_signed_u32_to_i32((stream).as_ref(), cfg, val, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -1i32 {
             println!("  [PASS] u32::cast_signed(0xFFFFFFFF): {}", r[0]);
@@ -861,7 +885,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let val: i32 = -1;
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_cast_unsigned_i32_to_u32((stream).as_ref(), cfg, val, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_unsigned_i32_to_u32((stream).as_ref(), cfg, val, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 0xFFFFFFFF {
             println!("  [PASS] i32::cast_unsigned(-1): 0x{:08X}", r[0]);
@@ -888,7 +913,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let val: u32 = 42;
         let host_ptr: *const u32 = &val;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_cast_ptr_reinterpret((stream).as_ref(), cfg, host_ptr, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_ptr_reinterpret((stream).as_ref(), cfg, host_ptr, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] != 0 {
             println!(
@@ -909,7 +935,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let val: u32 = 42;
         let host_ptr: *const u32 = &val;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_cast_ptr_to_usize((stream).as_ref(), cfg, host_ptr, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cast_ptr_to_usize((stream).as_ref(), cfg, host_ptr, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] != 0 {
             println!(
@@ -934,7 +961,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let input_data: Vec<u32> = vec![42, 99, 7, 255];
         let input_gpu = DeviceBuffer::from_host(&stream, &input_data)?;
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_slice_constant_index((stream).as_ref(), cfg, &input_gpu, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_slice_constant_index((stream).as_ref(), cfg, &input_gpu, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 42 {
             println!("  [PASS] slice constant index: data[0] = {}", r[0]);
@@ -956,11 +984,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let n = 4usize;
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, n)?;
-        let result = module.test_unsize_array_to_slice(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &mut out,
-        );
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let result = unsafe {
+            module.test_unsize_array_to_slice(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &mut out,
+            )
+        };
         match result {
             Ok(_) => {
                 let r = out.to_host_vec(&stream)?;
@@ -988,11 +1019,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let n = 4usize;
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, n)?;
-        let result = module.test_unsize_array_as_slice(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &mut out,
-        );
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let result = unsafe {
+            module.test_unsize_array_as_slice(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &mut out,
+            )
+        };
         match result {
             Ok(_) => {
                 let r = out.to_host_vec(&stream)?;
@@ -1019,7 +1053,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // array iter sum via .as_slice()
     {
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, N)?;
-        let result = module.test_unsize_array_iter_sum((stream).as_ref(), cfg, &mut out);
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let result = unsafe { module.test_unsize_array_iter_sum((stream).as_ref(), cfg, &mut out) };
         match result {
             Ok(_) => {
                 let r = out.to_host_vec(&stream)?;
@@ -1050,11 +1085,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let n = 3usize;
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, n)?;
-        let result = module.test_unsize_f64_as_slice(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &mut out,
-        );
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let result = unsafe {
+            module.test_unsize_f64_as_slice(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &mut out,
+            )
+        };
         match result {
             Ok(_) => {
                 let r = out.to_host_vec(&stream)?;
@@ -1082,11 +1120,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let n = 3usize;
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, n)?;
-        let result = module.test_unsize_f64_explicit(
-            (stream).as_ref(),
-            LaunchConfig::for_num_elems(n as u32),
-            &mut out,
-        );
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let result = unsafe {
+            module.test_unsize_f64_explicit(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(n as u32),
+                &mut out,
+            )
+        };
         match result {
             Ok(_) => {
                 let r = out.to_host_vec(&stream)?;
@@ -1113,7 +1154,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // f64 iter sum
     {
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, N)?;
-        let result = module.test_unsize_f64_iter_sum((stream).as_ref(), cfg, &mut out);
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        let result = unsafe { module.test_unsize_f64_iter_sum((stream).as_ref(), cfg, &mut out) };
         match result {
             Ok(_) => {
                 let r = out.to_host_vec(&stream)?;

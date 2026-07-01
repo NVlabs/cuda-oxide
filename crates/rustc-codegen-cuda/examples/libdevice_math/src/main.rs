@@ -75,13 +75,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dev_y = DeviceBuffer::from_host(&stream, &host_y)?;
     let mut dev_out = DeviceBuffer::from_host(&stream, &[0.0f32; 4])?;
 
-    module.swiglu_libdevice(
-        &stream,
-        LaunchConfig::for_num_elems(4),
-        &dev_x,
-        &dev_y,
-        &mut dev_out,
-    )?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.swiglu_libdevice(
+            &stream,
+            LaunchConfig::for_num_elems(4),
+            &dev_x,
+            &dev_y,
+            &mut dev_out,
+        )
+    }?;
 
     let actual = dev_out.to_host_vec(&stream)?;
     let expected: Vec<f32> = host_x
@@ -108,13 +111,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let atan2_y_dev = DeviceBuffer::from_host(&stream, &atan2_y)?;
     let mut math_out = DeviceBuffer::<[f32; 7]>::zeroed(&stream, math_x.len())?;
 
-    module.math_functions(
-        &stream,
-        LaunchConfig::for_num_elems(math_x.len() as u32),
-        &math_x_dev,
-        &atan2_y_dev,
-        &mut math_out,
-    )?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.math_functions(
+            &stream,
+            LaunchConfig::for_num_elems(math_x.len() as u32),
+            &math_x_dev,
+            &atan2_y_dev,
+            &mut math_out,
+        )
+    }?;
 
     let actual = math_out.to_host_vec(&stream)?;
     const ULP_LIMIT: u32 = 4;

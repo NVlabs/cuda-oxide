@@ -250,8 +250,8 @@ fn main() {
             shared_mem_bytes: (N * core::mem::size_of::<f32>()) as u32,
         };
 
-        module
-            .dynamic_smem_basic((stream).as_ref(), cfg, &data_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.dynamic_smem_basic((stream).as_ref(), cfg, &data_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         let out_result = out_dev.to_host_vec(&stream).unwrap();
@@ -292,9 +292,11 @@ fn main() {
             shared_mem_bytes: (2 * N * core::mem::size_of::<f32>()) as u32,
         };
 
-        module
-            .dynamic_smem_partition((stream).as_ref(), cfg, &a_dev, &b_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.dynamic_smem_partition((stream).as_ref(), cfg, &a_dev, &b_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         let out_result = out_dev.to_host_vec(&stream).unwrap();
         println!("Output out[0..5] = {:?}", &out_result[0..5]);
@@ -330,9 +332,11 @@ fn main() {
             shared_mem_bytes: (N * core::mem::size_of::<f32>()) as u32,
         };
 
-        module
-            .dynamic_smem_explicit_align((stream).as_ref(), cfg, &data_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.dynamic_smem_explicit_align((stream).as_ref(), cfg, &data_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         let out_result = out_dev.to_host_vec(&stream).unwrap();
         println!("Output out[0..5] = {:?}", &out_result[0..5]);
@@ -375,9 +379,18 @@ fn main() {
             shared_mem_bytes: (3 * N * core::mem::size_of::<f32>()) as u32,
         };
 
-        module
-            .dynamic_smem_mixed_align((stream).as_ref(), cfg, &a_dev, &b_dev, &c_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.dynamic_smem_mixed_align(
+                (stream).as_ref(),
+                cfg,
+                &a_dev,
+                &b_dev,
+                &c_dev,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
 
         let out_result = out_dev.to_host_vec(&stream).unwrap();
         println!("Output out[0..5] = {:?}", &out_result[0..5]);

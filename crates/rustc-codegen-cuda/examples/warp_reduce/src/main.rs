@@ -154,8 +154,8 @@ fn main() {
     println!("\n--- Test 1: Butterfly Reduction (shuffle_xor) ---");
     let mut out_dev = DeviceBuffer::<f32>::zeroed(&stream, WARPS).unwrap();
 
-    module
-        .warp_reduce_sum((stream).as_ref(), cfg, &data_dev, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.warp_reduce_sum((stream).as_ref(), cfg, &data_dev, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let out_result = out_dev.to_host_vec(&stream).unwrap();
@@ -178,8 +178,8 @@ fn main() {
     println!("\n--- Test 2: Sequential Reduction (shuffle_down) ---");
     let mut out_dev = DeviceBuffer::<f32>::zeroed(&stream, WARPS).unwrap();
 
-    module
-        .warp_reduce_sum_down((stream).as_ref(), cfg, &data_dev, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.warp_reduce_sum_down((stream).as_ref(), cfg, &data_dev, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let out_result = out_dev.to_host_vec(&stream).unwrap();
@@ -202,14 +202,16 @@ fn main() {
     let broadcast_dev = DeviceBuffer::from_host(&stream, &broadcast_input).unwrap();
     let mut broadcast_out_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-    module
-        .warp_broadcast(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.warp_broadcast(
             (stream).as_ref(),
             cfg,
             &broadcast_dev,
             &mut broadcast_out_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let broadcast_result = broadcast_out_dev.to_host_vec(&stream).unwrap();
 
@@ -249,8 +251,8 @@ fn main() {
     println!("\n--- Test 4: Lane ID ---");
     let mut lane_out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-    module
-        .test_lane_id((stream).as_ref(), cfg, &mut lane_out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.test_lane_id((stream).as_ref(), cfg, &mut lane_out_dev) }
         .expect("Kernel launch failed");
 
     let lane_result = lane_out_dev.to_host_vec(&stream).unwrap();

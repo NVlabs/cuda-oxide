@@ -97,7 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let b = -2.5_f32;
         let nan_arg = f32::NAN;
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, 4)?;
-        module.fmaxmin_f32_kernel(&stream, cfg, a, b, nan_arg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.fmaxmin_f32_kernel(&stream, cfg, a, b, nan_arg, &mut out) }?;
         let result = out.to_host_vec(&stream)?;
         let expected: [u32; 4] = [
             a.max(b).to_bits(), // f32::max finite
@@ -120,7 +121,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let b = -2.5e10_f64;
         let nan_arg = f64::NAN;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 4)?;
-        module.fmaxmin_f64_kernel(&stream, cfg, a, b, nan_arg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.fmaxmin_f64_kernel(&stream, cfg, a, b, nan_arg, &mut out) }?;
         let result = out.to_host_vec(&stream)?;
         let expected: [u64; 4] = [
             a.max(b).to_bits(),

@@ -2561,14 +2561,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
 
-    module
-        .vecadd_async(
+    // SAFETY: this is a 1D launch and `vecadd` guards its index against the
+    // output length before writing.
+    unsafe {
+        module.vecadd_async(
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
-        )?
-        .sync()?;
+        )
+    }?
+    .sync()?;
 
     let mut c_host = vec![0.0f32; N];
     cuda_async::device_context::with_cuda_context(0, |ctx| {
@@ -2631,15 +2634,18 @@ fn main() {
     let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    module
-        .vecadd(
+    // SAFETY: this is a 1D launch and `vecadd` guards its index against the
+    // output length before writing.
+    unsafe {
+        module.vecadd(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let c_host = c_dev.to_host_vec(&stream).unwrap();
 

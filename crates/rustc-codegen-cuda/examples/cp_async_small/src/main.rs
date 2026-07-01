@@ -129,8 +129,8 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 32).unwrap();
 
-        module
-            .test_cp_async_4(&stream, cfg32, &input_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cp_async_4(&stream, cfg32, &input_dev, &mut out_dev) }
             .expect("test_cp_async_4 launch failed");
 
         let out = out_dev.to_host_vec(&stream).unwrap();
@@ -153,8 +153,8 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 64).unwrap();
 
-        module
-            .test_cp_async_8(&stream, cfg32, &input_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cp_async_8(&stream, cfg32, &input_dev, &mut out_dev) }
             .expect("test_cp_async_8 launch failed");
 
         let out = out_dev.to_host_vec(&stream).unwrap();
