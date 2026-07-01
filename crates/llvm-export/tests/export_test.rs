@@ -1605,11 +1605,15 @@ fn nvvm_metadata_version_uses_next_allocated_metadata_id() {
         .expect("NVVM export succeeds");
 
     assert!(
-        ir.contains("!nvvm.annotations = !{!0, !1, !2, !3}"),
-        "launch-bounds annotations should occupy !0..!3:\n{ir}"
+        ir.contains("!0 = !{ptr @bounded_kernel, !\"kernel\", i32 1}"),
+        "a launch-bounded kernel still needs its kernel annotation:\n{ir}"
     );
     assert!(
-        ir.contains("!nvvmir.version = !{!4}\n!4 = !{i32 2, i32 0, i32 3, i32 2}"),
+        ir.contains("!nvvm.annotations = !{!0, !1, !2, !3, !4}"),
+        "kernel identity plus launch-bounds annotations should occupy !0..!4:\n{ir}"
+    );
+    assert!(
+        ir.contains("!nvvmir.version = !{!5}\n!5 = !{i32 2, i32 0, i32 3, i32 2}"),
         "version metadata should use the next allocated ID:\n{ir}"
     );
 }

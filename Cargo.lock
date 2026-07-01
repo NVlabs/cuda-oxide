@@ -383,6 +383,7 @@ version = "0.2.1"
 dependencies = [
  "cuda-async",
  "cuda-core",
+ "cuda-device",
  "cuda-macros",
  "half",
  "libnvvm-sys",

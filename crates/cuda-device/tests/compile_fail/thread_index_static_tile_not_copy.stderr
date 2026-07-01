@@ -1,0 +1,9 @@
+error[E0382]: borrow of moved value: `tile`
+  --> tests/compile_fail/thread_index_static_tile_not_copy.rs:10:13
+   |
+ 8 | fn cannot_reuse_tile(tile: StaticTileMut32<'_, u32, 2, 4, 16>) {
+   |                      ---- move occurs because `tile` has type `StaticTileMut32<'_, u32, 2, 4, 16>`, which does not implement the `Copy` trait
+ 9 |     let _moved = tile;
+   |                  ---- value moved here
+10 |     let _ = tile.rows();
+   |             ^^^^ value borrowed here after move

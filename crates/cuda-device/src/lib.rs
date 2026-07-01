@@ -35,6 +35,7 @@ pub mod shared;
 pub mod tcgen05;
 pub mod thread;
 pub mod tma;
+pub mod view;
 pub mod warp;
 pub mod wgmma;
 pub mod wmma;
@@ -72,3 +73,7 @@ pub use tcgen05::{
 };
 pub use thread::*;
 pub use tma::TmaDescriptor;
+pub use view::{
+    InBounds32, InBoundsMut32, LinearTiles, LocalIndex32, RowMajorTiles, StaticTileMut32,
+    StaticView32, StaticViewMut32,
+};
