@@ -8,6 +8,7 @@
 #[test]
 fn macro_guards() {
     let t = trybuild::TestCases::new();
+    t.pass("tests/pass/const_generic_hygiene.rs");
     t.compile_fail("tests/compile_fail/kernel_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_extern_reserved_name.rs");

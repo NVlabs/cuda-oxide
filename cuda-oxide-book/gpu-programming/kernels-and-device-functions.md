@@ -37,9 +37,9 @@ Under the hood, `#[kernel]` does three things:
    `reserved-oxide-symbols` crate; the `<hash>` suffix makes the namespace
    unguessable for user code.
 2. **Adds `#[no_mangle]`** to preserve the symbol name in the generated PTX.
-3. **Generates a marker struct** implementing `CudaKernel` (or
-   `GenericCudaKernel` for generic kernels) so host launch code can look up the
-   correct PTX entry point at compile time.
+3. **Generates host lookup metadata** so typed launch code can find the correct
+   PTX entry. Generic kernels also get a readable helper such as
+   `scale_ptx_name::<f32>()`; generated marker types are internal plumbing.
 
 In the generated PTX, a kernel becomes a `.entry` directive -- the GPU
 equivalent of `main`:

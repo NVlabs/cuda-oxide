@@ -69,18 +69,16 @@ pub trait CudaKernel {
 /// pub fn scale<T: Copy + Mul<Output = T>>(factor: T, input: &[T], mut out: DisjointSlice<T>) { ... }
 /// ```
 ///
-/// The macro generates:
+/// Application code asks the generated helper for a concrete specialization:
 /// ```ignore
-/// pub struct __scale_CudaKernel<T>(std::marker::PhantomData<T>);
-///
-/// impl<T: Copy + Mul<Output = T>> GenericCudaKernel for __scale_CudaKernel<T> {
-///     fn ptx_name() -> &'static str {
-///         // "scale_TID_<hex32>" — one 32-char hash of the concrete
-///         // generated kernel function-item type. The hash matches what the
-///         // backend wrote into the .ptx for the same specialization.
-///     }
-/// }
+/// let name = scale_ptx_name::<f32>();
+/// // "scale_TID_<32 lowercase hex characters>"
 /// ```
+///
+/// `#[kernel]` implements this trait on an internal marker type and exposes
+/// the helper above. Application code should use the helper rather than name
+/// that marker directly. The helper also retains the requested specialization
+/// in device output before it returns the lookup name.
 ///
 /// # PTX Naming Scheme
 ///

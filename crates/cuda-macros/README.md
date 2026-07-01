@@ -15,7 +15,13 @@ Marks a function as a CUDA kernel. Generates:
 1. An entry point renamed into the reserved `cuda_oxide_kernel_<hash>_<name>` namespace
    (with `#[no_mangle]`) so the codegen backend can find it. The hash makes the prefix
    unguessable for user code; see `crates/reserved-oxide-symbols/` for the contract.
-2. A `__<name>_CudaKernel` marker struct implementing `CudaKernel` (or `GenericCudaKernel` for generics).
+2. Host lookup metadata used by typed launch APIs.
+3. For a generic kernel, a readable `<name>_ptx_name::<...>()` helper. Generated
+   marker types are internal plumbing and should not be named by application code.
+
+The `<name>_ptx_name` sibling is part of the generated API, so that name must
+remain free beside a generic kernel. Calling it also retains that concrete
+specialization in device output; it cannot return a name for an omitted entry.
 
 > **Reserved names.** The macros refuse to compile any function whose name starts with
 > `cuda_oxide_` -- that namespace is reserved for cuda-oxide-internal mangling. The check
@@ -40,6 +46,7 @@ pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
 #[kernel]
 pub fn scale<T: Copy + Mul<Output = T>>(factor: T, input: &[T], mut out: DisjointSlice<T>) { ... }
 // Launch: module.scale::<f32>(&stream, config, factor, &input, &mut out)?
+// Inspect its generated entry name: scale_ptx_name::<f32>()
 
 // Mode 2: explicit instantiation list
 #[kernel(f32, i32)]

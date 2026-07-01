@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#![allow(dead_code)]
+#![allow(dead_code, non_upper_case_globals, clippy::needless_lifetimes)]
 
 use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig};
 #[cfg(feature = "async")]
@@ -56,6 +56,30 @@ mod kernels {
     #[kernel]
     pub fn lifetime_mixed<'a, T: Copy + 'a, const N: usize>(input: &'a [T], output: &mut [T]) {
         let _ = (input, output, N);
+    }
+
+    #[kernel]
+    pub fn hygiene_probe<
+        '__cuda_oxide_async,
+        const stream: usize,
+        const config: usize,
+        const __cuda_oxide_arg_0: usize,
+        const __cuda_oxide_arg_1: usize,
+        const __cuda_oxide_kernel_hash: usize,
+        const __cuda_oxide_kernel_ptr: usize,
+        const __cuda_oxide_force_mono: usize,
+        const __cuda_oxide_ptx_name: usize,
+        const __cuda_oxide_function: usize,
+        const __cuda_oxide_function_storage: usize,
+        const __cuda_oxide_function_cache: usize,
+        const __cuda_oxide_launch: usize,
+        const __CudaModuleArg0: usize,
+        const __CudaModuleArg1: usize,
+    >(
+        __cuda_oxide_args: &'__cuda_oxide_async [u32],
+        output: &mut [u32],
+    ) {
+        let _ = (__cuda_oxide_args, output);
     }
 
     #[kernel]
@@ -253,8 +277,6 @@ fn generated_cuda_module_api_typechecks() {
 // while staying fixed-length regardless of generic arity.
 // =============================================================================
 
-use cuda_host::GenericCudaKernel;
-
 fn is_lowercase_hex_32(s: &str) -> bool {
     s.len() == 32
         && s.chars()
@@ -272,7 +294,7 @@ fn ptx_name_for_closure_generic_matches_tid_scheme() {
     let offset = 5u32;
     let op = move |x: u32| x + offset;
     fn name_for<F: Fn(u32) -> u32 + Copy>(_f: F) -> &'static str {
-        <kernels::__copy_closure_CudaKernel<F> as GenericCudaKernel>::ptx_name()
+        kernels::copy_closure_ptx_name::<F>()
     }
 
     let name = name_for(op);
@@ -288,7 +310,7 @@ fn ptx_name_is_stable_per_closure_type() {
     let offset = 7u32;
     let op = move |x: u32| x + offset;
     fn name_for<F: Fn(u32) -> u32 + Copy>(_f: F) -> &'static str {
-        <kernels::__copy_closure_CudaKernel<F> as GenericCudaKernel>::ptx_name()
+        kernels::copy_closure_ptx_name::<F>()
     }
     let a = name_for(op);
     let b = name_for(op);
@@ -301,7 +323,7 @@ fn ptx_name_separates_distinct_closure_types() {
     let op1 = move |x: u32| x + factor;
     let op2 = move |x: u32| x * factor;
     fn name_for<F: Fn(u32) -> u32 + Copy>(_f: F) -> &'static str {
-        <kernels::__copy_closure_CudaKernel<F> as GenericCudaKernel>::ptx_name()
+        kernels::copy_closure_ptx_name::<F>()
     }
     let n1 = name_for(op1);
     let n2 = name_for(op2);
@@ -313,9 +335,9 @@ fn ptx_name_separates_distinct_closure_types() {
 
 #[test]
 fn ptx_name_separates_const_specializations() {
-    let n0 = <kernels::__const_only_CudaKernel<0> as GenericCudaKernel>::ptx_name();
-    let n4 = <kernels::__const_only_CudaKernel<4> as GenericCudaKernel>::ptx_name();
-    let n8 = <kernels::__const_only_CudaKernel<8> as GenericCudaKernel>::ptx_name();
+    let n0 = kernels::const_only_ptx_name::<0>();
+    let n4 = kernels::const_only_ptx_name::<4>();
+    let n8 = kernels::const_only_ptx_name::<8>();
 
     assert_ne!(n0, n4, "zero must remain a distinct const value");
     assert_ne!(n4, n8, "const values must participate in kernel identity");
@@ -325,11 +347,36 @@ fn ptx_name_separates_const_specializations() {
 }
 
 #[test]
+fn generic_kernel_marker_remains_compatible() {
+    use cuda_host::GenericCudaKernel;
+
+    let direct = <kernels::__const_only_CudaKernel<4> as GenericCudaKernel>::ptx_name();
+    assert_eq!(direct, kernels::const_only_ptx_name::<4>());
+}
+
+#[test]
 fn ptx_name_separates_mixed_specializations() {
-    let u32_n4 = <kernels::__mixed_CudaKernel<u32, 4> as GenericCudaKernel>::ptx_name();
-    let u32_n8 = <kernels::__mixed_CudaKernel<u32, 8> as GenericCudaKernel>::ptx_name();
-    let i32_n4 = <kernels::__mixed_CudaKernel<i32, 4> as GenericCudaKernel>::ptx_name();
+    let u32_n4 = kernels::mixed_ptx_name::<u32, 4>();
+    let u32_n8 = kernels::mixed_ptx_name::<u32, 8>();
+    let i32_n4 = kernels::mixed_ptx_name::<i32, 4>();
 
     assert_ne!(u32_n4, u32_n8);
     assert_ne!(u32_n4, i32_n4);
+}
+
+#[test]
+fn ptx_name_helper_preserves_lifetime_bounds() {
+    fn name_for<'a, T: Copy + 'a, const N: usize>(_input: &'a [T]) -> &'static str {
+        kernels::lifetime_mixed_ptx_name::<T, N>()
+    }
+
+    let input = [1u32, 2, 3];
+    let name = name_for::<u32, 4>(&input);
+    assert!(is_lowercase_hex_32(split_tid_name(name, "lifetime_mixed")));
+}
+
+#[test]
+fn generated_names_do_not_capture_user_const_generics() {
+    let name = kernels::hygiene_probe_ptx_name::<0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>();
+    assert!(is_lowercase_hex_32(split_tid_name(name, "hygiene_probe")));
 }

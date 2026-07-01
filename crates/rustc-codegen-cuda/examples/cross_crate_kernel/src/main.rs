@@ -34,22 +34,16 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 
-// Import everything from the kernel library!
-// This includes the #[kernel] functions and their generated helpers:
-// - scale, add, scale_with_helper (original functions)
-// - cuda_oxide_kernel_<hash>_* (renamed entry points; the prefix is owned
-//   by `crates/reserved-oxide-symbols/` so this crate isn't a load-bearing
-//   string-literal site)
-// - __*_CudaKernel (marker types for CudaKernel trait)
+// Import the public kernel functions and their generated `<kernel>_ptx_name`
+// helpers. Entry symbols and marker types remain implementation details.
 use kernel_lib::kernels;
 
 fn specialization_names() -> [&'static str; 4] {
-    use cuda_host::GenericCudaKernel;
     [
-        <kernels::__scale_CudaKernel<f32> as GenericCudaKernel>::ptx_name(),
-        <kernels::__scale_CudaKernel<i32> as GenericCudaKernel>::ptx_name(),
-        <kernels::__add_const_CudaKernel<4> as GenericCudaKernel>::ptx_name(),
-        <kernels::__add_const_CudaKernel<8> as GenericCudaKernel>::ptx_name(),
+        kernels::scale_ptx_name::<f32>(),
+        kernels::scale_ptx_name::<i32>(),
+        kernels::add_const_ptx_name::<4>(),
+        kernels::add_const_ptx_name::<8>(),
     ]
 }
 

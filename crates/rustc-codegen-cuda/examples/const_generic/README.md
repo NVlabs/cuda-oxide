@@ -19,13 +19,25 @@ A second kernel deliberately does not read its const parameter. Its `<4>` and
 `<8>` specializations must still remain two exact, host-addressable PTX entries
 even though their optimized instruction bodies are identical.
 
+A third entry is never launched. Calling only `name_only_ptx_name::<4>()` must
+still retain that specialization in PTX, so a returned name never points at a
+missing entry.
+
+The generated host helper keeps the lookup readable:
+
+```rust
+let four = kernels::write_value_ptx_name::<4>();
+let eight = kernels::write_value_ptx_name::<8>();
+assert_ne!(four, eight);
+```
+
 ```bash
 cargo oxide pipeline const_generic
 cargo oxide run const_generic
 ```
 
-The host lookup names and generated PTX can be checked without initializing
-CUDA:
+The built executable can compare its own lookup names with generated PTX
+without creating a CUDA context:
 
 ```bash
 cargo oxide build const_generic
@@ -33,5 +45,9 @@ cargo oxide build const_generic
   --verify-ptx
 ```
 
-That check proves that the host names resolve to both PTX entries, both entries
-retain `#[launch_bounds(64)]`, and each body contains its own folded constant.
+The executable still links the CUDA driver library, so this explicit local
+check requires `libcuda.so.1`. Compile-only CI does not execute it.
+
+That check proves that every host name resolves to PTX, the two `write_value`
+entries retain `#[launch_bounds(64)]`, and each body contains its own folded
+constant.

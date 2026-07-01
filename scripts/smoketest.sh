@@ -29,8 +29,6 @@
 #                   target because no GPU is available.
 #   NVVM_VERIFY_EXAMPLES are compiled through the real libNVVM verifier and
 #                   compiler in compile-only mode.
-#   HOST_PTX_VERIFY_EXAMPLES run a CPU-only verifier after compilation to
-#                   compare host lookup names with generated PTX entries.
 #
 # Categories are bash arrays at the top of this file. When adding an
 # error* example, also update STATUS.md and run
@@ -47,7 +45,6 @@ WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 NVVM_VERIFY_EXAMPLES=(device_global libdevice_math legacy_nvvm_pointer_shapes primitive_stress)
-HOST_PTX_VERIFY_EXAMPLES=(const_generic cross_crate_kernel)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr)
 
 classify() {
@@ -68,14 +65,6 @@ verify_nvvm_in_compile_only() {
     return 1
 }
 
-verify_host_ptx_in_compile_only() {
-    local ex="$1" candidate
-    for candidate in "${HOST_PTX_VERIFY_EXAMPLES[@]}"; do
-        [[ "$ex" == "$candidate" ]] && return 0
-    done
-    return 1
-}
-
 # ---- CLI -----------------------------------------------------------------
 
 usage() {
@@ -89,9 +78,9 @@ OPTIONS
   -o, --only PATTERN   Run only examples whose name matches the bash regex
                        PATTERN (e.g. -o 'tcgen05|wgmma').
   -s, --skip PATTERN   Skip examples whose name matches PATTERN.
-  -c, --compile-only   Compile each example without running GPU code. Most use
+  -c, --compile-only   Compile each example without running it. Most use
                        `cargo oxide build`; designated NVVM regressions use
-                       `emit-ltoir`, and CPU-only host/PTX verifiers may run.
+                       `emit-ltoir` to include real libNVVM verification.
                        Non-error categories must leave a fresh artifact;
                        error examples must still fail. Works on GPU-less CI.
   -x, --fail-fast      Stop at the first failure.
@@ -222,7 +211,7 @@ printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_
 printf "GPU: %s\n" "${gpu_info}"
 printf "LTOIR arch: %s\n" "${LTOIR_ARCH}"
 if [[ ${COMPILE_ONLY} -eq 1 ]]; then
-    printf "Mode: compile-only (no GPU execution; designated CPU verifiers still run)\n"
+    printf "Mode: compile-only (device artifacts only; nothing is executed)\n"
 fi
 if [[ -n "${ONLY}" ]]; then printf "Filter --only: %s\n" "${ONLY}"; fi
 if [[ -n "${SKIP}" ]]; then printf "Filter --skip: %s\n" "${SKIP}"; fi
@@ -436,11 +425,7 @@ verdict_compile() {
         return 1
     fi
     if [[ -s "${ex_dir}/${artifact}.ptx" ]]; then
-        if verify_host_ptx_in_compile_only "${ex}"; then
-            echo "PASS (compiled; host/PTX contract verified)"
-        else
-            echo "PASS (compiled)"
-        fi
+        echo "PASS (compiled)"
         return 0
     fi
     if [[ -s "${ex_dir}/${artifact}.ll" ]]; then
@@ -498,23 +483,6 @@ run_cargo() {
     else
         cargo oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
-    fi
-
-    if [[ ${COMPILE_ONLY} -eq 1 && ${CARGO_EC} -eq 0 ]] \
-        && verify_host_ptx_in_compile_only "${ex}"; then
-        local binary="${CARGO_TARGET_DIR}/release/${ex//-/_}"
-        if [[ ! -x "${binary}" ]]; then
-            echo "error: host/PTX verifier binary missing: ${binary}" >>"${log}"
-            CARGO_EC=1
-            return
-        fi
-        if [[ ${VERBOSE} -eq 1 ]]; then
-            "${binary}" --verify-ptx 2>&1 | tee -a "${log}"
-            CARGO_EC=${PIPESTATUS[0]}
-        else
-            "${binary}" --verify-ptx >>"${log}" 2>&1
-            CARGO_EC=$?
-        fi
     fi
 }
 

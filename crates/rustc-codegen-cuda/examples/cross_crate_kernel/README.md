@@ -29,8 +29,8 @@ cross_crate_kernel/
 cargo oxide run cross_crate_kernel
 ```
 
-The cross-crate host lookup names can be checked against the generated PTX
-without initializing CUDA:
+The built executable can compare its own lookup names against generated PTX
+without creating a CUDA context:
 
 ```bash
 cargo oxide build cross_crate_kernel
@@ -38,8 +38,18 @@ cargo oxide build cross_crate_kernel
   --verify-ptx
 ```
 
+The executable still links the CUDA driver library, so this explicit local
+check requires `libcuda.so.1`. Compile-only CI does not execute it.
+
 This covers `scale::<f32>`, `scale::<i32>`, `add_const::<4>`, and
 `add_const::<8>`.
+
+The consuming crate can inspect those names without touching macro internals:
+
+```rust
+let f32_entry = kernels::scale_ptx_name::<f32>();
+let four_entry = kernels::add_const_ptx_name::<4>();
+```
 
 ## Expected Output
 

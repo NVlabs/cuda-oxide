@@ -12,6 +12,7 @@ impl Eight {
     const VALUE: usize = 8;
 }
 
+#[allow(non_upper_case_globals)]
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -41,15 +42,29 @@ mod kernels {
         // SAFETY: inherited from this kernel's caller contract.
         unsafe { output.add(index).write(index as u32) }
     }
+
+    #[device]
+    fn hygiene_device<const __cuda_oxide_arg_0: usize>(value: usize) -> usize {
+        value + __cuda_oxide_arg_0
+    }
+
+    /// This specialization is retained only by asking for its PTX name. It
+    /// also proves that generated locals cannot capture a user const generic.
+    #[allow(non_upper_case_globals)]
+    #[kernel]
+    pub fn name_only<const cuda_oxide_kernel_scope_246e25db: usize>() {
+        let _ = thread::index_1d();
+        let _ = hygiene_device::<cuda_oxide_kernel_scope_246e25db>(0);
+    }
 }
 
-fn specialization_names() -> [&'static str; 4] {
-    use cuda_host::GenericCudaKernel;
+fn specialization_names() -> [&'static str; 5] {
     [
-        <kernels::__write_value_CudaKernel<4> as GenericCudaKernel>::ptx_name(),
-        <kernels::__write_value_CudaKernel<8> as GenericCudaKernel>::ptx_name(),
-        <kernels::__write_same_CudaKernel<4> as GenericCudaKernel>::ptx_name(),
-        <kernels::__write_same_CudaKernel<8> as GenericCudaKernel>::ptx_name(),
+        kernels::write_value_ptx_name::<4>(),
+        kernels::write_value_ptx_name::<8>(),
+        kernels::write_same_ptx_name::<4>(),
+        kernels::write_same_ptx_name::<8>(),
+        kernels::name_only_ptx_name::<4>(),
     ]
 }
 
@@ -68,7 +83,7 @@ fn entry_body<'a>(ptx: &'a str, name: &str) -> &'a str {
 fn verify_generated_ptx() {
     let ptx = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/const_generic.ptx"))
         .expect("read const_generic.ptx; run `cargo oxide build const_generic` first");
-    let [value_4, value_8, unused_4, unused_8] = specialization_names();
+    let [value_4, value_8, unused_4, unused_8, name_only_4] = specialization_names();
 
     assert_ne!(value_4, value_8);
     assert_ne!(unused_4, unused_8);
@@ -76,6 +91,7 @@ fn verify_generated_ptx() {
     let body_8 = entry_body(&ptx, value_8);
     let _unused_body_4 = entry_body(&ptx, unused_4);
     let _unused_body_8 = entry_body(&ptx, unused_8);
+    let _name_only_body_4 = entry_body(&ptx, name_only_4);
     assert!(body_4.contains(".maxntid 64, 1, 1"));
     assert!(body_8.contains(".maxntid 64, 1, 1"));
     assert!(
@@ -100,9 +116,7 @@ fn main() {
     }
     if args.iter().any(|arg| arg == "--verify-ptx") {
         verify_generated_ptx();
-        println!(
-            "host lookup names, used/unused-const PTX entries, launch bounds, and constants agree"
-        );
+        println!("host lookup names, retained PTX entries, launch bounds, and constants agree");
         return;
     }
 
@@ -162,10 +176,11 @@ fn main() {
 mod tests {
     #[test]
     fn host_lookup_names_distinguish_const_values() {
-        let [value_4, value_8, unused_4, unused_8] = super::specialization_names();
+        let [value_4, value_8, unused_4, unused_8, name_only_4] = super::specialization_names();
 
         assert_ne!(value_4, value_8);
         assert_ne!(unused_4, unused_8);
+        assert!(name_only_4.starts_with("name_only_TID_"));
         assert!(value_4.starts_with("write_value_TID_"));
         assert!(value_8.starts_with("write_value_TID_"));
         println!("VALUE=4 host lookup: {value_4}");
