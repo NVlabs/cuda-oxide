@@ -320,6 +320,7 @@ extern crate rustc_codegen_llvm;
 mod collector;
 mod device_codegen;
 mod generated_intrinsics;
+mod materialize;
 
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind};
@@ -791,6 +792,15 @@ fn write_device_artifact_object(
     use_target_specific_anchor: bool,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let bundle_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| output_name.to_string());
+    let materialized_artifact;
+    let artifact = match materialize_artifact_for_embedding(&bundle_name, &result.target, artifact)?
+    {
+        Some(cubin) => {
+            materialized_artifact = cubin;
+            &materialized_artifact
+        }
+        None => artifact,
+    };
     let payload_kind = match artifact.kind {
         device_codegen::DeviceCodegenArtifactKind::Ptx => oxide_artifacts::ArtifactPayloadKind::Ptx,
         device_codegen::DeviceCodegenArtifactKind::NvvmIr => {
@@ -865,6 +875,39 @@ fn write_device_artifact_object(
         oxide_artifacts::build_host_object_for_target(&blob, host_target, Some(&legacy_anchor))?
     };
     write_artifact_object(output_dir, output_name, host_target, &object, "embed")
+}
+
+/// Opt-in (`CUDA_OXIDE_MATERIALIZE_CUBIN`): compile NVVM IR / LTOIR
+/// artifacts down to a final cubin before embedding, so the consuming
+/// binary loads device code directly through the CUDA driver — no libNVVM
+/// or nvJitLink on the deployment host and no first-load compile hit. The
+/// cubin is pinned to the emitted architecture; the default (embed the IR,
+/// compile at load) keeps cuda-host's execution routing, including the PTX
+/// bridge to newer GPUs. PTX and cubin artifacts pass through untouched
+/// either way. See `materialize` for the trade-offs.
+fn materialize_artifact_for_embedding(
+    bundle_name: &str,
+    target: &str,
+    artifact: &device_codegen::DeviceCodegenArtifact,
+) -> Result<Option<device_codegen::DeviceCodegenArtifact>, Box<dyn std::error::Error>> {
+    if !materialize::materialize_cubin_enabled() {
+        return Ok(None);
+    }
+    let cubin = match artifact.kind {
+        device_codegen::DeviceCodegenArtifactKind::NvvmIr => {
+            materialize::nvvm_ir_to_cubin(&artifact.bytes, bundle_name, target)?
+        }
+        device_codegen::DeviceCodegenArtifactKind::Ltoir => {
+            materialize::ltoir_to_cubin(&artifact.bytes, &artifact.name, target)?
+        }
+        device_codegen::DeviceCodegenArtifactKind::Ptx
+        | device_codegen::DeviceCodegenArtifactKind::Cubin => return Ok(None),
+    };
+    Ok(Some(device_codegen::DeviceCodegenArtifact {
+        kind: device_codegen::DeviceCodegenArtifactKind::Cubin,
+        name: format!("{bundle_name}.cubin"),
+        bytes: cubin,
+    }))
 }
 
 fn write_filtered_artifact_anchor_object(

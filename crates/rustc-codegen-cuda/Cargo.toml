@@ -24,6 +24,13 @@ dialect-mir = { path = "../dialect-mir" }
 dialect-nvvm = { path = "../dialect-nvvm" }
 reserved-oxide-symbols = { path = "../reserved-oxide-symbols" }
 oxide-artifacts = { path = "../oxide-artifacts", features = ["object-write"] }
+# Opt-in cubin materialization (CUDA_OXIDE_MATERIALIZE_CUBIN): both crates
+# load their libraries via dlopen at call time, so the backend dylib gains
+# no CUDA link-time or load-time dependency. Deliberately NOT cuda-host,
+# which would link the backend against the CUDA driver (libcuda.so.1) and
+# break building/loading it on machines without a GPU driver.
+libnvvm-sys = { path = "../libnvvm-sys" }
+nvjitlink-sys = { path = "../nvjitlink-sys" }
 
 # IMPORTANT: This crate is isolated from the main workspace, so we cannot use
 # `{ workspace = true }`. Keep these versions synchronized with root Cargo.toml

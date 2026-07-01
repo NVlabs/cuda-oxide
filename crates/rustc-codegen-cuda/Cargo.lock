@@ -395,6 +395,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nvjitlink-sys"
+version = "0.2.1"
+dependencies = [
+ "libloading",
+ "thiserror",
+]
+
+[[package]]
 name = "nvvm-transforms"
 version = "0.2.1"
 dependencies = [
@@ -562,10 +570,12 @@ dependencies = [
  "combine",
  "dialect-mir",
  "dialect-nvvm",
+ "libnvvm-sys",
  "linkme",
  "llvm-export",
  "mir-importer",
  "mir-lower",
+ "nvjitlink-sys",
  "once_cell",
  "oxide-artifacts",
  "pliron",
