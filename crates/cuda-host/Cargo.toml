@@ -20,3 +20,6 @@ cuda-async = { workspace = true, optional = true }
 [features]
 default = []
 async = ["dep:cuda-async", "cuda-macros/async"]
+
+[dev-dependencies]
+cuda-device = { workspace = true }

@@ -12,6 +12,8 @@ help: the trait `for<'__cuda_disjoint> cuda_device::__LaunchContractDisjointSlic
    = help: the following other types implement trait `cuda_device::__LaunchContractDisjointSlice<Element, DOMAIN>`:
              `cuda_device::DisjointSlice<'a, T, Index2D<ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'a, T, Index2D<ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
+             `cuda_device::DisjointSlice<'a, T, LinearTiles<N>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
+             `cuda_device::DisjointSlice<'a, T, RowMajorTiles<ROWS, COLS, ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'a, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'a, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'a, T>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`

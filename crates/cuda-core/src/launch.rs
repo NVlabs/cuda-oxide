@@ -205,6 +205,20 @@ pub enum DynamicSharedMemoryRequirement {
     },
 }
 
+/// Coordinate widths whose range is guaranteed by launch preparation.
+///
+/// `U32` does not change CUDA's grid or block dimensions. It proves that each
+/// per-axis global coordinate fits in `u32`, allowing a contracted kernel to
+/// keep coordinate arithmetic narrow until the final address calculation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CoordinateRequirement {
+    /// Make no narrower-coordinate promise.
+    #[default]
+    Native,
+    /// Every active-axis coordinate is representable by `u32`.
+    U32,
+}
+
 /// An immutable description of a kernel's launch-time assumptions.
 ///
 /// Macro-generated contract marker types expose one of these through
@@ -218,6 +232,7 @@ pub struct LaunchContractSpec {
     cluster: Option<(u32, u32, u32)>,
     cooperative: bool,
     min_compute_capability: Option<(u32, u32)>,
+    coordinates: CoordinateRequirement,
 }
 
 impl LaunchContractSpec {
@@ -235,6 +250,7 @@ impl LaunchContractSpec {
             cluster: None,
             cooperative: false,
             min_compute_capability: None,
+            coordinates: CoordinateRequirement::Native,
         }
     }
 
@@ -256,6 +272,17 @@ impl LaunchContractSpec {
     #[must_use]
     pub const fn with_min_compute_capability(mut self, major: u32, minor: u32) -> Self {
         self.min_compute_capability = Some((major, minor));
+        self
+    }
+
+    /// Proves that every global coordinate fits in `u32`.
+    ///
+    /// Preparation checks `grid_axis * block_axis <= 2^32` independently for
+    /// X, Y, and Z. Exactly `2^32` positions is valid because the largest
+    /// zero-based coordinate is `u32::MAX`.
+    #[must_use]
+    pub const fn with_u32_coordinates(mut self) -> Self {
+        self.coordinates = CoordinateRequirement::U32;
         self
     }
 
@@ -287,6 +314,11 @@ impl LaunchContractSpec {
     /// Returns the minimum compute capability, if one was declared.
     pub const fn min_compute_capability(&self) -> Option<(u32, u32)> {
         self.min_compute_capability
+    }
+
+    /// Returns the coordinate-width requirement.
+    pub const fn coordinates(&self) -> CoordinateRequirement {
+        self.coordinates
     }
 }
 
@@ -375,6 +407,19 @@ pub enum LaunchContractError {
         kernel: &'static str,
         /// Shape whose product overflowed.
         dimension: LaunchDimension,
+    },
+    /// A per-axis global coordinate cannot be represented by `u32`.
+    CoordinateRangeExceedsU32 {
+        /// Kernel being prepared.
+        kernel: &'static str,
+        /// Axis whose coordinate range is too large.
+        axis: LaunchAxis,
+        /// Number of blocks on this axis.
+        grid: u32,
+        /// Number of threads per block on this axis.
+        block: u32,
+        /// Number of coordinate values required on this axis.
+        positions: u64,
     },
     /// A shared-memory alignment was not a nonzero power of two.
     InvalidSharedMemoryAlignment {
@@ -594,6 +639,16 @@ impl Display for LaunchContractError {
             Self::DimensionProductOverflow { kernel, dimension } => {
                 write!(f, "{kernel}: {dimension:?} dimension product overflowed")
             }
+            Self::CoordinateRangeExceedsU32 {
+                kernel,
+                axis,
+                grid,
+                block,
+                positions,
+            } => write!(
+                f,
+                "{kernel}: Grid.{axis:?} {grid} * Block.{axis:?} {block} requires {positions} coordinates, exceeding the u32 range"
+            ),
             Self::InvalidSharedMemoryAlignment { kernel, alignment } => write!(
                 f,
                 "{kernel}: dynamic shared-memory alignment {alignment} is not a nonzero power of two"
@@ -977,6 +1032,10 @@ fn validate_static(
     validate_shape(spec.kernel_name, LaunchDimension::Grid, config.grid_dim)?;
     validate_shape(spec.kernel_name, LaunchDimension::Block, config.block_dim)?;
 
+    if spec.coordinates == CoordinateRequirement::U32 {
+        validate_u32_coordinates(spec.kernel_name, config.grid_dim, config.block_dim)?;
+    }
+
     match spec.block {
         BlockRequirement::Exact(required) => {
             validate_shape(spec.kernel_name, LaunchDimension::Block, required)?;
@@ -1052,6 +1111,28 @@ fn validate_static(
         }
     }
 
+    Ok(())
+}
+
+fn validate_u32_coordinates(
+    kernel: &'static str,
+    grid: (u32, u32, u32),
+    block: (u32, u32, u32),
+) -> Result<(), LaunchContractError> {
+    const U32_COORDINATE_COUNT: u64 = u32::MAX as u64 + 1;
+
+    for (axis, grid, block) in axes(grid, block) {
+        let positions = u64::from(grid) * u64::from(block);
+        if positions > U32_COORDINATE_COUNT {
+            return Err(LaunchContractError::CoordinateRangeExceedsU32 {
+                kernel,
+                axis,
+                grid,
+                block,
+                positions,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -1449,6 +1530,24 @@ mod tests {
     }
 
     #[test]
+    fn u32_coordinate_contract_accepts_exact_range_and_rejects_larger_axis() {
+        let spec = exact_spec((2, 1, 1)).with_u32_coordinates();
+
+        // 2^31 blocks * 2 threads gives exactly 2^32 zero-based coordinates,
+        // whose largest value is u32::MAX.
+        assert!(validate_static(spec, raw((1 << 31, 1, 1), (2, 1, 1), 0)).is_ok());
+
+        assert!(matches!(
+            validate_static(spec, raw(((1 << 31) + 1, 1, 1), (2, 1, 1), 0)),
+            Err(LaunchContractError::CoordinateRangeExceedsU32 {
+                axis: LaunchAxis::X,
+                positions: 4_294_967_298,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn validates_dynamic_shared_memory_exact_range_and_alignment() {
         let exact = LaunchContractSpec::new(
             KERNEL,
@@ -1696,11 +1795,13 @@ mod tests {
         let spec = exact_spec((32, 1, 1))
             .with_cluster((2, 1, 1))
             .with_cooperative()
-            .with_min_compute_capability(9, 0);
+            .with_min_compute_capability(9, 0)
+            .with_u32_coordinates();
         assert_eq!(spec.kernel_name(), KERNEL);
         assert_eq!(spec.block(), BlockRequirement::Exact((32, 1, 1)));
         assert_eq!(spec.cluster(), Some((2, 1, 1)));
         assert!(spec.cooperative());
         assert_eq!(spec.min_compute_capability(), Some((9, 0)));
+        assert_eq!(spec.coordinates(), CoordinateRequirement::U32);
     }
 }

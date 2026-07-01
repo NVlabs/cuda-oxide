@@ -75,10 +75,13 @@ above `#[kernel]`. In this order the attributes have already become body
 markers when the generic entry is generated, so the macro must copy those exact
 compiler markers to the entry rather than depending on attribute order.
 
-A small `#[kernel(u32)]` compile-only kernel checks the explicit-instantiation
-form too: its helper asks for 8-byte alignment, its contract raises that to 32,
-and the generated `explicit_aligned_u32` entry keeps `.maxntid 32, 1, 1`. It
-uses the opposite pre-`#[kernel]` ordering of bounds and contract attributes.
+A small `#[kernel(u32, scope = scope)]` compile-only kernel checks the
+explicit-instantiation form too: its helper asks for 8-byte alignment, its
+contract raises that to 32, and the generated `explicit_aligned_u32` entry
+keeps `.maxntid 32, 1, 1`. It uses the opposite pre-`#[kernel]` ordering of
+bounds and contract attributes. It also calls `index_1d32(scope)`, proving that
+the generated entry—not its generic helper—creates and forwards the prepared
+1-D coordinate scope.
 
 ```bash
 cargo oxide run cuda_module_contract
