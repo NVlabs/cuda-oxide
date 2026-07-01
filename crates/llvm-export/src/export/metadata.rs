@@ -31,20 +31,22 @@ pub(super) fn emit_nvvm_annotations(
 ) -> Result<(), String> {
     let mut metadata_refs = Vec::new();
 
-    // Collect names of kernels that have special configs
-    let special_kernel_names: HashSet<String> = state
+    // Cluster annotations already carry `!"kernel"`. Launch-bounds annotations
+    // do not, so bounded kernels still need the basic annotation when the
+    // backend requests annotations for every kernel.
+    let cluster_kernel_names: HashSet<String> = state
         .cluster_kernels
         .iter()
         .map(|k| k.name.clone())
-        .chain(state.launch_bounds_kernels.iter().map(|k| k.name.clone()))
         .collect();
 
-    // Emit basic annotation for kernels WITHOUT special configs
+    // Emit basic annotations for kernels whose other metadata does not already
+    // identify them as kernels.
     if emit_all_annotations {
         let basic_kernels: Vec<String> = state
             .all_kernels
             .iter()
-            .filter(|kernel| !special_kernel_names.contains(&kernel.name))
+            .filter(|kernel| !cluster_kernel_names.contains(&kernel.name))
             .map(|kernel| kernel.name.clone())
             .collect();
 
@@ -199,17 +201,50 @@ mod tests {
             output,
             concat!(
                 "!0 = !{ptr @plain, !\"kernel\", i32 1}\n",
-                "!1 = !{ptr @clustered, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 2, !\"cluster_dim_y\", i32 3, !\"cluster_dim_z\", i32 4}\n",
-                "!2 = !{ptr @bounded, !\"maxntidx\", i32 256}\n",
-                "!3 = !{ptr @bounded, !\"maxntidy\", i32 1}\n",
-                "!4 = !{ptr @bounded, !\"maxntidz\", i32 1}\n",
-                "!5 = !{ptr @bounded, !\"minctasm\", i32 2}\n",
-                "!nvvm.annotations = !{!0, !1, !2, !3, !4, !5}\n",
-                "!nvvmir.version = !{!6}\n",
-                "!6 = !{i32 2, i32 0, i32 3, i32 2}\n",
+                "!1 = !{ptr @bounded, !\"kernel\", i32 1}\n",
+                "!2 = !{ptr @clustered, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 2, !\"cluster_dim_y\", i32 3, !\"cluster_dim_z\", i32 4}\n",
+                "!3 = !{ptr @bounded, !\"maxntidx\", i32 256}\n",
+                "!4 = !{ptr @bounded, !\"maxntidy\", i32 1}\n",
+                "!5 = !{ptr @bounded, !\"maxntidz\", i32 1}\n",
+                "!6 = !{ptr @bounded, !\"minctasm\", i32 2}\n",
+                "!nvvm.annotations = !{!0, !1, !2, !3, !4, !5, !6}\n",
+                "!nvvmir.version = !{!7}\n",
+                "!7 = !{i32 2, i32 0, i32 3, i32 2}\n",
             )
         );
-        assert_eq!(state.next_metadata_id(), 7);
+        assert_eq!(state.next_metadata_id(), 8);
+    }
+
+    #[test]
+    fn cluster_and_launch_bounds_emit_one_kernel_identity() {
+        let ctx = Context::new();
+        let mut state = test_state(&ctx);
+        state.all_kernels.push(KernelInfo {
+            name: "clustered_bounded".into(),
+        });
+        state.cluster_kernels.push(KernelClusterConfig {
+            name: "clustered_bounded".into(),
+            dim_x: 2,
+            dim_y: 1,
+            dim_z: 1,
+        });
+        state.launch_bounds_kernels.push(KernelLaunchBounds {
+            name: "clustered_bounded".into(),
+            max_threads: 128,
+            min_blocks: None,
+        });
+
+        let mut output = String::new();
+        emit_nvvm_annotations(&mut output, &mut state, true).unwrap();
+
+        assert_eq!(output.matches("!\"kernel\", i32 1").count(), 1);
+        assert!(output.contains(
+            "!0 = !{ptr @clustered_bounded, !\"kernel\", i32 1, !\"cluster_dim_x\", i32 2, !\"cluster_dim_y\", i32 1, !\"cluster_dim_z\", i32 1}"
+        ));
+        assert!(output.contains("!1 = !{ptr @clustered_bounded, !\"maxntidx\", i32 128}"));
+        assert!(output.contains("!2 = !{ptr @clustered_bounded, !\"maxntidy\", i32 1}"));
+        assert!(output.contains("!3 = !{ptr @clustered_bounded, !\"maxntidz\", i32 1}"));
+        assert_eq!(state.next_metadata_id(), 4);
     }
 
     #[test]

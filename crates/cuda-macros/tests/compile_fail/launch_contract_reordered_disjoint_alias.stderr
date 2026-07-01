@@ -8,6 +8,8 @@ error[E0277]: the trait bound `for<'__cuda_disjoint> cuda_device::DisjointSlice<
    = help: the following other types implement trait `cuda_device::__LaunchContractDisjointSlice<Element, DOMAIN>`:
              `cuda_device::DisjointSlice<'_, T, Index2D<ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'_, T, Index2D<ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
+             `cuda_device::DisjointSlice<'_, T, LinearTiles<N>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
+             `cuda_device::DisjointSlice<'_, T, RowMajorTiles<ROWS, COLS, ROW_STRIDE>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'_, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `cuda_device::DisjointSlice<'_, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `cuda_device::DisjointSlice<'_, T>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`

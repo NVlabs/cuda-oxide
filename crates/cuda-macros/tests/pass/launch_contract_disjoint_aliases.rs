@@ -6,6 +6,7 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, launch_bounds, launch_cont
 
 type Tiled = Index2D<64>;
 use cuda_device::thread::Index2D as ImportedIndex2D;
+use cuda_device::thread::index_1d32 as fast_index;
 
 #[cuda_module]
 mod kernels {
@@ -43,6 +44,29 @@ mod kernels {
     pub fn lifetime_only<'a>(input: &'a [u32]) {
         let _ = input;
     }
+
+    #[kernel(scope = scope)]
+    #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
+    pub fn generic_fast<const ADD: u32>(mut out: DisjointSlice<u32>) {
+        let index = fast_index(scope);
+        if let Some(mut value) = out.element_thread32(index) {
+            value.write(ADD);
+        }
+    }
+
+    fn index_1d32() -> u32 {
+        7
+    }
+
+    #[kernel(scope = launch)]
+    #[launch_contract(domain = 1, coordinates = u32, block = (64, 1, 1))]
+    pub fn same_named_local_is_ordinary(mut out: DisjointSlice<u32>) {
+        let local_value = index_1d32();
+        let index = cuda_device::thread::index_1d32(launch);
+        if let Some(mut value) = out.element_thread32(index) {
+            value.write(local_value);
+        }
+    }
 }
 
 fn prepared_methods_exist(module: &kernels::LoadedModule) {
@@ -53,6 +77,8 @@ fn prepared_methods_exist(module: &kernels::LoadedModule) {
         cuda_core::LaunchConfig1D::new(1, 64, 0),
     );
     let _ = module.prepare_lifetime_only(cuda_core::LaunchConfig1D::new(1, 64, 0));
+    let _ = module.prepare_generic_fast::<7>(cuda_core::LaunchConfig1D::new(1, 64, 0));
+    let _ = module.prepare_same_named_local_is_ordinary(cuda_core::LaunchConfig1D::new(1, 64, 0));
 }
 
 fn main() {}

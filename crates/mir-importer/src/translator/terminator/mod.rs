@@ -3117,9 +3117,13 @@ fn try_dispatch_intrinsic(
                 loc,
             )))
         }
-        "cuda_device::thread::__launch_bounds_config" => {
-            // Compile-time launch bounds marker from #[launch_bounds(max, min)] attribute.
-            // The launch bounds are extracted in body.rs during MIR scanning.
+        "cuda_device::__launch_bounds_config"
+        | "cuda_device::thread::__launch_bounds_config"
+        | "cuda_device::__launch_contract_config"
+        | "cuda_device::thread::__launch_contract_config" => {
+            // Compile-time launch metadata marker. Launch bounds are extracted
+            // in body.rs; the contract marker is consumed by the proc macro to
+            // select a typed kernel scope. Neither call generates runtime code.
             // This call generates no runtime code - just emit a goto to the target block.
             //
             // We need a prev_op to insert after. If none exists, create a dummy constant.
@@ -3150,7 +3154,7 @@ fn try_dispatch_intrinsic(
             };
             Ok(Some(helpers::emit_goto(
                 ctx,
-                target.expect("__launch_bounds_config must have target"),
+                target.expect("launch metadata marker must have target"),
                 actual_prev_op,
                 block_map,
                 loc,

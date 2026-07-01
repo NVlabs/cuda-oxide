@@ -1,0 +1,9 @@
+error[E0382]: borrow of moved value: `proof`
+  --> tests/compile_fail/thread_index_view_proof_not_copy.rs:13:13
+   |
+11 |     let proof = view.at_const::<0>();
+   |         ----- move occurs because `proof` has type `InBoundsMut32<'_, u32>`, which does not implement the `Copy` trait
+12 |     let _moved = proof;
+   |                  ----- value moved here
+13 |     let _ = proof.read();
+   |             ^^^^^ value borrowed here after move
