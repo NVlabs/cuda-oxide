@@ -54,11 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Item | Purpose |
 |------|---------|
 | `LoadedModule` | Typed handle around the embedded CUDA module and cached kernel functions |
-| `load(&Arc<CudaContext>)` | Load the current crate's embedded artifact bundle |
-| `load_named(&Arc<CudaContext>, name)` | Load a specific embedded bundle by name |
-| `from_module(Arc<CudaModule>)` | Wrap an already-loaded CUDA module |
+| `load(&Arc<CudaContext>)` | Load the current package's embedded bundle; unsafe when the module has a launch contract |
+| `load_named(&Arc<CudaContext>, name)` | Load a specific embedded bundle by name; unsafe when the module has a launch contract |
+| `from_module(Arc<CudaModule>)` | Wrap an already-loaded CUDA module; unsafe when the module has a launch contract |
 | `LoadedModule::{kernel}` | One launch method per `#[kernel]` function |
-| `load_async(device_id)` | With feature `async`, load from a `cuda-async` device context |
+| `load_async(device_id)` | With feature `async`, load from a `cuda-async` device context; unsafe when contracted |
 | `LoadedModule::{kernel}_async` | With feature `async`, build a lazy `AsyncKernelLaunch` |
 | `LoadedModule::{kernel}_async_owned` | With feature `async`, build an owned async launch that returns its buffers |
 
@@ -75,6 +75,78 @@ Because the launches are ordinary methods, rust-analyzer and rustc can complete
 kernel names, show argument names, and type-check arguments before the program
 runs. By-value arguments are copied into the CUDA launch packet through the
 `KernelScalar` boundary; device slices are encoded as pointer-plus-length pairs.
+
+## Prepared Launch Contracts
+
+`#[launch_contract]` is an opt-in path for kernels whose geometry and resource
+assumptions are part of correctness, not merely a tuning choice:
+
+```rust
+#[kernel]
+#[launch_bounds(256)]
+#[launch_contract(
+    domain = 1,
+    block = (256, 1, 1),
+    dynamic_shared = 1024,
+    dynamic_shared_alignment = 128,
+    min_compute_capability = (9, 0),
+)]
+fn reduce(input: &[f32], mut output: DisjointSlice<f32>) { /* ... */ }
+```
+
+Preparation resolves the exact generic kernel entry and checks the live CUDA
+device and function once:
+
+```text
+LaunchConfig1D
+      │ check block/grid limits, shared memory, CC, cluster/cooperative rules
+      ▼
+PreparedLaunch<reduce<T>>
+      │ immutable function + configuration + context
+      └──────────────> repeated launches make no capability/resource queries
+```
+
+```rust
+let prepared = module.prepare_reduce(LaunchConfig1D::new(blocks, 256, 1024))?;
+module.reduce(&stream, &prepared, &input, &mut output)?;
+```
+
+`LaunchConfig1D`, `LaunchConfig2D`, and `LaunchConfig3D` have private fields;
+a 2-D configuration cannot be passed to a 1-D contract. The prepared value is
+also branded with the exact kernel specialization, so `reduce::<f32>` and
+`reduce::<f64>` are not interchangeable. Generic closures can use the generated
+`prepare_{kernel}_for(&closure, config)` helper to infer their anonymous type.
+
+For contracted kernels, raw `LaunchConfig` is available only through generated
+unsafe methods such as `reduce_unchecked`. Borrowed and owned async methods
+return immutable prepared wrappers, so safe code cannot change their geometry
+after validation; they recheck the scheduler-selected stream's context at
+submission time.
+
+Binding code is a one-time unsafe boundary for contracted modules. Embedded
+bundles are currently named per package, not per library/binary target, so even
+`load()` cannot prove that a same-package sibling contains the matching ABI and
+contract. `load`, `load_async`, `from_module`, `load_named`, and
+`load_async_named` therefore require the caller to assert artifact provenance.
+For generic modules, the caller must also ensure the merged PTX bundles contain
+the matching specializations and no conflicting entry definitions. Preparation
+and repeated launches are safe after that binding.
+
+The declared dynamic shared-memory byte range is an author contract because
+arbitrary pointer offsets cannot be inferred. Alignment is compiler-enforced:
+the marker emitted by `#[launch_contract]` is merged with alignment requests in
+the body and reachable local helpers, and the stronger value reaches PTX.
+Prelinked external helpers keep the alignment recorded when they were compiled.
+
+Cluster and cooperative contracts are validated separately. A contract that
+combines both currently fails preparation because the available occupancy query
+cannot prove the combined residency rule; the unsafe launch method remains the
+explicit expert escape hatch.
+
+This provides the typed host half of issue #115: an opted-in 1-D kernel cannot
+be launched with Y/Z geometry through safe generated methods. Connecting that
+host proof to every `ThreadIndex` created through transitive device helpers is
+separate work; uncontracted kernels keep their existing API.
 
 Enable the `async` feature to generate async launch methods. They use the same
 scalar mapping, but take no stream argument:

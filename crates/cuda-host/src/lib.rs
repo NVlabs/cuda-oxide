@@ -96,9 +96,11 @@ pub use type_id::{type_id_u128, type_id_u128_of_val};
 
 #[cfg(feature = "async")]
 pub use launch::{
-    KernelSliceArg, KernelSliceArgMut, load_cuda_module_from_async_context,
-    load_kernel_module_async, new_async_kernel_launch, new_owned_async_kernel_launch,
-    push_async_kernel_scalar, push_async_read_only_device_slice, push_async_writable_device_slice,
+    KernelSliceArg, KernelSliceArgMut, PreparedAsyncKernelLaunch, PreparedOwnedAsyncKernelLaunch,
+    load_cuda_module_from_async_context, load_kernel_module_async, new_async_kernel_launch,
+    new_owned_async_kernel_launch, new_prepared_async_kernel_launch,
+    new_prepared_owned_async_kernel_launch, push_async_kernel_scalar,
+    push_async_read_only_device_slice, push_async_writable_device_slice,
     set_async_kernel_cluster_dim, set_async_kernel_cooperative,
 };
 

@@ -5,13 +5,13 @@
 
 #![allow(dead_code)]
 
-use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig, LaunchConfig1D};
 #[cfg(feature = "async")]
 use cuda_host::cuda_async::device_box::DeviceBox;
 #[cfg(feature = "async")]
 use cuda_host::cuda_async::device_operation::DeviceOperation;
 use cuda_host::cuda_module;
-use cuda_macros::{cooperative_launch, kernel};
+use cuda_macros::{cooperative_launch, kernel, launch_contract};
 
 #[cfg(feature = "async")]
 type TwoF32Buffers = (DeviceBox<[f32]>, DeviceBox<[f32]>);
@@ -71,6 +71,29 @@ mod kernels {
     pub fn cooperative_grid_sync(output: &mut [u32]) {
         let _ = output;
     }
+
+    #[kernel]
+    #[launch_contract(
+        domain = 1,
+        block = (64, 1, 1),
+        dynamic_shared = 0,
+        min_compute_capability = (8, 0),
+    )]
+    pub fn contracted_read(input: &[u32]) {
+        let _ = input;
+    }
+
+    #[kernel]
+    #[launch_contract(domain = 1, block = (64, 1, 1), dynamic_shared = 0)]
+    pub fn contracted_closure<F: Fn(u32) -> u32 + Copy>(op: F, input: &[u32]) {
+        let _ = (op, input);
+    }
+
+    #[kernel]
+    #[launch_contract(domain = 1, block = (64, 1, 1), dynamic_shared = 0)]
+    pub fn contracted_const<const N: usize>(input: &[u32]) {
+        let _ = (N, input);
+    }
 }
 
 #[cfg(feature = "async")]
@@ -127,6 +150,36 @@ fn generated_methods_accept_kernel_scalar_types(
     Ok(())
 }
 
+fn generated_prepared_methods_bind_the_exact_kernel_and_specialization(
+    module: &kernels::LoadedModule,
+    stream: &CudaStream,
+    input: &DeviceBuffer<u32>,
+) -> Result<(), cuda_core::LaunchContractError> {
+    let prepared = module.prepare_contracted_read(LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_read(stream, &prepared, input)?;
+
+    let offset = 7u32;
+    let op = move |value: u32| value + offset;
+    let generic = module.prepare_contracted_closure_for(&op, LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_closure(stream, &generic, op, input)?;
+
+    let const_generic = module.prepare_contracted_const::<4>(LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_const::<4>(stream, &const_generic, input)?;
+
+    unsafe {
+        module.contracted_read_unchecked(
+            stream,
+            LaunchConfig {
+                grid_dim: (1, 1, 1),
+                block_dim: (64, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            input,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "async")]
 fn generated_async_methods_accept_borrowed_buffers(
     module: &kernels::LoadedModule,
@@ -170,6 +223,26 @@ fn generated_async_methods_accept_borrowed_buffers(
     let launch = module.cooperative_grid_sync_async(config, async_output_u32)?;
     assert_unit_operation(launch);
 
+    Ok(())
+}
+
+#[cfg(feature = "async")]
+fn generated_prepared_async_methods_are_immutable_operations(
+    module: &kernels::LoadedModule,
+    input: &DeviceBuffer<u32>,
+    async_input: &DeviceBox<[u32]>,
+) -> Result<(), cuda_core::LaunchContractError> {
+    let prepared = module.prepare_contracted_read(LaunchConfig1D::new(1, 64, 0))?;
+    assert_unit_operation(module.contracted_read_async(&prepared, input));
+    assert_unit_operation(module.contracted_read_async(&prepared, async_input));
+
+    let offset = 7u32;
+    let op = move |value: u32| value + offset;
+    let generic = module.prepare_contracted_closure_for(&op, LaunchConfig1D::new(1, 64, 0))?;
+    assert_unit_operation(module.contracted_closure_async(&generic, op, async_input));
+
+    let const_generic = module.prepare_contracted_const::<4>(LaunchConfig1D::new(1, 64, 0))?;
+    assert_unit_operation(module.contracted_const_async::<4>(&const_generic, async_input));
     Ok(())
 }
 
@@ -230,15 +303,36 @@ fn generated_owned_async_methods_forward_const_generics(
     Ok(())
 }
 
+#[cfg(feature = "async")]
+fn generated_prepared_owned_async_methods_are_immutable_operations(
+    module: &kernels::LoadedModule,
+    async_input: DeviceBox<[u32]>,
+    const_input: DeviceBox<[u32]>,
+) -> Result<(), cuda_core::LaunchContractError> {
+    let prepared = module.prepare_contracted_read(LaunchConfig1D::new(1, 64, 0))?;
+    let launch = module.contracted_read_async_owned(&prepared, async_input);
+    assert_owned_u32_buffer(launch);
+
+    let const_generic = module.prepare_contracted_const::<4>(LaunchConfig1D::new(1, 64, 0))?;
+    let launch = module.contracted_const_async_owned::<4, _>(&const_generic, const_input);
+    assert_owned_u32_buffer(launch);
+    Ok(())
+}
+
 #[test]
 fn generated_cuda_module_api_typechecks() {
     let _ = generated_methods_accept_kernel_scalar_types;
+    let _ = generated_prepared_methods_bind_the_exact_kernel_and_specialization;
     #[cfg(feature = "async")]
     let _ = generated_async_methods_accept_borrowed_buffers;
+    #[cfg(feature = "async")]
+    let _ = generated_prepared_async_methods_are_immutable_operations;
     #[cfg(feature = "async")]
     let _ = generated_owned_async_methods_accept_owned_buffers;
     #[cfg(feature = "async")]
     let _ = generated_owned_async_methods_forward_const_generics;
+    #[cfg(feature = "async")]
+    let _ = generated_prepared_owned_async_methods_are_immutable_operations;
 }
 
 // =============================================================================

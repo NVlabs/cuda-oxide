@@ -27,4 +27,11 @@ fn macro_guards() {
 fn cuda_launch_requires_unsafe() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/launch_requires_unsafe.rs");
+
+    // This case expands `#[cuda_module]`. The trybuild fixture depends on the
+    // non-async `cuda-host` API, so only compile it with the matching macro
+    // feature set. Async contract expansion is covered by the macro unit tests
+    // and the `cuda-host --all-features` integration tests.
+    #[cfg(not(feature = "async"))]
+    t.compile_fail("tests/compile_fail/contract_unchecked_requires_unsafe.rs");
 }

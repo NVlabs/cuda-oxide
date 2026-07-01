@@ -94,6 +94,49 @@ pub struct DisjointSlice<'a, T, IndexSpace = Index1D> {
     _space: PhantomData<fn() -> IndexSpace>,
 }
 
+mod launch_contract_sealed {
+    pub trait Sealed {}
+}
+
+impl<'a, T, IndexSpace> launch_contract_sealed::Sealed for DisjointSlice<'a, T, IndexSpace> {}
+
+/// Compiler-facing proof that a `DisjointSlice` has the expected element type
+/// and supports a launch domain.
+///
+/// This trait is sealed: only the genuine [`DisjointSlice`] type can implement
+/// it. `#[cuda_module]` adds this bound to contracted kernels so Rust resolves
+/// type aliases before checking the declared launch domain.
+///
+/// A 2D index space also supports a 1D launch (all Y dimensions are one), but
+/// a 1D index space cannot support a 2D launch.
+#[doc(hidden)]
+pub trait __LaunchContractDisjointSlice<Element, const DOMAIN: u8>:
+    launch_contract_sealed::Sealed
+{
+}
+
+impl<'a, T> __LaunchContractDisjointSlice<T, 1> for DisjointSlice<'a, T, Index1D> {}
+
+impl<'a, T, const ROW_STRIDE: usize> __LaunchContractDisjointSlice<T, 1>
+    for DisjointSlice<'a, T, crate::thread::Index2D<ROW_STRIDE>>
+{
+}
+
+impl<'a, T, const ROW_STRIDE: usize> __LaunchContractDisjointSlice<T, 2>
+    for DisjointSlice<'a, T, crate::thread::Index2D<ROW_STRIDE>>
+{
+}
+
+impl<'a, T> __LaunchContractDisjointSlice<T, 1>
+    for DisjointSlice<'a, T, crate::thread::Runtime2DIndex>
+{
+}
+
+impl<'a, T> __LaunchContractDisjointSlice<T, 2>
+    for DisjointSlice<'a, T, crate::thread::Runtime2DIndex>
+{
+}
+
 impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     /// Create a DisjointSlice from a raw pointer and length.
     ///

@@ -28,14 +28,15 @@
 //!
 //! ## Dynamic Shared Memory (`DynamicSharedArray<T, ALIGN>`)
 //!
-//! Dynamic shared memory uses a per-kernel symbol (`__dynamic_smem_{kernel_name}`).
+//! Dynamic shared memory uses a symbol for each function that owns an access
+//! (`__dynamic_smem_{function_name}`).
 //! Key characteristics:
 //!
-//! - **Per-kernel symbols**: Each kernel gets its own extern shared symbol
-//! - **Pre-computed alignment**: A pre-pass scans all `DynamicSharedArray` calls in a kernel
-//!   to determine the maximum alignment before creating the global
-//! - **Single pool per kernel**: All `DynamicSharedArray` calls within a kernel share the
-//!   same runtime pool (sized by `shared_mem_bytes` at launch)
+//! - **Per-owner symbols**: Each function containing an access gets an extern symbol
+//! - **Pre-computed alignment**: A pre-pass combines the owner's body alignment with
+//!   the strongest launch-contract marker that can reach it
+//! - **Single runtime pool per launch**: The symbols refer to dynamic shared memory
+//!   sized by `shared_mem_bytes` at launch
 //!
 //! ### PTX Output Example
 //!
@@ -786,16 +787,16 @@ fn initializer_hex_byte_count(hex: &str) -> std::result::Result<u64, anyhow::Err
 /// with address space 3 and zero-length array type `[0 x i8]`. The actual size
 /// is determined at kernel launch via `LaunchConfig::shared_mem_bytes`.
 ///
-/// # Per-Kernel Symbols
+/// # Per-Owner Symbols
 ///
-/// Each kernel gets its own dynamic shared memory symbol (`__dynamic_smem_{kernel_name}`).
-/// This ensures explicit separation in the generated PTX.
+/// Each function that owns an access gets a dynamic shared-memory symbol
+/// (`__dynamic_smem_{function_name}`).
 ///
 /// # Alignment
 ///
-/// The alignment is pre-computed during the lowering pre-pass. All
-/// `DynamicSharedArray<T, ALIGN>` calls in a kernel share the same global, which
-/// uses the maximum alignment requested by any call.
+/// The alignment is pre-computed during the lowering pre-pass. It is the
+/// maximum of the owner's body requirements and every launch-contract marker
+/// that can reach it.
 ///
 /// # Byte Offset
 ///
@@ -873,17 +874,16 @@ pub fn convert_extern_shared_dc(
     Ok(())
 }
 
-/// Get or create the extern shared memory global for a kernel.
+/// Get or create the extern shared memory global for an owning function.
 ///
 /// Creates an LLVM global variable with:
 /// - Zero-length array type: `[0 x i8]`
 /// - External linkage (no initializer)
 /// - Address space 3 (shared memory)
-/// - Pre-computed maximum alignment from all DynamicSharedArray calls in the kernel
+/// - Pre-computed body and calling-kernel contract alignment
 ///
-/// Each kernel gets its own dynamic shared memory symbol
-/// (`__dynamic_smem_kernel_name`). Uses `shared_globals` for deduplication
-/// (only one global per kernel).
+/// Each owning function gets its own dynamic shared memory symbol. Uses
+/// `shared_globals` for deduplication (only one global per function).
 fn get_or_create_extern_shared_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
@@ -895,7 +895,7 @@ fn get_or_create_extern_shared_global(
     let (symbol_name, max_alignment) = dynamic_smem_alignments.get(func_name).cloned().ok_or_else(
         || {
             anyhow_to_pliron(anyhow::anyhow!(
-                "Internal error: dynamic shared memory alignment not pre-computed for kernel '{}'. \
+                "Internal error: dynamic shared memory alignment not pre-computed for function '{}'. \
                  This should have been done in compute_max_dynamic_smem_alignment.",
                 func_name
             ))

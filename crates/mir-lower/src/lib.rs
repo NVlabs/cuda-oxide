@@ -167,7 +167,7 @@ pub struct MirToLlvmConversionDriver {
     pub shared_globals: SharedGlobalsMap,
     /// Device global deduplication across all functions.
     pub device_globals: DeviceGlobalsMap,
-    /// Per-kernel dynamic shared memory alignment tracking.
+    /// Per-owning-function dynamic shared memory alignment tracking.
     pub dynamic_smem_alignments: DynamicSmemAlignmentMap,
 }
 
@@ -302,6 +302,11 @@ impl DialectConversion for MirToLlvmConversionDriver {
 ///
 /// `Ok(())` if all operations were successfully converted.
 pub fn lower_mir_to_llvm(ctx: &mut Context, module_op: Ptr<Operation>) -> Result<()> {
+    // Dynamic shared-memory operations may live in device helpers. Compute
+    // every kernel-to-helper requirement while the complete MIR call graph is
+    // still available; function conversion removes that graph incrementally.
+    lowering::propagate_kernel_dynamic_shared_alignments(ctx, module_op);
+
     let mut conversion = MirToLlvmConversionDriver {
         shared_globals: FxHashMap::default(),
         device_globals: FxHashMap::default(),

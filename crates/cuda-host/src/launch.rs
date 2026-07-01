@@ -19,6 +19,8 @@
 
 use std::ffi::c_void;
 #[cfg(feature = "async")]
+use std::future::IntoFuture;
+#[cfg(feature = "async")]
 use std::sync::Arc;
 
 // =============================================================================
@@ -276,6 +278,170 @@ pub fn new_owned_async_kernel_launch<R: Send>(
     resources: R,
 ) -> cuda_async::launch::OwnedAsyncKernelLaunch<R> {
     cuda_async::launch::OwnedAsyncKernelLaunch::new(launch, resources)
+}
+
+/// Immutable async operation produced from a validated, kernel-branded launch.
+///
+/// Unlike [`cuda_async::launch::AsyncKernelLaunch`], this wrapper exposes no
+/// setters for geometry, cluster shape, or cooperative mode. It also checks the
+/// stream selected by the async scheduler against the prepared function's CUDA
+/// context immediately before submission.
+#[cfg(feature = "async")]
+pub struct PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    launch: cuda_async::launch::AsyncKernelLaunch<'a>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+}
+
+#[cfg(feature = "async")]
+impl<Contract> std::fmt::Debug for PreparedAsyncKernelLaunch<'_, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedAsyncKernelLaunch")
+            .field("contract", &Contract::SPEC.kernel_name())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Owns async kernel resources while preserving an immutable prepared launch.
+#[cfg(feature = "async")]
+pub struct PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    launch: cuda_async::launch::OwnedAsyncKernelLaunch<R>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+}
+
+#[cfg(feature = "async")]
+impl<R, Contract> std::fmt::Debug for PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedOwnedAsyncKernelLaunch")
+            .field("contract", &Contract::SPEC.kernel_name())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Seals a fully marshalled async launch behind its prepared contract.
+///
+/// # Safety
+///
+/// `launch` must contain the same function and raw launch configuration as
+/// `prepared`, with the cluster/cooperative mode declared by its contract.
+#[doc(hidden)]
+#[cfg(feature = "async")]
+pub unsafe fn new_prepared_async_kernel_launch<'a, Contract>(
+    launch: cuda_async::launch::AsyncKernelLaunch<'a>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+) -> PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    PreparedAsyncKernelLaunch { launch, prepared }
+}
+
+/// Seals a fully marshalled owned async launch behind its prepared contract.
+///
+/// # Safety
+///
+/// `launch` must contain the same function and raw launch configuration as
+/// `prepared`, with the cluster/cooperative mode declared by its contract.
+#[doc(hidden)]
+#[cfg(feature = "async")]
+pub unsafe fn new_prepared_owned_async_kernel_launch<R, Contract>(
+    launch: cuda_async::launch::OwnedAsyncKernelLaunch<R>,
+    prepared: cuda_core::PreparedLaunch<Contract>,
+) -> PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    PreparedOwnedAsyncKernelLaunch { launch, prepared }
+}
+
+#[cfg(feature = "async")]
+impl<'a, Contract> cuda_async::device_operation::DeviceOperation
+    for PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = ();
+
+    unsafe fn execute(
+        self,
+        context: &cuda_async::device_operation::ExecutionContext,
+    ) -> Result<(), cuda_async::error::DeviceError> {
+        self.prepared
+            .validate_stream(context.get_cuda_stream())
+            .map_err(|error| cuda_async::error::DeviceError::Launch(error.to_string()))?;
+        unsafe { cuda_async::device_operation::DeviceOperation::execute(self.launch, context) }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<'a, Contract> IntoFuture for PreparedAsyncKernelLaunch<'a, Contract>
+where
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = Result<(), cuda_async::error::DeviceError>;
+    type IntoFuture = cuda_async::device_future::DeviceFuture<(), Self>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        match cuda_async::device_context::with_default_device_policy(|policy| {
+            cuda_async::scheduling_policies::SchedulingPolicy::schedule(policy, self)
+        }) {
+            Ok(Ok(future)) => future,
+            Ok(Err(error)) | Err(error) => cuda_async::device_future::DeviceFuture::failed(error),
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<R, Contract> cuda_async::device_operation::DeviceOperation
+    for PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send + 'static,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = R;
+
+    unsafe fn execute(
+        self,
+        context: &cuda_async::device_operation::ExecutionContext,
+    ) -> Result<R, cuda_async::error::DeviceError> {
+        self.prepared
+            .validate_stream(context.get_cuda_stream())
+            .map_err(|error| cuda_async::error::DeviceError::Launch(error.to_string()))?;
+        unsafe { cuda_async::device_operation::DeviceOperation::execute(self.launch, context) }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<R, Contract> IntoFuture for PreparedOwnedAsyncKernelLaunch<R, Contract>
+where
+    R: Send + 'static,
+    Contract: cuda_core::KernelLaunchContract,
+{
+    type Output = Result<R, cuda_async::error::DeviceError>;
+    type IntoFuture = cuda_async::device_future::DeviceFuture<R, Self>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        match cuda_async::device_context::with_default_device_policy(|policy| {
+            cuda_async::scheduling_policies::SchedulingPolicy::schedule(policy, self)
+        }) {
+            Ok(Ok(future)) => future,
+            Ok(Err(error)) | Err(error) => cuda_async::device_future::DeviceFuture::failed(error),
+        }
+    }
 }
 
 #[doc(hidden)]
