@@ -8,8 +8,8 @@ pointing at the same output buffer. The borrow checker was not designed for
 this.
 
 cuda-oxide solves the problem in layers. The common case -- one thread writes
-one element -- is safe by construction, no `unsafe` required. The uncommon
-cases -- shared memory, warp shuffles, hardware intrinsics -- require
+one element under a checked launch contract -- is safe by construction.
+Uncommon cases -- shared memory, warp shuffles, hardware intrinsics -- require
 `unsafe` with documented contracts. And the frontier cases -- TMA, tensor
 cores, cluster-level communication -- are fully manual, matching the
 complexity of the hardware they control.
@@ -26,7 +26,7 @@ compiler can verify:
 
 | Tier       | Description                                             | `unsafe` Required? |
 |:-----------|:--------------------------------------------------------|:-------------------|
-| **Tier 1** | Safe by construction -- the type system prevents misuse | No                 |
+| **Tier 1** | Safe kernel body plus a checked `PreparedLaunch`         | No                 |
 | **Tier 2** | Explicit `unsafe` with clear safety contracts           | Yes, scoped        |
 | **Tier 3** | Raw hardware intrinsics -- full user responsibility     | Yes, pervasive     |
 
@@ -41,8 +41,8 @@ rarely leave Tier 2.
 
 ### The core idea: `DisjointSlice<T>` + `ThreadIndex`
 
-The primary safety abstraction is a pair of types that together guarantee
-race-free parallel writes without `unsafe` at the call site:
+The primary device-side safety abstraction is a pair of types that together
+support race-free parallel writes:
 
 - **`ThreadIndex<'kernel, IndexSpace>`** -- an opaque witness around a
   `usize`, with no public constructor. The only way to obtain one is
@@ -58,7 +58,7 @@ race-free parallel writes without `unsafe` at the call site:
   matches its own. Returns `Option<&mut T>` -- `None` for out-of-bounds
   indices.
 
-Put them together and you get a kernel with zero `unsafe`:
+Put them together and you get a kernel body with zero `unsafe`:
 
 ```rust
 use cuda_device::{kernel, DisjointSlice};
@@ -88,20 +88,27 @@ pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
 }
 ```
 
-Safety follows from four facts:
+Safety follows from five facts:
 
-1. `index_1d()` produces a unique value per thread (hardware guarantee:
-   `threadIdx.x < blockDim.x`, so the linear index
-   `blockIdx.x * blockDim.x + threadIdx.x` is unique across the grid).
+1. `index_1d()` uses only X coordinates. Its value is unique when block and
+   grid Y/Z dimensions are all 1. A `domain = 1` prepared launch proves that;
+   a raw launch must prove it in its `unsafe` block.
 2. `get_mut()` is bounds-checked -- out-of-range threads get `None`.
 3. The `IndexSpace` parameter ties each witness to its layout: a
    `DisjointSlice<T, Index2D<128>>` will not accept a
    `ThreadIndex<'_, Index2D<256>>` -- mixing strides is a compile error.
 4. The witness is `!Send + !Sync + !Copy + !Clone` and `'kernel`-scoped,
    so threads cannot launder each other's indices through shared memory.
+5. A checked `PreparedLaunch<K>` ties the host geometry to the exact kernel.
 
 The borrow checker sees a single `&mut T` per thread. The hardware
-guarantees the indices are disjoint. The type system ties the two together.
+provides the coordinates; the launch proof makes their linearization disjoint.
+The type system ties the device and host proofs together.
+
+```text
+1D prepared launch: Y=Z=1 -> index_1d values are unique -> safe get_mut
+raw 2D launch:       grid/block Y > 1 repeats X indices -> caller-unsafe
+```
 
 ### Trusted index functions
 
@@ -110,7 +117,7 @@ are the constructors cuda-oxide provides:
 
 | Function                      | Formula                                 | Return Type                                            | Notes                                            |
 |:------------------------------|:----------------------------------------|:-------------------------------------------------------|:-------------------------------------------------|
-| `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`                        | Unconditionally unique per thread                |
+| `index_1d()`                  | `blockIdx.x * blockDim.x + threadIdx.x` | `ThreadIndex<'kernel, Index1D>`                        | Unique only for a 1D launch (Y/Z inactive)        |
 | `index_2d::<S>()`             | `row * S + col`                         | `Option<ThreadIndex<'kernel, Index2D<S>>>`             | Const stride; mixing strides is a compile error  |
 | `unsafe index_2d_runtime(s)`  | `row * s + col`                         | `Option<ThreadIndex<'kernel, Runtime2DIndex>>`         | Caller asserts every thread used the same `s`    |
 | `index_2d_row()`              | `blockIdx.y * blockDim.y + threadIdx.y` | `usize`                                                | Component accessor, not a witness constructor    |
@@ -119,6 +126,8 @@ are the constructors cuda-oxide provides:
 `index_2d_row()` and `index_2d_col()` return plain `usize` -- they give
 you the components for arithmetic, but cannot be used to index into a
 `DisjointSlice`. Only the linearized result earns a `ThreadIndex`.
+Likewise, 2D uniqueness assumes the launch has no active Z dimension. A
+`domain = 2` prepared launch proves that; a raw launch must assert it.
 
 ### How `index_2d` is type-safe
 
@@ -216,14 +225,16 @@ guards against reading garbage from the input matrices.
 
 ### What makes a kernel Tier 1
 
-A kernel is fully safe -- Tier 1 -- when:
+A kernel and its launch are fully safe -- Tier 1 -- when:
 
 1. All mutable output access goes through `DisjointSlice::get_mut(ThreadIndex)`
 2. All inputs are shared immutable references (`&[T]`)
 3. No shared memory, no raw pointers, no intrinsics beyond thread indexing
+4. The host uses a matching checked `PreparedLaunch<K>`
 
 Examples in this tier include `vecadd`, `helper_fn`, `generic`, `host_closure`,
-and the naive GEMM kernels in the `gemm` and `async_mlp` examples.
+and the naive GEMM kernels in the `gemm` and `async_mlp` examples when launched
+through matching contracts. Their raw `LaunchConfig` paths remain unsafe.
 
 ---
 
@@ -376,7 +387,7 @@ provides on the CPU is also enforced on the GPU:
 | Guarantee                            | How It Works                                                                                                                                             |
 |:-------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Ownership and borrowing**          | Lifetime errors, use-after-free, and aliasing violations caught at compile time                                                                          |
-| **Safe parallel writes**             | `DisjointSlice<T>` + `ThreadIndex` -- type-level proof that writes do not race                                                                           |
+| **Safe parallel writes**             | `DisjointSlice<T>` + `ThreadIndex` + matching prepared geometry prove that writes do not race                                                            |
 | **Explicit `unsafe` scoping**        | Raw pointer access requires `unsafe`, making obligations visible and auditable                                                                           |
 | **Convergent attribute enforcement** | Sync primitives (barriers, fences, shuffles) marked `convergent` in the IR, preventing the optimizer from moving or duplicating them across control flow |
 
@@ -484,7 +495,8 @@ The rules:
 
 - Use `DisjointSlice` for all mutable outputs.
 - Use `&[T]` for all read-only inputs.
-- For 1D grids, default to `get_mut_indexed()`. If you need the index for
+- For 1D grids, declare `launch_contract(domain = 1, ...)` and use a prepared
+  launch. Inside the kernel, default to `get_mut_indexed()`. If you need the index for
   arithmetic against multiple slices, fall back to the explicit pair:
   `let idx = thread::index_1d(); slice.get_mut(idx)`.
 - For const-stride 2D grids, parameterise the slice as
@@ -496,7 +508,9 @@ The rules:
 - Always bounds-check via `get_mut()` / `get_mut_indexed()` (both return
   `Option`).
 
-If your kernel compiles without `unsafe`, it is race-free by construction.
+If the kernel body compiles without `unsafe`, it satisfies the device-side
+part of the proof. Race freedom also requires a matching prepared launch, or
+an explicit unsafe proof for a raw configuration.
 
 ### When you need `unsafe`
 
@@ -541,7 +555,7 @@ the code until the argument is obvious, or use a safe API instead.
 | Property                                                        | Status                                               |
 |:----------------------------------------------------------------|:-----------------------------------------------------|
 | Borrow checker on device code                                   | Enforced (real `rustc` frontend)                     |
-| Safe 1D parallel writes (`DisjointSlice + index_1d`)            | Enforced                                             |
+| Safe 1D parallel writes (`DisjointSlice + index_1d`)            | Enforced with a `domain = 1` prepared launch         |
 | Safe 2D parallel writes -- const stride                         | Enforced (`Index2D<S>` mismatch is a compile error)  |
 | Safe 2D parallel writes -- runtime stride                       | Caller-asserted via `unsafe index_2d_runtime`        |
 | `ThreadIndex` non-transferable across threads (smem laundering) | Enforced (`!Send + !Sync + !Copy + !Clone + 'kernel`)|
@@ -559,7 +573,7 @@ prevent. Until the macro rejects `&mut [T]` outright (or rewrites it to
 `DisjointSlice`), treat any kernel that takes one as if every line in it
 were `unsafe`.
 
-The safety model is designed to make the common case safe by default while
-providing explicit escape hatches for everything else. Write your kernel,
-let the type system catch the races, and save `unsafe` for the parts where
-you genuinely know something the compiler does not.
+The safety model is designed to make the common case safe through a kernel
+body plus a prepared launch, while providing explicit escape hatches for
+everything else. Use `unsafe` only when you are supplying a proof that the
+compiler and launch contract do not carry.

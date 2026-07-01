@@ -162,12 +162,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let values_dev = DeviceBuffer::from_host(&stream, &values)?;
     let mut out_dev = DeviceBuffer::<[u64; 2]>::zeroed(&stream, N)?;
 
-    module.pointer_shapes(
-        &stream,
-        LaunchConfig::for_num_elems(N as u32),
-        &values_dev,
-        &mut out_dev,
-    )?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.pointer_shapes(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &values_dev,
+            &mut out_dev,
+        )
+    }?;
 
     let got = out_dev.to_host_vec(&stream)?;
     let mut failures = 0usize;

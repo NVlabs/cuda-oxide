@@ -52,12 +52,15 @@ fn main() {
     let bytes_dev = DeviceBuffer::from_host(&stream, &bytes).unwrap();
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-    m.slice_reslice(
-        &stream,
-        LaunchConfig::for_num_elems(N as u32),
-        &bytes_dev,
-        &mut out_dev,
-    )
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        m.slice_reslice(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &bytes_dev,
+            &mut out_dev,
+        )
+    }
     .expect("launch slice_reslice");
 
     let out = out_dev.to_host_vec(&stream).unwrap();

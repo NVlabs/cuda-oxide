@@ -31,8 +31,10 @@
 //! 4. **`get_unchecked_mut()`**: Unsafe escape hatch for performance-critical
 //!    paths where bounds have been validated by other means.
 //!
-//! The unsafe boundary is pushed to the construction of `DisjointSlice` from raw
-//! memory, not to the per-access level.
+//! The unsafe boundary is pushed away from each access. A prepared launch proves
+//! that the kernel's declared index domain matches its geometry; an unprepared
+//! raw launch is unsafe and leaves that proof to the caller. Constructing a
+//! `DisjointSlice` from raw memory is also unsafe.
 
 use crate::thread::{Index1D, IndexFormula, KernelScope, ThreadIndex};
 use core::marker::PhantomData;
@@ -47,7 +49,9 @@ use core::marker::PhantomData;
 ///    (`index_1d`, `index_2d::<S>`, `unsafe index_2d_runtime`), which
 ///    derive the index from hardware built-in variables -- read-only
 ///    special registers assigned by the runtime at launch.
-/// 3. Each thread's `ThreadIndex` is unique within its index space.
+/// 3. Each thread's `ThreadIndex` is unique within its index space when the
+///    prepared launch contract matches that space. Raw launch callers must
+///    uphold the same condition explicitly.
 ///
 /// Each thread accesses a unique element, making parallel writes safe without
 /// synchronization.
@@ -64,8 +68,8 @@ use core::marker::PhantomData;
 /// the caller to check bounds externally; in release builds this was UB for
 /// out-of-bounds indices — a soundness hole. The current design follows
 /// `slice::get_mut()` / `slice::get_unchecked_mut()` from std: the safe
-/// path is always sound, and the unsafe escape hatch (`get_unchecked_mut`)
-/// is explicitly opted into.
+/// path is sound when reached through a prepared launch. Raw launch geometry
+/// and the unchecked element accessor are explicit unsafe escape hatches.
 ///
 /// The type is `Send` but NOT `Sync`: each GPU thread gets its own copy of
 /// the struct (with the same backing pointer), then uses its unique
@@ -92,6 +96,49 @@ pub struct DisjointSlice<'a, T, IndexSpace = Index1D> {
     len: usize,
     _marker: PhantomData<&'a mut [T]>,
     _space: PhantomData<fn() -> IndexSpace>,
+}
+
+mod launch_contract_sealed {
+    pub trait Sealed {}
+}
+
+impl<'a, T, IndexSpace> launch_contract_sealed::Sealed for DisjointSlice<'a, T, IndexSpace> {}
+
+/// Compiler-facing proof that a `DisjointSlice` has the expected element type
+/// and supports a launch domain.
+///
+/// This trait is sealed: only the genuine [`DisjointSlice`] type can implement
+/// it. `#[cuda_module]` adds this bound to contracted kernels so Rust resolves
+/// type aliases before checking the declared launch domain.
+///
+/// A 2D index space also supports a 1D launch (all Y dimensions are one), but
+/// a 1D index space cannot support a 2D launch.
+#[doc(hidden)]
+pub trait __LaunchContractDisjointSlice<Element, const DOMAIN: u8>:
+    launch_contract_sealed::Sealed
+{
+}
+
+impl<'a, T> __LaunchContractDisjointSlice<T, 1> for DisjointSlice<'a, T, Index1D> {}
+
+impl<'a, T, const ROW_STRIDE: usize> __LaunchContractDisjointSlice<T, 1>
+    for DisjointSlice<'a, T, crate::thread::Index2D<ROW_STRIDE>>
+{
+}
+
+impl<'a, T, const ROW_STRIDE: usize> __LaunchContractDisjointSlice<T, 2>
+    for DisjointSlice<'a, T, crate::thread::Index2D<ROW_STRIDE>>
+{
+}
+
+impl<'a, T> __LaunchContractDisjointSlice<T, 1>
+    for DisjointSlice<'a, T, crate::thread::Runtime2DIndex>
+{
+}
+
+impl<'a, T> __LaunchContractDisjointSlice<T, 2>
+    for DisjointSlice<'a, T, crate::thread::Runtime2DIndex>
+{
 }
 
 impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
@@ -163,8 +210,9 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
     ///    can only be indexed by a matching witness.
     ///
     /// 3. **No data races**: Given the constraint above, each thread's
-    ///    `ThreadIndex` is unique, and threads cannot share `ThreadIndex`
-    ///    values, so each thread accesses a different memory location.
+    ///    `ThreadIndex` is unique under the prepared launch's matching index
+    ///    domain. An unsafe raw launch takes responsibility for the same
+    ///    geometry invariant, so each thread accesses a different location.
     ///
     /// # Example
     ///
@@ -181,8 +229,9 @@ impl<'a, T, IndexSpace> DisjointSlice<'a, T, IndexSpace> {
         if i < self.len {
             // SAFETY:
             // - Bounds check passed above.
-            // - `idx` is a ThreadIndex derived from hardware built-in variables,
-            //   guaranteeing a unique index per thread (no data races).
+            // - `idx` is a ThreadIndex derived from hardware built-in variables.
+            //   The prepared launch contract, or an unsafe raw launch caller,
+            //   guarantees that its index space is unique for this geometry.
             // - The DisjointSlice was constructed with valid memory (from_raw_parts safety).
             Some(unsafe { &mut *self.ptr.add(i) })
         } else {
@@ -292,9 +341,9 @@ impl<'a, T, IS: IndexFormula> DisjointSlice<'a, T, IS> {
         if i < self.len {
             // SAFETY:
             // - bounds check passed above
-            // - idx is a thread-unique witness in IS, freshly minted from
-            //   hardware special registers (no laundering — !Copy, !Send,
-            //   `'kernel`-bound)
+            // - idx is freshly minted from hardware special registers (no
+            //   laundering — !Copy, !Send, `'kernel`-bound); the prepared
+            //   launch, or unsafe raw caller, proves IS is unique here
             // - DisjointSlice was constructed with valid memory
             //   (from_raw_parts safety)
             Some((unsafe { &mut *self.ptr.add(i) }, idx))
@@ -305,7 +354,8 @@ impl<'a, T, IS: IndexFormula> DisjointSlice<'a, T, IS> {
 }
 
 // SAFETY: DisjointSlice can be sent between threads because:
-// - Each thread will access unique elements (guaranteed by ThreadIndex)
+// - A prepared launch, or unsafe raw caller, guarantees that each thread's
+//   ThreadIndex selects a unique element for the active geometry
 // - The pointer and length are just data, no thread affinity
 // - T: Send means the elements themselves can be sent between threads
 unsafe impl<'a, T: Send, IndexSpace> Send for DisjointSlice<'a, T, IndexSpace> {}
@@ -313,7 +363,7 @@ unsafe impl<'a, T: Send, IndexSpace> Send for DisjointSlice<'a, T, IndexSpace> {
 // DisjointSlice auto-trait summary:
 //   Send: yes (explicit impl above, when T: Send)
 //   Sync: NO (not implemented) — each GPU thread gets its own copy of the
-//         struct, then uses its unique ThreadIndex to access a different
-//         element. Sharing &DisjointSlice across threads would allow
+//         struct, then uses its conditionally unique ThreadIndex to access a
+//         different element. Sharing &DisjointSlice across threads would allow
 //         multiple threads to call get_mut() on the same struct, which
 //         would produce aliasing &mut T references — unsound.

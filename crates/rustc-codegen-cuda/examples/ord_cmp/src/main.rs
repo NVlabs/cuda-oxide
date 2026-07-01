@@ -256,8 +256,8 @@ fn main() {
 
     // cmp_kernel: full-width + narrow integer + char comparisons.
     let mut out = DeviceBuffer::<i32>::zeroed(&stream, 27).expect("failed to allocate output");
-    module
-        .cmp_kernel(stream.as_ref(), config, &mut out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.cmp_kernel(stream.as_ref(), config, &mut out) }
         .expect("cmp_kernel launch failed");
     let got = out.to_host_vec(&stream).expect("failed to copy output");
     let expected = [
@@ -268,24 +268,24 @@ fn main() {
 
     // cmp_cast_kernel: Ordering as i8 / as i32 must sign-extend to -1.
     let mut out = DeviceBuffer::<i32>::zeroed(&stream, 4).expect("failed to allocate output");
-    module
-        .cmp_cast_kernel(stream.as_ref(), config, &mut out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.cmp_cast_kernel(stream.as_ref(), config, &mut out) }
         .expect("cmp_cast_kernel launch failed");
     let got = out.to_host_vec(&stream).expect("failed to copy output");
     ok &= check("cmp_cast_kernel", &got, &[-1, -1, 1, 0]);
 
     // ordering_match_kernel: issue #146 shape; Less must take the Less arm.
     let mut out = DeviceBuffer::<i32>::zeroed(&stream, 1).expect("failed to allocate output");
-    module
-        .ordering_match_kernel(stream.as_ref(), config, &mut out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.ordering_match_kernel(stream.as_ref(), config, &mut out) }
         .expect("ordering_match_kernel launch failed");
     let got = out.to_host_vec(&stream).expect("failed to copy output");
     ok &= check("ordering_match_kernel", &got, &[-1]);
 
     // enum_repr_kernel: sparse u16 tag + negative signed i8 tag.
     let mut out = DeviceBuffer::<i32>::zeroed(&stream, 4).expect("failed to allocate output");
-    module
-        .enum_repr_kernel(stream.as_ref(), config, &mut out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.enum_repr_kernel(stream.as_ref(), config, &mut out) }
         .expect("enum_repr_kernel launch failed");
     let got = out.to_host_vec(&stream).expect("failed to copy output");
     ok &= check("enum_repr_kernel", &got, &[100, 200, -5, -4]);

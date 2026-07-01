@@ -127,9 +127,11 @@ fn main() {
     let mut signed_dev = DeviceBuffer::<i32>::zeroed(&stream, 2).unwrap();
     let mut unsigned_dev = DeviceBuffer::<u32>::zeroed(&stream, 2).unwrap();
 
-    module
-        .redux_minmax_signedness((stream).as_ref(), cfg, &mut signed_dev, &mut unsigned_dev)
-        .expect("Kernel launch failed");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.redux_minmax_signedness((stream).as_ref(), cfg, &mut signed_dev, &mut unsigned_dev)
+    }
+    .expect("Kernel launch failed");
 
     let signed = signed_dev.to_host_vec(&stream).unwrap();
     let unsigned = unsigned_dev.to_host_vec(&stream).unwrap();
@@ -153,8 +155,8 @@ fn main() {
     println!("\n--- Test 2: redux.sync.and/or/xor ---");
     let mut bits_dev = DeviceBuffer::<u32>::zeroed(&stream, 3).unwrap();
 
-    module
-        .redux_bitwise((stream).as_ref(), cfg, &mut bits_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.redux_bitwise((stream).as_ref(), cfg, &mut bits_dev) }
         .expect("Kernel launch failed");
 
     let bits = bits_dev.to_host_vec(&stream).unwrap();

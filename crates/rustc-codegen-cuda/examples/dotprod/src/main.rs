@@ -168,8 +168,9 @@ fn main() {
 
     let mut out_dev = DeviceBuffer::<i32>::zeroed(&stream, 4).unwrap();
 
-    module
-        .dotprod_test(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.dotprod_test(
             (stream).as_ref(),
             cfg,
             a4,
@@ -180,7 +181,8 @@ fn main() {
             b2,
             &mut out_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let results = out_dev.to_host_vec(&stream).unwrap();
 

@@ -54,6 +54,145 @@ use pliron::{
     r#type::{TypeHandle, Typed},
     value::Value,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
+
+const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
+
+// ============================================================================
+// Dynamic shared-memory contract propagation
+// ============================================================================
+
+/// Propagate dynamic shared-memory alignment markers through the local MIR
+/// call graph before any function is lowered.
+///
+/// The marker normally belongs to a kernel entry. Attribute expansion may put
+/// it in a generic helper when `#[launch_contract]` appears above `#[kernel]`,
+/// so every marked local function is a propagation root. A dynamic
+/// shared-memory access can also live in a deeper ordinary helper. Shared
+/// helpers receive the maximum requirement from every marked root that can
+/// reach them.
+pub(crate) fn propagate_kernel_dynamic_shared_alignments(
+    ctx: &mut Context,
+    module_op: Ptr<Operation>,
+) {
+    let mut functions = FxHashMap::default();
+    for region in module_op.deref(ctx).regions() {
+        for block in region.deref(ctx).iter(ctx) {
+            for op in block.deref(ctx).iter(ctx) {
+                if let Some(function) = MirFuncOp::wrap(ctx, op) {
+                    functions.insert(function.get_symbol_name(ctx).to_string(), op);
+                }
+            }
+        }
+    }
+
+    let call_graph: FxHashMap<String, Vec<String>> = functions
+        .iter()
+        .map(|(name, op)| (name.clone(), collect_mir_callees(ctx, *op)))
+        .collect();
+    let alignment_roots: Vec<(String, u64)> = functions
+        .iter()
+        .filter_map(|(name, op)| {
+            dynamic_shared_alignment_attr(ctx, *op).map(|value| (name.clone(), value))
+        })
+        .collect();
+
+    for (name, propagated_alignment) in
+        propagate_alignments_through_call_graph(&call_graph, &alignment_roots)
+    {
+        let Some(function) = functions.get(&name).copied() else {
+            continue;
+        };
+        let alignment = dynamic_shared_alignment_attr(ctx, function)
+            .map_or(propagated_alignment, |local| {
+                local.max(propagated_alignment)
+            });
+        set_dynamic_shared_alignment_attr(ctx, function, alignment);
+    }
+}
+
+fn collect_mir_callees(ctx: &Context, root: Ptr<Operation>) -> Vec<String> {
+    fn visit(ctx: &Context, op: Ptr<Operation>, callees: &mut Vec<String>) {
+        if let Some(call) = Operation::get_op::<dialect_mir::ops::MirCallOp>(op, ctx)
+            && let Some(callee) = call.get_attr_callee(ctx)
+        {
+            callees.push(String::from((*callee).clone()));
+        }
+
+        let children: Vec<_> = op
+            .deref(ctx)
+            .regions()
+            .flat_map(|region| region.deref(ctx).iter(ctx))
+            .flat_map(|block| block.deref(ctx).iter(ctx))
+            .collect();
+        for child in children {
+            visit(ctx, child, callees);
+        }
+    }
+
+    let mut callees = Vec::new();
+    visit(ctx, root, &mut callees);
+    callees.sort_unstable();
+    callees.dedup();
+    callees
+}
+
+fn propagate_alignments_through_call_graph(
+    call_graph: &FxHashMap<String, Vec<String>>,
+    alignment_roots: &[(String, u64)],
+) -> FxHashMap<String, u64> {
+    let mut propagated = FxHashMap::default();
+
+    for (root, alignment) in alignment_roots {
+        let mut worklist = vec![root.clone()];
+        let mut visited = FxHashSet::default();
+
+        while let Some(function) = worklist.pop() {
+            if !visited.insert(function.clone()) {
+                continue;
+            }
+            if !call_graph.contains_key(&function) {
+                continue;
+            }
+
+            propagated
+                .entry(function.clone())
+                .and_modify(|current: &mut u64| *current = (*current).max(*alignment))
+                .or_insert(*alignment);
+            if let Some(callees) = call_graph.get(&function) {
+                worklist.extend(callees.iter().cloned());
+            }
+        }
+    }
+
+    propagated
+}
+
+fn dynamic_shared_alignment_attr(ctx: &Context, op: Ptr<Operation>) -> Option<u64> {
+    let key: pliron::identifier::Identifier = DYNAMIC_SHARED_ALIGNMENT_ATTR
+        .try_into()
+        .expect("static identifier");
+    op.deref(ctx)
+        .attributes
+        .get::<pliron::builtin::attributes::IntegerAttr>(&key)
+        .map(|attribute| attribute.value().to_u64())
+}
+
+fn set_dynamic_shared_alignment_attr(ctx: &mut Context, op: Ptr<Operation>, alignment: u64) {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::Signedness;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZero;
+
+    let key: pliron::identifier::Identifier = DYNAMIC_SHARED_ALIGNMENT_ATTR
+        .try_into()
+        .expect("static identifier");
+    let u64_ty = pliron::builtin::types::IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let value = APInt::from_u64(alignment, NonZero::new(64).unwrap());
+    op.deref_mut(ctx)
+        .attributes
+        .set(key, IntegerAttr::new(u64_ty, value));
+}
 
 // ============================================================================
 // Function Conversion
@@ -144,7 +283,12 @@ pub fn convert_func(
         // Pre-scan MIR blocks for max dynamic shared memory alignment.
         // Must happen BEFORE inline_region empties the MIR region.
         let mir_blocks: Vec<_> = mir_region.deref(ctx).iter(ctx).collect();
-        let max_align = compute_max_dynamic_smem_alignment(ctx, &mir_blocks);
+        let body_max_align = compute_max_dynamic_smem_alignment(ctx, &mir_blocks);
+        let contract_min_align = dynamic_shared_alignment_attr(ctx, op);
+        let max_align = match (body_max_align, contract_min_align) {
+            (Some(body), Some(contract)) => Some(body.max(contract)),
+            (body, contract) => body.or(contract),
+        };
 
         // Stamp ABI alignment onto load/store/alloca/ref ops while types are
         // still MIR — repr(align(N)) is visible on MirStructType but lost after
@@ -656,3 +800,54 @@ fn stamp_memory_op_alignment(ctx: &mut Context, mir_blocks: &[Ptr<BasicBlock>]) 
 
 /// Register the MIR → LLVM lowering pass (placeholder for pass infrastructure).
 pub fn register(_ctx: &mut Context) {}
+
+#[cfg(test)]
+mod dynamic_shared_contract_tests {
+    use super::*;
+
+    fn graph(entries: &[(&str, &[&str])]) -> FxHashMap<String, Vec<String>> {
+        entries
+            .iter()
+            .map(|(caller, callees)| {
+                (
+                    (*caller).to_string(),
+                    callees.iter().map(|callee| (*callee).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn propagation_is_transitive_cycle_safe_and_takes_shared_helper_maximum() {
+        let call_graph = graph(&[
+            ("kernel_32", &["forward", "external"]),
+            ("kernel_256", &["shared"]),
+            ("kernel_64", &["cycle_a"]),
+            ("forward", &["shared"]),
+            ("shared", &[]),
+            ("cycle_a", &["cycle_b"]),
+            ("cycle_b", &["cycle_a"]),
+            ("marked_helper", &["marked_owner"]),
+            ("marked_owner", &[]),
+            ("uncontracted", &["unreached_helper"]),
+            ("unreached_helper", &[]),
+        ]);
+        let contracts = [
+            ("kernel_32".to_string(), 32),
+            ("kernel_256".to_string(), 256),
+            ("kernel_64".to_string(), 64),
+            ("marked_helper".to_string(), 128),
+        ];
+
+        let propagated = propagate_alignments_through_call_graph(&call_graph, &contracts);
+
+        assert_eq!(propagated.get("forward"), Some(&32));
+        assert_eq!(propagated.get("shared"), Some(&256));
+        assert_eq!(propagated.get("cycle_a"), Some(&64));
+        assert_eq!(propagated.get("cycle_b"), Some(&64));
+        assert_eq!(propagated.get("marked_owner"), Some(&128));
+        assert!(!propagated.contains_key("external"));
+        assert!(!propagated.contains_key("uncontracted"));
+        assert!(!propagated.contains_key("unreached_helper"));
+    }
+}

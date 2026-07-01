@@ -114,9 +114,11 @@ let bdim_x = thread::blockDim_x();     // u32
 when the computed column exceeds the stride — use it to skip the
 right-edge tail in non-aligned 2D kernels.
 
-`index_2d::<S>` is the safe default; the const generic encodes the stride
-in the witness type so two threads can't mint colliding indices by
-passing different strides. `index_2d_runtime` is the escape hatch for
+`index_2d::<S>` is the safe const-stride form; the const generic encodes the
+stride in the witness type so threads cannot use different strides.
+Dimensionality remains a host-side obligation: `index_1d` requires inactive
+Y/Z dimensions, and 2D indices require inactive Z. A matching
+`PreparedLaunch<K>` proves this; a raw launch is unsafe. `index_2d_runtime` is the escape hatch for
 launches whose stride is only known at runtime; the caller takes on the
 "every thread used the same stride" obligation by writing `unsafe`. Full
 discussion in [The Safety Model](../gpu-safety/the-safety-model.md).
@@ -369,7 +371,11 @@ let a = DeviceBuffer::from_host(&stream, &a_host).unwrap();
 let b = DeviceBuffer::from_host(&stream, &b_host).unwrap();
 let mut output = DeviceBuffer::<f32>::zeroed(&stream, n).unwrap();
 
-module.vecadd(&stream, LaunchConfig::for_num_elems(n), &a, &b, &mut output).unwrap();
+// SAFETY: this is a 1D launch and all buffers contain n elements.
+unsafe {
+    module.vecadd(&stream, LaunchConfig::for_num_elems(n), &a, &b, &mut output)
+}
+.unwrap();
 ```
 
 ### Typed Async
@@ -378,14 +384,20 @@ module.vecadd(&stream, LaunchConfig::for_num_elems(n), &a, &b, &mut output).unwr
 use cuda_async::device_operation::DeviceOperation;
 
 let module = kernels::load_async(0)?;
-let op = module.vecadd_async(LaunchConfig::for_num_elems(n), &a, &b, &mut output)?;
+// SAFETY: this is 1D, buffers contain n elements, and module/scheduler share a context.
+let op = unsafe {
+    module.vecadd_async(LaunchConfig::for_num_elems(n), &a, &b, &mut output)
+}?;
 
 op.sync()?;       // blocking
 // or: op.await?;  // async with tokio
 ```
 
-`cuda_launch!` and `cuda_launch_async!` remain available as lower-level APIs for
-explicit module loading and custom launch code.
+Raw generated calls are unsafe because `LaunchConfig` is not tied to a kernel.
+A kernel with `#[launch_contract]` instead uses `LaunchConfig1D/2D/3D` to create
+a checked `PreparedLaunch<K>`, then launches safely. `cuda_launch!` and
+`cuda_launch_async!` remain unsafe lower-level APIs for explicit module loading
+and custom launch code.
 
 ### LaunchConfig
 
@@ -417,7 +429,7 @@ debug::prof_trigger::<7>();     // Nsight profiler trigger
 | Module               | Description                                                      | Min SM   |
 |:---------------------|:-----------------------------------------------------------------|:---------|
 | `thread`             | Thread/block IDs, `index_1d`, `sync_threads`                     | All      |
-| `disjoint`           | `DisjointSlice<T>` — safe parallel writes                        | All      |
+| `disjoint`           | `DisjointSlice<T>` — typed writes completed by a launch proof    | All      |
 | `shared`             | `SharedArray<T, N>`, `DynamicSharedArray<T>`                     | All      |
 | `warp`               | Shuffle, vote, match, lane/warp ID                               | All      |
 | `atomic`             | Scoped atomics (device/block/system)                             | sm_70+   |

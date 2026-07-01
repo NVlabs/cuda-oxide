@@ -580,13 +580,15 @@ fn test_simple_device_funcs_runner(
         shared_mem_bytes: 0,
     };
 
-    module
-        .test_simple_device_funcs(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_simple_device_funcs(
             (stream).as_ref(),
             config,
             d_output.cu_deviceptr() as *mut f32,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let h_output = d_output.to_host_vec(&stream).unwrap();
 
@@ -642,14 +644,16 @@ fn test_cub_warp_reduce_runner(
         shared_mem_bytes: 0,
     };
 
-    module
-        .test_cub_warp_reduce(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_cub_warp_reduce(
             (stream).as_ref(),
             config,
             d_input.cu_deviceptr() as *const f32,
             d_output.cu_deviceptr() as *mut f32,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let h_output = d_output.to_host_vec(&stream).unwrap();
 
@@ -703,8 +707,9 @@ fn test_mixed_attrs_runner(
         shared_mem_bytes: 0,
     };
 
-    module
-        .test_mixed_attrs(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_mixed_attrs(
             (stream).as_ref(),
             config,
             d_a.cu_deviceptr() as *const f32,
@@ -712,7 +717,8 @@ fn test_mixed_attrs_runner(
             d_output.cu_deviceptr() as *mut f32,
             vec_size,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let h_output = d_output.to_host_vec(&stream).unwrap();
 
@@ -753,13 +759,15 @@ fn test_smem_alignment_cross_module_runner(
         shared_mem_bytes: 256, // Enough for the test
     };
 
-    module
-        .test_smem_alignment_cross_module(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.test_smem_alignment_cross_module(
             (stream).as_ref(),
             config,
             d_output.cu_deviceptr() as *mut u64,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     // Synchronize to flush printf output
     stream.synchronize().expect("Sync failed");

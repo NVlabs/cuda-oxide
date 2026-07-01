@@ -93,7 +93,9 @@ A common workflow for catching device-side errors:
 
 ```rust
 // Launch kernel
-module.vecadd(&stream, config, &a, &b, &mut c).expect("Launch failed");
+// SAFETY: config matches vecadd's 1D indexing and all buffer bounds.
+unsafe { module.vecadd(&stream, config, &a, &b, &mut c) }
+    .expect("Launch failed");
 
 // Synchronize and check for traps
 stream.synchronize().expect("Kernel trapped -- check gpu_assert! conditions");
@@ -111,7 +113,8 @@ The synchronous launch path returns
 `Result<(), DriverError>`. The `DriverError` wraps a CUDA driver result code:
 
 ```rust
-match module.vecadd(&stream, config, &a, &b, &mut c) {
+// SAFETY: config matches vecadd's 1D indexing and all buffer bounds.
+match unsafe { module.vecadd(&stream, config, &a, &b, &mut c) } {
     Ok(()) => { /* launched successfully */ }
     Err(e) => eprintln!("Launch failed: {e}"),
 }
@@ -455,7 +458,7 @@ for the full profiling toolkit.
 
 | Pitfall                          | Symptom                                    | Fix                                                              |
 |:---------------------------------|:-------------------------------------------|:-----------------------------------------------------------------|
-| Race condition on output buffer  | Wrong results, non-deterministic           | Use `DisjointSlice` instead of raw `*mut T`                      |
+| Race condition on output buffer  | Wrong results, non-deterministic           | Use `DisjointSlice` plus matching prepared launch geometry      |
 | Missing `sync_threads()`         | Stale shared memory reads                  | Add barrier between writes and reads                             |
 | Wrong `shared_mem_bytes`         | `LAUNCH_OUT_OF_RESOURCES` or garbage data  | Match `LaunchConfig` to actual `DynamicSharedArray` usage        |
 | Out-of-bounds with raw pointers  | Trap or silent corruption                  | Use `DisjointSlice::get_mut` for bounds checking                 |

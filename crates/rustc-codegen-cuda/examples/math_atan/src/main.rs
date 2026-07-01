@@ -139,10 +139,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_atan2_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
     let mut out_atan_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
 
-    module.atan2_f32(&stream, cfg, &ys32, &xs32, &mut out_atan2_f32)?;
-    module.atan_f32(&stream, cfg, &ys32, &mut out_atan_f32)?;
-    module.atan2_f64(&stream, cfg, &ys64, &xs64, &mut out_atan2_f64)?;
-    module.atan_f64(&stream, cfg, &ys64, &mut out_atan_f64)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.atan2_f32(&stream, cfg, &ys32, &xs32, &mut out_atan2_f32) }?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.atan_f32(&stream, cfg, &ys32, &mut out_atan_f32) }?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.atan2_f64(&stream, cfg, &ys64, &xs64, &mut out_atan2_f64) }?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.atan_f64(&stream, cfg, &ys64, &mut out_atan_f64) }?;
 
     let got_atan2_f32 = out_atan2_f32.to_host_vec(&stream)?;
     let got_atan_f32 = out_atan_f32.to_host_vec(&stream)?;

@@ -96,15 +96,17 @@ fn main() {
 
     // row = 5 & 3 = 1; col = 6 & 1 = 0; out[0] = scratch[1][0]  => 3.0
     let mut out_dev = DeviceBuffer::<f64>::zeroed(&stream, 1).unwrap();
-    module
-        .projected_read_2d(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.projected_read_2d(
             &stream,
             LaunchConfig::for_num_elems(1),
             5usize,
             6usize,
             &mut out_dev,
         )
-        .expect("projected_read_2d launch");
+    }
+    .expect("projected_read_2d launch");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
     assert!(
@@ -115,15 +117,17 @@ fn main() {
 
     // value = 6 + 5 = 11
     let mut out_dev = DeviceBuffer::<f64>::zeroed(&stream, 1).unwrap();
-    module
-        .projected_read_struct_field(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.projected_read_struct_field(
             &stream,
             LaunchConfig::for_num_elems(1),
             6usize,
             5usize,
             &mut out_dev,
         )
-        .expect("projected_read_struct_field launch");
+    }
+    .expect("projected_read_struct_field launch");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
     assert!(

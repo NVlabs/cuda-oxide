@@ -61,14 +61,12 @@ pub type SharedGlobalsMap = FxHashMap<String, pliron::identifier::Identifier>;
 /// CUDA global memory (address space 1), not shared memory.
 pub type DeviceGlobalsMap = FxHashMap<String, pliron::identifier::Identifier>;
 
-/// Tracking for dynamic shared memory alignment per kernel.
+/// Tracking for dynamic shared memory alignment per lowered function.
 ///
-/// Maps kernel name to `(symbol_name, max_alignment)`.
+/// Maps function name to `(symbol_name, max_alignment)`.
 ///
-/// Each kernel gets its own symbol (e.g., `__dynamic_smem_my_kernel`)
-/// for explicit separation in the generated PTX. Before converting any
-/// operations, the pass pre-scans all `MirExternSharedOp` operations in
-/// a function to determine the maximum alignment required by any
-/// `DynamicSharedArray<T, ALIGN>` call, ensuring the global is created
-/// with the correct alignment from the start.
+/// Each function that owns a dynamic shared-memory access gets a symbol. Before
+/// conversion, the pass combines the alignment requested by the function body
+/// with every propagated launch-contract marker that can reach it. This
+/// ensures a helper shared by several kernels uses their strongest requirement.
 pub type DynamicSmemAlignmentMap = FxHashMap<String, (pliron::identifier::Identifier, u64)>;

@@ -24,7 +24,7 @@ This crate turns raw CUDA handles into Rust types with automatic cleanup on drop
 - **Memory**: Async (`malloc_async`, `free_async`, `memcpy_htod_async`, ...) and sync (`malloc_sync`, `free_sync`) device memory operations.
 - **Device buffers**: `DeviceBuffer<T>` owns device memory and provides host-device transfer helpers for `T: DeviceCopy`. Safe borrowed host-to-device copies synchronize before returning; unchecked async HtoD helpers are `unsafe`.
 - **Pinned host memory**: `PinnedHostBuffer<T>` allocates page-locked host memory for faster transfers. The async transfer helpers (`DeviceBuffer::from_pinned_host`, `copy_from_pinned_host_async`, `copy_to_pinned_host_async`) are `unsafe` because they only enqueue the copy and the caller must keep the pinned buffer alive until `stream.synchronize()`. Use `copy_to_pinned_host` for a blocking DtoH helper that syncs internally.
-- **Launch**: `launch_kernel(func, grid, block, smem, stream, params)` enqueues a kernel on a stream. `launch_kernel_ex(...)` adds cluster dimensions (Hopper+); `launch_kernel_cooperative(...)` enables `Grid::sync()` for grid-wide barriers.
+- **Launch**: the `unsafe` `launch_kernel(func, grid, block, smem, stream, params)` family enqueues raw launches. The caller must prove both the argument ABI and the kernel's geometry/resource assumptions. `launch_kernel_ex(...)` adds cluster dimensions (Hopper+); `launch_kernel_cooperative(...)` enables `Grid::sync()` for grid-wide barriers.
 - **Events**: `ctx.new_event(flags)` for synchronization points and GPU-side timing via `event.elapsed_ms(end)`.
 
 ## Usage

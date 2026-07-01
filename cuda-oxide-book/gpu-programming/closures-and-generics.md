@@ -65,15 +65,17 @@ entry point:
 ```rust
 use cuda_core::LaunchConfig;
 
-module
-    .scale::<f32>(
+// SAFETY: config is 1D and both buffers cover every launched index.
+unsafe {
+    module.scale::<f32>(
         &stream,
         LaunchConfig::for_num_elems(N as u32),
         2.0f32,
         &input_dev,
         &mut output_dev,
     )
-    .expect("Launch failed");
+}
+.expect("Launch failed");
 ```
 
 The generated method forces monomorphization of `scale::<f32>` so the
@@ -102,8 +104,11 @@ add_value::<8> -> add_value_TID_<hash B>
 Use ordinary Rust turbofish syntax on the generated launch method:
 
 ```rust
-module.add_value::<4>(&stream, config, &mut output)?;
-module.add_value::<{ Config::VALUE }>(&stream, config, &mut output)?;
+// SAFETY: config matches the kernels' 1D indexing and output bounds.
+unsafe {
+    module.add_value::<4>(&stream, config, &mut output)?;
+    module.add_value::<{ Config::VALUE }>(&stream, config, &mut output)?;
+}
 ```
 
 The older `#[kernel(f32, i32)]` convenience form only supports one type
@@ -131,9 +136,11 @@ Launch with a closure:
 
 ```rust
 let factor = 3i32;
-module
-    .map::<_>(&stream, config, move |x| x * factor, &input_dev, &mut output_dev)
-    .expect("Launch failed");
+// SAFETY: config is 1D and both buffers cover every launched index.
+unsafe {
+    module.map::<_>(&stream, config, move |x| x * factor, &input_dev, &mut output_dev)
+}
+.expect("Launch failed");
 ```
 
 ### How closure arguments travel
@@ -275,8 +282,8 @@ pub mod kernels {
 use my_kernels::kernels;
 
 let module = kernels::load(&ctx)?;
-module
-    .vecadd(&stream, config, &a, &b, &mut c)
+// SAFETY: config is 1D and all three buffers cover every launched index.
+unsafe { module.vecadd(&stream, config, &a, &b, &mut c) }
     .expect("Launch failed");
 ```
 

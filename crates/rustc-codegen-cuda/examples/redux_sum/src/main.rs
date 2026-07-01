@@ -110,8 +110,8 @@ fn main() {
     println!("\n--- Test 1: redux_sync_add over lane ids ---");
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, WARPS).unwrap();
 
-    module
-        .redux_lane_sum((stream).as_ref(), cfg, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.redux_lane_sum((stream).as_ref(), cfg, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let out_result = out_dev.to_host_vec(&stream).unwrap();
@@ -130,8 +130,8 @@ fn main() {
     let data_dev = DeviceBuffer::from_host(&stream, &data_host).unwrap();
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, WARPS).unwrap();
 
-    module
-        .redux_data_sum((stream).as_ref(), cfg, &data_dev, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.redux_data_sum((stream).as_ref(), cfg, &data_dev, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let out_result = out_dev.to_host_vec(&stream).unwrap();

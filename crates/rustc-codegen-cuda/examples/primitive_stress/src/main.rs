@@ -245,7 +245,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
-        module.test_char(&stream, cfg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_char(&stream, cfg, &mut out) }?;
         let result = out.to_host_vec(&stream)?[0];
         let expected = ('A' as u32)
             .wrapping_add('\u{1f980}' as u32)
@@ -264,7 +265,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let b = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128;
         let c = -0x1234_5678_9abc_def_i128;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 4)?;
-        module.test_u128_i128(&stream, cfg, a, b, c, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_u128_i128(&stream, cfg, a, b, c, &mut out) }?;
         let result = out.to_host_vec(&stream)?;
         let unsigned = a
             .wrapping_mul(3)
@@ -292,7 +294,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let a = 0x8000_1234_usize;
         let b = -12345_isize;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 2)?;
-        module.test_pointer_sized(&stream, cfg, a, b, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_pointer_sized(&stream, cfg, a, b, &mut out) }?;
         let result = out.to_host_vec(&stream)?;
         let expected = [
             a.wrapping_mul(5)
@@ -314,7 +317,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let b = 0x0123_4567_89ab_cdef_u64;
         let c = 0x8020_0401_u32;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 7)?;
-        module.test_bit_intrinsics(&stream, cfg, a, b, c, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_bit_intrinsics(&stream, cfg, a, b, c, &mut out) }?;
         let result = out.to_host_vec(&stream)?;
         let wide = a.rotate_left(17) ^ a.rotate_right(29) ^ a.swap_bytes() ^ a.reverse_bits();
         let wide_counts = (a.count_ones() as u64) | ((a.leading_zeros() as u64) << 32);
@@ -347,8 +351,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let u64_val = u64::MAX - 2;
         let i64_val = i64::MIN + 2;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 7)?;
-        module
-            .test_saturating_intrinsics(&stream, cfg, u8_val, i8_val, u64_val, i64_val, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_saturating_intrinsics(
+                &stream, cfg, u8_val, i8_val, u64_val, i64_val, &mut out,
+            )
+        }?;
         let result = out.to_host_vec(&stream)?;
         let expected = [
             u8_val.saturating_add(10) as u64,
@@ -372,7 +380,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let seed32 = 2.0_f32;
         let seed64 = 2.0_f64;
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, 50)?;
-        module.test_float_math_intrinsics(&stream, cfg, seed32, seed64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_float_math_intrinsics(&stream, cfg, seed32, seed64, &mut out) }?;
         let result = out.to_host_vec(&stream)?;
         let expected = expected_float_math_bits(seed32, seed64);
         // Allow up to 2 ULPs for transcendentals: CUDA `libdevice` uses

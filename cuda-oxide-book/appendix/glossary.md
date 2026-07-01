@@ -64,8 +64,8 @@ with `zip!` (parallel) and `and_then` (sequential).
 
 A safe mutable output abstraction for kernels. Accepts only a
 `ThreadIndex` whose `IndexSpace` matches its own type parameter,
-providing bounds-checked `Option<&mut T>` returns. Prevents data races
-by construction — each thread can only write to its own element. The
+providing bounds-checked `Option<&mut T>` returns. With matching prepared
+launch geometry, each thread can only write to its own element. The
 `get_mut_indexed()` shortcut mints the witness and resolves it to a
 mutable reference in a single call.
 
@@ -114,6 +114,13 @@ functions for each concrete type used. cuda-oxide fully supports
 monomorphization on device — `scale::<f32>` and `scale::<f64>` each become
 separate PTX functions.
 
+## `PreparedLaunch<K>`
+
+A reusable host-side proof that a launch configuration was checked for the
+exact kernel `K`. Generated safe methods accept this branded value. Passing a
+raw `LaunchConfig` directly to a generated method is instead unsafe because it
+does not prove the kernel's indexing or resource requirements.
+
 ## Pliron
 
 An MLIR-inspired IR framework written in Rust, used as the intermediate
@@ -156,8 +163,8 @@ An opaque witness that can only be constructed by trusted index
 functions. Three forms:
 
 - `thread::index_1d() -> ThreadIndex<'_, Index1D>`. Always returns a
-  witness; unconditionally unique per thread
-  (`threadIdx.x < blockDim.x` is hardware-enforced).
+  witness. It is unique only when block and grid Y/Z dimensions are 1;
+  a `domain = 1` prepared launch proves this.
 - `thread::index_2d::<S>() -> Option<ThreadIndex<'_, Index2D<S>>>`. The
   row stride is a const generic, so a `DisjointSlice<T, Index2D<S>>`
   only accepts a witness with the matching `S` -- mixing strides is a

@@ -69,7 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out = DeviceBuffer::<f32>::zeroed(&stream, 1)?;
     let seed: f32 = 7.0;
 
-    module.sharedarray_late_use(stream.as_ref(), cfg, seed, &mut out)?;
+    // SAFETY: one thread is launched, matching the kernel's single-element
+    // output access and fixed shared-memory use.
+    unsafe { module.sharedarray_late_use(stream.as_ref(), cfg, seed, &mut out) }?;
 
     let result = out.to_host_vec(&stream)?[0];
     let expected: f32 = 21.0; // seed * repro_weight() == 7.0 * 3.0

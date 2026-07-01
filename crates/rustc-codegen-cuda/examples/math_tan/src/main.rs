@@ -113,8 +113,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_tan_f32 = DeviceBuffer::<f32>::zeroed(&stream, n)?;
     let mut out_tan_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
 
-    module.tan_f32(&stream, cfg, &xs32, &mut out_tan_f32)?;
-    module.tan_f64(&stream, cfg, &xs64, &mut out_tan_f64)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.tan_f32(&stream, cfg, &xs32, &mut out_tan_f32) }?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.tan_f64(&stream, cfg, &xs64, &mut out_tan_f64) }?;
 
     let got_tan_f32 = out_tan_f32.to_host_vec(&stream)?;
     let got_tan_f64 = out_tan_f64.to_host_vec(&stream)?;

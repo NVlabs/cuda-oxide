@@ -68,8 +68,8 @@ fn main() {
         block_dim: (N as u32, 1, 1),
         shared_mem_bytes: 0,
     };
-    module
-        .swap_kernel(stream.as_ref(), config, &d_a, &d_b, &mut d_out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.swap_kernel(stream.as_ref(), config, &d_a, &d_b, &mut d_out) }
         .expect("Kernel launch failed");
 
     let out = d_out.to_host_vec(&stream).unwrap();

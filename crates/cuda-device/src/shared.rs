@@ -254,6 +254,17 @@ impl<T, const N: usize, const ALIGN: usize> IndexMut<usize> for SharedArray<T, N
 // DynamicSharedArray - Runtime-sized shared memory
 // ============================================================================
 
+/// Compile-time minimum alignment marker for a kernel's dynamic shared memory.
+///
+/// This is injected by `#[launch_contract]`. cuda-oxide removes the call before
+/// code generation, so it adds no kernel hot-path instructions. Kernel authors
+/// should use the attribute rather than calling this function directly.
+#[doc(hidden)]
+#[inline(never)]
+pub fn __dynamic_shared_alignment<const ALIGN: usize>() {
+    // The MIR importer removes this marker after recording ALIGN.
+}
+
 /// Dynamic (runtime-sized) shared memory with configurable alignment.
 ///
 /// Unlike [`SharedArray`] which has a compile-time known size, `DynamicSharedArray`

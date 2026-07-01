@@ -222,16 +222,19 @@ fn main() {
     );
     println!("Total tiles: {}\n", total_tiles);
 
-    let launch_result = module.test_clc_try_cancel(
-        (stream).as_ref(),
-        LaunchConfig {
-            grid_dim: (TILES_X, TILES_Y, 1),
-            block_dim: (32, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        &mut output_dev,
-        total_tiles,
-    );
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    let launch_result = unsafe {
+        module.test_clc_try_cancel(
+            (stream).as_ref(),
+            LaunchConfig {
+                grid_dim: (TILES_X, TILES_Y, 1),
+                block_dim: (32, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            &mut output_dev,
+            total_tiles,
+        )
+    };
 
     match launch_result {
         Ok(_) => match stream.synchronize() {
@@ -285,15 +288,18 @@ fn main() {
 
     let mut all_output = DeviceBuffer::<u32>::zeroed(&stream, 4).unwrap();
 
-    let launch_result = module.test_clc_all_intrinsics(
-        (stream).as_ref(),
-        LaunchConfig {
-            grid_dim: (4, 1, 1),
-            block_dim: (32, 1, 1),
-            shared_mem_bytes: 0,
-        },
-        &mut all_output,
-    );
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    let launch_result = unsafe {
+        module.test_clc_all_intrinsics(
+            (stream).as_ref(),
+            LaunchConfig {
+                grid_dim: (4, 1, 1),
+                block_dim: (32, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            &mut all_output,
+        )
+    };
 
     match launch_result {
         Ok(_) => match stream.synchronize() {

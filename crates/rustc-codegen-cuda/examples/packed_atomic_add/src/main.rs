@@ -63,9 +63,13 @@ fn main() {
     let module = kernels::load(&ctx).expect("load embedded PTX");
     let counters = DeviceBuffer::<u32>::zeroed(&stream, COUNTERS).expect("allocate counters");
     let counters_ptr = counters.cu_deviceptr() as *mut u32;
-    module
-        .add_packed(&stream, LaunchConfig::for_num_elems(THREADS), counters_ptr)
-        .expect("launch add_packed");
+    // SAFETY: the launch covers THREADS items and counters_ptr addresses both
+    // packed counters for the lifetime of the synchronized kernel launch.
+    unsafe {
+        module
+            .add_packed(&stream, LaunchConfig::for_num_elems(THREADS), counters_ptr)
+            .expect("launch add_packed");
+    }
     stream.synchronize().expect("synchronize");
 
     let result = counters.to_host_vec(&stream).expect("copy counters");

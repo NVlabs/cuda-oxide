@@ -109,18 +109,22 @@ fn main() {
         .expect("Failed to bind double launchers");
     let config = LaunchConfig::for_num_elems(N as u32);
 
-    // The init kernel feeds the three processing kernels.
-    init.fill_index(&stream, config, &mut idx_dev)
-        .expect("fill_index launch failed");
-    scale
-        .scale_by(&stream, config, &idx_dev, &mut scaled_dev)
-        .expect("scale_by launch failed");
-    offset
-        .offset_by(&stream, config, &idx_dev, &mut offset_dev)
-        .expect("offset_by launch failed");
-    double
-        .double_all(&stream, config, &idx_dev, &mut doubled_dev)
-        .expect("double_all launch failed");
+    // SAFETY: every launch is one-dimensional over N elements, and each
+    // input/output buffer covers the full range accessed by its kernel.
+    unsafe {
+        // The init kernel feeds the three processing kernels.
+        init.fill_index(&stream, config, &mut idx_dev)
+            .expect("fill_index launch failed");
+        scale
+            .scale_by(&stream, config, &idx_dev, &mut scaled_dev)
+            .expect("scale_by launch failed");
+        offset
+            .offset_by(&stream, config, &idx_dev, &mut offset_dev)
+            .expect("offset_by launch failed");
+        double
+            .double_all(&stream, config, &idx_dev, &mut doubled_dev)
+            .expect("double_all launch failed");
+    }
 
     let scaled = scaled_dev.to_host_vec(&stream).unwrap();
     let offset = offset_dev.to_host_vec(&stream).unwrap();

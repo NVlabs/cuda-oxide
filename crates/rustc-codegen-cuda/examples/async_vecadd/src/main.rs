@@ -92,14 +92,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Launch the kernel asynchronously.
     //    `vecadd_async` returns an AsyncKernelLaunch (a DeviceOperation).
     //    No GPU work happens until we `.sync()` or `.await`.
-    module
-        .vecadd_async(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.vecadd_async(
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
-        )?
-        .sync()?;
+        )
+    }?
+    .sync()?;
 
     // 5. Copy results back.
     let mut c_host = vec![0.0f32; N];

@@ -88,7 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------- f32 ----------
     {
         let mut out = DeviceBuffer::<f32>::zeroed(&stream, 4)?;
-        module.fp_special_literal_f32_kernel(&stream, cfg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.fp_special_literal_f32_kernel(&stream, cfg, &mut out) }?;
         let got = out.to_host_vec(&stream)?;
         check_f32_specials(&got, &mut passed, &mut failed);
     }
@@ -96,7 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------- f64 ----------
     {
         let mut out = DeviceBuffer::<f64>::zeroed(&stream, 4)?;
-        module.fp_special_literal_f64_kernel(&stream, cfg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.fp_special_literal_f64_kernel(&stream, cfg, &mut out) }?;
         let got = out.to_host_vec(&stream)?;
         check_f64_specials(&got, &mut passed, &mut failed);
     }

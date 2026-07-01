@@ -57,8 +57,8 @@ fn main() {
     let module = kernels::load(&ctx).expect("load embedded PTX");
     let mut out = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
 
-    module
-        .run_fma(&stream, LaunchConfig::for_num_elems(1), &mut out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.run_fma(&stream, LaunchConfig::for_num_elems(1), &mut out) }
         .expect("launch run_fma");
 
     let got = out.to_host_vec(&stream).unwrap()[0];

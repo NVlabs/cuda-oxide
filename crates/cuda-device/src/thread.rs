@@ -29,7 +29,8 @@
 //!    `outer * stride + inner` combines these into a scalar index per thread.
 //! 3. `index_1d`: unique per thread only for a 1D launch
 //!    (`blockDim.y == blockDim.z == 1` and `gridDim.y == gridDim.z == 1`). It
-//!    reads only the X registers, so a 2D/3D launch collides; see issue #115.
+//!    reads only the X registers, so a 2D/3D launch collides. A prepared
+//!    `domain = 1` launch enforces this; raw launches are unsafe.
 //! 4. `index_2d::<S>()`: unique per thread for const-stride 2D grids.
 //!    The stride lives in the witness type, and `DisjointSlice` only
 //!    accepts indices from the matching index space -- mismatched
@@ -119,11 +120,12 @@ impl<'kernel> KernelScope<'kernel> {
     }
 }
 
-/// A thread-unique index derived from hardware built-in variables (special registers).
+/// A conditionally thread-unique index derived from hardware built-in variables.
 ///
 /// `ThreadIndex` cannot be constructed directly. The contained `usize` is
-/// unique per thread, which is what makes parallel writes to `DisjointSlice`
-/// race-free without synchronisation.
+/// unique when the launch geometry matches its index space. A prepared launch
+/// proves that condition; an unsafe raw launch must uphold it explicitly. That
+/// conditional uniqueness makes parallel writes to `DisjointSlice` race-free.
 ///
 /// The index-space parameter ties each witness to the indexing scheme that
 /// created it. A `DisjointSlice<T, Index2D<128>>` won't accept a
@@ -284,7 +286,8 @@ pub mod __internal {
     ///
     /// Unique per thread **only for a 1D launch** (`blockDim.y == blockDim.z ==
     /// 1` and `gridDim.y == gridDim.z == 1`); a 2D/3D launch collides because
-    /// this reads only the X registers. Tracked in issue #115.
+    /// this reads only the X registers. A prepared `domain = 1` launch enforces
+    /// those trailing dimensions; a raw launch must prove them explicitly.
     #[inline(always)]
     pub fn index_1d<'kernel>(
         scope: &'kernel KernelScope<'kernel>,
@@ -353,9 +356,10 @@ pub mod __internal {
 /// `gridDim.y == gridDim.z == 1`.
 ///
 /// Under a 2D or 3D launch, threads that share the same X but differ in Y or Z
-/// get the *same* index, which would alias the same `DisjointSlice` slot. Every
-/// shipped example launches 1D, so nothing hits this today. Tracked in issue
-/// #115 (a fix that makes this sound under any launch is being weighed).
+/// get the *same* index, which would alias the same `DisjointSlice` slot. A
+/// kernel with `#[launch_contract(domain = 1, ...)]` can only use matching
+/// prepared geometry through its safe host method. Launching with unverified
+/// raw geometry is unsafe and leaves this uniqueness proof to the caller.
 ///
 /// # Example
 ///

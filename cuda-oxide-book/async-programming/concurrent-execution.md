@@ -118,7 +118,7 @@ work yet) and hand it to `tokio::spawn`:
         let pipeline = zip!(h2d(batch_data), zeros(DIM * DIM), zeros(DIM))
             .and_then(move |(input, hidden, output)| {
                 // Stage 1: GEMM — hidden = input × W0
-                // ... build AsyncKernelLaunch, push args, chain with and_then ...
+                // ... build + finalize an owned launch, then chain with and_then ...
             })
             .and_then(move |(hidden, output, w1, module)| {
                 // Stage 2: MatVec — output = hidden × W1

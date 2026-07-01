@@ -37,12 +37,20 @@ In practice, `#[cuda_module]` handles steps 2--5 behind a generated Rust API.
 You normally interact with context creation, `kernels::load`, and a typed method
 call.
 
-## `#[cuda_module]` -- typed launch
+## `#[cuda_module]` -- typed arguments
 
 Wrap kernels in an inline `#[cuda_module]` module to generate a typed loader and
-one method per `#[kernel]`. The method is "synchronous" in the CUDA sense: you
-provide a specific stream and the kernel is enqueued immediately, though GPU
-execution still overlaps the host until you synchronize.
+one method per `#[kernel]`. The generated signature checks kernel arguments,
+but a raw `LaunchConfig` does not prove the kernel's indexing shape or resource
+requirements. The raw launch method is therefore unsafe.
+
+```text
+raw LaunchConfig   -> unsafe launch
+PreparedLaunch<K>  -> safe launch of exactly K
+```
+
+"Synchronous" here means that you provide a stream and enqueue immediately;
+GPU execution can still overlap the host until you synchronize.
 
 ```rust
 use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
@@ -71,9 +79,11 @@ fn main() {
     let b = DeviceBuffer::from_host(&stream, &[2.0f32; 1024]).unwrap();
     let mut c = DeviceBuffer::<f32>::zeroed(&stream, 1024).unwrap();
 
-    module
-        .vecadd(&stream, LaunchConfig::for_num_elems(1024), &a, &b, &mut c)
-        .expect("Kernel launch failed");
+    // SAFETY: this is a 1D launch and all three buffers contain 1024 elements.
+    unsafe {
+        module.vecadd(&stream, LaunchConfig::for_num_elems(1024), &a, &b, &mut c)
+    }
+    .expect("Kernel launch failed");
 
     let result = c.to_host_vec(&stream).unwrap();
     assert_eq!(result[0], 3.0);
@@ -86,7 +96,7 @@ fn main() {
 |:-----------------------|:------------------------------------|
 | `#[cuda_module]`       | Generates loader and launch methods |
 | `kernels::load(&ctx)`  | Loads the embedded artifact bundle  |
-| `module.vecadd(...)`   | Enqueues a typed kernel launch      |
+| `module.vecadd(...)`   | Type-checks arguments; raw config requires `unsafe` |
 | `LaunchConfig`         | Grid/block dimensions and smem      |
 
 ### Argument mapping
@@ -102,10 +112,48 @@ The generated method maps kernel parameters to host values:
 
 ### Return value
 
-Typed launch methods return `Result<(), DriverError>`. The `Ok` case means the
+Raw typed launch methods return `Result<(), DriverError>`. The `Ok` case means the
 kernel was successfully **enqueued** -- not that it finished. To check for
 runtime errors (e.g., out-of-bounds trap), synchronize the stream or context
 afterward.
+
+## Safe prepared launches
+
+Declare the kernel's geometry when it is part of correctness:
+
+```rust
+use cuda_core::LaunchConfig1D;
+use cuda_device::{cuda_module, kernel, launch_bounds, launch_contract, thread, DisjointSlice};
+
+#[cuda_module]
+mod contracted {
+    use super::*;
+
+    #[kernel]
+    #[launch_bounds(256)]
+    #[launch_contract(domain = 1, block = (256, 1, 1))]
+    pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        if let Some(c_elem) = c.get_mut(idx) {
+            *c_elem = a[idx.get()] + b[idx.get()];
+        }
+    }
+}
+
+let module = contracted::load(&ctx)?;
+let config = LaunchConfig1D::new(4, 256, 0);
+let prepared = module.prepare_vecadd(config)?;
+module.vecadd(&stream, &prepared, &a, &b, &mut c)?;
+```
+
+`prepare_vecadd` checks the exact block shape, device limits, dynamic shared
+memory, context, and any cluster/cooperative requirements. `LaunchConfig1D`
+cannot represent active Y/Z dimensions, and `PreparedLaunch<vecadd>` cannot be
+used with another kernel. Preparation may fail; once it succeeds, the branded
+launch can be reused safely.
+
+For a contracted kernel, the raw escape hatch is named `vecadd_unchecked` and
+remains unsafe. Uncontracted kernels expose only unsafe raw launch methods.
 
 ## `cuda_launch!` -- unsafe lower-level launch
 
@@ -125,8 +173,8 @@ use cuda_host::{cuda_launch, load_kernel_module};
 
 let module = load_kernel_module(&ctx, "vecadd").unwrap();
 
-// SAFETY: args match vecadd's signature (three slices); a, b, c are live
-// device buffers.
+// SAFETY: args match vecadd, buffers are live, and the config is 1D with
+// bounds guarded by c.get_mut(idx).
 unsafe {
     cuda_launch! {
         kernel: vecadd,
@@ -166,7 +214,7 @@ such as `sm_90a`, or for running newer-GPU artifacts on older GPUs.
 The driver must also support the PTX version produced by the selected toolkit.
 CUDA error 222 means the toolkit is too new for the driver's PTX JIT; select a
 compatible toolkit or upgrade the driver. The
-[installation guide](../getting-started/installation.md#installation-toolkit-driver-compatibility)
+{ref}`installation guide <installation-toolkit-driver-compatibility>`
 explains why this can differ from the normal LLVM-to-PTX path.
 
 ## `LaunchConfig`
@@ -198,8 +246,8 @@ let config = LaunchConfig::for_num_elems(N as u32);
 ```
 
 This uses 256 threads per block and computes the grid size via ceiling
-division: `grid_x = (N + 255) / 256`. It's the right default for most
-element-wise operations.
+division: `grid_x = (N + 255) / 256`. It is a convenient 1D shape, but it is
+still raw data; only preparation ties a configuration to a kernel.
 
 ### 2D and 3D configurations
 
@@ -240,12 +288,15 @@ use cuda_async::device_operation::DeviceOperation;
 init_device_contexts(0, 1)?;
 let module = kernels::load_async(0)?;
 
-let op = module.vecadd_async(
-    LaunchConfig::for_num_elems(1024),
-    &a_dev,
-    &b_dev,
-    &mut c_dev,
-)?;
+// SAFETY: this is 1D, buffers contain 1024 elements, and module/scheduler share a context.
+let op = unsafe {
+    module.vecadd_async(
+        LaunchConfig::for_num_elems(1024),
+        &a_dev,
+        &b_dev,
+        &mut c_dev,
+    )
+}?;
 
 // Execute and wait
 op.sync()?;
@@ -257,12 +308,15 @@ future:
 ```rust
 use std::future::IntoFuture;
 
-let op = module.vecadd_async_owned(
-    LaunchConfig::for_num_elems(1024),
-    a_dev,
-    b_dev,
-    c_dev,
-)?;
+// SAFETY: this is 1D, owned buffers contain 1024 elements, and contexts match.
+let op = unsafe {
+    module.vecadd_async_owned(
+        LaunchConfig::for_num_elems(1024),
+        a_dev,
+        b_dev,
+        c_dev,
+    )
+}?;
 
 let (a_dev, b_dev, c_dev) = tokio::spawn(op.into_future()).await??;
 ```
@@ -286,10 +340,11 @@ owned typed shape:
   spawned task owns the allocation until completion
 ```
 
-`cuda_launch_async!` remains as a lower-level migration API, but prefer the
-generated borrowed or owned methods for new code. Raw pointer async launches are
-only correct when the caller can prove the pointed-to allocation outlives the
-lazy operation.
+For a contracted kernel, both async forms accept `&PreparedLaunch<K>` and are
+safe. `cuda_launch_async!` remains a lower-level unsafe migration API; its
+invocation must be inside an `unsafe` block. Raw pointer async launches are only
+correct when the caller can prove that the allocation outlives the lazy
+operation.
 
 ### `.sync()` vs `.await`
 
@@ -346,7 +401,8 @@ On the host, the launch uses `launch_kernel_ex` (the extended launch API) with
 cluster dimensions. `cuda_launch!` supports this via the `cluster_dim` field:
 
 ```rust
-// SAFETY: args match cluster_kernel's signature; out_dev is a live buffer.
+// SAFETY: args/config match cluster_kernel, including its 4-block cluster;
+// out_dev stays live through synchronization.
 unsafe {
     cuda_launch! {
         kernel: cluster_kernel,
@@ -395,7 +451,8 @@ mod kernels {
 }
 
 let module = kernels::load(&ctx)?;
-module.grid_sync_kernel(&stream, config, &mut out_dev)?; // cooperative launch
+// SAFETY: config satisfies the kernel's indexing, residency, and output bounds.
+unsafe { module.grid_sync_kernel(&stream, config, &mut out_dev) }?;
 ```
 
 Unlike `#[cluster_launch]`, the attribute changes nothing in the PTX; it only

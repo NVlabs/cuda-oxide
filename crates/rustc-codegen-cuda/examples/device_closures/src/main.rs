@@ -296,13 +296,15 @@ fn main() {
         const N: usize = 8;
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .test_inline_closure(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_inline_closure(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i * 2) as u32).collect();
@@ -327,15 +329,17 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .scale_kernel(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.scale_kernel(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &input_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = input.iter().map(|&x| x * factor).collect();
@@ -362,8 +366,9 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
 
-        module
-            .transform_kernel(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.transform_kernel(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 offset,
@@ -371,7 +376,8 @@ fn main() {
                 &input_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<i32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<i32> = input.iter().map(|&x| (x + offset) * scale).collect();
@@ -397,15 +403,17 @@ fn main() {
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .inline_with_param(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.inline_with_param(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &input_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = input.iter().map(|&x| x * factor).collect();
@@ -425,13 +433,15 @@ fn main() {
         const N: usize = 8;
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .test_closure_constant(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_constant(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = vec![42; N];
@@ -450,13 +460,15 @@ fn main() {
         const N: usize = 8;
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .test_closure_multi_arg(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_multi_arg(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| i as u32 + 10).collect();
@@ -475,13 +487,15 @@ fn main() {
         const N: usize = 8;
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .test_closure_fnonce(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_fnonce(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i * 3) as u32).collect();
@@ -506,14 +520,16 @@ fn main() {
 
         println!("  factor = {}", factor);
 
-        module
-            .test_closure_capture_fnonce(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_capture_fnonce(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i * factor as usize) as u32).collect();
@@ -535,14 +551,16 @@ fn main() {
 
         println!("  factor = {}", factor);
 
-        module
-            .test_wrapper_method_named_call(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_wrapper_method_named_call(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i as u32) * factor + 1).collect();
@@ -562,14 +580,16 @@ fn main() {
         let factor: u32 = 5;
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .test_closure_field_projection(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_field_projection(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i as u32) * factor).collect();
@@ -589,14 +609,16 @@ fn main() {
         let factor: u32 = 7;
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .test_closure_double_ref(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_double_ref(
                 (stream).as_ref(),
                 LaunchConfig::for_num_elems(N as u32),
                 factor,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
         let expected: Vec<u32> = (0..N).map(|i| (i as u32) * factor).collect();

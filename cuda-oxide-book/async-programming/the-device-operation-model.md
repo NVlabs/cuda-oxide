@@ -82,7 +82,16 @@ init_device_contexts(0, 1)?;
 
 // Build the recipe (no GPU work yet)
 let module = kernels::load_async(0)?;
-let op = module.vecadd_async(LaunchConfig::for_num_elems(1024), &a_dev, &b_dev, &mut c_dev)?;
+// SAFETY: this is 1D, buffers contain 1024 elements, and module/scheduler
+// both use device 0's context.
+let op = unsafe {
+    module.vecadd_async(
+        LaunchConfig::for_num_elems(1024),
+        &a_dev,
+        &b_dev,
+        &mut c_dev,
+    )
+}?;
 
 // Now cook it: pick a stream, launch, wait for the result
 op.sync()?;
@@ -92,6 +101,15 @@ At the point where `op` is created, nothing has happened on the GPU. The method
 builds an `AsyncKernelLaunch` value that remembers which function to call, what
 arguments to pass, and how to configure the grid -- but it does not touch any
 stream. It is a recipe card sitting on the counter.
+
+The `unsafe` is about accepting an unproved raw `LaunchConfig`, not about
+building lazily. A contracted kernel uses a checked `PreparedLaunch<K>` and a
+safe generated async method:
+
+```text
+raw config -> unsafe async recipe
+prepared K -> safe async recipe for K
+```
 
 When you call `.sync()`, the scheduling policy picks a stream from its pool,
 submits the kernel, and blocks until the stream is idle. That single line is
@@ -193,9 +211,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_device_contexts(0, 1)?;
 
     let module = kernels::load_async(0)?;
-    module
-        .vecadd_async(LaunchConfig::for_num_elems(1024), &a_dev, &b_dev, &mut c_dev)?
-        .await?;
+    // SAFETY: this is 1D, buffers contain 1024 elements, and module/scheduler
+    // both use device 0's context.
+    unsafe {
+        module.vecadd_async(
+            LaunchConfig::for_num_elems(1024),
+            &a_dev,
+            &b_dev,
+            &mut c_dev,
+        )
+    }?
+    .await?;
 
     Ok(())
 }
@@ -300,8 +326,10 @@ helpers that slot cleanly into `and_then` chains.
 
 :::{tip}
 `with_context` is the escape hatch for raw driver calls that need a
-`CUstream`. For kernel launches, prefer generated async launch methods because
-they handle argument marshalling and buffer lifetimes.
+`CUstream`. For kernel launches, prefer contracted generated async methods:
+they handle argument marshalling and buffer lifetimes, and accept a checked
+`PreparedLaunch<K>`. Uncontracted generated methods still require an unsafe
+raw-launch proof.
 :::
 
 ## How the GPU tells Rust it is done

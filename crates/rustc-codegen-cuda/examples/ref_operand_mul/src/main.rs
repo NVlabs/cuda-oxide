@@ -107,8 +107,9 @@ fn run_ref_pieces_mul(module: &kernels::LoadedModule, stream: &Arc<CudaStream>) 
     };
 
     // a = (2, 3), b = (4, 5): prod = (8, 15), sq = (64, 225); sum = 289.
-    module
-        .ref_pieces_mul(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.ref_pieces_mul(
             stream.as_ref(),
             config,
             2_u32,
@@ -117,7 +118,8 @@ fn run_ref_pieces_mul(module: &kernels::LoadedModule, stream: &Arc<CudaStream>) 
             5_u32,
             &mut d_out,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let result = d_out.to_host_vec(stream).unwrap()[0];
     let expected = 289_u32;

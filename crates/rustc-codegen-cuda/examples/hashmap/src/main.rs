@@ -315,7 +315,8 @@ impl GpuHashMap {
         let values_dev = DeviceBuffer::from_host(stream, values)?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.insert_kernel(stream, cfg, &self.slots, &keys_dev, &values_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.insert_kernel(stream, cfg, &self.slots, &keys_dev, &values_dev) }?;
 
         Ok(())
     }
@@ -345,14 +346,17 @@ impl GpuHashMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.try_insert_kernel(
-            stream,
-            cfg,
-            &self.slots,
-            &keys_dev,
-            &values_dev,
-            &mut out_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.try_insert_kernel(
+                stream,
+                cfg,
+                &self.slots,
+                &keys_dev,
+                &values_dev,
+                &mut out_dev,
+            )
+        }?;
 
         let raw = out_dev.to_host_vec(stream)?;
         Ok(raw.into_iter().map(|x| x == 0).collect())
@@ -374,7 +378,8 @@ impl GpuHashMap {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(stream, keys.len())?;
 
         let cfg = LaunchConfig::for_num_elems(keys.len() as u32);
-        module.find_kernel(stream, cfg, &self.slots, &keys_dev, &mut out_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.find_kernel(stream, cfg, &self.slots, &keys_dev, &mut out_dev) }?;
 
         let out = out_dev.to_host_vec(stream)?;
         Ok(out)

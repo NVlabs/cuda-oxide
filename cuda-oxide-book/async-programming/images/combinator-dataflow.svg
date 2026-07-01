@@ -96,8 +96,8 @@
       <rect x="3" y="8" width="3" height="94" rx="1" fill="#f97583" opacity="0.6"/>
       <text x="20" y="30" font-size="14" font-weight="700" fill="#f97583">Stage 1: GEMM</text>
       <text x="126" y="30" font-size="12" fill="#b1bac4">&#x2014; hidden = input &#xD7; W0</text>
-      <text x="20" y="54" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">AsyncKernelLaunch::new(sgemm_naive)</text>
-      <text x="20" y="76" font-size="11" fill="#9ca3af">Kernel returns () &#x2014; carry forward buffers with value()</text>
+      <text x="20" y="54" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">AsyncKernelLaunchBuilder::new(sgemm_naive)</text>
+      <text x="20" y="76" font-size="11" fill="#9ca3af">unsafe finalize_unchecked(gemm_cfg) &#x2192; owned operation</text>
       <rect x="280" y="86" width="244" height="20" rx="4" fill="rgba(249, 117, 131, 0.12)"/>
       <text x="402" y="100" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="9" fill="#f97583">value((hidden, output, w1, module))</text>
     </g>
@@ -113,8 +113,8 @@
       <rect x="3" y="8" width="3" height="94" rx="1" fill="#e8912d" opacity="0.6"/>
       <text x="20" y="30" font-size="14" font-weight="700" fill="#e8912d">Stage 2: MatVec</text>
       <text x="146" y="30" font-size="12" fill="#b1bac4">&#x2014; output = hidden &#xD7; W1</text>
-      <text x="20" y="54" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">AsyncKernelLaunch::new(matvec_naive)</text>
-      <text x="20" y="76" font-size="11" fill="#9ca3af">Carry forward only what next stage needs</text>
+      <text x="20" y="54" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">AsyncKernelLaunchBuilder::new(matvec_naive)</text>
+      <text x="20" y="76" font-size="11" fill="#9ca3af">unsafe finalize_unchecked(matvec_cfg) &#x2192; owned operation</text>
       <rect x="400" y="86" width="124" height="20" rx="4" fill="rgba(232, 145, 45, 0.12)"/>
       <text x="462" y="100" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="9" fill="#e8912d">value(output)</text>
     </g>
@@ -130,8 +130,8 @@
       <rect x="3" y="8" width="3" height="94" rx="1" fill="#d2a8ff" opacity="0.6"/>
       <text x="20" y="30" font-size="14" font-weight="700" fill="#d2a8ff">Stage 3: ReLU</text>
       <text x="116" y="30" font-size="12" fill="#b1bac4">&#x2014; result = max(0, output)</text>
-      <text x="20" y="54" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">AsyncKernelLaunch::new(relu)</text>
-      <text x="20" y="76" font-size="11" fill="#9ca3af">In-place operation on output buffer</text>
+      <text x="20" y="54" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">AsyncKernelLaunchBuilder::new(relu)</text>
+      <text x="20" y="76" font-size="11" fill="#9ca3af">unsafe finalize_unchecked(relu_cfg) &#x2192; owned operation</text>
       <rect x="400" y="86" width="124" height="20" rx="4" fill="rgba(210, 168, 255, 0.12)"/>
       <text x="462" y="100" text-anchor="middle" font-family="'RobotoMono', monospace" font-size="9" fill="#d2a8ff">value(output)</text>
     </g>

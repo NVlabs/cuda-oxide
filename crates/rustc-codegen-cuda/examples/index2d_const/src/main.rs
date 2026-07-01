@@ -49,8 +49,9 @@ fn main() {
         .expect("Failed to load PTX module");
     let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
 
-    module
-        .copy_2d_const_width(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.copy_2d_const_width(
             &stream,
             LaunchConfig {
                 grid_dim: (1, HEIGHT as u32, 1),
@@ -61,7 +62,8 @@ fn main() {
             &mut output_dev,
             HEIGHT as u32,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let output_host = output_dev.to_host_vec(&stream).unwrap();
     for i in 0..(WIDTH * HEIGHT) {

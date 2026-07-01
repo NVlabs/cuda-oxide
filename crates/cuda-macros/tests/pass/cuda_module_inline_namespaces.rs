@@ -78,7 +78,8 @@ mod kernels {
             stream: &CudaStream,
             config: LaunchConfig,
         ) {
-            let _ = module.private_map(stream, config, 7u32);
+            // SAFETY: this compile-pass fixture supplies the raw launch proof.
+            let _ = unsafe { module.private_map(stream, config, 7u32) };
         }
     }
 
@@ -123,7 +124,8 @@ mod kernels {
         stream: &CudaStream,
         config: LaunchConfig,
     ) {
-        let _ = module.scoped(stream, config, 11u32);
+        // SAFETY: this compile-pass fixture supplies the raw launch proof.
+        let _ = unsafe { module.scoped(stream, config, 11u32) };
     }
 }
 
@@ -133,12 +135,15 @@ fn typecheck_namespaces(
     stream: &CudaStream,
     config: LaunchConfig,
 ) {
-    let _ = root.root_typed(stream, config, Params { value: 1 });
-    let _ = child.child_typed(
-        stream,
-        config,
-        kernels::child::Params { values: [2; 4] },
-    );
+    // SAFETY: this compile-pass fixture supplies the raw launch proofs.
+    unsafe {
+        let _ = root.root_typed(stream, config, Params { value: 1 });
+        let _ = child.child_typed(
+            stream,
+            config,
+            kernels::child::Params { values: [2; 4] },
+        );
+    }
 
     let _ = kernels::child::LoadedModule::from_parent(root);
     let bridge = kernels::bridge::LoadedModule::from_parent(root).unwrap();

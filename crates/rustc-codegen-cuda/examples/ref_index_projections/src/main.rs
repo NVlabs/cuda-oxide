@@ -667,128 +667,114 @@ fn main() {
     let mut all_pass = true;
 
     all_pass &= run_and_report("test_unrolled_baseline", &stream, |s, cfg, i, o| {
-        module.test_unrolled_baseline(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_unrolled_baseline(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report(
         "test_closure_indexes_into_array",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_closure_indexes_into_array(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_closure_indexes_into_array(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report("test_closure_indexes_via_match", &stream, |s, cfg, i, o| {
-        module
-            .test_closure_indexes_via_match(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_indexes_via_match(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report(
         "test_closure_into_struct_wrapper",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_closure_into_struct_wrapper(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_closure_into_struct_wrapper(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report(
         "test_closure_pre_loaded_outside",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_closure_pre_loaded_outside(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_closure_pre_loaded_outside(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report("test_closure_node_ref_access", &stream, |s, cfg, i, o| {
-        module
-            .test_closure_node_ref_access(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_node_ref_access(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report("test_closure_with_shuffle", &stream, |s, cfg, i, o| {
-        module
-            .test_closure_with_shuffle(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_with_shuffle(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report("test_closure_two_shuffles", &stream, |s, cfg, i, o| {
-        module
-            .test_closure_two_shuffles(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_two_shuffles(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report(
         "test_two_shuffles_no_indexed_load",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_two_shuffles_no_indexed_load(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_two_shuffles_no_indexed_load(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report("test_two_shuffles_raw_array", &stream, |s, cfg, i, o| {
-        module
-            .test_two_shuffles_raw_array(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_two_shuffles_raw_array(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report(
         "test_two_shuffles_no_transparent",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_two_shuffles_no_transparent(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_two_shuffles_no_transparent(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report("test_two_shuffles_inlined", &stream, |s, cfg, i, o| {
-        module
-            .test_two_shuffles_inlined(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_two_shuffles_inlined(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report(
         "test_closure_shuffle_with_captures",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_closure_shuffle_with_captures(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_closure_shuffle_with_captures(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report("test_closure_via_array_literal", &stream, |s, cfg, i, o| {
-        module
-            .test_closure_via_array_literal(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_via_array_literal(s, cfg, i, o) }.expect("launch")
     });
 
     // Address-walker regression kernels (PR #121 hardening).
     all_pass &= run_and_report("test_mut_ref_writethrough", &stream, |s, cfg, i, o| {
-        module
-            .test_mut_ref_writethrough(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_mut_ref_writethrough(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report("test_constant_index_tail", &stream, |s, cfg, i, o| {
-        module
-            .test_constant_index_tail(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_constant_index_tail(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report("test_raw_addr_of_const", &stream, |s, cfg, i, o| {
-        module.test_raw_addr_of_const(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_raw_addr_of_const(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report(
         "test_raw_addr_of_mut_writethrough",
         &stream,
         |s, cfg, i, o| {
-            module
-                .test_raw_addr_of_mut_writethrough(s, cfg, i, o)
-                .expect("launch")
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_raw_addr_of_mut_writethrough(s, cfg, i, o) }.expect("launch")
         },
     );
     all_pass &= run_and_report("test_inline_never_node_fn", &stream, |s, cfg, i, o| {
-        module
-            .test_inline_never_node_fn(s, cfg, i, o)
-            .expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_inline_never_node_fn(s, cfg, i, o) }.expect("launch")
     });
     all_pass &= run_and_report("test_holder_deref_tail", &stream, |s, cfg, i, o| {
-        module.test_holder_deref_tail(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_holder_deref_tail(s, cfg, i, o) }.expect("launch")
     });
 
     if all_pass {

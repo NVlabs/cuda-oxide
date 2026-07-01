@@ -123,8 +123,9 @@ fn main() {
     let mut out = DeviceBuffer::<u64>::zeroed(&stream, SLOTS).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    module
-        .bigint_helpers(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.bigint_helpers(
             &stream,
             LaunchConfig::for_num_elems(1),
             a,
@@ -139,7 +140,8 @@ fn main() {
             t,
             &mut out,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let got = out.to_host_vec(&stream).unwrap();
 

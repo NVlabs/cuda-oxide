@@ -68,7 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let mut out = DeviceBuffer::<f16>::zeroed(&stream, 1)?;
-        module.test_f16_store(&stream, cfg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_f16_store(&stream, cfg, &mut out) }?;
         let got = out.to_host_vec(&stream)?[0].to_bits();
         let expected = f16::from_bits(0x3e00).to_bits();
         check("f16 load/store", got, expected, &mut passed, &mut failed);
@@ -76,7 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, 4)?;
-        module.test_f16_ops(&stream, cfg, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_f16_ops(&stream, cfg, &mut out) }?;
         let got = out.to_host_vec(&stream)?;
 
         let one = f16::from_bits(0x3c00);

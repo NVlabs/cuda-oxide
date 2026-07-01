@@ -264,12 +264,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     DeviceBox<[f32]>,
                     DeviceBox<[f32]>,
                 )| {
-                    let launch = module
-                        .sgemm_naive_async_owned(
+                    // SAFETY: the 2D grid and block match `sgemm_naive`'s
+                    // indexing, and all matrices are DIM x DIM allocations.
+                    let launch = unsafe {
+                        module.sgemm_naive_async_owned(
                             gemm_cfg, DIM as u32, DIM as u32, DIM as u32, 1.0f32, input, w0,
                             0.0f32, hidden,
                         )
-                        .expect("Failed to build sgemm_naive launch");
+                    }
+                    .expect("Failed to build sgemm_naive launch");
                     launch
                         .and_then(move |(_input, _w0, hidden)| value((hidden, output, w1, module)))
                 },
@@ -282,19 +285,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arc<DeviceBox<[f32]>>,
                     kernels::LoadedModule,
                 )| {
-                    let launch = module
-                        .matvec_naive_async_owned(
+                    // SAFETY: this is a 1D launch of DIM guarded threads over
+                    // DIM-sized vectors and a DIM x DIM matrix.
+                    let launch = unsafe {
+                        module.matvec_naive_async_owned(
                             matvec_cfg, DIM as u32, DIM as u32, hidden, w1, output,
                         )
-                        .expect("Failed to build matvec_naive launch");
+                    }
+                    .expect("Failed to build matvec_naive launch");
                     launch.and_then(move |(_hidden, _w1, output)| value((output, module)))
                 },
             )
             // ── Stage 3: ReLU  result = max(0, output) ──────────────────
             .and_then(
                 move |(output, module): (DeviceBox<[f32]>, kernels::LoadedModule)| {
-                    module
-                        .relu_async_owned(relu_cfg, output)
+                    // SAFETY: this is a 1D launch and the ReLU kernel guards
+                    // accesses using the owned output's DIM-element length.
+                    unsafe { module.relu_async_owned(relu_cfg, output) }
                         .expect("Failed to build relu launch")
                 },
             )

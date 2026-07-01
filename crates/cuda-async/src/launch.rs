@@ -5,9 +5,11 @@
 
 //! CUDA kernel launch builder with argument marshalling.
 //!
-//! [`AsyncKernelLaunch`] accumulates a kernel function reference, launch
-//! configuration, and type-erased argument pointers, then submits the launch
-//! through the CUDA driver when executed as a [`DeviceOperation`].
+//! [`AsyncKernelLaunchBuilder`] safely accumulates a kernel function reference,
+//! launch attributes, and type-erased argument pointers. An explicit unsafe
+//! call to [`AsyncKernelLaunchBuilder::finalize_unchecked`] supplies the raw
+//! launch geometry and returns an immutable [`AsyncKernelLaunch`] that can be
+//! scheduled as a [`DeviceOperation`].
 //!
 //! Arguments are heap-allocated via [`KernelArgument::push_arg`] and freed when
 //! the launcher is dropped after submission. This keeps the pointed-to values
@@ -27,19 +29,39 @@ use std::future::IntoFuture;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-/// Builder that accumulates kernel arguments and submits a CUDA kernel launch.
+/// Safe, inert builder for an unchecked CUDA kernel launch.
 ///
-/// Implements [`DeviceOperation`] so it can be composed with other operations
-/// and scheduled onto any stream. Also implements [`IntoFuture`] for `.await`
-/// syntax.
+/// Building a launch does not enqueue GPU work. The builder deliberately does
+/// not implement [`DeviceOperation`] or [`IntoFuture`]: raw launch geometry
+/// must first cross the explicit unsafe boundary at
+/// [`finalize_unchecked`](Self::finalize_unchecked).
+///
+/// ```compile_fail,E0277
+/// use cuda_async::device_operation::DeviceOperation;
+/// use cuda_async::launch::AsyncKernelLaunchBuilder;
+///
+/// fn schedule<O: DeviceOperation>(_operation: O) {}
+///
+/// fn cannot_schedule(builder: AsyncKernelLaunchBuilder<'static>) {
+///     schedule(builder);
+/// }
+/// ```
+///
+/// Builders stay on the thread that assembles their type-erased argument
+/// storage. Only the immutable finalized operation is `Send`:
+///
+/// ```compile_fail,E0277
+/// use cuda_async::launch::AsyncKernelLaunchBuilder;
+///
+/// fn assert_send<T: Send>() {}
+/// assert_send::<AsyncKernelLaunchBuilder<'static>>();
+/// ```
 #[derive(Debug)]
-pub struct AsyncKernelLaunch<'a> {
+pub struct AsyncKernelLaunchBuilder<'a> {
     /// Handle to the compiled device function.
-    pub func: Arc<CudaFunction>,
+    func: Arc<CudaFunction>,
     /// Heap-allocated, type-erased argument storage passed to the CUDA driver.
     args: KernelArgStorage,
-    /// Grid/block dimensions and shared memory size. Must be set before launch.
-    cfg: Option<LaunchConfig>,
     /// Optional thread-block cluster dimensions for `cuLaunchKernelEx`.
     cluster_dim: Option<(u32, u32, u32)>,
     /// When `true`, launch via `cuLaunchKernelEx` with
@@ -50,10 +72,44 @@ pub struct AsyncKernelLaunch<'a> {
     _borrows: PhantomData<&'a mut ()>,
 }
 
+/// Immutable, runnable CUDA kernel launch.
+///
+/// This type can only be created by consuming an
+/// [`AsyncKernelLaunchBuilder`]. It exposes no safe geometry or argument
+/// setters, so its safety assumptions cannot be invalidated after the raw
+/// launch configuration has been accepted.
+///
+/// ```compile_fail,E0599
+/// use cuda_async::launch::AsyncKernelLaunch;
+/// use cuda_core::LaunchConfig;
+///
+/// fn cannot_reconfigure(launch: &mut AsyncKernelLaunch<'_>, config: LaunchConfig) {
+///     launch.set_launch_config(config);
+/// }
+/// ```
+#[derive(Debug)]
+pub struct AsyncKernelLaunch<'a> {
+    /// Handle to the compiled device function.
+    func: Arc<CudaFunction>,
+    /// Heap-allocated, type-erased argument storage passed to the CUDA driver.
+    args: KernelArgStorage,
+    /// Complete grid/block dimensions and dynamic shared-memory size.
+    cfg: LaunchConfig,
+    /// Optional thread-block cluster dimensions for `cuLaunchKernelEx`.
+    cluster_dim: Option<(u32, u32, u32)>,
+    /// Whether this launch requests cooperative grid residency.
+    cooperative: bool,
+    /// Ties borrowed device buffers to the lazy launch operation.
+    _borrows: PhantomData<&'a mut ()>,
+}
+
 /// # Safety
 ///
-/// The `*mut c_void` pointers in `args` are heap-allocated boxes that do not
-/// alias mutable state. The `Arc<CudaFunction>` is `Send + Sync`.
+/// The argument pointers refer to heap allocations owned by the launch.
+/// Non-`Copy` values enter that storage only through `KernelArgument: Send`;
+/// copied scalar values have no destructor. The runnable type exposes none of
+/// those erased values to safe Rust. The `Arc<CudaFunction>` is `Send + Sync`,
+/// and `_borrows` preserves source lifetimes captured while building.
 unsafe impl<'a> Send for AsyncKernelLaunch<'a> {}
 
 #[derive(Debug, Default)]
@@ -71,7 +127,7 @@ impl Drop for KernelArgStorage {
 }
 
 impl KernelArgStorage {
-    fn push_boxed_arg<T>(&mut self, arg: Box<T>) {
+    fn push_send_arg<T: Send>(&mut self, arg: Box<T>) {
         unsafe fn drop_box<T>(arg: *mut c_void) {
             let _ = unsafe { Box::from_raw(arg as *mut T) };
         }
@@ -81,7 +137,12 @@ impl KernelArgStorage {
     }
 
     fn push_scalar_arg<T: Copy>(&mut self, arg: T) {
-        self.push_boxed_arg(Box::new(arg));
+        unsafe fn drop_copy_box<T: Copy>(arg: *mut c_void) {
+            let _ = unsafe { Box::from_raw(arg as *mut T) };
+        }
+
+        self.ptrs.push(Box::into_raw(Box::new(arg)) as *mut c_void);
+        self.drops.push(drop_copy_box::<T>);
     }
 
     fn as_mut_slice(&mut self) -> &mut [*mut c_void] {
@@ -89,13 +150,13 @@ impl KernelArgStorage {
     }
 }
 
-impl<'a> AsyncKernelLaunch<'a> {
-    /// Creates a launcher for `func` with no arguments and no launch config.
+impl<'a> AsyncKernelLaunchBuilder<'a> {
+    /// Creates an inert builder for `func` with no arguments or launch
+    /// attributes.
     pub fn new(func: Arc<CudaFunction>) -> Self {
         Self {
             func,
             args: KernelArgStorage::default(),
-            cfg: None,
             cluster_dim: None,
             cooperative: false,
             _borrows: PhantomData,
@@ -120,6 +181,18 @@ impl<'a> AsyncKernelLaunch<'a> {
     ///
     /// The allocated storage remains alive until launch submission finishes or
     /// the builder is dropped without launching.
+    ///
+    /// Values with thread-affine ownership cannot be hidden in the erased
+    /// storage that will later become a `Send` operation:
+    ///
+    /// ```compile_fail,E0277
+    /// use cuda_async::launch::AsyncKernelLaunchBuilder;
+    /// use std::rc::Rc;
+    ///
+    /// fn reject_rc(mut builder: AsyncKernelLaunchBuilder<'static>) {
+    ///     builder.push_arg(Box::new(Rc::new(1_u32)));
+    /// }
+    /// ```
     #[inline(always)]
     pub fn push_arg<T: KernelArgument>(&mut self, arg: T) -> &mut Self {
         arg.push_arg(self);
@@ -142,12 +215,6 @@ impl<'a> AsyncKernelLaunch<'a> {
         self
     }
 
-    /// Sets the grid/block dimensions and shared memory size for the launch.
-    pub fn set_launch_config(&mut self, cfg: LaunchConfig) -> &mut Self {
-        self.cfg = Some(cfg);
-        self
-    }
-
     /// Sets thread-block cluster dimensions for a cluster launch.
     pub fn set_cluster_dim(&mut self, cluster_dim: (u32, u32, u32)) -> &mut Self {
         self.cluster_dim = Some(cluster_dim);
@@ -166,6 +233,55 @@ impl<'a> AsyncKernelLaunch<'a> {
         self
     }
 
+    /// Accepts an unverified raw launch configuration and seals this builder
+    /// into an immutable, schedulable operation.
+    ///
+    /// Prefer the generated typed module APIs for application code. They check
+    /// a kernel's declared launch contract before constructing the runnable
+    /// operation.
+    ///
+    /// # Safety
+    ///
+    /// The caller must prove all facts that a typed prepared launch normally
+    /// checks:
+    ///
+    /// - `cfg` must match the kernel's indexing dimensionality, launch bounds,
+    ///   block shape, and dynamic shared-memory requirements;
+    /// - the cluster and cooperative attributes must be legal for the kernel;
+    /// - the function signature must exactly match the arguments, in order,
+    ///   type, size, and alignment;
+    /// - referenced device allocations must remain valid for the complete GPU
+    ///   operation and satisfy Rust's aliasing requirements; and
+    /// - the scheduling policy must select a stream from the CUDA context that
+    ///   owns `func`.
+    ///
+    /// Violating these requirements can cause memory corruption, data races,
+    /// or CUDA driver errors.
+    ///
+    /// ```compile_fail,E0133
+    /// use cuda_async::launch::AsyncKernelLaunchBuilder;
+    /// use cuda_core::LaunchConfig;
+    ///
+    /// fn raw_finalize_requires_unsafe(
+    ///     builder: AsyncKernelLaunchBuilder<'static>,
+    ///     config: LaunchConfig,
+    /// ) {
+    ///     let _ = builder.finalize_unchecked(config);
+    /// }
+    /// ```
+    pub unsafe fn finalize_unchecked(self, cfg: LaunchConfig) -> AsyncKernelLaunch<'a> {
+        AsyncKernelLaunch {
+            func: self.func,
+            args: self.args,
+            cfg,
+            cluster_dim: self.cluster_dim,
+            cooperative: self.cooperative,
+            _borrows: self._borrows,
+        }
+    }
+}
+
+impl<'a> AsyncKernelLaunch<'a> {
     /// Submits the kernel to `stream` via `cuLaunchKernel`, or via
     /// `cuLaunchKernelEx` when cluster dimensions or a cooperative launch
     /// were requested.
@@ -182,12 +298,10 @@ impl<'a> AsyncKernelLaunch<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`DeviceError::Launch`] if no launch config was set, or
-    /// [`DeviceError::Driver`] if context binding or launch submission fails.
+    /// Returns [`DeviceError::Driver`] if context binding or launch submission
+    /// fails.
     unsafe fn launch(mut self, stream: &Arc<CudaStream>) -> Result<(), DeviceError> {
-        let cfg = self
-            .cfg
-            .ok_or_else(|| DeviceError::Launch("Launch config not set.".to_string()))?;
+        let cfg = self.cfg;
         let result = match (self.cluster_dim, self.cooperative) {
             (Some(cluster_dim), true) => unsafe {
                 cuda_core::launch_kernel_ex_cooperative_on_stream(
@@ -263,18 +377,18 @@ impl<R: Send> OwnedAsyncKernelLaunch<R> {
 /// Implemented for all common scalar primitives (`u8`–`u64`, `i8`–`i64`,
 /// `f32`, `f64`, `usize`, `isize`, `bool`) so callers can write
 /// `.push_arg(42u32)` without manual `Box::new`.
-pub trait KernelArgument {
+pub trait KernelArgument: Send {
     /// Heap-allocates `self` and appends the pointer to `launcher.args`.
-    fn push_arg(self, launcher: &mut AsyncKernelLaunch<'_>);
+    fn push_arg(self, launcher: &mut AsyncKernelLaunchBuilder<'_>);
 }
 
 /// Passes the box's raw pointer directly as a kernel argument.
 ///
 /// This is the low-level escape hatch. Prefer passing scalars directly -- they
 /// are auto-boxed via the blanket scalar impls.
-impl<T: 'static> KernelArgument for Box<T> {
-    fn push_arg(self, launcher: &mut AsyncKernelLaunch<'_>) {
-        launcher.args.push_boxed_arg(self);
+impl<T: Send + 'static> KernelArgument for Box<T> {
+    fn push_arg(self, launcher: &mut AsyncKernelLaunchBuilder<'_>) {
+        launcher.args.push_send_arg(self);
     }
 }
 
@@ -283,7 +397,7 @@ macro_rules! impl_scalar_kernel_arg {
         $(
             impl KernelArgument for $t {
                 #[inline(always)]
-                fn push_arg(self, launcher: &mut AsyncKernelLaunch<'_>) {
+                fn push_arg(self, launcher: &mut AsyncKernelLaunchBuilder<'_>) {
                     launcher.push_scalar_arg(self);
                 }
             }
@@ -310,7 +424,7 @@ impl_scalar_kernel_arg!(
 )]
 pub trait KernelArguments {
     /// Pushes every element into `launcher` in order.
-    fn push_args(self, launcher: &mut AsyncKernelLaunch<'_>);
+    fn push_args(self, launcher: &mut AsyncKernelLaunchBuilder<'_>);
 }
 
 macro_rules! impl_kernel_args_tuple {
@@ -318,14 +432,14 @@ macro_rules! impl_kernel_args_tuple {
     () => {
         impl KernelArguments for () {
             #[inline(always)]
-            fn push_args(self, _launcher: &mut AsyncKernelLaunch<'_>) {}
+            fn push_args(self, _launcher: &mut AsyncKernelLaunchBuilder<'_>) {}
         }
     };
     // Recursive case: (A, B, C, ...) where each element is a KernelArgument
     ($($idx:tt : $T:ident),+) => {
         impl<$($T: KernelArgument),+> KernelArguments for ($($T,)+) {
             #[inline(always)]
-            fn push_args(self, launcher: &mut AsyncKernelLaunch<'_>) {
+            fn push_args(self, launcher: &mut AsyncKernelLaunchBuilder<'_>) {
                 $(launcher.push_arg(self.$idx);)+
             }
         }
@@ -412,8 +526,7 @@ impl<R: Send + 'static> IntoFuture for OwnedAsyncKernelLaunch<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
-    use std::rc::Rc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -438,21 +551,21 @@ mod tests {
 
     #[test]
     fn arg_storage_drops_values_with_their_original_type() {
-        struct DropCounter(Rc<Cell<usize>>);
+        struct DropCounter(Arc<AtomicUsize>);
 
         impl Drop for DropCounter {
             fn drop(&mut self) {
-                self.0.set(self.0.get() + 1);
+                self.0.fetch_add(1, Ordering::Relaxed);
             }
         }
 
-        let drops = Rc::new(Cell::new(0));
+        let drops = Arc::new(AtomicUsize::new(0));
         let mut storage = KernelArgStorage::default();
 
-        storage.push_boxed_arg(Box::new(DropCounter(Rc::clone(&drops))));
-        assert_eq!(drops.get(), 0);
+        storage.push_send_arg(Box::new(DropCounter(Arc::clone(&drops))));
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
 
         drop(storage);
-        assert_eq!(drops.get(), 1);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 }

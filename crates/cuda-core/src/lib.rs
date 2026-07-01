@@ -73,7 +73,11 @@ pub use device_buffer::{DeviceBuffer, DeviceCopy};
 pub use embedded::{EmbeddedModule, EmbeddedModuleError};
 pub use error::{DriverError, IntoResult};
 pub use event::CudaEvent;
-pub use launch::LaunchConfig;
+pub use launch::{
+    BlockRequirement, DeviceLaunchLimits, DynamicSharedMemoryRequirement, KernelLaunchConfig,
+    KernelLaunchContract, LaunchAxis, LaunchConfig, LaunchConfig1D, LaunchConfig2D, LaunchConfig3D,
+    LaunchContractError, LaunchContractSpec, LaunchDimension, PreparedLaunch,
+};
 pub use module::{ConstantHandle, CudaFunction, CudaModule};
 pub use pinned_host_buffer::PinnedHostBuffer;
 pub use stream::CudaStream;
@@ -126,6 +130,10 @@ pub unsafe fn init(flags: c_uint) -> Result<(), DriverError> {
 /// - The pointed-to argument values must remain valid until this function
 ///   returns, because the driver reads them during launch submission.
 /// - The grid and block dimensions must not exceed device limits.
+/// - The grid, block, dynamic-shared-memory size, and launch mode must satisfy
+///   every semantic invariant assumed by the kernel body. In particular,
+///   device acceptance does not prove that an index is unique or that a
+///   synchronization primitive is being launched correctly.
 /// - The calling thread must already have the context that owns both `func` and
 ///   `stream` bound as its current context.
 ///
@@ -180,6 +188,9 @@ pub unsafe fn launch_kernel(
 /// - The pointed-to argument values must remain valid until this function
 ///   returns.
 /// - The grid and block dimensions must not exceed device limits.
+/// - The grid, block, dynamic-shared-memory size, and launch mode must satisfy
+///   every semantic invariant assumed by the kernel body, including index-space
+///   uniqueness and synchronization requirements.
 ///
 /// # Errors
 ///
@@ -296,6 +307,8 @@ pub unsafe fn launch_kernel_ex(
 ///   returns.
 /// - The grid, block, and cluster dimensions must satisfy the device limits and
 ///   CUDA cluster-launch requirements.
+/// - The launch geometry, dynamic-shared-memory size, and cluster mode must
+///   satisfy every semantic invariant assumed by the kernel body.
 ///
 /// # Errors
 ///

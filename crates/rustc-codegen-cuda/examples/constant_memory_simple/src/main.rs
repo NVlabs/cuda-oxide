@@ -40,7 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     module.set_scale(&stream, &3.0)?;
 
     let mut out = DeviceBuffer::<f32>::zeroed(&stream, 8)?;
-    module.multiply(&stream, LaunchConfig::for_num_elems(8), &mut out)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.multiply(&stream, LaunchConfig::for_num_elems(8), &mut out) }?;
 
     let result = out.to_host_vec(&stream)?;
     println!("{:?}", result);
