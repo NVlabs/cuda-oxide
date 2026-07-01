@@ -479,6 +479,18 @@ fn is_unroll_marker_path(fn_path: &str) -> bool {
     fn_path.contains("::__unroll_config")
 }
 
+/// Returns true for the zero-cost launch-bounds marker planted by the macro.
+///
+/// The MIR importer consumes the call in its containing function. The marker's
+/// own empty body is not a device function and must not survive as `.func`.
+fn is_launch_bounds_marker_path(fn_path: &str) -> bool {
+    matches!(
+        fn_path,
+        "cuda_device::__launch_bounds_config"
+            | "cuda_device::thread::__launch_bounds_config"
+    )
+}
+
 /// Marker substring of the panic message used by the public
 /// `cuda_device::thread::index_*` stubs (see `cuda-device/src/thread.rs`).
 ///
@@ -1215,6 +1227,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         if is_unroll_marker_path(&raw_name) {
             if self.verbose {
                 eprintln!("[collector] Skipping unroll marker: {raw_name}");
+            }
+            return;
+        }
+
+        if is_launch_bounds_marker_path(&raw_name) {
+            if self.verbose {
+                eprintln!("[collector] Skipping launch-bounds marker: {raw_name}");
             }
             return;
         }

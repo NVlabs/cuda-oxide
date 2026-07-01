@@ -132,9 +132,10 @@ fn detect_cluster_config(body: &mir::Body) -> Option<ClusterDims> {
 /// We scan the MIR to find it and extract the const generic parameters.
 ///
 /// Returns `Some(LaunchBounds)` if found, `None` otherwise.
-fn detect_launch_bounds_config(body: &mir::Body) -> Option<LaunchBounds> {
+fn detect_launch_bounds_config(body: &mir::Body) -> Result<Option<LaunchBounds>, String> {
     use rustc_public::ty::TyConstKind;
 
+    let mut detected: Option<LaunchBounds> = None;
     for block in &body.blocks {
         let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
             continue;
@@ -149,30 +150,66 @@ fn detect_launch_bounds_config(body: &mir::Body) -> Option<LaunchBounds> {
             continue;
         };
 
-        let fn_name = def_id.name();
-        if fn_name != "__launch_bounds_config" && !fn_name.ends_with("::__launch_bounds_config") {
+        let definition_name = def_id.name();
+        if def_id.krate().name.as_str() != "cuda_device"
+            || (definition_name != "__launch_bounds_config"
+                && !definition_name.ends_with("::__launch_bounds_config"))
+        {
             continue;
         }
 
-        // Extract const generic args (MAX_THREADS, MIN_BLOCKS)
-        let mut values = [0u32, 0u32];
-        for (i, arg) in args.0.iter().take(2).enumerate() {
-            let rustc_public::ty::GenericArgKind::Const(c) = arg else {
-                continue;
-            };
-            values[i] = match c.kind() {
-                TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|v| v as u32),
-                _ => c.eval_target_usize().ok().map(|v| v as u32),
-            }
-            .unwrap_or(values[i]);
+        if args.0.len() != 2 {
+            return Err(format!(
+                "cuda_device launch-bounds marker has {} generic arguments; expected exactly 2",
+                args.0.len()
+            ));
         }
-
-        return Some(LaunchBounds {
+        let mut values = [0u32; 2];
+        for (index, (name, arg)) in ["maximum threads", "minimum blocks"]
+            .into_iter()
+            .zip(args.0.iter())
+            .enumerate()
+        {
+            let rustc_public::ty::GenericArgKind::Const(value) = arg else {
+                return Err(format!(
+                    "cuda_device launch-bounds {name} argument is not a constant"
+                ));
+            };
+            let raw = match value.kind() {
+                TyConstKind::Value(_, allocation) => allocation.read_uint().map_err(|error| {
+                    format!("could not read launch-bounds {name} constant: {error:?}")
+                })?,
+                _ => u128::from(value.eval_target_usize().map_err(|error| {
+                    format!("could not evaluate launch-bounds {name} constant: {error:?}")
+                })?),
+            };
+            values[index] = u32::try_from(raw)
+                .map_err(|_| format!("launch-bounds {name} value {raw} does not fit in u32"))?;
+        }
+        if values[0] == 0 {
+            return Err("launch-bounds maximum threads must be greater than zero".to_string());
+        }
+        let bounds = LaunchBounds {
             max_threads: values[0],
             min_blocks: values[1],
-        });
+        };
+        if let Some(existing) = detected {
+            if existing.max_threads != bounds.max_threads
+                || existing.min_blocks != bounds.min_blocks
+            {
+                return Err(format!(
+                    "a kernel contains conflicting cuda_device launch-bounds markers: ({}, {}) and ({}, {})",
+                    existing.max_threads,
+                    existing.min_blocks,
+                    bounds.max_threads,
+                    bounds.min_blocks,
+                ));
+            }
+        } else {
+            detected = Some(bounds);
+        }
     }
-    None
+    Ok(detected)
 }
 
 /// Scans MIR for the dynamic-shared alignment marker injected by
@@ -859,7 +896,13 @@ pub fn translate_body(
         }
 
         // Detect compile-time launch bounds from #[launch_bounds(max, min)] attribute
-        if let Some(launch_bounds) = detect_launch_bounds_config(body) {
+        let launch_bounds = match detect_launch_bounds_config(body) {
+            Ok(bounds) => bounds,
+            Err(error) => {
+                return input_err_noloc!(TranslationErr::invalid_op(error));
+            }
+        };
+        if let Some(launch_bounds) = launch_bounds {
             use pliron::builtin::attributes::IntegerAttr;
             use pliron::builtin::types::Signedness;
             use pliron::utils::apint::APInt;
