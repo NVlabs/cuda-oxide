@@ -30,7 +30,7 @@ pub(crate) fn convert_m8n8_x4(
 ) -> Result<()> {
     let void_ty = llvm_types::VoidType::get(ctx);
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() < 5 {
+    if operands.len() != 5 {
         return pliron::input_err_noloc!("stmatrix.m8n8.x4 requires 5 operands");
     }
     inline_asm_convergent(
@@ -61,7 +61,7 @@ pub(crate) fn convert_m8n8_x4_trans(
 ) -> Result<()> {
     let void_ty = llvm_types::VoidType::get(ctx);
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() < 5 {
+    if operands.len() != 5 {
         return pliron::input_err_noloc!("stmatrix.m8n8.x4.trans requires 5 operands");
     }
     inline_asm_convergent(
@@ -75,7 +75,7 @@ pub(crate) fn convert_m8n8_x4_trans(
             ".reg .u32 %ptr32; ",
             "cvta.to.shared.u64 %ptr64, $0; ",
             "cvt.u32.u64 %ptr32, %ptr64; ",
-            "stmatrix.sync.aligned.m8n8.x4.shared.b16 [%ptr32], {$1, $2, $3, $4}; ",
+            "stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%ptr32], {$1, $2, $3, $4}; ",
             "}"
         ),
         "l,r,r,r,r,~{memory}",
@@ -92,7 +92,7 @@ pub(crate) fn convert_m8n8_x2(
 ) -> Result<()> {
     let void_ty = llvm_types::VoidType::get(ctx);
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() < 3 {
+    if operands.len() != 3 {
         return pliron::input_err_noloc!("stmatrix.m8n8.x2 requires 3 operands");
     }
     inline_asm_convergent(
@@ -123,7 +123,7 @@ pub(crate) fn convert_m8n8_x2_trans(
 ) -> Result<()> {
     let void_ty = llvm_types::VoidType::get(ctx);
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() < 3 {
+    if operands.len() != 3 {
         return pliron::input_err_noloc!("stmatrix.m8n8.x2.trans requires 3 operands");
     }
     inline_asm_convergent(

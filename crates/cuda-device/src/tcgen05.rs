@@ -1857,34 +1857,44 @@ pub fn tcgen05_store_wait() {
 /// # Parameters
 ///
 /// - `smem_ptr`: Destination in shared memory (16-byte aligned)
-/// - `r0`, `r1`, `r2`, `r3`: Four f32 values from thread's registers
+/// - `r0`, `r1`, `r2`, `r3`: Four u32 values, each containing two packed b16 elements
 ///
 /// # Shape
 ///
 /// `stmatrix.sync.aligned.m8n8.x4.shared.b16`:
-/// - Stores an 8×8 matrix tile
+/// - Stores four 8×8 matrix tiles
 /// - Uses 4 registers per thread (packed as 16-bit elements)
 /// - Cooperatively distributes across 32 threads
 ///
 /// # Usage
 ///
-/// After `tcgen05_ld_16x256b_x8_pure`, slice the 32 registers into groups of 4
-/// and call `stmatrix_m8n8_x4` for each 8×8 tile.
+/// Convert loaded values to packed b16 pairs before calling this function.
+/// Each u32 is treated as bits; this function does not convert f32 to b16.
+///
+/// # Address lanes
+///
+/// ```text
+/// lanes  0..7  -> rows 0..7 of matrix 0
+/// lanes  8..15 -> rows 0..7 of matrix 1
+/// lanes 16..23 -> rows 0..7 of matrix 2
+/// lanes 24..31 -> rows 0..7 of matrix 3
+/// ```
 ///
 /// # Safety
 ///
 /// - `smem_ptr` must be valid shared memory (16-byte aligned)
 /// - Must be called by ALL 32 threads in a warp together
+/// - Callers must use the appropriate fence or barrier before a dependent memory access
 #[inline(never)]
-pub unsafe fn stmatrix_m8n8_x4(smem_ptr: *mut u8, r0: f32, r1: f32, r2: f32, r3: f32) {
+pub unsafe fn stmatrix_m8n8_x4(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u32, r3: u32) {
     let _ = (smem_ptr, r0, r1, r2, r3);
     unreachable!("stmatrix_m8n8_x4 called outside CUDA kernel context")
 }
 
-/// Store matrix tile from registers to shared memory with transpose (layout transform).
+/// Store matrix tiles from registers to shared memory in column-major order.
 ///
 /// This is the warp-cooperative matrix store instruction with the critical `.trans`
-/// modifier that transforms data from fragment layout to row-major layout.
+/// modifier, which selects column-major storage.
 ///
 /// # PTX Instruction
 ///
@@ -1899,7 +1909,7 @@ pub unsafe fn stmatrix_m8n8_x4(smem_ptr: *mut u8, r0: f32, r1: f32, r2: f32, r3:
 ///
 /// - Stores four 8×8 matrix tiles (256 elements total per warp call)
 /// - Each register contains 2 packed bf16 values
-/// - `.trans` performs the fragment→row-major layout transformation
+/// - `.trans` stores each matrix in column-major order
 ///
 /// # Usage for 64×64 extraction
 ///
@@ -1910,11 +1920,17 @@ pub unsafe fn stmatrix_m8n8_x4(smem_ptr: *mut u8, r0: f32, r1: f32, r2: f32, r3:
 ///
 /// Each warp stores 16 rows (1024 elements), so 4 calls × 256 = 1024 ✓
 ///
+/// # Address lanes
+///
+/// The address-lane rule is unchanged by `.trans`: consecutive groups of
+/// eight lanes provide rows 0-7 for matrices 0, 1, 2, and 3 respectively.
+///
 /// # Safety
 ///
 /// - `smem_ptr` must be valid shared memory (16-byte aligned)
 /// - Must be called by ALL 32 threads in a warp together (warp-synchronous)
 /// - Registers must contain properly packed bf16 pairs
+/// - Callers must use the appropriate fence or barrier before a dependent memory access
 #[inline(never)]
 pub unsafe fn stmatrix_m8n8_x4_trans(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u32, r3: u32) {
     let _ = (smem_ptr, r0, r1, r2, r3);
@@ -1967,8 +1983,15 @@ pub unsafe fn stmatrix_m8n8_x4_trans(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u3
 ///
 /// # Address Requirement
 ///
-/// Each thread provides address for its assigned row:
-/// `addr = base + (lane_id / 4) * row_stride`
+/// Only lanes 0-15 provide addresses. Lanes 0-7 provide rows 0-7 of the first
+/// matrix; lanes 8-15 provide rows 0-7 of the second matrix. All 32 lanes still
+/// execute the instruction and provide fragment registers.
+///
+/// ```text
+/// lanes  0..7  -> base + (lane_id % 8) * row_stride
+/// lanes  8..15 -> base + matrix_stride + (lane_id % 8) * row_stride
+/// lanes 16..31 -> address operand ignored; fragment registers still used
+/// ```
 ///
 /// # Usage with Base LDTM
 ///
@@ -1981,9 +2004,9 @@ pub unsafe fn stmatrix_m8n8_x4_trans(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u3
 /// let p0 = cvt_f32x2_bf16x2(regs[0], regs[1]);
 /// let p1 = cvt_f32x2_bf16x2(regs[2], regs[3]);
 ///
-/// // Each thread provides address for its row
-/// let row_in_tile = lane_id / 4;
-/// let addr = base_smem + row_in_tile * row_stride + col_offset;
+/// let row_in_tile = lane_id % 8;
+/// let matrix_offset = if lane_id < 8 { 0 } else { matrix_stride };
+/// let addr = base_smem + matrix_offset + row_in_tile * row_stride + col_offset;
 ///
 /// // Store via stmatrix.x2 (non-trans)
 /// stmatrix_m8n8_x2(addr as *mut u8, p0, p1);
@@ -1994,16 +2017,16 @@ pub unsafe fn stmatrix_m8n8_x4_trans(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u3
 /// - `smem_ptr` must be valid shared memory (16-byte aligned)
 /// - Must be called by ALL 32 threads in a warp together (warp-synchronous)
 /// - Registers must contain properly packed bf16 pairs
+/// - Callers must use the appropriate fence or barrier before a dependent memory access
 #[inline(never)]
 pub unsafe fn stmatrix_m8n8_x2(smem_ptr: *mut u8, r0: u32, r1: u32) {
     let _ = (smem_ptr, r0, r1);
     unreachable!("stmatrix_m8n8_x2 called outside CUDA kernel context")
 }
 
-/// Store two 8×8 bf16 matrices to shared memory with TRANSPOSE.
+/// Store two 8×8 bf16 matrices to shared memory in column-major order.
 ///
-/// This is the TRANSPOSE version that matches cuBLAS epilog: `STSM.16.MT88.2`.
-/// Converts from fragment (column-major) layout to row-major layout during store.
+/// This is the `.trans` version that matches cuBLAS epilog: `STSM.16.MT88.2`.
 ///
 /// # Generated PTX
 ///
@@ -2011,20 +2034,16 @@ pub unsafe fn stmatrix_m8n8_x2(smem_ptr: *mut u8, r0: u32, r1: u32) {
 ///
 /// # Thread-to-Address Mapping (TRANSPOSE)
 ///
-/// For transpose stmatrix.m8n8.x2, each group of 4 threads writes one ROW:
-/// - Threads 0-3:   write row 0
-/// - Threads 4-7:   write row 1
-/// - Threads 8-11:  write row 2
-/// - ...
-/// - Threads 28-31: write row 7
-///
-/// Each thread provides address: `base + (lane_id / 4) * row_stride`
+/// The address-lane rule is unchanged by `.trans`: lanes 0-7 provide rows
+/// 0-7 of the first matrix and lanes 8-15 provide rows 0-7 of the second.
+/// All 32 lanes still execute the instruction and provide fragment registers.
 ///
 /// # Safety
 ///
 /// - `smem_ptr` must be valid shared memory (16-byte aligned)
 /// - Must be called by ALL 32 threads in a warp together
 /// - Registers must contain properly packed bf16 pairs from LDTM
+/// - Callers must use the appropriate fence or barrier before a dependent memory access
 #[inline(never)]
 pub unsafe fn stmatrix_m8n8_x2_trans(smem_ptr: *mut u8, r0: u32, r1: u32) {
     let _ = (smem_ptr, r0, r1);

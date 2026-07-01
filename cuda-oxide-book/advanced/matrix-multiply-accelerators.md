@@ -229,9 +229,10 @@ registers and then use `stmatrix` to write to shared memory:
 
 ```rust
 use cuda_device::tcgen05::{
+    cvt_f32x2_bf16x2,
     tcgen05_ld_16x256b_pure,
     tcgen05_load_wait,
-    stmatrix_m8n8_x4,
+    stmatrix_m8n8_x2,
     TmemF32x4,
 };
 
@@ -240,8 +241,12 @@ unsafe {
     let regs: TmemF32x4 = tcgen05_ld_16x256b_pure(tmem.raw_address());
     tcgen05_load_wait();
 
-    // Store from registers to shared memory (warp-collective)
-    stmatrix_m8n8_x4(smem_ptr, regs[0], regs[1], regs[2], regs[3]);
+    // Convert four f32 accumulators into two registers of packed bf16 values.
+    let packed0 = cvt_f32x2_bf16x2(regs[0], regs[1]);
+    let packed1 = cvt_f32x2_bf16x2(regs[2], regs[3]);
+
+    // Store two 8×8 matrices from registers (warp-collective).
+    stmatrix_m8n8_x2(smem_ptr, packed0, packed1);
 }
 ```
 

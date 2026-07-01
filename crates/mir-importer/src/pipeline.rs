@@ -25,13 +25,17 @@
 //!
 //! | Feature                       | Target  | Architecture         |
 //! |-------------------------------|---------|----------------------|
-//! | tcgen05/TMEM                  | sm_100a | Blackwell datacenter |
-//! | TMA multicast                 | sm_100a | Blackwell datacenter |
+//! | tcgen05/TMEM, CTA-pair TMA    | sm_100a | Blackwell datacenter |
+//! | PTX 8.6 matrix shapes/types   | sm_100a | Blackwell family     |
+//! | TMA multicast                 | sm_100a | sm_90a/Blackwell     |
 //! | WGMMA                         | sm_90a  | Hopper only          |
+//! | `stmatrix.m8n8.b16`          | sm_90   | PTX 7.8+             |
 //! | TMA/mbarrier                  | sm_100  | Hopper+ compatible   |
 //! | bf16x2 add/sub/mul            | sm_90   | Hopper+ compatible   |
 //! | other bf16x2 ALU              | sm_80   | Ampere+ compatible   |
 //! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
+//! | `movmatrix.m8n8.b16`          | sm_75   | PTX 7.8+             |
+//! | `ldmatrix.m8n8.b16`           | sm_75   | PTX 6.5+             |
 //! | Basic CUDA                    | sm_80   | Ampere+ (max compat) |
 //!
 //! Override with `CUDA_OXIDE_TARGET=<target>` environment variable.
@@ -1069,11 +1073,47 @@ fn contains_sm90_features(contents: &str) -> bool {
     ["add.rn.bf16x2 ", "sub.rn.bf16x2 ", "mul.rn.bf16x2 "]
         .iter()
         .any(|mnemonic| contents.contains(mnemonic))
+        || contains_stmatrix_features(contents)
 }
 
 /// Checks for the register-only 8x8 matrix transpose (PTX 7.8, sm_75+).
 fn contains_movmatrix_features(contents: &str) -> bool {
     contents.contains("movmatrix.sync.aligned.m8n8.trans.b16 ")
+}
+
+/// Checks the full PTX instruction families, including inline `ptx_asm!`
+/// forms that cuda-oxide does not yet expose as typed wrappers.
+///
+/// Broad family matching is intentional. Missing a valid spelling can
+/// silently select an architecture or PTX ISA that is too old; an invalid
+/// spelling still reaches ptxas and fails there after conservative targeting.
+fn contains_ldmatrix_features(contents: &str) -> bool {
+    contents.contains("ldmatrix.sync.aligned.")
+}
+
+fn contains_stmatrix_features(contents: &str) -> bool {
+    contents.contains("stmatrix.sync.aligned.")
+}
+
+/// PTX 8.6 matrix shapes/types have a Blackwell architecture-family floor.
+fn contains_blackwell_matrix_features(contents: &str) -> bool {
+    contents.split(';').any(|statement| {
+        let newer_ldmatrix = statement.contains("ldmatrix.sync.aligned.")
+            && [".m16n16.", ".m8n16.", ".b8", ".src_fmt", ".dst_fmt"]
+                .iter()
+                .any(|token| statement.contains(token));
+        let newer_stmatrix = statement.contains("stmatrix.sync.aligned.")
+            && [".m16n8.", ".b8"]
+                .iter()
+                .any(|token| statement.contains(token));
+        newer_ldmatrix || newer_stmatrix
+    })
+}
+
+fn contains_ldmatrix_cta_state_space(contents: &str) -> bool {
+    contents.split(';').any(|statement| {
+        statement.contains("ldmatrix.sync.aligned.") && statement.contains(".shared::cta.")
+    })
 }
 
 /// Checks for features whose minimum target is sm_80.
@@ -1142,7 +1182,7 @@ fn contains_blackwell_features(contents: &str) -> bool {
         || contents.contains("tcgen05.cp")
 }
 
-/// Checks for TMA multicast in LLVM IR (requires sm_100a).
+/// Checks for base TMA multicast in LLVM IR (sm_90a or Blackwell a/f).
 ///
 /// TMA multicast (`cp.async.bulk.tensor...multicast::cluster`) is an
 /// architecture-specific extension that broadcasts a tile to all CTAs in a
@@ -1154,13 +1194,28 @@ fn contains_tma_multicast(contents: &str) -> bool {
         .any(|line| line.contains("g2s.tile") && line.contains(", i1 1, i1"))
 }
 
+/// Checks Blackwell-only CTA-pair TMA forms emitted as inline PTX.
+fn contains_tma_cg2_features(contents: &str) -> bool {
+    contents.split(';').any(|statement| {
+        statement.contains("cp.async.bulk.tensor") && statement.contains(".cta_group::2")
+    }) || contents.lines().any(|line| {
+        line.contains("g2s.tile")
+            && line.contains(", i32 2)")
+            && (line.contains(", i1 1, i1") || line.contains(", i1 true, i1"))
+    })
+}
+
 /// GPU features detected in LLVM IR that determine target selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetectedFeatures {
     /// tcgen05/TMEM (Blackwell datacenter, sm_100a).
     Blackwell,
-    /// TMA multicast (arch-specific extension, sm_100a).
+    /// Base TMA multicast (sm_90a or Blackwell architecture/family targets).
     TmaMulticast,
+    /// CTA-pair TMA forms (Blackwell datacenter family).
+    TmaCg2,
+    /// PTX 8.6 ldmatrix/stmatrix shapes supported on Blackwell family targets.
+    MatrixBlackwell,
     /// WGMMA (Hopper only, sm_90a - NOT forward-compatible).
     Wgmma,
     /// TMA/mbarrier (Hopper+ compatible).
@@ -1173,6 +1228,8 @@ enum DetectedFeatures {
     Sm80,
     /// Warp matrix register transpose introduced in PTX 7.8 on sm_75.
     Movmatrix,
+    /// Warp matrix shared-memory load introduced in PTX 6.5 on sm_75.
+    Ldmatrix,
     /// No special features (Volta+, with an sm_80 cross-compile default).
     Basic,
 }
@@ -1181,10 +1238,12 @@ enum DetectedFeatures {
 ///
 /// For example, a module may need sm_80 because it uses `cp.async` and still
 /// need PTX 7.8 because it also uses `movmatrix`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PtxIsaRequirement {
     Default,
+    Ptx65,
     Ptx78,
+    Ptx86,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1201,34 +1260,50 @@ struct ModuleRequirements {
 fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
     match (
         contains_blackwell_features(contents),
+        contains_tma_cg2_features(contents),
         contains_tma_multicast(contents),
+        contains_blackwell_matrix_features(contents),
         contains_wgmma_features(contents),
         contains_tma_features(contents),
         contains_cluster_features(contents),
         contains_sm90_features(contents),
         contains_sm80_features(contents),
         contains_movmatrix_features(contents),
+        contains_ldmatrix_features(contents),
     ) {
-        (true, _, _, _, _, _, _, _) => DetectedFeatures::Blackwell,
-        (_, true, _, _, _, _, _, _) => DetectedFeatures::TmaMulticast,
-        (_, _, true, _, _, _, _, _) => DetectedFeatures::Wgmma,
-        (_, _, _, true, _, _, _, _) => DetectedFeatures::Tma,
-        (_, _, _, _, true, _, _, _) => DetectedFeatures::Cluster,
-        (_, _, _, _, _, true, _, _) => DetectedFeatures::Sm90,
-        (_, _, _, _, _, _, true, _) => DetectedFeatures::Sm80,
-        (_, _, _, _, _, _, _, true) => DetectedFeatures::Movmatrix,
+        (true, _, _, _, _, _, _, _, _, _, _) => DetectedFeatures::Blackwell,
+        (_, true, _, _, _, _, _, _, _, _, _) => DetectedFeatures::TmaCg2,
+        (_, _, true, _, _, _, _, _, _, _, _) => DetectedFeatures::TmaMulticast,
+        (_, _, _, true, _, _, _, _, _, _, _) => DetectedFeatures::MatrixBlackwell,
+        (_, _, _, _, true, _, _, _, _, _, _) => DetectedFeatures::Wgmma,
+        (_, _, _, _, _, true, _, _, _, _, _) => DetectedFeatures::Tma,
+        (_, _, _, _, _, _, true, _, _, _, _) => DetectedFeatures::Cluster,
+        (_, _, _, _, _, _, _, true, _, _, _) => DetectedFeatures::Sm90,
+        (_, _, _, _, _, _, _, _, true, _, _) => DetectedFeatures::Sm80,
+        (_, _, _, _, _, _, _, _, _, true, _) => DetectedFeatures::Movmatrix,
+        (_, _, _, _, _, _, _, _, _, _, true) => DetectedFeatures::Ldmatrix,
         _ => DetectedFeatures::Basic,
     }
 }
 
 fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements {
+    let mut ptx_isa = PtxIsaRequirement::Default;
+    if contains_ldmatrix_features(contents) {
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx65);
+    }
+    if contains_movmatrix_features(contents)
+        || contains_stmatrix_features(contents)
+        || contains_ldmatrix_cta_state_space(contents)
+    {
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx78);
+    }
+    if contains_blackwell_matrix_features(contents) {
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx86);
+    }
+
     ModuleRequirements {
         features: detect_features_in_llvm_text(contents),
-        ptx_isa: if contains_movmatrix_features(contents) {
-            PtxIsaRequirement::Ptx78
-        } else {
-            PtxIsaRequirement::Default
-        },
+        ptx_isa,
     }
 }
 
@@ -1248,7 +1323,9 @@ fn detect_module_requirements_in_llvm_file(
 fn select_target(features: DetectedFeatures) -> &'static str {
     match features {
         DetectedFeatures::Blackwell => "sm_100a",
+        DetectedFeatures::TmaCg2 => "sm_100a",
         DetectedFeatures::TmaMulticast => "sm_100a",
+        DetectedFeatures::MatrixBlackwell => "sm_100a",
         DetectedFeatures::Wgmma => "sm_90a",
         // TMA needs PTX 8.0+ which requires sm_90a or sm_100+.
         // sm_90a is NOT forward-compatible to Blackwell, so use sm_100 which:
@@ -1262,6 +1339,7 @@ fn select_target(features: DetectedFeatures) -> &'static str {
         DetectedFeatures::Sm90 => "sm_90",
         DetectedFeatures::Sm80 => "sm_80",
         DetectedFeatures::Movmatrix => "sm_75",
+        DetectedFeatures::Ldmatrix => "sm_75",
         DetectedFeatures::Basic => "sm_80",
     }
 }
@@ -1280,22 +1358,41 @@ fn select_target(features: DetectedFeatures) -> &'static str {
 /// hint) can actually run the kernel, or whether we must build for the arch the
 /// IR requires instead.
 fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
-    let Some(capability) = arch_compute_capability(arch) else {
+    let Some((capability, suffix)) = arch_compute_capability_and_suffix(arch) else {
         return false;
     };
-    let Some(major) = arch_major(arch) else {
-        return false;
-    };
+    let major = capability / 10;
     match features {
-        DetectedFeatures::Blackwell | DetectedFeatures::TmaMulticast => major == 10,
-        DetectedFeatures::Wgmma => major == 9,
+        DetectedFeatures::Blackwell | DetectedFeatures::TmaCg2 => {
+            supports_tcgen_target(capability, suffix)
+        }
+        DetectedFeatures::TmaMulticast => {
+            (capability == 90 && suffix == Some('a')) || supports_tcgen_target(capability, suffix)
+        }
+        DetectedFeatures::MatrixBlackwell => match suffix {
+            Some('a') => matches!(capability, 100 | 101 | 110 | 120),
+            Some('f') => matches!(major, 10..=12),
+            _ => false,
+        },
+        DetectedFeatures::Wgmma => capability == 90 && suffix == Some('a'),
         DetectedFeatures::Tma | DetectedFeatures::Cluster | DetectedFeatures::Sm90 => major >= 9,
         DetectedFeatures::Sm80 => major >= 8,
-        DetectedFeatures::Movmatrix => capability >= 75,
+        DetectedFeatures::Movmatrix | DetectedFeatures::Ldmatrix => capability >= 75,
         // Basic kernels are supported on the project's Volta+ floor. The
         // cross-compilation default remains sm_80, but a detected sm_70/sm_75
         // GPU is a valid and more useful target for `cargo oxide run`.
         DetectedFeatures::Basic => major >= 7,
+    }
+}
+
+/// tcgen05/TMEM exists only on the datacenter Blackwell architecture or
+/// family targets. Consumer sm_120 and generic targets without an `a`/`f`
+/// suffix do not provide Tensor Memory.
+fn supports_tcgen_target(capability: u32, suffix: Option<char>) -> bool {
+    match suffix {
+        Some('a') => capability / 10 == 10 || capability == 110,
+        Some('f') => matches!(capability / 10, 10 | 11),
+        _ => false,
     }
 }
 
@@ -1306,7 +1403,7 @@ fn validate_target_features(target: &CudaArch, features: DetectedFeatures) -> Re
 
     Err(format!(
         "CUDA target {} cannot lower detected feature {features:?}; \
-         cuda-oxide currently requires {} or newer for this module",
+         cuda-oxide requires a target compatible with {} for this module",
         target.sm(),
         select_target(features)
     ))
@@ -1334,13 +1431,18 @@ fn resolve_ptx_target(
 
 /// Select the PTX ISA independently from the GPU architecture.
 ///
-/// `movmatrix` runs on sm_75+, but LLVM's pre-Hopper CPUs select older PTX
-/// versions by default. Request PTX 7.8 on sm_75 through sm_89; sm_90+ already
-/// selects PTX 7.8 or newer and must not be downgraded.
+/// LLVM GPU CPUs select a default PTX ISA independently from the hardware
+/// feature floor. Raise that ISA only when the selected CPU's default is too
+/// old; never force a newer target back to an older PTX version.
 fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<&'static str> {
-    (requirement == PtxIsaRequirement::Ptx78
-        && arch_compute_capability(target).is_some_and(|capability| capability < 90))
-    .then_some("+ptx78")
+    let capability = arch_compute_capability(target)?;
+    match requirement {
+        PtxIsaRequirement::Default => None,
+        PtxIsaRequirement::Ptx65 if capability == 75 => Some("+ptx65"),
+        PtxIsaRequirement::Ptx78 if capability < 90 => Some("+ptx78"),
+        PtxIsaRequirement::Ptx86 if capability < 100 => Some("+ptx86"),
+        PtxIsaRequirement::Ptx65 | PtxIsaRequirement::Ptx78 | PtxIsaRequirement::Ptx86 => None,
+    }
 }
 
 /// Extract the compute-capability *major* version from an `sm_…` target string.
@@ -1348,18 +1450,22 @@ fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<
 /// CUDA concatenates major+minor without a separator, so `"sm_120a"` is cc 12.0
 /// (major 12), `"sm_90"` is cc 9.0, `"sm_103a"` is cc 10.3. We read the digit
 /// run after `sm_` and divide by ten. Returns `None` when there are no digits.
+#[cfg(test)]
 fn arch_major(arch: &str) -> Option<u32> {
     arch_compute_capability(arch).map(|capability| capability / 10)
 }
 
 /// Extract the numeric compute capability from an `sm_…` target.
 fn arch_compute_capability(arch: &str) -> Option<u32> {
-    let digits: String = arch
-        .strip_prefix("sm_")?
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    (digits.len() >= 2).then(|| digits.parse().ok()).flatten()
+    arch_compute_capability_and_suffix(arch).map(|(capability, _)| capability)
+}
+
+fn arch_compute_capability_and_suffix(arch: &str) -> Option<(u32, Option<char>)> {
+    if !arch.starts_with("sm_") {
+        return None;
+    }
+    let target = arch.parse::<CudaArch>().ok()?;
+    Some((target.capability(), target.suffix()))
 }
 
 /// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
@@ -1910,13 +2016,16 @@ mod tests {
     fn automatic_nvvm_target_uses_the_module_feature_floor() {
         for (features, expected, is_legacy) in [
             (DetectedFeatures::Basic, "sm_80", true),
+            (DetectedFeatures::Ldmatrix, "sm_75", true),
             (DetectedFeatures::Movmatrix, "sm_75", true),
             (DetectedFeatures::Sm80, "sm_80", true),
             (DetectedFeatures::Sm90, "sm_90", true),
             (DetectedFeatures::Cluster, "sm_90", true),
             (DetectedFeatures::Wgmma, "sm_90a", true),
             (DetectedFeatures::Tma, "sm_100", false),
+            (DetectedFeatures::TmaCg2, "sm_100a", false),
             (DetectedFeatures::TmaMulticast, "sm_100a", false),
+            (DetectedFeatures::MatrixBlackwell, "sm_100a", false),
             (DetectedFeatures::Blackwell, "sm_100a", false),
         ] {
             let target = resolve_nvvm_target(None, None, Some(features)).unwrap();
@@ -1938,6 +2047,10 @@ mod tests {
         let movmatrix_on_volta =
             resolve_nvvm_target(None, Some("sm_70"), Some(DetectedFeatures::Movmatrix)).unwrap();
         assert_eq!(movmatrix_on_volta.sm(), "sm_75");
+
+        let ldmatrix_on_volta =
+            resolve_nvvm_target(None, Some("sm_70"), Some(DetectedFeatures::Ldmatrix)).unwrap();
+        assert_eq!(ldmatrix_on_volta.sm(), "sm_75");
 
         let blackwell =
             resolve_nvvm_target(None, Some("sm_120a"), Some(DetectedFeatures::Basic)).unwrap();
@@ -1989,6 +2102,24 @@ mod tests {
             resolve_nvvm_target(Some("sm_86"), Some("sm_120a"), Some(DetectedFeatures::Sm80))
                 .unwrap();
         assert_eq!(target.sm(), "sm_86");
+    }
+
+    #[test]
+    fn explicit_ptx_target_cannot_undercut_matrix_feature_floors() {
+        let ldmatrix = resolve_ptx_target(Some("sm_70"), None, DetectedFeatures::Ldmatrix)
+            .expect_err("sm_70 cannot lower ldmatrix")
+            .to_string();
+        assert!(ldmatrix.contains("cannot lower detected feature Ldmatrix"));
+
+        let stmatrix = resolve_ptx_target(Some("sm_80"), None, DetectedFeatures::Sm90)
+            .expect_err("sm_80 cannot lower stmatrix")
+            .to_string();
+        assert!(stmatrix.contains("cannot lower detected feature Sm90"));
+
+        let newer = resolve_ptx_target(Some("sm_100"), None, DetectedFeatures::MatrixBlackwell)
+            .expect_err("generic sm_100 lacks architecture-family matrix features")
+            .to_string();
+        assert!(newer.contains("cannot lower detected feature MatrixBlackwell"));
     }
 
     #[test]
@@ -2186,6 +2317,94 @@ mod tests {
     }
 
     #[test]
+    fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
+        let base_ldmatrix = "ldmatrix.sync.aligned.m8n8.x4.b16 {$0, $1, $2, $3}, [$4];";
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(base_ldmatrix),
+            ModuleRequirements {
+                features: DetectedFeatures::Ldmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx65,
+            }
+        );
+
+        let cta_ldmatrix = "ldmatrix.sync.aligned.m8n8.x1.shared::cta.b16 {$0}, [$1];";
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(cta_ldmatrix),
+            ModuleRequirements {
+                features: DetectedFeatures::Ldmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+
+        for stmatrix in [
+            "stmatrix.sync.aligned.m8n8.x1.b16 [$0], {$1};",
+            "stmatrix.sync.aligned.m8n8.x4.trans.shared::cta.b16 [$0], {$1, $2, $3, $4};",
+        ] {
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(stmatrix),
+                ModuleRequirements {
+                    features: DetectedFeatures::Sm90,
+                    ptx_isa: PtxIsaRequirement::Ptx78,
+                }
+            );
+        }
+
+        for newer in [
+            "ldmatrix.sync.aligned.m16n16.x1.trans.shared.b8 {$0, $1}, [$2];",
+            "ldmatrix.sync.aligned.m8n16.x2.shared::cta.b8x16.b6x16_p32 {$0, $1}, [$2];",
+            "stmatrix.sync.aligned.m16n8.x1.trans.shared.b8 [$0], {$1};",
+        ] {
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(newer),
+                ModuleRequirements {
+                    features: DetectedFeatures::MatrixBlackwell,
+                    ptx_isa: PtxIsaRequirement::Ptx86,
+                },
+                "{newer}"
+            );
+        }
+
+        let mixed = format!(
+            "{base_ldmatrix}\n{}",
+            "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;"
+        );
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&mixed),
+            ModuleRequirements {
+                features: DetectedFeatures::Movmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            },
+            "the strongest PTX ISA floor must survive equal sm_75 feature families"
+        );
+
+        assert_eq!(
+            required_ptx_feature("sm_75", PtxIsaRequirement::Ptx65),
+            Some("+ptx65")
+        );
+        assert_eq!(
+            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx65),
+            None
+        );
+        assert_eq!(
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86),
+            None
+        );
+
+        let adjacent_unrelated_b8 = concat!(
+            "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {$0}, [$1]; ",
+            "mov.b8 $2, $3;"
+        );
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(adjacent_unrelated_b8),
+            ModuleRequirements {
+                features: DetectedFeatures::Ldmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx65,
+            },
+            "an unrelated b8 instruction must not raise the ldmatrix family"
+        );
+    }
+
+    #[test]
     fn test_sm90_floor_wins_when_sm80_features_are_also_present() {
         let llvm = r#"
             call i32 asm pure "add.rn.bf16x2 $0, $1, $2;", "=r,r,r"(i32 %a, i32 %b)
@@ -2201,6 +2420,8 @@ mod tests {
     fn test_tma_multicast_detection_requires_cta_mask() {
         let multicast = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 1, i1 false)";
         let unicast = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile(i32 0, i1 0, i1 false)";
+        let cg2 = "cp.async.bulk.tensor.2d.cta_group::2.shared::cluster.global";
+        let cg2_intrinsic = "call void @llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d(ptr addrspace(7) %dst, i1 1, i1 false, i32 2)";
 
         assert!(contains_tma_multicast(multicast));
         assert!(!contains_tma_multicast(unicast));
@@ -2209,18 +2430,26 @@ mod tests {
             DetectedFeatures::TmaMulticast
         );
         assert_eq!(detect_features_in_llvm_text(unicast), DetectedFeatures::Tma);
+        assert_eq!(detect_features_in_llvm_text(cg2), DetectedFeatures::TmaCg2);
+        assert_eq!(
+            detect_features_in_llvm_text(cg2_intrinsic),
+            DetectedFeatures::TmaCg2
+        );
     }
 
     #[test]
     fn test_select_target_prefers_required_architecture() {
         assert_eq!(select_target(DetectedFeatures::Blackwell), "sm_100a");
+        assert_eq!(select_target(DetectedFeatures::TmaCg2), "sm_100a");
         assert_eq!(select_target(DetectedFeatures::TmaMulticast), "sm_100a");
+        assert_eq!(select_target(DetectedFeatures::MatrixBlackwell), "sm_100a");
         assert_eq!(select_target(DetectedFeatures::Wgmma), "sm_90a");
         assert_eq!(select_target(DetectedFeatures::Tma), "sm_100");
         assert_eq!(select_target(DetectedFeatures::Cluster), "sm_90");
         assert_eq!(select_target(DetectedFeatures::Sm90), "sm_90");
         assert_eq!(select_target(DetectedFeatures::Sm80), "sm_80");
         assert_eq!(select_target(DetectedFeatures::Movmatrix), "sm_75");
+        assert_eq!(select_target(DetectedFeatures::Ldmatrix), "sm_75");
         assert_eq!(select_target(DetectedFeatures::Basic), "sm_80");
     }
 
@@ -2243,8 +2472,13 @@ mod tests {
         // tcgen05 and cta_group TMA multicast are sm_100-family only:
         // consumer Blackwell (sm_120) and Hopper (sm_90) cannot run them, even
         // though 120 > 100. This is the gemm_sol regression guard.
-        for f in [DetectedFeatures::Blackwell, DetectedFeatures::TmaMulticast] {
+        for f in [DetectedFeatures::Blackwell, DetectedFeatures::TmaCg2] {
             assert!(arch_satisfies("sm_100a", f), "sm_100a must satisfy {f:?}");
+            assert!(arch_satisfies("sm_103f", f), "sm_103f must satisfy {f:?}");
+            assert!(
+                !arch_satisfies("sm_100", f),
+                "generic sm_100 must NOT satisfy {f:?}"
+            );
             assert!(
                 !arch_satisfies("sm_120a", f),
                 "sm_120a must NOT satisfy {f:?}"
@@ -2257,17 +2491,52 @@ mod tests {
     }
 
     #[test]
+    fn test_arch_satisfies_base_tma_multicast_targets() {
+        for arch in ["sm_90a", "sm_100a", "sm_103f", "sm_110a"] {
+            assert!(
+                arch_satisfies(arch, DetectedFeatures::TmaMulticast),
+                "{arch}"
+            );
+        }
+        for arch in ["sm_90", "sm_100", "sm_120a"] {
+            assert!(
+                !arch_satisfies(arch, DetectedFeatures::TmaMulticast),
+                "{arch}"
+            );
+        }
+    }
+
+    #[test]
     fn test_arch_satisfies_wgmma_is_hopper_only() {
         assert!(arch_satisfies("sm_90a", DetectedFeatures::Wgmma));
+        assert!(!arch_satisfies("sm_90", DetectedFeatures::Wgmma));
         assert!(!arch_satisfies("sm_100a", DetectedFeatures::Wgmma));
         assert!(!arch_satisfies("sm_120a", DetectedFeatures::Wgmma));
     }
 
     #[test]
+    fn test_arch_satisfies_blackwell_matrix_family_targets() {
+        for arch in [
+            "sm_100a", "sm_101a", "sm_110a", "sm_120a", "sm_100f", "sm_120f",
+        ] {
+            assert!(
+                arch_satisfies(arch, DetectedFeatures::MatrixBlackwell),
+                "{arch}"
+            );
+        }
+        for arch in ["sm_90a", "sm_100", "sm_120"] {
+            assert!(
+                !arch_satisfies(arch, DetectedFeatures::MatrixBlackwell),
+                "{arch}"
+            );
+        }
+    }
+
+    #[test]
     fn test_arch_satisfies_forward_compatible_features() {
         // Plain TMA / cluster / sm_90-floor instructions lower on any sm_90+
-        // device, sm_80-floor instructions on any sm_80+ device, movmatrix on
-        // sm_75+, and basic kernels on Volta+.
+        // device, sm_80-floor instructions on any sm_80+ device, movmatrix and
+        // base ldmatrix on sm_75+, and basic kernels on Volta+.
         // So a consumer sm_120 GPU is a valid target for these (it runs locally
         // instead of being downgraded to the feature floor).
         for arch in ["sm_90a", "sm_100a", "sm_120a"] {
@@ -2276,6 +2545,7 @@ mod tests {
             assert!(arch_satisfies(arch, DetectedFeatures::Sm90));
             assert!(arch_satisfies(arch, DetectedFeatures::Sm80));
             assert!(arch_satisfies(arch, DetectedFeatures::Movmatrix));
+            assert!(arch_satisfies(arch, DetectedFeatures::Ldmatrix));
             assert!(arch_satisfies(arch, DetectedFeatures::Basic));
         }
         assert!(arch_satisfies("sm_80", DetectedFeatures::Sm80));
@@ -2283,6 +2553,8 @@ mod tests {
         assert!(arch_satisfies("sm_75", DetectedFeatures::Movmatrix));
         assert!(arch_satisfies("sm_80", DetectedFeatures::Movmatrix));
         assert!(!arch_satisfies("sm_70", DetectedFeatures::Movmatrix));
+        assert!(arch_satisfies("sm_75", DetectedFeatures::Ldmatrix));
+        assert!(!arch_satisfies("sm_70", DetectedFeatures::Ldmatrix));
         assert!(arch_satisfies("sm_80", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_75", DetectedFeatures::Basic));
         assert!(arch_satisfies("sm_70", DetectedFeatures::Basic));

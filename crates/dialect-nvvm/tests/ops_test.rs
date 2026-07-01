@@ -3,15 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
-    Barrier0Op, ElectSyncOp, FmaBf16x2Op, MovmatrixTransB16Op, ReadPtxSregDynamicSmemSizeOp,
-    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
-    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
-    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
-    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
-    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
-    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, ThreadfenceBlockOp, ThreadfenceOp,
-    ThreadfenceSystemOp,
+    Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MovmatrixTransB16Op,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
+    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
+    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
+    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -75,6 +76,101 @@ type OpInfo = (
     fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
     std::any::TypeId,
 );
+
+#[test]
+fn test_matrix_memory_ops_verify_pointer_and_packed_register_types() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+
+    let load_block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into()]);
+    let load_pointer = load_block.deref(&ctx).get_argument(0);
+    let load = Operation::new(
+        &mut ctx,
+        LdmatrixX2Op::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into()],
+        vec![load_pointer],
+        vec![],
+        0,
+    );
+    assert!(LdmatrixX2Op::new(load).verify(&ctx).is_ok());
+
+    let bad_load_pointer_block = BasicBlock::new(&mut ctx, None, vec![i64_ty.into()]);
+    let bad_pointer = bad_load_pointer_block.deref(&ctx).get_argument(0);
+    let bad_load_pointer = Operation::new(
+        &mut ctx,
+        LdmatrixX2Op::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into()],
+        vec![bad_pointer],
+        vec![],
+        0,
+    );
+    assert!(LdmatrixX2Op::new(bad_load_pointer).verify(&ctx).is_err());
+
+    let bad_load_result = Operation::new(
+        &mut ctx,
+        LdmatrixX2Op::get_concrete_op_info(),
+        vec![i32_ty.into(), f32_ty.into()],
+        vec![load_pointer],
+        vec![],
+        0,
+    );
+    assert!(LdmatrixX2Op::new(bad_load_result).verify(&ctx).is_err());
+
+    let store_block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            ptr_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+        ],
+    );
+    let store_operands = (0..5)
+        .map(|index| store_block.deref(&ctx).get_argument(index))
+        .collect();
+    let store = Operation::new(
+        &mut ctx,
+        StmatrixM8n8X4Op::get_concrete_op_info(),
+        vec![],
+        store_operands,
+        vec![],
+        0,
+    );
+    assert!(StmatrixM8n8X4Op::new(store).verify(&ctx).is_ok());
+
+    let bad_store_block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            ptr_ty.into(),
+            f32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+        ],
+    );
+    let bad_store_operands = (0..5)
+        .map(|index| bad_store_block.deref(&ctx).get_argument(index))
+        .collect();
+    let bad_store = Operation::new(
+        &mut ctx,
+        StmatrixM8n8X4Op::get_concrete_op_info(),
+        vec![],
+        bad_store_operands,
+        vec![],
+        0,
+    );
+    assert!(StmatrixM8n8X4Op::new(bad_store).verify(&ctx).is_err());
+}
 
 #[test]
 fn test_thread_register_ops_verify_i32_results() {

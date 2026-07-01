@@ -1,5 +1,3 @@
-Failed to redirect error to /home/nihalp/.GlobalProtect/PanGPA.log (Read-only file system)
-Attempt to redirect error to PanGPA.log
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
@@ -7,7 +5,25 @@ Attempt to redirect error to PanGPA.log
 
 //! Warp-level matrix operations.
 //!
-//! In-register matrix transpose and shared-memory matrix loads.
+//! This module provides a register-only 8×8 transpose (`movmatrix`) and
+//! warp-cooperative shared-memory loads (`ldmatrix`).
+//!
+//! For ldmatrix, each group of four lanes loads one naturally aligned
+//! 16-byte row:
+//!
+//! ```text
+//! x1: lanes  0..7  provide addresses
+//! x2: lanes  0..15 provide addresses
+//! x4: lanes  0..31 provide addresses
+//! ```
+//!
+//! On sm_75, x1 and x2 still require valid addresses in all 32 lanes. A
+//! common choice is to copy the lower-lane addresses into the upper lanes.
+//! The .trans forms use column-major rather than row-major layout.
+//!
+//! Ldmatrix is a weak memory operation: .sync converges the warp but does not
+//! order memory. Callers need an appropriate barrier or fence around dependent
+//! memory accesses. Movmatrix is register-only and has no memory effect.
 
 /// Transpose an 8×8 matrix of b16 elements in-register across the warp.
 ///
@@ -52,8 +68,10 @@ pub unsafe fn movmatrix_trans_b16(a: u32) -> u32 {
 ///
 /// # Safety
 ///
-/// - `smem_ptr` must point to valid shared memory, 16-byte aligned
+/// - Lanes 0-7 must each provide a valid, naturally aligned 16-byte shared-memory row
+/// - On sm_75, all 32 lanes must provide a valid address
 /// - Must be called by all threads in a warp (warp-synchronous)
+/// - Callers must use a suitable barrier or fence to order other memory accesses
 /// - Requires sm_75+ (Turing and later)
 #[inline(never)]
 pub unsafe fn ldmatrix_x1(smem_ptr: *const u32) -> u32 {
@@ -61,7 +79,7 @@ pub unsafe fn ldmatrix_x1(smem_ptr: *const u32) -> u32 {
     unreachable!("ldmatrix_x1 called outside CUDA kernel context")
 }
 
-/// Load one 8×8 matrix tile from shared memory with transpose.
+/// Load one 8×8 matrix tile from shared memory in column-major layout.
 ///
 /// # PTX
 ///
@@ -69,7 +87,7 @@ pub unsafe fn ldmatrix_x1(smem_ptr: *const u32) -> u32 {
 ///
 /// # Safety
 ///
-/// Same as [`ldmatrix_x1`].
+/// Same address-lane, synchronization, and target requirements as [`ldmatrix_x1`].
 #[inline(never)]
 pub unsafe fn ldmatrix_x1_trans(smem_ptr: *const u32) -> u32 {
     let _ = smem_ptr;
@@ -86,14 +104,17 @@ pub unsafe fn ldmatrix_x1_trans(smem_ptr: *const u32) -> u32 {
 ///
 /// # Safety
 ///
-/// Same as [`ldmatrix_x1`].
+/// - Lanes 0-15 provide the 16 row addresses
+/// - On sm_75, all 32 lanes must provide a valid address
+/// - All lanes must participate, and callers must order other memory accesses
+/// - Requires sm_75+ (Turing and later)
 #[inline(never)]
 pub unsafe fn ldmatrix_x2(smem_ptr: *const u32) -> [u32; 2] {
     let _ = smem_ptr;
     unreachable!("ldmatrix_x2 called outside CUDA kernel context")
 }
 
-/// Load 2 packed 8×8 matrices from shared memory with transpose.
+/// Load 2 packed 8×8 matrices from shared memory in column-major layout.
 ///
 /// # PTX
 ///
@@ -101,7 +122,7 @@ pub unsafe fn ldmatrix_x2(smem_ptr: *const u32) -> [u32; 2] {
 ///
 /// # Safety
 ///
-/// Same as [`ldmatrix_x1`].
+/// Same address-lane, synchronization, and target requirements as [`ldmatrix_x2`].
 #[inline(never)]
 pub unsafe fn ldmatrix_x2_trans(smem_ptr: *const u32) -> [u32; 2] {
     let _ = smem_ptr;
@@ -118,14 +139,16 @@ pub unsafe fn ldmatrix_x2_trans(smem_ptr: *const u32) -> [u32; 2] {
 ///
 /// # Safety
 ///
-/// Same as [`ldmatrix_x1`].
+/// - All 32 lanes provide valid, naturally aligned 16-byte row addresses
+/// - All lanes must participate, and callers must order other memory accesses
+/// - Requires sm_75+ (Turing and later)
 #[inline(never)]
 pub unsafe fn ldmatrix_x4(smem_ptr: *const u32) -> [u32; 4] {
     let _ = smem_ptr;
     unreachable!("ldmatrix_x4 called outside CUDA kernel context")
 }
 
-/// Load 4 packed 8×8 matrices from shared memory with transpose.
+/// Load 4 packed 8×8 matrices from shared memory in column-major layout.
 ///
 /// # PTX
 ///
@@ -133,7 +156,7 @@ pub unsafe fn ldmatrix_x4(smem_ptr: *const u32) -> [u32; 4] {
 ///
 /// # Safety
 ///
-/// Same as [`ldmatrix_x1`].
+/// Same address-lane, synchronization, and target requirements as [`ldmatrix_x4`].
 #[inline(never)]
 pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
     let _ = smem_ptr;

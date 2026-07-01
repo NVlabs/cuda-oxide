@@ -478,7 +478,7 @@ mod kernels {
             //   lane_id % 8  → which row within an 8-row group (0..7)
             //   lanes  0..7  → first  8×8 matrix (col_offset + 0..7)
             //   lanes  8..15 → second 8×8 matrix (col_offset + 8..15), offset by 16 bytes
-            //   lanes 16..31 → don't participate in stmatrix (hardware ignores them)
+            //   lanes 16..31 → address operand ignored; fragment registers still participate
             const TILE_N: usize = 128;
             let warp_row_base = (warp_id * 32) as usize;
             let row_stride_bytes = TILE_N * 2; // 128 bf16 = 256 bytes per row

@@ -173,6 +173,7 @@ name = "dialect-nvvm"
 version = "0.2.1"
 dependencies = [
  "combine",
+ "dialect-mir",
  "dyn-clone",
  "linkme",
  "pliron",

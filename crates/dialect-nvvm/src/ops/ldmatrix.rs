@@ -3,235 +3,173 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Shared memory matrix load (ldmatrix) operations.
+//! Warp-cooperative shared-memory matrix loads.
 //!
-//! Ldmatrix provides warp-cooperative matrix load operations that read 8×8
-//! matrix tiles from shared memory into registers in the fragment layout
-//! expected by tensor core `mma.sync` instructions.
+//! Each operation loads one, two, or four 8×8 matrices of b16 elements and
+//! returns the calling lane's packed 32-bit register fragments. The `.trans`
+//! forms select column-major layout.
 //!
-//! # Layout
+//! # Address lanes
 //!
 //! ```text
-//! ┌───────────────────────┬───────┬──────────┬───────────┬─────────────────────┐
-//! │ Operation             │ Tiles │ Regs     │ Transpose │ PTX                 │
-//! ├───────────────────────┼───────┼──────────┼───────────┼─────────────────────┤
-//! │ LdmatrixX1Op          │ 1     │ 1 × u32  │ No        │ ldmatrix...m8n8.x1  │
-//! │ LdmatrixX1TransOp     │ 1     │ 1 × u32  │ Yes       │ ldmatrix...x1.trans │
-//! │ LdmatrixX2Op          │ 2     │ 2 × u32  │ No        │ ldmatrix...m8n8.x2  │
-//! │ LdmatrixX2TransOp     │ 2     │ 2 × u32  │ Yes       │ ldmatrix...x2.trans │
-//! │ LdmatrixX4Op          │ 4     │ 4 × u32  │ No        │ ldmatrix...m8n8.x4  │
-//! │ LdmatrixX4TransOp     │ 4     │ 4 × u32  │ Yes       │ ldmatrix...x4.trans │
-//! └───────────────────────┴───────┴──────────┴───────────┴─────────────────────┘
+//! x1: lanes  0..7  provide row addresses
+//! x2: lanes  0..15 provide row addresses
+//! x4: lanes  0..31 provide row addresses
 //! ```
 //!
-//! # Return Patterns
+//! On sm_75, every lane must still supply a valid address for x1 and x2; copy
+//! the lower-lane addresses into the otherwise unused upper lanes. Each group
+//! of four lanes loads 16 bytes from a naturally aligned address.
 //!
-//! - **x1 variants**: 1 operand (smem_ptr), 1 result (u32) -- scalar return
-//! - **x2/x4 variants**: 2 operands (smem_ptr, dest_ptr), 0 results -- alloca-slot pattern
-//!
-//! # Requirements
-//!
-//! - **Execution**: Warp-synchronous (all 32 threads must participate)
-//! - **Memory**: Source must be in shared memory
-//! - **Alignment**: Pointer must be 16-byte aligned
-//! - **Architecture**: sm_75+ (Turing and later)
+//! These are weak memory operations: `.sync` makes the warp converge at the
+//! instruction, but does not order earlier or later memory accesses. Callers
+//! need an appropriate barrier or fence before a dependent access.
 
+use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
-    context::Context,
-    context::Ptr,
+    builtin::types::IntegerType,
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
     op::Op,
     operation::Operation,
+    result::Error,
+    r#type::Typed,
+    verify_err,
 };
 use pliron_derive::pliron_op;
 
-// =============================================================================
-// 1-Tile Load Operations (scalar return: 1 operand, 1 result)
-// =============================================================================
-
-/// Load one 8×8 matrix tile from shared memory.
-///
-/// PTX: `ldmatrix.sync.aligned.m8n8.x1.shared.b16 {%r0}, [addr];`
-///
-/// # Operands
-///
-/// - `smem_ptr` (ptr): source pointer in shared memory
-///
-/// # Results
-///
-/// - `r0` (u32): loaded register (2 packed b16 values)
-#[pliron_op(
-    name = "nvvm.ldmatrix_x1",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
-)]
-pub struct LdmatrixX1Op;
-
-impl LdmatrixX1Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        LdmatrixX1Op { op }
+fn verify_ldmatrix(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    op_name: &str,
+    result_count: usize,
+) -> Result<(), Error> {
+    let op = &*op.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != 1 {
+        return verify_err!(op.loc(), "{} requires one shared-memory pointer", op_name);
     }
+
+    let pointer_ty = operands[0].get_type(ctx);
+    if pointer_ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    }
+
+    if op.get_num_results() != result_count {
+        return verify_err!(
+            op.loc(),
+            "{} requires {} register results",
+            op_name,
+            result_count
+        );
+    }
+
+    for index in 0..result_count {
+        let ty = op.get_result(index).get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(int_ty) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "{} result {} must be an integer", op_name, index);
+        };
+        if int_ty.width() != 32 {
+            return verify_err!(op.loc(), "{} result {} must be 32 bits", op_name, index);
+        }
+    }
+
+    Ok(())
 }
 
-/// Load one 8×8 matrix tile from shared memory with transpose.
-///
-/// PTX: `ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {%r0}, [addr];`
-///
-/// # Operands
-///
-/// - `smem_ptr` (ptr): source pointer in shared memory
-///
-/// # Results
-///
-/// - `r0` (u32): loaded register (2 packed b16 values)
-#[pliron_op(
-    name = "nvvm.ldmatrix_x1_trans",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
-)]
-pub struct LdmatrixX1TransOp;
+macro_rules! define_ldmatrix_op {
+    (
+        $(#[$doc:meta])*
+        $name:ident,
+        $op_name:literal,
+        $results:literal
+    ) => {
+        $(#[$doc])*
+        #[pliron_op(
+            name = $op_name,
+            format,
+            interfaces = [NOpdsInterface<1>, NResultsInterface<$results>],
+        )]
+        pub struct $name;
 
-impl LdmatrixX1TransOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        LdmatrixX1TransOp { op }
-    }
+        impl $name {
+            /// Wrap an existing operation pointer.
+            pub fn new(op: Ptr<Operation>) -> Self {
+                Self { op }
+            }
+        }
+
+        impl Verify for $name {
+            fn verify(&self, ctx: &Context) -> Result<(), Error> {
+                verify_ldmatrix(ctx, self.get_operation(), $op_name, $results)
+            }
+        }
+    };
 }
 
-// =============================================================================
-// 2-Tile Load Operations (alloca-slot: 2 operands, 0 results)
-// =============================================================================
+define_ldmatrix_op!(
+    /// Load one row-major 8×8 b16 matrix.
+    ///
+    /// PTX: `ldmatrix.sync.aligned.m8n8.x1.shared.b16 {$0}, [addr];`
+    LdmatrixX1Op,
+    "nvvm.ldmatrix_x1",
+    1
+);
 
-/// Load two 8×8 matrix tiles from shared memory.
-///
-/// PTX: `ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%r0, %r1}, [addr];`
-///
-/// Uses the alloca-slot pattern: the inline asm loads from shared memory and
-/// stores the results directly into the destination slot pointer.
-///
-/// # Operands
-///
-/// - `smem_ptr` (ptr): source pointer in shared memory
-/// - `dest_ptr` (ptr): destination alloca slot pointer
-///
-/// # Results
-///
-/// - None (void op; results written via dest_ptr)
-#[pliron_op(
-    name = "nvvm.ldmatrix_x2",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
-)]
-pub struct LdmatrixX2Op;
+define_ldmatrix_op!(
+    /// Load one column-major 8×8 b16 matrix.
+    ///
+    /// PTX: `ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {$0}, [addr];`
+    LdmatrixX1TransOp,
+    "nvvm.ldmatrix_x1_trans",
+    1
+);
 
-impl LdmatrixX2Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        LdmatrixX2Op { op }
-    }
-}
+define_ldmatrix_op!(
+    /// Load two row-major 8×8 b16 matrices.
+    ///
+    /// PTX: `ldmatrix.sync.aligned.m8n8.x2.shared.b16 {$0, $1}, [addr];`
+    LdmatrixX2Op,
+    "nvvm.ldmatrix_x2",
+    2
+);
 
-/// Load two 8×8 matrix tiles from shared memory with transpose.
-///
-/// PTX: `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%r0, %r1}, [addr];`
-///
-/// # Operands
-///
-/// - `smem_ptr` (ptr): source pointer in shared memory
-/// - `dest_ptr` (ptr): destination alloca slot pointer
-///
-/// # Results
-///
-/// - None (void op; results written via dest_ptr)
-#[pliron_op(
-    name = "nvvm.ldmatrix_x2_trans",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
-)]
-pub struct LdmatrixX2TransOp;
+define_ldmatrix_op!(
+    /// Load two column-major 8×8 b16 matrices.
+    ///
+    /// PTX: `ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {$0, $1}, [addr];`
+    LdmatrixX2TransOp,
+    "nvvm.ldmatrix_x2_trans",
+    2
+);
 
-impl LdmatrixX2TransOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        LdmatrixX2TransOp { op }
-    }
-}
+define_ldmatrix_op!(
+    /// Load four row-major 8×8 b16 matrices.
+    ///
+    /// PTX: `ldmatrix.sync.aligned.m8n8.x4.shared.b16 {$0, $1, $2, $3}, [addr];`
+    LdmatrixX4Op,
+    "nvvm.ldmatrix_x4",
+    4
+);
 
-// =============================================================================
-// 4-Tile Load Operations (alloca-slot: 2 operands, 0 results)
-// =============================================================================
-
-/// Load four 8×8 matrix tiles from shared memory.
-///
-/// PTX: `ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r0, %r1, %r2, %r3}, [addr];`
-///
-/// Uses the alloca-slot pattern: the inline asm loads from shared memory and
-/// stores the results directly into the destination slot pointer.
-///
-/// # Operands
-///
-/// - `smem_ptr` (ptr): source pointer in shared memory
-/// - `dest_ptr` (ptr): destination alloca slot pointer
-///
-/// # Results
-///
-/// - None (void op; results written via dest_ptr)
-#[pliron_op(
-    name = "nvvm.ldmatrix_x4",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
-)]
-pub struct LdmatrixX4Op;
-
-impl LdmatrixX4Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        LdmatrixX4Op { op }
-    }
-}
-
-/// Load four 8×8 matrix tiles from shared memory with transpose.
-///
-/// PTX: `ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%r0, %r1, %r2, %r3}, [addr];`
-///
-/// # Operands
-///
-/// - `smem_ptr` (ptr): source pointer in shared memory
-/// - `dest_ptr` (ptr): destination alloca slot pointer
-///
-/// # Results
-///
-/// - None (void op; results written via dest_ptr)
-#[pliron_op(
-    name = "nvvm.ldmatrix_x4_trans",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
-)]
-pub struct LdmatrixX4TransOp;
-
-impl LdmatrixX4TransOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        LdmatrixX4TransOp { op }
-    }
-}
+define_ldmatrix_op!(
+    /// Load four column-major 8×8 b16 matrices.
+    ///
+    /// PTX: `ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {$0, $1, $2, $3}, [addr];`
+    LdmatrixX4TransOp,
+    "nvvm.ldmatrix_x4_trans",
+    4
+);
 
 /// Register ldmatrix operations with the context.
 pub(super) fn register(ctx: &mut Context) {
-    // 1-tile load (scalar return)
     LdmatrixX1Op::register(ctx);
     LdmatrixX1TransOp::register(ctx);
-    // 2-tile load (alloca-slot)
     LdmatrixX2Op::register(ctx);
     LdmatrixX2TransOp::register(ctx);
-    // 4-tile load (alloca-slot)
     LdmatrixX4Op::register(ctx);
     LdmatrixX4TransOp::register(ctx);
 }

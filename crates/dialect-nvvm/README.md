@@ -39,7 +39,7 @@ dialect-nvvm ops
 | `mbarrier`  | 10  | Init, arrive, arrive_expect_tx, try_wait, wait_parity, fence_proxy_async        |
 | `tma`       | 15  | 1D-5D global↔shared copies, multicast, CTA-group-2 variants, commit/wait groups |
 | `wgmma`     | 5   | Fence, commit, wait, smem descriptor, M64N64K16 bf16 MMA                        |
-| `stmatrix`  | 5   | m8n8 matrix stores (×2, ×4, transposed), f32→bf16 convert                       |
+| `stmatrix`  | 5   | m8n8 stores with packed b16 inputs (×2, ×4, transposed), f32→bf16 helper        |
 
 ### Blackwell+ (sm_100)
 

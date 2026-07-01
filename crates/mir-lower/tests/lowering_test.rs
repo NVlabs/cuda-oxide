@@ -2874,6 +2874,122 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
     Ok(())
 }
 
+#[test]
+fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![
+            ptr_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+            i32_ty.into(),
+        ],
+    );
+    let args: Vec<_> = (0..5)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect();
+
+    for (op_info, operands) in [
+        (nvvm::StmatrixM8n8X4Op::get_concrete_op_info(), args.clone()),
+        (
+            nvvm::StmatrixM8n8X4TransOp::get_concrete_op_info(),
+            args.clone(),
+        ),
+        (
+            nvvm::StmatrixM8n8X2Op::get_concrete_op_info(),
+            args[..3].to_vec(),
+        ),
+        (
+            nvvm::StmatrixM8n8X2TransOp::get_concrete_op_info(),
+            args[..3].to_vec(),
+        ),
+    ] {
+        Operation::new(&mut ctx, op_info, vec![], operands, vec![], 0).insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let expected = [
+        (
+            "stmatrix.sync.aligned.m8n8.x4.shared.b16 [%ptr32], {$1, $2, $3, $4};",
+            "l,r,r,r,r,~{memory}",
+        ),
+        (
+            "stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%ptr32], {$1, $2, $3, $4};",
+            "l,r,r,r,r,~{memory}",
+        ),
+        (
+            "stmatrix.sync.aligned.m8n8.x2.shared.b16 [%ptr32], {$1, $2};",
+            "l,r,r,~{memory}",
+        ),
+        (
+            "stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%ptr32], {$1, $2};",
+            "l,r,r,~{memory}",
+        ),
+    ];
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let mut lowered = Vec::new();
+
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if !template.contains("stmatrix.sync.aligned.") {
+                    continue;
+                }
+                lowered.push((
+                    template,
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .unwrap_or_default(),
+                    llvm::asm_kind(&ctx, &inline_asm),
+                ));
+            }
+        }
+    }
+
+    assert_eq!(lowered.len(), expected.len());
+    for (instruction, constraints) in expected {
+        let matches: Vec<_> = lowered
+            .iter()
+            .filter(|(template, _, _)| template.contains(instruction))
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one exact {instruction} lowering"
+        );
+        assert_eq!(matches[0].1, constraints);
+        assert_eq!(matches[0].2, llvm::AsmKind::Convergent);
+    }
+    Ok(())
+}
+
 // =============================================================================
 // Warp-level matrix (`movmatrix`) lowering test
 // =============================================================================
@@ -2954,372 +3070,141 @@ fn test_movmatrix_trans_b16_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
 // ldmatrix lowering tests
 // =============================================================================
 
-/// ldmatrix.x1 lowers to convergent inline PTX with scalar return.
-/// The op has 1 operand (smem_ptr as i64 pointer) and 1 result (i32).
 #[test]
-fn test_ldmatrix_x1_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+fn test_ldmatrix_forms_return_registers_in_exact_convergent_memory_asm() -> Result<(), anyhow::Error>
+{
+    use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-
-    // Kernel arg: smem_ptr as i64 (will be a pointer in real usage)
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into()]);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
     let smem_ptr = entry.deref(&ctx).get_argument(0);
 
-    // LdmatrixX1Op: 1 operand (smem_ptr), 1 result (i32)
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::LdmatrixX1Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![smem_ptr],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
+    let cases = [
+        (
+            nvvm::LdmatrixX1Op::get_concrete_op_info(),
+            1usize,
+            "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {$0}, [%ptr32];",
+            "=r,l,~{memory}",
+            "$1",
+        ),
+        (
+            nvvm::LdmatrixX1TransOp::get_concrete_op_info(),
+            1,
+            "ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {$0}, [%ptr32];",
+            "=r,l,~{memory}",
+            "$1",
+        ),
+        (
+            nvvm::LdmatrixX2Op::get_concrete_op_info(),
+            2,
+            "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {$0, $1}, [%ptr32];",
+            "=r,=r,l,~{memory}",
+            "$2",
+        ),
+        (
+            nvvm::LdmatrixX2TransOp::get_concrete_op_info(),
+            2,
+            "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {$0, $1}, [%ptr32];",
+            "=r,=r,l,~{memory}",
+            "$2",
+        ),
+        (
+            nvvm::LdmatrixX4Op::get_concrete_op_info(),
+            4,
+            "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {$0, $1, $2, $3}, [%ptr32];",
+            "=r,=r,=r,=r,l,~{memory}",
+            "$4",
+        ),
+        (
+            nvvm::LdmatrixX4TransOp::get_concrete_op_info(),
+            4,
+            "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {$0, $1, $2, $3}, [%ptr32];",
+            "=r,=r,=r,=r,l,~{memory}",
+            "$4",
+        ),
+    ];
+
+    for &(op_info, result_count, _, _, _) in &cases {
+        let results = (0..result_count).map(|_| i32_ty.into()).collect();
+        Operation::new(&mut ctx, op_info, results, vec![smem_ptr], vec![], 0)
+            .insert_at_back(entry, &ctx);
+    }
     append_return(&mut ctx, entry);
 
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let mut found_asm = false;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let mut lowered = Vec::new();
 
-    let module_op = module_ptr.deref(&ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
-
-    for op in block.deref(&ctx).iter(&ctx) {
+    for op in module_block.deref(&ctx).iter(&ctx) {
         let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
             continue;
         };
         if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
             continue;
         }
+
         let func_region = func_op.get_operation().deref(&ctx).get_region(0);
         for func_block in func_region.deref(&ctx).iter(&ctx) {
             for body_op in func_block.deref(&ctx).iter(&ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
-                    let template = inline_asm
-                        .get_attr_inline_asm_template(&ctx)
-                        .map(|s| String::from((*s).clone()));
-                    if let Some(ref t) = template {
-                        if t.contains("ldmatrix.sync.aligned.m8n8.x1.shared.b16") {
-                            assert!(
-                                !t.contains(".trans"),
-                                "x1 (non-trans) template must not contain .trans"
-                            );
-                            assert_eq!(
-                                inline_asm
-                                    .get_attr_inline_asm_constraints(&ctx)
-                                    .map(|s| String::from((*s).clone()))
-                                    .as_deref(),
-                                Some("=r,l"),
-                                "ldmatrix_x1 constraints"
-                            );
-                            assert!(
-                                inline_asm
-                                    .get_attr_inline_asm_convergent(&ctx)
-                                    .is_some_and(|b| bool::from((*b).clone())),
-                                "ldmatrix must be convergent"
-                            );
-                            // Verify it has 1 result
-                            assert_eq!(
-                                body_op.deref(&ctx).get_num_results(),
-                                1,
-                                "ldmatrix_x1 must produce 1 result"
-                            );
-                            found_asm = true;
-                        }
-                    }
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if !template.contains("ldmatrix.sync.aligned.") {
+                    continue;
                 }
+
+                let constraints = inline_asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                lowered.push((
+                    template,
+                    constraints,
+                    llvm::asm_kind(&ctx, &inline_asm),
+                    body_op.deref(&ctx).get_num_operands(),
+                    body_op.deref(&ctx).get_num_results(),
+                ));
             }
         }
     }
 
-    assert!(found_asm, "ldmatrix_x1 must lower to inline asm");
-    Ok(())
-}
+    assert_eq!(lowered.len(), cases.len());
+    for &(_, _, expected_instruction, expected_constraints, pointer_operand) in &cases {
+        let matches: Vec<_> = lowered
+            .iter()
+            .filter(|(template, _, _, _, _)| template.contains(expected_instruction))
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one exact ldmatrix lowering for {expected_instruction}"
+        );
 
-/// ldmatrix.x1.trans lowers to convergent inline PTX with `.trans` modifier.
-#[test]
-fn test_ldmatrix_x1_trans_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into()]);
-    let smem_ptr = entry.deref(&ctx).get_argument(0);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::LdmatrixX1TransOp::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![smem_ptr],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    let mut found_asm = false;
-
-    let module_op = module_ptr.deref(&ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
-
-    for op in block.deref(&ctx).iter(&ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
-            continue;
-        };
-        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
-            continue;
-        }
-        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
-        for func_block in func_region.deref(&ctx).iter(&ctx) {
-            for body_op in func_block.deref(&ctx).iter(&ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
-                    let template = inline_asm
-                        .get_attr_inline_asm_template(&ctx)
-                        .map(|s| String::from((*s).clone()));
-                    if let Some(ref t) = template {
-                        if t.contains("ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16") {
-                            assert!(
-                                inline_asm
-                                    .get_attr_inline_asm_convergent(&ctx)
-                                    .is_some_and(|b| bool::from((*b).clone())),
-                                "ldmatrix must be convergent"
-                            );
-                            found_asm = true;
-                        }
-                    }
-                }
-            }
-        }
+        let (template, constraints, kind, operands, results) = matches[0];
+        assert!(
+            template.contains(&format!("cvta.to.shared.u64 %ptr64, {pointer_operand};")),
+            "pointer must follow all output operands: {template}"
+        );
+        assert!(
+            !template.contains("st.b32"),
+            "no hidden stack stores: {template}"
+        );
+        assert_eq!(constraints, expected_constraints);
+        assert_eq!(*kind, llvm::AsmKind::Convergent);
+        assert_eq!(*operands, 1, "only the shared-memory pointer is an input");
+        assert_eq!(*results, 1, "LLVM inline asm returns one scalar or struct");
     }
 
-    assert!(
-        found_asm,
-        "ldmatrix_x1_trans must lower to inline asm with .trans"
-    );
-    Ok(())
-}
-
-/// ldmatrix.x2 lowers to convergent inline PTX as a void op (alloca-slot pattern).
-/// The op has 2 operands [smem_ptr, dest_ptr] and 0 results.
-#[test]
-fn test_ldmatrix_x2_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
-
-    // Kernel args: [smem_ptr (i64), dest_ptr (i64)]
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
-    let smem_ptr = entry.deref(&ctx).get_argument(0);
-    let dest_ptr = entry.deref(&ctx).get_argument(1);
-
-    // LdmatrixX2Op: 2 operands [smem_ptr, dest_ptr], 0 results (void)
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::LdmatrixX2Op::get_concrete_op_info(),
-        vec![],
-        vec![smem_ptr, dest_ptr],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    let mut found_asm = false;
-
-    let module_op = module_ptr.deref(&ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
-
-    for op in block.deref(&ctx).iter(&ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
-            continue;
-        };
-        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
-            continue;
-        }
-        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
-        for func_block in func_region.deref(&ctx).iter(&ctx) {
-            for body_op in func_block.deref(&ctx).iter(&ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
-                    let template = inline_asm
-                        .get_attr_inline_asm_template(&ctx)
-                        .map(|s| String::from((*s).clone()));
-                    if let Some(ref t) = template {
-                        if t.contains("ldmatrix.sync.aligned.m8n8.x2.shared.b16") {
-                            assert!(
-                                !t.contains(".trans"),
-                                "x2 (non-trans) template must not contain .trans"
-                            );
-                            assert!(t.contains("st.b32"), "x2 must store results to dest_ptr");
-                            assert!(
-                                inline_asm
-                                    .get_attr_inline_asm_convergent(&ctx)
-                                    .is_some_and(|b| bool::from((*b).clone())),
-                                "ldmatrix must be convergent"
-                            );
-                            found_asm = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(found_asm, "ldmatrix_x2 must lower to inline asm");
-    Ok(())
-}
-
-/// ldmatrix.x4 lowers to convergent inline PTX with 4 register loads and stores.
-#[test]
-fn test_ldmatrix_x4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
-
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
-    let smem_ptr = entry.deref(&ctx).get_argument(0);
-    let dest_ptr = entry.deref(&ctx).get_argument(1);
-
-    // LdmatrixX4Op: 2 operands [smem_ptr, dest_ptr], 0 results (void)
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::LdmatrixX4Op::get_concrete_op_info(),
-        vec![],
-        vec![smem_ptr, dest_ptr],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    let mut found_asm = false;
-
-    let module_op = module_ptr.deref(&ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
-
-    for op in block.deref(&ctx).iter(&ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
-            continue;
-        };
-        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
-            continue;
-        }
-        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
-        for func_block in func_region.deref(&ctx).iter(&ctx) {
-            for body_op in func_block.deref(&ctx).iter(&ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
-                    let template = inline_asm
-                        .get_attr_inline_asm_template(&ctx)
-                        .map(|s| String::from((*s).clone()));
-                    if let Some(ref t) = template {
-                        if t.contains("ldmatrix.sync.aligned.m8n8.x4.shared.b16") {
-                            assert!(
-                                !t.contains(".trans"),
-                                "x4 (non-trans) template must not contain .trans"
-                            );
-                            assert!(t.contains("st.b32"), "x4 must store results to dest_ptr");
-                            assert!(
-                                t.contains("r0, r1, r2, r3"),
-                                "x4 must load into 4 registers"
-                            );
-                            assert!(
-                                inline_asm
-                                    .get_attr_inline_asm_convergent(&ctx)
-                                    .is_some_and(|b| bool::from((*b).clone())),
-                                "ldmatrix must be convergent"
-                            );
-                            found_asm = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(found_asm, "ldmatrix_x4 must lower to inline asm");
-    Ok(())
-}
-
-/// ldmatrix.x4.trans lowers to convergent inline PTX with `.trans` modifier.
-#[test]
-fn test_ldmatrix_x4_trans_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
-
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i64_ty.into(), i64_ty.into()]);
-    let smem_ptr = entry.deref(&ctx).get_argument(0);
-    let dest_ptr = entry.deref(&ctx).get_argument(1);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::LdmatrixX4TransOp::get_concrete_op_info(),
-        vec![],
-        vec![smem_ptr, dest_ptr],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    let mut found_asm = false;
-
-    let module_op = module_ptr.deref(&ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
-
-    for op in block.deref(&ctx).iter(&ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
-            continue;
-        };
-        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
-            continue;
-        }
-        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
-        for func_block in func_region.deref(&ctx).iter(&ctx) {
-            for body_op in func_block.deref(&ctx).iter(&ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
-                    let template = inline_asm
-                        .get_attr_inline_asm_template(&ctx)
-                        .map(|s| String::from((*s).clone()));
-                    if let Some(ref t) = template {
-                        if t.contains("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16") {
-                            assert!(
-                                inline_asm
-                                    .get_attr_inline_asm_convergent(&ctx)
-                                    .is_some_and(|b| bool::from((*b).clone())),
-                                "ldmatrix must be convergent"
-                            );
-                            found_asm = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    assert!(
-        found_asm,
-        "ldmatrix_x4_trans must lower to inline asm with .trans"
-    );
     Ok(())
 }

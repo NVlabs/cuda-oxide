@@ -10,8 +10,9 @@
 //!
 //! # Layout Transformation
 //!
-//! Tensor core operations produce data in "fragment" layout (optimized for
-//! computation). Stmatrix transforms this to row-major layout for memory access.
+//! Tensor core operations produce register fragments optimized for computation.
+//! `stmatrix` stores those fragments in row-major order by default; the
+//! optional `.trans` qualifier selects column-major storage.
 //!
 //! ```text
 //! ┌─────────────────────┬───────┬──────────┬───────────┬────────────────────┐
@@ -32,16 +33,72 @@
 //!
 //! - **Execution**: Warp-synchronous (all 32 threads must participate)
 //! - **Memory**: Destination must be in shared memory
-//! - **Alignment**: Pointer must be aligned to tile size
+//! - **Alignment**: Each four-lane group writes a naturally aligned 16-byte row
+//! - **Ordering**: This is a weak memory operation; callers must use a suitable
+//!   barrier or fence before a dependent memory access
+//! - **Architecture**: sm_90+ and PTX 7.8+
 
+use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
+    builtin::types::IntegerType,
+    common_traits::Verify,
     context::Context,
     context::Ptr,
+    location::Located,
     op::Op,
     operation::Operation,
+    result::Error,
+    r#type::Typed,
+    verify_err,
 };
 use pliron_derive::pliron_op;
+
+fn verify_stmatrix_operands(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    op_name: &str,
+    register_count: usize,
+) -> Result<(), Error> {
+    let op = &*op.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != register_count + 1 {
+        return verify_err!(
+            op.loc(),
+            "{} requires one pointer and {} register operands",
+            op_name,
+            register_count
+        );
+    }
+
+    let pointer_ty = operands[0].get_type(ctx);
+    if pointer_ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    }
+
+    for (index, register) in operands.iter().enumerate().skip(1) {
+        let ty = register.get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(int_ty) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(
+                op.loc(),
+                "{} register operand {} must be an integer",
+                op_name,
+                index - 1
+            );
+        };
+        if int_ty.width() != 32 {
+            return verify_err!(
+                op.loc(),
+                "{} register operand {} must be 32 bits",
+                op_name,
+                index - 1
+            );
+        }
+    }
+
+    Ok(())
+}
 
 // =============================================================================
 // 4-Tile Store Operations
@@ -56,10 +113,10 @@ use pliron_derive::pliron_op;
 /// # Operands
 ///
 /// - `smem_ptr` (ptr): destination pointer in shared memory
-/// - `r0` (f32): first register value
-/// - `r1` (f32): second register value
-/// - `r2` (f32): third register value
-/// - `r3` (f32): fourth register value
+/// - `r0` (i32): first register containing two packed b16 values
+/// - `r1` (i32): second packed register
+/// - `r2` (i32): third packed register
+/// - `r3` (i32): fourth packed register
 ///
 /// # Results
 ///
@@ -67,7 +124,6 @@ use pliron_derive::pliron_op;
 #[pliron_op(
     name = "nvvm.stmatrix_m8n8_x4",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<5>, NResultsInterface<0>],
 )]
 pub struct StmatrixM8n8X4Op;
@@ -79,10 +135,16 @@ impl StmatrixM8n8X4Op {
     }
 }
 
+impl Verify for StmatrixM8n8X4Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_stmatrix_operands(ctx, self.get_operation(), "nvvm.stmatrix_m8n8_x4", 4)
+    }
+}
+
 /// Store four 8×8 matrix tiles with transpose.
 ///
-/// Warp-cooperative matrix store with the `.trans` modifier that transforms
-/// data from fragment layout to row-major layout.
+/// Warp-cooperative matrix store with the `.trans` modifier, which selects
+/// column-major storage.
 ///
 /// PTX: `stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [ptr], {r0, r1, r2, r3};`
 ///
@@ -100,7 +162,6 @@ impl StmatrixM8n8X4Op {
 #[pliron_op(
     name = "nvvm.stmatrix_m8n8_x4_trans",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<5>, NResultsInterface<0>],
 )]
 pub struct StmatrixM8n8X4TransOp;
@@ -109,6 +170,12 @@ impl StmatrixM8n8X4TransOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
         StmatrixM8n8X4TransOp { op }
+    }
+}
+
+impl Verify for StmatrixM8n8X4TransOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_stmatrix_operands(ctx, self.get_operation(), "nvvm.stmatrix_m8n8_x4_trans", 4)
     }
 }
 
@@ -137,7 +204,6 @@ impl StmatrixM8n8X4TransOp {
 #[pliron_op(
     name = "nvvm.stmatrix_m8n8_x2",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
 )]
 pub struct StmatrixM8n8X2Op;
@@ -149,10 +215,15 @@ impl StmatrixM8n8X2Op {
     }
 }
 
+impl Verify for StmatrixM8n8X2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_stmatrix_operands(ctx, self.get_operation(), "nvvm.stmatrix_m8n8_x2", 2)
+    }
+}
+
 /// Store two 8×8 bf16 matrices to shared memory with transpose.
 ///
-/// The TRANSPOSE version matching cuBLAS `STSM.16.MT88.2`.
-/// Converts from fragment (column-major) to row-major layout during store.
+/// The transpose form stores the matrix in column-major order.
 ///
 /// PTX: `stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [ptr], {r0, r1};`
 ///
@@ -168,7 +239,6 @@ impl StmatrixM8n8X2Op {
 #[pliron_op(
     name = "nvvm.stmatrix_m8n8_x2_trans",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
 )]
 pub struct StmatrixM8n8X2TransOp;
@@ -177,6 +247,12 @@ impl StmatrixM8n8X2TransOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
         StmatrixM8n8X2TransOp { op }
+    }
+}
+
+impl Verify for StmatrixM8n8X2TransOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_stmatrix_operands(ctx, self.get_operation(), "nvvm.stmatrix_m8n8_x2_trans", 2)
     }
 }
 

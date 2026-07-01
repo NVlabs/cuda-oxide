@@ -103,8 +103,7 @@ pub fn emit_stmatrix_m8n8_x4(
 
 /// Emit stmatrix_m8n8_x4_trans: Warp-cooperative matrix store with transpose.
 ///
-/// This version uses the `.trans` modifier to transform data from fragment
-/// layout to row-major layout during the store operation.
+/// This version uses the `.trans` modifier to store in column-major order.
 ///
 /// Args: (smem_ptr: *mut u8, r0: u32, r1: u32, r2: u32, r3: u32)
 ///       where each u32 contains 2 packed bf16 values

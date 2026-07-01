@@ -53,8 +53,8 @@ use dialect_nvvm::ops::{
     Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, DsmemReadU32Op, ElectSyncOp,
     FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, FmaBf16x2Op,
-    FmaReluBf16x2Op, InlinePtxOp, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op,
-    LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
+    FmaReluBf16x2Op, InlinePtxOp, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp,
+    LdmatrixX4Op, LdmatrixX4TransOp, MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
     MatchAnySyncI32Op, MatchAnySyncI64Op, MaxBf16x2Op, MbarrierArriveClusterOp,
     MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
     MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
@@ -3980,13 +3980,6 @@ impl MirToLlvmConversion for LdmatrixX4TransOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::ldmatrix::convert_ldmatrix_x4_trans(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
             ctx,
             rewriter,
             self.get_operation(),
