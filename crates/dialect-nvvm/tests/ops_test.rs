@@ -4,12 +4,13 @@
  */
 
 use dialect_nvvm::ops::{
-    Barrier0Op, ElectSyncOp, FmaBf16x2Op, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp,
-    ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
-    ReadPtxSregLanemaskLtOp, ReadPtxSregTidXOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp,
-    ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp,
-    ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, ThreadfenceBlockOp,
-    ThreadfenceOp, ThreadfenceSystemOp,
+    Barrier0Op, ElectSyncOp, FmaBf16x2Op, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
+    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
+    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
+    ShflSyncUpI64Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -147,6 +148,55 @@ fn test_lanemask_op_rejects_non_i32_result() {
         0,
     );
     assert!(ReadPtxSregLanemaskLtOp::new(op).verify(&ctx).is_err());
+}
+
+#[test]
+fn test_special_register_ops_verify_authoritative_widths() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    macro_rules! check_width {
+        ($op:ty, $good:expr, $bad:expr) => {{
+            let good = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![$good.into()],
+                vec![],
+                vec![],
+                0,
+            );
+            assert!(
+                verify_op(&<$op>::new(good), &ctx).is_ok(),
+                "{} must accept its PTX register width",
+                stringify!($op)
+            );
+
+            let bad = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![$bad.into()],
+                vec![],
+                vec![],
+                0,
+            );
+            assert!(
+                verify_op(&<$op>::new(bad), &ctx).is_err(),
+                "{} must reject the other integer width",
+                stringify!($op)
+            );
+        }};
+    }
+
+    check_width!(ReadPtxSregWarpIdOp, i32_ty, i64_ty);
+    check_width!(ReadPtxSregNwarpIdOp, i32_ty, i64_ty);
+    check_width!(ReadPtxSregSmIdOp, i32_ty, i64_ty);
+    check_width!(ReadPtxSregNsmIdOp, i32_ty, i64_ty);
+    check_width!(ReadPtxSregDynamicSmemSizeOp, i32_ty, i64_ty);
+    check_width!(ReadPtxSregTotalSmemSizeOp, i32_ty, i64_ty);
+    check_width!(ReadPtxSregGridIdOp, i64_ty, i32_ty);
 }
 
 #[test]

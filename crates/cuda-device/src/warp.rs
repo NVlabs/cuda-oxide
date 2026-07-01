@@ -151,12 +151,12 @@ pub fn lanemask_gt() -> u32 {
 // Hardware Warp Identification
 // =============================================================================
 
-/// Read the hardware warp ID within the current SM.
+/// Sample the current warp identifier within this thread block (CTA).
 ///
-/// Returns the `%warpid` special register. Note: this is the **hardware warp
-/// slot**, not `threadIdx.x / 32`. The hardware may reuse warp IDs across
-/// different thread blocks co-resident on the same SM, and the value may change
-/// between time slices on architectures that support warp preemption.
+/// Returns the `%warpid` special register. It is the same for every thread in
+/// a warp and unique only within the current CTA, not across CTAs. The value
+/// may change if the thread is rescheduled after preemption. For a stable
+/// logical warp index, derive one from `threadIdx` instead.
 ///
 /// Valid range: `0 ..< nwarpid()`.
 ///
@@ -169,9 +169,9 @@ pub fn warpid() -> u32 {
     unreachable!("warpid called outside CUDA kernel context")
 }
 
-/// Read the maximum number of hardware warp slots per SM (i.e., max warp ID + 1).
+/// Read the maximum number of warp identifiers.
 ///
-/// Returns the `%nwarpid` special register. This is the hardware capacity, not
+/// Returns the `%nwarpid` special register. This is an identifier bound, not
 /// the number of warps currently active.
 ///
 /// # PTX

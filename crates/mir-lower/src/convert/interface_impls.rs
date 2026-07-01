@@ -20,7 +20,10 @@ use pliron::{
     result::Result,
 };
 
-use llvm_export::attributes::{FCmpPredicateAttr, ICmpPredicateAttr};
+use llvm_export::{
+    attributes::{FCmpPredicateAttr, ICmpPredicateAttr},
+    ops::AsmKind,
+};
 
 use crate::conversion_interface::MirToLlvmConversion;
 
@@ -1295,14 +1298,16 @@ impl MirToLlvmConversion for ReadPtxSregWarpIdOp {
         &self,
         ctx: &mut Context,
         rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
+        _operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
+        super::intrinsics::basic::convert_sreg_read_inline(
             ctx,
             rewriter,
             self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_warpid",
+            32,
+            "mov.u32 $0, %warpid;",
+            "=r",
+            AsmKind::SideEffect,
         )
     }
 }
@@ -1331,14 +1336,16 @@ impl MirToLlvmConversion for ReadPtxSregSmIdOp {
         &self,
         ctx: &mut Context,
         rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
+        _operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
+        super::intrinsics::basic::convert_sreg_read_inline(
             ctx,
             rewriter,
             self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_smid",
+            32,
+            "mov.u32 $0, %smid;",
+            "=r",
+            AsmKind::SideEffect,
         )
     }
 }
@@ -1367,14 +1374,16 @@ impl MirToLlvmConversion for ReadPtxSregGridIdOp {
         &self,
         ctx: &mut Context,
         rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
+        _operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
+        super::intrinsics::basic::convert_sreg_read_inline(
             ctx,
             rewriter,
             self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_gridid",
+            64,
+            "mov.u64 $0, %gridid;",
+            "=l",
+            AsmKind::Pure,
         )
     }
 }
@@ -1385,14 +1394,16 @@ impl MirToLlvmConversion for ReadPtxSregDynamicSmemSizeOp {
         &self,
         ctx: &mut Context,
         rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
+        _operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
+        super::intrinsics::basic::convert_sreg_read_inline(
             ctx,
             rewriter,
             self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_dynamic_smem_size",
+            32,
+            "mov.u32 $0, %dynamic_smem_size;",
+            "=r",
+            AsmKind::Pure,
         )
     }
 }
@@ -1403,14 +1414,16 @@ impl MirToLlvmConversion for ReadPtxSregTotalSmemSizeOp {
         &self,
         ctx: &mut Context,
         rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
+        _operands_info: &OperandsInfo,
     ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
+        super::intrinsics::basic::convert_sreg_read_inline(
             ctx,
             rewriter,
             self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_total_smem_size",
+            32,
+            "mov.u32 $0, %total_smem_size;",
+            "=r",
+            AsmKind::Pure,
         )
     }
 }

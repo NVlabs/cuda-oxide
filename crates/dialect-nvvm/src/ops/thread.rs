@@ -832,7 +832,7 @@ impl ReadPtxSregSmIdOp {
 
 impl Verify for ReadPtxSregSmIdOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_sreg_i32_result(ctx, self.get_operation(), "nvvm.read_ptx_sreg_smid")
+        verify_sreg_integer_result(ctx, self.get_operation(), "smid", 32)
     }
 }
 
@@ -860,18 +860,18 @@ impl ReadPtxSregNsmIdOp {
 
 impl Verify for ReadPtxSregNsmIdOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_sreg_i32_result(ctx, self.get_operation(), "nvvm.read_ptx_sreg_nsmid")
+        verify_sreg_integer_result(ctx, self.get_operation(), "nsmid", 32)
     }
 }
 
 /// Read the grid launch identifier.
 ///
-/// Corresponds to `llvm.nvvm.read.ptx.sreg.gridid` / PTX `%gridid`.
+/// Corresponds to the modern 64-bit PTX `%gridid` register.
 ///
 /// # Verification
 ///
 /// - Must have 0 operands
-/// - Must have 1 result of type `i32`
+/// - Must have 1 result of type `i64`
 #[pliron_op(
     name = "nvvm.read_ptx_sreg_gridid",
     format,
@@ -888,12 +888,17 @@ impl ReadPtxSregGridIdOp {
 
 impl Verify for ReadPtxSregGridIdOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_sreg_i32_result(ctx, self.get_operation(), "nvvm.read_ptx_sreg_gridid")
+        verify_sreg_integer_result(ctx, self.get_operation(), "gridid", 64)
     }
 }
 
-/// Shared verifier for SM/grid identification sreg ops: a single 32-bit integer result.
-fn verify_sreg_i32_result(ctx: &Context, op: Ptr<Operation>, op_name: &str) -> Result<(), Error> {
+/// Shared verifier for SM/grid identification special-register results.
+fn verify_sreg_integer_result(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    register: &str,
+    width: u32,
+) -> Result<(), Error> {
     let op = &*op.deref(ctx);
     let res = op.get_result(0);
     let ty = res.get_type(ctx);
@@ -902,12 +907,17 @@ fn verify_sreg_i32_result(ctx: &Context, op: Ptr<Operation>, op_name: &str) -> R
     let int_ty = match ty_obj.downcast_ref::<IntegerType>() {
         Some(ty) => ty,
         None => {
-            return verify_err!(op.loc(), "{} result must be integer", op_name);
+            return verify_err!(op.loc(), "%{} result must be integer", register);
         }
     };
 
-    if int_ty.width() != 32 {
-        return verify_err!(op.loc(), "{} result must be 32-bit integer", op_name);
+    if int_ty.width() != width {
+        return verify_err!(
+            op.loc(),
+            "%{} result must be {}-bit integer",
+            register,
+            width
+        );
     }
     Ok(())
 }

@@ -218,9 +218,69 @@ pub fn emit_nvvm_intrinsic(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    let u32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
+    emit_nvvm_integer_intrinsic(
+        ctx,
+        opid,
+        32,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+    )
+}
 
-    let nvvm_op = Operation::new(ctx, opid, vec![u32_type.to_handle()], vec![], vec![], 0);
+/// Emits a zero-operand NVVM operation returning the full 64-bit PTX value.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_nvvm_intrinsic_u64(
+    ctx: &mut Context,
+    opid: (
+        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    ),
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_nvvm_integer_intrinsic(
+        ctx,
+        opid,
+        64,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_nvvm_integer_intrinsic(
+    ctx: &mut Context,
+    opid: (
+        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    ),
+    result_width: u32,
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    let result_type = IntegerType::get(ctx, result_width, Signedness::Unsigned);
+
+    let nvvm_op = Operation::new(ctx, opid, vec![result_type.to_handle()], vec![], vec![], 0);
     nvvm_op.deref_mut(ctx).set_loc(loc.clone());
 
     let last_op = if let Some(prev) = prev_op {

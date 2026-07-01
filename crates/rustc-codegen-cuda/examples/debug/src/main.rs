@@ -18,7 +18,7 @@
 //!
 //! Run: cargo oxide run debug
 
-use cuda_device::{DisjointSlice, debug, gpu_assert, kernel, launch_bounds, thread};
+use cuda_device::{DisjointSlice, debug, gpu_assert, kernel, launch_bounds, shared, thread, warp};
 use cuda_host::cuda_module;
 
 // =============================================================================
@@ -52,6 +52,37 @@ mod kernels {
                 .wrapping_add(end_timer.wrapping_sub(start_timer))
                 .wrapping_add(sum & 0);
         }
+    }
+
+    /// Compile-time coverage for location, launch, and shared-memory special
+    /// registers. Both location registers are sampled twice so optimized PTX
+    /// must retain two `%warpid` and two `%smid` moves.
+    #[kernel]
+    pub fn special_register_test(mut output: DisjointSlice<u64>) {
+        let idx = thread::index_1d();
+        let Some(output_elem) = output.get_mut(idx) else {
+            return;
+        };
+
+        let warp_before = warp::warpid();
+        let sm_before = thread::smid();
+        let warp_bound = warp::nwarpid();
+        let sm_bound = thread::nsmid();
+        let launch = thread::gridid();
+        let dynamic_bytes = shared::dynamic_smem_size();
+        let total_bytes = shared::total_smem_size();
+        let warp_after = warp::warpid();
+        let sm_after = thread::smid();
+
+        *output_elem = launch
+            .wrapping_add(warp_before as u64)
+            .wrapping_add((sm_before as u64).rotate_left(7))
+            .wrapping_add((warp_bound as u64).rotate_left(13))
+            .wrapping_add((sm_bound as u64).rotate_left(19))
+            .wrapping_add((dynamic_bytes as u64).rotate_left(29))
+            .wrapping_add((total_bytes as u64).rotate_left(37))
+            .wrapping_add((warp_after as u64).rotate_left(43))
+            .wrapping_add((sm_after as u64).rotate_left(53));
     }
 
     /// Test kernel: demonstrates trap() for error handling

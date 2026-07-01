@@ -373,6 +373,69 @@ fn assert_sreg_i32_lowers_to_intrinsic(
     Ok(())
 }
 
+fn assert_sreg_lowers_to_inline_asm(
+    op_info: (
+        fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    ),
+    result_width: u32,
+    expected_template: &str,
+    expected_constraints: &str,
+    expected_kind: llvm::AsmKind,
+) -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let result_ty = IntegerType::get(&ctx, result_width, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    let sreg_op = Operation::new(&mut ctx, op_info, vec![result_ty.into()], vec![], vec![], 0);
+    sreg_op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut matches = 0usize;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                if template.as_deref() != Some(expected_template) {
+                    continue;
+                }
+
+                matches += 1;
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some(expected_constraints)
+                );
+                assert_eq!(llvm::asm_kind(&ctx, &inline_asm), expected_kind);
+            }
+        }
+    }
+
+    assert_eq!(matches, 1, "expected one exact `{expected_template}` read");
+    Ok(())
+}
+
 #[test]
 fn test_lanemask_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
     // Each lane-position mask op lowers to its matching read-only sreg intrinsic
@@ -401,10 +464,13 @@ fn test_lanemask_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error
 }
 
 #[test]
-fn test_warpid_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
-    assert_sreg_i32_lowers_to_intrinsic(
+fn test_warpid_ops_preserve_snapshot_semantics() -> Result<(), anyhow::Error> {
+    assert_sreg_lowers_to_inline_asm(
         nvvm::ReadPtxSregWarpIdOp::get_concrete_op_info(),
-        "llvm_nvvm_read_ptx_sreg_warpid",
+        32,
+        "mov.u32 $0, %warpid;",
+        "=r",
+        llvm::AsmKind::SideEffect,
     )?;
     assert_sreg_i32_lowers_to_intrinsic(
         nvvm::ReadPtxSregNwarpIdOp::get_concrete_op_info(),
@@ -414,10 +480,13 @@ fn test_warpid_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> 
 }
 
 #[test]
-fn test_smid_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
-    assert_sreg_i32_lowers_to_intrinsic(
+fn test_smid_ops_preserve_snapshot_semantics() -> Result<(), anyhow::Error> {
+    assert_sreg_lowers_to_inline_asm(
         nvvm::ReadPtxSregSmIdOp::get_concrete_op_info(),
-        "llvm_nvvm_read_ptx_sreg_smid",
+        32,
+        "mov.u32 $0, %smid;",
+        "=r",
+        llvm::AsmKind::SideEffect,
     )?;
     assert_sreg_i32_lowers_to_intrinsic(
         nvvm::ReadPtxSregNsmIdOp::get_concrete_op_info(),
@@ -427,23 +496,92 @@ fn test_smid_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
 }
 
 #[test]
-fn test_gridid_op_lowers_to_sreg_intrinsic_call() -> Result<(), anyhow::Error> {
-    assert_sreg_i32_lowers_to_intrinsic(
-        nvvm::ReadPtxSregGridIdOp::get_concrete_op_info(),
-        "llvm_nvvm_read_ptx_sreg_gridid",
-    )?;
+fn test_repeated_location_samples_remain_side_effecting_reads() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+
+    for op_info in [
+        nvvm::ReadPtxSregWarpIdOp::get_concrete_op_info(),
+        nvvm::ReadPtxSregSmIdOp::get_concrete_op_info(),
+        nvvm::ReadPtxSregWarpIdOp::get_concrete_op_info(),
+        nvvm::ReadPtxSregSmIdOp::get_concrete_op_info(),
+    ] {
+        let op = Operation::new(&mut ctx, op_info, vec![i32_ty.into()], vec![], vec![], 0);
+        op.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut warpid_reads = 0usize;
+    let mut smid_reads = 0usize;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                match template.as_deref() {
+                    Some("mov.u32 $0, %warpid;") => warpid_reads += 1,
+                    Some("mov.u32 $0, %smid;") => smid_reads += 1,
+                    _ => continue,
+                }
+                assert_eq!(
+                    llvm::asm_kind(&ctx, &inline_asm),
+                    llvm::AsmKind::SideEffect,
+                    "location snapshots must survive LLVM CSE"
+                );
+            }
+        }
+    }
+
+    assert_eq!(warpid_reads, 2);
+    assert_eq!(smid_reads, 2);
     Ok(())
 }
 
 #[test]
-fn test_smem_size_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error> {
-    assert_sreg_i32_lowers_to_intrinsic(
+fn test_gridid_op_lowers_to_full_width_inline_ptx() -> Result<(), anyhow::Error> {
+    assert_sreg_lowers_to_inline_asm(
+        nvvm::ReadPtxSregGridIdOp::get_concrete_op_info(),
+        64,
+        "mov.u64 $0, %gridid;",
+        "=l",
+        llvm::AsmKind::Pure,
+    )
+}
+
+#[test]
+fn test_smem_size_ops_lower_to_portable_inline_ptx() -> Result<(), anyhow::Error> {
+    assert_sreg_lowers_to_inline_asm(
         nvvm::ReadPtxSregDynamicSmemSizeOp::get_concrete_op_info(),
-        "llvm_nvvm_read_ptx_sreg_dynamic_smem_size",
+        32,
+        "mov.u32 $0, %dynamic_smem_size;",
+        "=r",
+        llvm::AsmKind::Pure,
     )?;
-    assert_sreg_i32_lowers_to_intrinsic(
+    assert_sreg_lowers_to_inline_asm(
         nvvm::ReadPtxSregTotalSmemSizeOp::get_concrete_op_info(),
-        "llvm_nvvm_read_ptx_sreg_total_smem_size",
+        32,
+        "mov.u32 $0, %total_smem_size;",
+        "=r",
+        llvm::AsmKind::Pure,
     )?;
     Ok(())
 }

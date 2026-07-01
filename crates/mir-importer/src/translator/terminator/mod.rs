@@ -2494,39 +2494,45 @@ fn try_dispatch_intrinsic(
             )?))
         }
         // SM and grid identification
-        "cuda_device::thread::smid" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregSmIdOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::thread::nsmid" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregNsmIdOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::thread::gridid" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregGridIdOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
+        "cuda_device::smid" | "cuda_device::thread::smid" => {
+            Ok(Some(helpers::emit_nvvm_intrinsic(
+                ctx,
+                ReadPtxSregSmIdOp::get_concrete_op_info(),
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+        "cuda_device::nsmid" | "cuda_device::thread::nsmid" => {
+            Ok(Some(helpers::emit_nvvm_intrinsic(
+                ctx,
+                ReadPtxSregNsmIdOp::get_concrete_op_info(),
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
+        "cuda_device::gridid" | "cuda_device::thread::gridid" => {
+            Ok(Some(helpers::emit_nvvm_intrinsic_u64(
+                ctx,
+                ReadPtxSregGridIdOp::get_concrete_op_info(),
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
         "cuda_device::grid::envreg1" => Ok(Some(helpers::emit_nvvm_intrinsic(
             ctx,
             dialect_nvvm::ops::ReadPtxSregEnvReg1Op::get_concrete_op_info(),

@@ -34,8 +34,7 @@ use pliron_derive::pliron_op;
 
 /// Read the size (in bytes) of dynamic shared memory for this kernel.
 ///
-/// Corresponds to `llvm.nvvm.read.ptx.sreg.dynamic.smem.size` /
-/// PTX `%dynamic_smem_size`.
+/// Corresponds to PTX `%dynamic_smem_size`.
 ///
 /// # Verification
 ///
@@ -57,18 +56,13 @@ impl ReadPtxSregDynamicSmemSizeOp {
 
 impl Verify for ReadPtxSregDynamicSmemSizeOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_smem_size_result(
-            ctx,
-            self.get_operation(),
-            "nvvm.read_ptx_sreg_dynamic_smem_size",
-        )
+        verify_smem_size_result(ctx, self.get_operation(), "dynamic_smem_size")
     }
 }
 
 /// Read the total size (in bytes) of shared memory for this kernel.
 ///
-/// Corresponds to `llvm.nvvm.read.ptx.sreg.total.smem.size` /
-/// PTX `%total_smem_size`.
+/// Corresponds to PTX `%total_smem_size`.
 ///
 /// # Verification
 ///
@@ -90,11 +84,7 @@ impl ReadPtxSregTotalSmemSizeOp {
 
 impl Verify for ReadPtxSregTotalSmemSizeOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_smem_size_result(
-            ctx,
-            self.get_operation(),
-            "nvvm.read_ptx_sreg_total_smem_size",
-        )
+        verify_smem_size_result(ctx, self.get_operation(), "total_smem_size")
     }
 }
 
