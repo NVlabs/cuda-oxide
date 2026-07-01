@@ -1,0 +1,5 @@
+error: cuda_program operation `missing` does not match a #[kernel] in this module
+  --> tests/compile_fail/cuda_program_non_kernel.rs:20:9
+   |
+20 |         missing(output, 1.0f32).grid_len(n);
+   |         ^^^^^^^

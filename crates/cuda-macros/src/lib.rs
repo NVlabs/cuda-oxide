@@ -5,6 +5,7 @@
 
 mod device_copy;
 mod printf;
+mod program_macro;
 mod ptx_asm;
 
 use proc_macro::TokenStream;
@@ -224,6 +225,30 @@ pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+/// Generates a typed CUDA module plus semantic program graph builders.
+///
+/// `#[cuda_program]` is a structuring layer above `#[cuda_module]`: kernels are
+/// still compiled by the normal `#[kernel]` path, while `#[program]` functions
+/// declare ordered host-side graph structure that lowers explicitly into an
+/// execution plan.
+#[proc_macro_attribute]
+pub fn cuda_program(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "cuda_program does not take arguments yet",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    let input = parse_macro_input!(item as ItemMod);
+    match program_macro::expand_cuda_program(input) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
 struct CudaModuleKernel {
     vis: syn::Visibility,
     cfg_attrs: Vec<syn::Attribute>,
@@ -251,6 +276,13 @@ enum CudaModuleParamMarshal {
 }
 
 fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
+    expand_cuda_module_with_extra(module, TokenStream2::new())
+}
+
+fn expand_cuda_module_with_extra(
+    module: ItemMod,
+    extra_items: TokenStream2,
+) -> syn::Result<TokenStream2> {
     let module_attrs = &module.attrs;
     let vis = &module.vis;
     let ident = &module.ident;
@@ -407,6 +439,8 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                 #(#set_constant_methods)*
                 #async_launch_methods
             }
+
+            #extra_items
         }
     })
 }

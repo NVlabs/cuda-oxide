@@ -20,8 +20,9 @@
 
 // No #![cfg_attr(cuda_device, no_std)] - this compiles as ONE unit!
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_core::{CudaContext, DeviceBuffer};
+use cuda_device::{DisjointSlice, cuda_program, kernel, thread};
+use cuda_host::ProgramLowering;
 
 // =============================================================================
 // KERNEL - This gets compiled to PTX by rustc-codegen-cuda
@@ -32,7 +33,7 @@ use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 /// This function exists in BOTH host MIR and device PTX:
 /// - Host: The function body is never called, but types are checked
 /// - Device: Compiled to PTX via mir-importer pipeline
-#[cuda_module]
+#[cuda_program]
 mod kernels {
     use super::*;
 
@@ -43,6 +44,27 @@ mod kernels {
         if let Some(c_elem) = c.get_mut(idx) {
             *c_elem = a[idx_raw] + b[idx_raw];
         }
+    }
+
+    #[kernel]
+    pub fn scale(input: &[f32], mut out: DisjointSlice<f32>, factor: f32) {
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = out.get_mut(idx) {
+            *out_elem = input[idx_raw] * factor;
+        }
+    }
+
+    #[program]
+    pub fn forward(
+        a: &DeviceBuffer<f32>,
+        b: &DeviceBuffer<f32>,
+        tmp: &mut DeviceBuffer<f32>,
+        c: &mut DeviceBuffer<f32>,
+        n: u32,
+    ) {
+        vecadd(a, b, tmp).grid_len(n);
+        scale(tmp, c, 1.0f32).grid_len(n);
     }
 }
 
@@ -69,18 +91,19 @@ fn main() {
     // Allocate device memory
     let a_dev = DeviceBuffer::from_host(&stream, &a_host).unwrap();
     let b_dev = DeviceBuffer::from_host(&stream, &b_host).unwrap();
+    let mut tmp_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
     let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
     // Load the embedded PTX bundle and launch through the typed module API.
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    module
-        .vecadd(
-            &stream,
-            LaunchConfig::for_num_elems(N as u32),
-            &a_dev,
-            &b_dev,
-            &mut c_dev,
-        )
+    let graph = kernels::forward_graph(&a_dev, &b_dev, &mut tmp_dev, &mut c_dev, N as u32);
+    assert_eq!(graph.dependencies().len(), 1);
+    assert_eq!(graph.dependencies()[0].resource, "tmp");
+    let bound = graph
+        .bind(&module, ProgramLowering::SequentialLaunches)
+        .expect("Failed to bind CUDA program graph");
+    bound
+        .launch(&stream)
         .expect("Kernel launch failed");
 
     // Get results

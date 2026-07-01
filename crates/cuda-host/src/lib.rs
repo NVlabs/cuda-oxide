@@ -82,6 +82,7 @@ pub mod embedded;
 pub mod launch;
 pub mod ltoir;
 mod ltoir_cache;
+pub mod program;
 pub mod tiling;
 pub mod type_id;
 
@@ -117,9 +118,14 @@ pub use embedded::{
 /// emit PTX directly. See [`ltoir`] for the complete lookup and compatibility
 /// rules.
 pub use ltoir::{LtoirError, load_kernel_module};
+pub use program::{
+    BoundProgram, ExecutionPlan, ExecutionPolicy, ProgramArgumentMetadata, ProgramArgumentRole,
+    ProgramDependencyMetadata, ProgramGraphMetadata, ProgramLowering, ProgramOperationMetadata,
+    ProgramResourceMetadata, ProgramResourceRole,
+};
 
 // Re-export launch macros from cuda-macros for convenience.
-pub use cuda_macros::{cuda_launch, cuda_module};
+pub use cuda_macros::{cuda_launch, cuda_module, cuda_program};
 
 /// Re-export of [`cuda_macros::cuda_launch_async`].
 ///
