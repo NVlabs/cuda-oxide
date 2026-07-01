@@ -980,9 +980,7 @@ fn translate_call(
     // Match both the full path (`cuda_device::thread::__unroll_config`) and the
     // re-exported short path (`cuda_device::__unroll_config`), mirroring the
     // robust suffix match in `body::detect_unroll_config`.
-    if let Some(ref name) = pattern_name
-        && (name == "__unroll_config" || name.ends_with("::__unroll_config"))
-    {
+    if is_cuda_device_const_marker(func, "__unroll_config") {
         let Some(factor) = extract_unroll_factor(func) else {
             return input_err!(
                 loc,
@@ -991,6 +989,14 @@ fn translate_call(
                 )
             );
         };
+        if factor == 1 || factor > 1024 {
+            return input_err!(
+                loc,
+                TranslationErr::invalid_op(format!(
+                    "partial unroll factor must be in 2..=1024, or 0 for full unrolling; got {factor}"
+                ))
+            );
+        }
         let Some(target) = target_usize else {
             return input_err!(
                 loc,
@@ -1151,6 +1157,7 @@ fn translate_call(
         && let Some(result) = try_dispatch_intrinsic(
             ctx,
             body,
+            func,
             name,
             args,
             destination,
@@ -1828,9 +1835,16 @@ fn extract_unroll_factor(func: &mir::Operand) -> Option<u32> {
     let mir::Operand::Constant(constant) = func else {
         return None;
     };
-    let TyKind::RigidTy(RigidTy::FnDef(_, args)) = constant.const_.ty().kind() else {
+    let TyKind::RigidTy(RigidTy::FnDef(definition, args)) = constant.const_.ty().kind() else {
         return None;
     };
+    let definition_name = definition.name();
+    if definition.krate().name.as_str() != "cuda_device"
+        || (definition_name != "__unroll_config" && !definition_name.ends_with("::__unroll_config"))
+        || args.0.len() != 1
+    {
+        return None;
+    }
     if let Some(arg) = args.0.first()
         && let rustc_public::ty::GenericArgKind::Const(c) = arg
     {
@@ -1845,6 +1859,28 @@ fn extract_unroll_factor(func: &mir::Operand) -> Option<u32> {
         };
     }
     None
+}
+
+/// Match a compiler marker by its resolved definition, not by a debug string.
+///
+/// A user function with the same spelling must remain an ordinary call. The
+/// `FnDef` identity also guarantees that generic arguments were type-checked by
+/// rustc before the importer reads them.
+fn is_cuda_device_const_marker(func: &mir::Operand, expected_name: &str) -> bool {
+    use rustc_public::CrateDef;
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let mir::Operand::Constant(constant) = func else {
+        return false;
+    };
+    let TyKind::RigidTy(RigidTy::FnDef(definition, _)) = constant.const_.ty().kind() else {
+        return false;
+    };
+    if definition.krate().name.as_str() != "cuda_device" {
+        return false;
+    }
+    let definition_name = definition.name();
+    definition_name == expected_name || definition_name.ends_with(&format!("::{expected_name}"))
 }
 
 /// Extracts function metadata from a MIR function operand.
@@ -2106,6 +2142,7 @@ fn emit_typed_swap(
 fn try_dispatch_intrinsic(
     ctx: &mut Context,
     body: &mir::Body,
+    func: &mir::Operand,
     name: &str,
     args: &[mir::Operand],
     destination: &mir::Place,
@@ -2403,10 +2440,22 @@ fn try_dispatch_intrinsic(
         | "cuda_device::thread::__launch_bounds_config"
         | "cuda_device::__launch_contract_config"
         | "cuda_device::thread::__launch_contract_config" => {
+            let expected_marker = match name {
+                "cuda_device::__launch_bounds_config"
+                | "cuda_device::thread::__launch_bounds_config" => "__launch_bounds_config",
+                "cuda_device::__launch_contract_config"
+                | "cuda_device::thread::__launch_contract_config" => {
+                    "__launch_contract_config"
+                }
+                _ => unreachable!("launch metadata arm matched an unknown marker"),
+            };
+            if !is_cuda_device_const_marker(func, expected_marker) {
+                return Ok(None);
+            }
             // Compile-time launch metadata marker. Launch bounds are extracted
-            // in body.rs; the contract marker is consumed by the proc macro to
-            // select a typed kernel scope. Neither call generates runtime code.
-            // This call generates no runtime code - just emit a goto to the target block.
+            // in body.rs; the contract marker selects the kernel's typed launch
+            // context during macro expansion. Neither marker emits runtime code.
+            // Emit only the control-flow edge to the call's target.
             //
             // We need a prev_op to insert after. If none exists, create a dummy constant.
             let actual_prev_op = match prev_op {
