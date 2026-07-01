@@ -5,6 +5,7 @@
 
 //! Warp-level matrix dialect operations.
 
+use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
     builtin::types::IntegerType,
@@ -71,6 +72,64 @@ impl Verify for MovmatrixTransB16Op {
     }
 }
 
+/// Warp MMA: m8n8k4 with f64 accumulator and f64 inputs.
+///
+/// # Operands
+///
+/// - `acc_ptr` (ptr): pointer to `[f64; 2]` accumulator (read-modify-write)
+/// - `a_ptr` (ptr): pointer to `f64` A fragment
+/// - `b_ptr` (ptr): pointer to `f64` B fragment
+///
+/// # Results
+///
+/// - None (accumulator updated in-place via pointer)
+#[pliron_op(
+    name = "nvvm.mma_m8n8k4_f64",
+    format,
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+)]
+pub struct MmaM8N8K4F64Op;
+
+impl Verify for MmaM8N8K4F64Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let operands: Vec<_> = op.operands().collect();
+
+        if operands.len() != 3 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mma_m8n8k4_f64 requires 3 pointer operands, got {}",
+                operands.len()
+            );
+        }
+
+        for (i, operand) in operands.iter().enumerate() {
+            let ty = operand.get_type(ctx);
+            if ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.mma_m8n8k4_f64 operand {} must be a MIR pointer",
+                    i
+                );
+            }
+        }
+
+        if op.get_num_results() != 0 {
+            return verify_err!(op.loc(), "nvvm.mma_m8n8k4_f64 must have 0 results");
+        }
+
+        Ok(())
+    }
+}
+
+impl MmaM8N8K4F64Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MmaM8N8K4F64Op { op }
+    }
+}
+
 pub(super) fn register(ctx: &mut Context) {
     MovmatrixTransB16Op::register(ctx);
+    MmaM8N8K4F64Op::register(ctx);
 }

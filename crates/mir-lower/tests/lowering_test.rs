@@ -3208,3 +3208,82 @@ fn test_ldmatrix_forms_return_registers_in_exact_convergent_memory_asm() -> Resu
 
     Ok(())
 }
+
+#[test]
+fn test_mma_m8n8k4_f64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use llvm_export::types::PointerType;
+
+    let mut ctx = make_test_ctx();
+    let ptr_ty = PointerType::get(&mut ctx, 0);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
+
+    let acc_ptr = entry.deref(&ctx).get_argument(0);
+    let a_ptr = entry.deref(&ctx).get_argument(1);
+    let b_ptr = entry.deref(&ctx).get_argument(2);
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM8N8K4F64Op::get_concrete_op_info(),
+        vec![],
+        vec![acc_ptr, a_ptr, b_ptr],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut found = 0;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for module_op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(function) = Operation::get_op::<llvm::FuncOp>(module_op, &ctx) else {
+            continue;
+        };
+        if function.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let body = function.get_operation().deref(&ctx).get_region(0);
+        for block in body.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                let constraints = asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                if !template
+                    .as_deref()
+                    .is_some_and(|t| t.contains("mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64"))
+                {
+                    continue;
+                }
+                found += 1;
+                assert_eq!(constraints.as_deref(), Some("l,l,l,~{memory}"));
+                assert_eq!(
+                    llvm::asm_kind_opt(&ctx, &asm),
+                    Some(llvm::AsmKind::Convergent)
+                );
+                assert_eq!(
+                    body_op.deref(&ctx).get_num_operands(),
+                    3,
+                    "expected 3 pointer operands (acc, a, b)"
+                );
+                assert_eq!(
+                    body_op.deref(&ctx).get_num_results(),
+                    0,
+                    "MMA op returns void (stores via pointer)"
+                );
+            }
+        }
+    }
+
+    assert_eq!(found, 1, "expected one mma.sync inline-asm operation");
+    Ok(())
+}

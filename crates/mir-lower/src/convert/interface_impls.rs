@@ -59,14 +59,14 @@ use dialect_nvvm::ops::{
     MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
     MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
     MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp,
-    MinBf16x2Op, MovmatrixTransB16Op, MulBf16x2Op, NanosleepOp, NegBf16x2Op, NvvmAtomicCmpxchgOp,
-    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op,
-    ReadPtxSregClockOp, ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp,
-    ReadPtxSregClusterCtaidZOp, ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp,
-    ReadPtxSregClusterNctaidYOp, ReadPtxSregClusterNctaidZOp, ReadPtxSregCtaidXOp,
-    ReadPtxSregCtaidYOp, ReadPtxSregCtaidZOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregEnvReg1Op,
-    ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
-    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    MinBf16x2Op, MmaM8N8K4F64Op, MovmatrixTransB16Op, MulBf16x2Op, NanosleepOp, NegBf16x2Op,
+    NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp,
+    ReadPtxSregClock64Op, ReadPtxSregClockOp, ReadPtxSregClusterCtaidXOp,
+    ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp, ReadPtxSregClusterIdxOp,
+    ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp, ReadPtxSregClusterNctaidZOp,
+    ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregCtaidZOp, ReadPtxSregDynamicSmemSizeOp,
+    ReadPtxSregEnvReg1Op, ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp,
+    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
     ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNclusterIdOp,
     ReadPtxSregNctaidXOp, ReadPtxSregNctaidYOp, ReadPtxSregNctaidZOp, ReadPtxSregNsmIdOp,
     ReadPtxSregNtidXOp, ReadPtxSregNtidYOp, ReadPtxSregNtidZOp, ReadPtxSregNwarpIdOp,
@@ -2637,6 +2637,25 @@ impl MirToLlvmConversion for NanosleepOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::mbarrier::convert_nanosleep(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+// ---- NVVM WMMA ops ---------------------------------------------------------
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM8N8K4F64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_mma_m8n8k4_f64(
             ctx,
             rewriter,
             self.get_operation(),
