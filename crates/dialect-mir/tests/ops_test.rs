@@ -1041,8 +1041,8 @@ fn test_mir_set_discriminant_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
 
-    let i8_ty = IntegerType::get(&mut ctx, 8, Signedness::Signed);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signed);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signed);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
     let unit = |name: &str| EnumVariant::unit(name.to_string());
 
     let enum_ty = MirEnumType::get(

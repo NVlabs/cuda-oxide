@@ -32,10 +32,8 @@ use dialect_mir::ops::{
     MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp,
     MirGetDiscriminantOp, MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp,
     MirMemcpyOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp,
-    MirReturnOp, MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp, MirSubOp,
-    MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
     MirReturnOp, MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp,
-    MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp,
+    MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
     AbsBf16x2Op, ActiveMaskOp, AddBf16x2Op, BarWarpSyncOp, Barrier0Op, BreakpointOp,

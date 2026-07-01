@@ -20,10 +20,19 @@ use core::intrinsics::mir::*;
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
+#[repr(i8)]
 #[allow(dead_code)]
 enum DeviceState {
-    Empty,
-    Full(u32),
+    Empty = -5,
+    Full(u32) = 7,
+}
+
+enum Never {}
+
+#[allow(dead_code)]
+enum SingleLayout {
+    Live(u32),
+    Impossible(Never),
 }
 
 #[custom_mir(dialect = "runtime", phase = "optimized")]
@@ -34,13 +43,21 @@ fn force_set_discriminant(state: &mut DeviceState) {
     })
 }
 
+#[custom_mir(dialect = "runtime", phase = "optimized")]
+fn keep_single_inhabited_variant(state: &mut SingleLayout) {
+    mir!({
+        SetDiscriminant(*state, 0);
+        Return()
+    })
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
 
-    /// Each thread starts with `DeviceState::Full(idx)`, then uses custom MIR
-    /// to emit `SetDiscriminant` to `Empty`. The output is `1` if the
-    /// discriminant write was observed, `0` otherwise.
+    /// Each thread checks both physical enum layouts supported by this PR:
+    /// a sparse signed direct tag is written, while selecting the sole live
+    /// variant of a no-tag enum is a no-op that preserves its payload.
     #[kernel]
     pub fn set_discriminant_kernel(mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
@@ -51,9 +68,15 @@ mod kernels {
             // This helper emits `StatementKind::SetDiscriminant` directly.
             force_set_discriminant(&mut state);
 
-            *out_elem = match state {
-                DeviceState::Empty => 1,
-                DeviceState::Full(_) => 0,
+            let mut single = SingleLayout::Live(raw_idx as u32);
+            keep_single_inhabited_variant(&mut single);
+            let single_is_unchanged =
+                matches!(single, SingleLayout::Live(v) if v == raw_idx as u32);
+
+            *out_elem = match (state, single_is_unchanged) {
+                (DeviceState::Empty, true) => 1,
+                (DeviceState::Full(_), _) => 0,
+                _ => 0,
             };
         }
     }

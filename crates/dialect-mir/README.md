@@ -51,7 +51,7 @@ Pointers and slices carry an NVPTX address space:
 
 ## Operations
 
-54 operations across 11 modules:
+55 operations across 11 modules:
 
 | Module         | Ops | Description                                                                             |
 |----------------|-----|-----------------------------------------------------------------------------------------|

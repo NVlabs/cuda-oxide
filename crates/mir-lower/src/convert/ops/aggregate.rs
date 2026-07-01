@@ -956,6 +956,17 @@ pub(crate) fn convert_set_discriminant(
         }
     };
 
+    // Only direct-tag enums have a physical tag address. The importer handles
+    // a no-tag Single layout as a no-op and rejects niche/empty layouts before
+    // creating this operation. Keep the same invariant here so malformed or
+    // hand-built dialect IR cannot store into the synthetic fallback tag used
+    // by other enum operations.
+    if enum_ty.total_size() == 0 {
+        return pliron::input_err_noloc!(
+            "MirSetDiscriminantOp requires a direct-tag enum with recorded layout"
+        );
+    }
+
     let mir_ty: TypeHandle = pliron::r#type::Type::register_instance(enum_ty, ctx).into();
     let slot_map = build_enum_slot_map(ctx, mir_ty).map_err(anyhow_to_pliron)?;
     let llvm_struct_ty = slot_map.llvm_struct_ty;
@@ -1544,6 +1555,135 @@ mod tests {
             tag_integer.value().to_u64(),
             255,
             "Less must lower to its declared i8 bit-pattern 255, not variant index 0"
+        );
+    }
+
+    /// SetDiscriminant must use the slot map instead of assuming that the tag
+    /// is field zero, and its GEP must retain the source pointer's GPU address
+    /// space. This shape puts an i64 payload first and an i8 tag at byte 8.
+    #[test]
+    fn set_discriminant_uses_tag_slot_and_preserves_shared_address_space() {
+        use llvm_export::ops::GepIndex;
+        use llvm_export::types::{PointerType, address_space};
+
+        let mut ctx = make_ctx();
+        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let payload_a: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let payload_b: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_layout(
+            &mut ctx,
+            "TagAfterPayload".to_string(),
+            discr_ty,
+            vec![3, 7],
+            vec![
+                EnumVariant::new_with_offsets("A".to_string(), vec![payload_a], vec![0]),
+                EnumVariant::new_with_offsets("B".to_string(), vec![payload_b], vec![0]),
+            ],
+            8,
+            16,
+            8,
+        )
+        .into();
+        let ptr_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, enum_ty, true).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, discr_ty], vec![]);
+        let enum_ptr = block.deref(&ctx).get_argument(0);
+        let discr = block.deref(&ctx).get_argument(1);
+        let set = Operation::new(
+            &mut ctx,
+            mir::MirSetDiscriminantOp::get_concrete_op_info(),
+            vec![],
+            vec![enum_ptr, discr],
+            vec![],
+            0,
+        );
+        set.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<mir::MirSetDiscriminantOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 1);
+
+        let gep = find_first::<llvm::GetElementPtrOp>(&ctx, &body).unwrap();
+        let indices = gep.indices(&ctx);
+        assert!(
+            matches!(
+                indices.as_slice(),
+                [GepIndex::Constant(0), GepIndex::Constant(1)]
+            ),
+            "the tag at byte 8 must be LLVM struct slot 1"
+        );
+        let gep_result_ty = gep.get_operation().deref(&ctx).get_result(0).get_type(&ctx);
+        assert_eq!(
+            gep_result_ty
+                .deref(&ctx)
+                .downcast_ref::<PointerType>()
+                .expect("GEP result must be a pointer")
+                .address_space(),
+            address_space::SHARED,
+            "tag GEP must preserve shared address space"
+        );
+
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).unwrap();
+        let stored_ty = store.get_operand_value(&ctx).get_type(&ctx);
+        assert_eq!(
+            stored_ty
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("stored tag must be an integer")
+                .width(),
+            8
+        );
+        assert_eq!(
+            store.get_operand_address(&ctx),
+            gep.get_operation().deref(&ctx).get_result(0),
+            "the store must use the tag GEP result"
+        );
+    }
+
+    /// A synthetic tag used for cuda-oxide's device-private niche model is
+    /// not a physical rustc tag and must never be written by SetDiscriminant.
+    #[test]
+    fn set_discriminant_rejects_enum_without_recorded_direct_layout() {
+        let mut ctx = make_ctx();
+        let discr_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let enum_ty: TypeHandle = MirEnumType::get(
+            &mut ctx,
+            "NoPhysicalTag".to_string(),
+            discr_ty,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".to_string()),
+                EnumVariant::unit("Some".to_string()),
+            ],
+        )
+        .into();
+        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, discr_ty], vec![]);
+        let enum_ptr = block.deref(&ctx).get_argument(0);
+        let discr = block.deref(&ctx).get_argument(1);
+        let set = Operation::new(
+            &mut ctx,
+            mir::MirSetDiscriminantOp::get_concrete_op_info(),
+            vec![],
+            vec![enum_ptr, discr],
+            vec![],
+            0,
+        );
+        set.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("a no-tag enum must not lower to a synthetic tag store");
+        assert!(
+            error
+                .to_string()
+                .contains("requires a direct-tag enum with recorded layout"),
+            "unexpected lowering error: {error}"
         );
     }
 }
