@@ -5,6 +5,7 @@
 
 //! Warp-level matrix dialect operations.
 
+use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
     builtin::types::{FP32Type, IntegerType},
@@ -180,7 +181,33 @@ impl MmaM16N8K16F32Bf16Op {
 pub struct MmaM8N8K4F64Op;
 
 impl Verify for MmaM8N8K4F64Op {
-    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let operands: Vec<_> = op.operands().collect();
+
+        if operands.len() != 3 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mma_m8n8k4_f64 requires 3 pointer operands, got {}",
+                operands.len()
+            );
+        }
+
+        for (i, operand) in operands.iter().enumerate() {
+            let ty = operand.get_type(ctx);
+            if ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.mma_m8n8k4_f64 operand {} must be a MIR pointer",
+                    i
+                );
+            }
+        }
+
+        if op.get_num_results() != 0 {
+            return verify_err!(op.loc(), "nvvm.mma_m8n8k4_f64 must have 0 results");
+        }
+
         Ok(())
     }
 }

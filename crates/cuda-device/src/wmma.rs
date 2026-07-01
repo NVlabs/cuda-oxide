@@ -243,8 +243,10 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
 ///
 /// # Safety
 ///
-/// - Must be called by all threads in a warp
-/// - Must be called from within a CUDA kernel context on sm_80+
+/// - All 32 lanes in the warp must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
+///   automatically.
 #[inline(never)]
 pub unsafe fn mma_m8n8k4_f64(acc: &mut [f64; 2], a: &f64, b: &f64) {
     let _ = (acc, a, b);

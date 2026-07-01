@@ -5,7 +5,7 @@
 
 //! Warp-level matrix intrinsics (`movmatrix`, `mma.sync`).
 
-use super::super::helpers::emit_store_result_and_goto;
+use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
@@ -294,11 +294,12 @@ pub fn emit_mma_m16n8k16_f32_bf16(
 /// Emit `mma_m8n8k4_f64`: Warp MMA with f64 accumulator and f64 inputs.
 ///
 /// Args:
-/// - `args[0]`: `&mut [f64; 2]` (accumulator pointer, read-modify-write)
-/// - `args[1]`: `&f64` (A fragment pointer)
-/// - `args[2]`: `&f64` (B fragment pointer)
+/// - arg 0: `&mut [f64; 2]` (accumulator pointer, read-modify-write)
+/// - arg 1: `&f64` (A fragment pointer)
+/// - arg 2: `&f64` (B fragment pointer)
 ///
 /// Returns: void (accumulator updated in-place)
+#[allow(clippy::too_many_arguments)]
 pub fn emit_mma_m8n8k4_f64(
     ctx: &mut Context,
     body: &mir::Body,
