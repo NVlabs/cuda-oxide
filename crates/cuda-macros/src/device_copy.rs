@@ -9,42 +9,34 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{
-    Data, DataStruct, DataUnion, DeriveInput, Field, Fields, Generics, TypeParamBound, parse_str,
+    Data, DataEnum, DataStruct, DataUnion, DeriveInput, Field, Fields, Generics, TypeParamBound,
+    parse_str,
 };
 
 pub fn impl_device_copy(input: &DeriveInput, import: TokenStream) -> TokenStream {
     let input_type = &input.ident;
 
-    // Generate the code to type-check all fields of the derived struct/union. We can't perform
+    // Generate the code to type-check all fields of the derived type. We can't perform
     // type checking at expansion-time, so instead we generate a dummy nested function with a
-    // type-bound on DeviceCopy and call it with every type that's in the struct/union.
+    // type-bound on DeviceCopy and call it with every field type.
     // This will fail to compile if any of the nested types doesn't implement DeviceCopy.
-    //
-    // Enums are deliberately rejected: `DeviceCopy`'s safety contract requires
-    // every bit pattern, including the all-zero pattern written by
-    // `DeviceBuffer::zeroed`, to be a valid value of the type. That holds for
-    // product types (structs/unions) when every field is `DeviceCopy`, but NOT
-    // for enums, whose discriminant leaves most byte patterns invalid. A zeroed
-    // or device-written buffer could then materialize an out-of-range
-    // discriminant (undefined behavior). This is the same reason `bool`, `char`,
-    // and `NonZeroU32` are not `DeviceCopy`. Per-field checking is necessary but
-    // not sufficient for enums, so we refuse rather than emit an unsound impl.
-    let check_types_code = match input.data {
-        Data::Struct(ref data_struct) => type_check_struct(data_struct),
-        Data::Union(ref data_union) => type_check_union(data_union),
-        Data::Enum(_) => {
-            return syn::Error::new_spanned(
-                input_type,
-                "`#[derive(DeviceCopy)]` cannot be applied to enums: `DeviceCopy` requires \
-                 every bit pattern (including the all-zero pattern written by \
-                 `DeviceBuffer::zeroed`) to be a valid value, but an enum's discriminant \
-                 leaves most byte patterns invalid, so a zeroed or device-written buffer \
-                 could materialize an out-of-range discriminant (undefined behavior). If you \
-                 can guarantee every device-produced byte pattern is a valid variant, write \
-                 `unsafe impl DeviceCopy for ... {}` by hand.",
-            )
-            .to_compile_error();
-        }
+    let (check_types_code, zero_validity_code) = match input.data {
+        Data::Struct(ref data_struct) => (type_check_struct(data_struct), quote! {}),
+        Data::Union(ref data_union) => (type_check_union(data_union), quote! {}),
+        Data::Enum(ref data_enum) => match type_check_enum(input, data_enum) {
+            Ok(check_types_code) => {
+                let enum_ty = &input.ident;
+                (
+                    check_types_code,
+                    quote! {
+                        const _: () = {
+                            let _ = unsafe { ::core::mem::zeroed::<#enum_ty>() };
+                        };
+                    },
+                )
+            }
+            Err(err) => return err.to_compile_error(),
+        },
     };
 
     // We need a function for the type-checking code to live in, so generate a complicated and
@@ -61,6 +53,8 @@ pub fn impl_device_copy(input: &DeriveInput, import: TokenStream) -> TokenStream
 
     // Finally, generate the unsafe impl and the type-checking function.
     let generated_code = quote! {
+        #zero_validity_code
+
         unsafe impl #impl_generics #import for #input_type #type_generics #where_clause {}
 
         #[doc(hidden)]
@@ -100,6 +94,35 @@ fn type_check_struct(s: &DataStruct) -> TokenStream {
     quote!(
         #(#checks)*
     )
+}
+
+fn type_check_enum(input: &DeriveInput, s: &DataEnum) -> syn::Result<TokenStream> {
+    if !input.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`#[derive(DeviceCopy)]` supports enums only when the enum is not generic, because \
+             rustc must be able to const-evaluate `mem::zeroed::<Enum>()` for the concrete enum \
+             type and reject enums whose all-zero bit pattern is invalid.",
+        ));
+    }
+
+    let mut checks = vec![];
+    for variant in &s.variants {
+        match variant.fields {
+            Fields::Named(ref named_fields) => {
+                let fields: Vec<&Field> = named_fields.named.iter().collect();
+                checks.extend(check_fields(&fields));
+            }
+            Fields::Unnamed(ref unnamed_fields) => {
+                let fields: Vec<&Field> = unnamed_fields.unnamed.iter().collect();
+                checks.extend(check_fields(&fields));
+            }
+            Fields::Unit => {}
+        }
+    }
+    Ok(quote!(
+        #(#checks)*
+    ))
 }
 
 fn type_check_union(s: &DataUnion) -> TokenStream {
