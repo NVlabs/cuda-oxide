@@ -339,6 +339,30 @@ synchronization usage. Extra arguments after `--` are passed directly to
 `compute-sanitizer` before the executable; use a second `--` to pass arguments
 to the target program after the executable.
 
+The command enables optimized device line tables by default so findings can
+name Rust source files and lines. An explicit `CUDA_OXIDE_DEBUG` process or
+project setting still wins.
+
+Compute Sanitizer normally exits with status zero even when it reports a tool
+finding. `cargo oxide sanitize` therefore supplies `--error-exitcode 86` by
+default, making findings fail scripts and CI. An explicit sanitizer argument
+overrides that default:
+
+```bash
+# Intentionally keep a zero exit status and inspect the printed report.
+cargo oxide sanitize vecadd -- --error-exitcode 0
+```
+
+Options such as `--check-exit-code no` and `--require-cuda-init no` weaken what
+a zero status proves. The wrapper therefore never declares the report clean
+from process status alone; it reports completion and leaves the sanitizer
+output visible for inspection.
+
+The `--no-fmad` CLI flag is forwarded through both ordinary and interop builds,
+but it only requests the existing compiler behavior. It does not by itself
+resolve the backend contraction limitation tracked in
+[#315](https://github.com/NVlabs/cuda-oxide/issues/315).
+
 Run `memcheck` first when investigating memory safety. The other tools are
 complementary and do not perform full memory-access checking.
 

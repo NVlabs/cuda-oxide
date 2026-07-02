@@ -98,8 +98,8 @@ enum Commands {
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
-        /// Disable FMA contraction (default: on, matching nvcc --fmad=true).
-        /// Also settable via CUDA_OXIDE_NO_FMA=1.
+        /// Forward the experimental no-FMA request to device codegen.
+        /// Also settable via CUDA_OXIDE_NO_FMA=1; see issue #315.
         #[arg(long)]
         no_fmad: bool,
         /// Additional arguments passed to compute-sanitizer before the binary.
