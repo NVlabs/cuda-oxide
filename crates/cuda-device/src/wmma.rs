@@ -262,3 +262,36 @@ pub unsafe fn mma_m8n8k4_f64(acc: [f64; 2], a: f64, b: f64) -> [f64; 2] {
     let _ = (acc, a, b);
     unreachable!("mma_m8n8k4_f64 called outside CUDA kernel context")
 }
+
+/// Multiply one warp-distributed INT8 tile and add an i32 accumulator.
+///
+/// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with
+/// shape 16×32, column-major `B` with shape 32×8, and `C`/`D` with shape
+/// 16×8. Each lane supplies its fragments in registers and receives four i32
+/// result registers.
+///
+/// Each `a` register packs four signed 8-bit integers and each `b` register
+/// packs four signed 8-bit integers. The lane-to-element mapping matches the
+/// m16n8k32 geometry.
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k32_s32_s8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_s32_s8 called outside CUDA kernel context")
+}
