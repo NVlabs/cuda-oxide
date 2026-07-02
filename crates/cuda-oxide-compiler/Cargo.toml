@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "cuda-oxide-compiler"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process 'library mode' compiler: Rust device-kernel crate -> PTX, no cargo/rustc subprocess"
+publish = false
+
+# IMPORTANT: bin-only (NO src/lib.rs). A `rustc_private` *library* rlib target
+# poisons dependency-format resolution for any binary that also pulls plain
+# crates.io rlibs (mir-importer -> pliron -> hashbrown/...): rustc then reports
+# "cannot satisfy dependencies so `std` only shows up once". Keeping everything
+# in the binary crate (which links the rustc_driver dylib directly) avoids that
+# and links cleanly.
+[[bin]]
+name = "cuda-oxide-compiler"
+path = "src/main.rs"
+
+[dependencies]
+# Reuse the backend's pipeline by compiling its two device modules
+# (collector.rs + device_codegen.rs) directly into this binary via #[path]
+# (see src/main.rs). They depend only on these crates -- NOT on oxide-artifacts
+# / the `object` crate -- so the binary links cleanly alongside the rustc_driver
+# dylib. (Linking the backend *dylib* instead doubles the whole std + `object`
+# graph, which is unsatisfiable in a rustc_driver-hosting tool.)
+mir-importer = { path = "../mir-importer" }
+llvm-export = { path = "../llvm-export" }
+reserved-oxide-symbols = { path = "../reserved-oxide-symbols" }
+
+[package.metadata.rust-analyzer]
+rustc_private = true

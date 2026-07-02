@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "libmode-consumer"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Normal Rust app (no rustc_private) that dlopens the cuda-oxide compiler cdylib via libloading and JITs a kernel to PTX."
+publish = false
+
+[[bin]]
+name = "libmode-consumer"
+path = "src/main.rs"
+
+[dependencies]
+libloading = { workspace = true }

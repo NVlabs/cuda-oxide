@@ -403,6 +403,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuda-oxide-compiler"
+version = "0.1.0"
+dependencies = [
+ "llvm-export",
+ "mir-importer",
+ "reserved-oxide-symbols",
+]
+
+[[package]]
+name = "cuda-oxide-compiler-cdylib"
+version = "0.1.0"
+dependencies = [
+ "llvm-export",
+ "mir-importer",
+ "reserved-oxide-symbols",
+]
+
+[[package]]
 name = "dialect-mir"
 version = "0.2.1"
 dependencies = [
@@ -697,6 +715,13 @@ checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
 dependencies = [
  "cfg-if",
  "windows-link",
+]
+
+[[package]]
+name = "libmode-consumer"
+version = "0.1.0"
+dependencies = [
+ "libloading",
 ]
 
 [[package]]
