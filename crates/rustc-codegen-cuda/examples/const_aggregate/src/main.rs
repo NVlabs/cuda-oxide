@@ -144,8 +144,8 @@ fn main() {
         block_dim: (N as u32, 1, 1),
         shared_mem_bytes: 0,
     };
-    module
-        .const_aggregate(stream.as_ref(), config, &mut d_out)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.const_aggregate(stream.as_ref(), config, &mut d_out) }
         .expect("Kernel launch failed");
 
     let out = d_out.to_host_vec(&stream).unwrap();

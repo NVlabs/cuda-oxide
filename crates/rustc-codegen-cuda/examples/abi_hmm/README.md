@@ -99,8 +99,9 @@ Field access mapping:
 let mut data = Extreme { a: b'X', b: 42 };
 let ptr = &mut data as *mut Extreme;  // HOST stack pointer!
 
-// GPU directly modifies host memory
-module.modify_extreme_hmm(stream.as_ref(), cfg, ptr, 2i128, &mut device_ran)?;
+// SAFETY: cfg launches one thread, and both HMM stack values remain alive
+// until the stream is synchronized.
+unsafe { module.modify_extreme_hmm(stream.as_ref(), cfg, ptr, 2i128, &mut device_ran) }?;
 
 assert_eq!(data.b, 84);   // GPU wrote to host memory ✓
 assert_eq!(device_ran, 1); // Kernel executed on GPU ✓
@@ -113,7 +114,8 @@ let scale: i128 = 3;
 // move closure: captures `scale` BY VALUE
 let closure = move |p: *mut Extreme| unsafe { (*p).b *= scale };
 
-module.with_closure_hmm(stream.as_ref(), cfg, ptr, &mut device_ran, closure)?;
+// SAFETY: cfg launches one thread, and the HMM values outlive synchronization.
+unsafe { module.with_closure_hmm(stream.as_ref(), cfg, ptr, &mut device_ran, closure) }?;
 
 assert_eq!(data.b, 300);  // 100 * 3 = 300 ✓
 ```
@@ -126,15 +128,19 @@ let scale: i128 = 4;
 // The closure struct contains { scale: &i128 } - a pointer to host memory!
 // GPU accesses this host address via HMM
 
-module.with_closure_hmm(
-    stream.as_ref(),
-    cfg,
-    ptr,
-    &mut device_ran,
-    |p: *mut Extreme| unsafe {
-        (*p).b *= scale  // GPU reads &scale via HMM
-    },
-)?;
+// SAFETY: cfg launches one thread, and the HMM values and captured reference
+// remain alive until the stream is synchronized.
+unsafe {
+    module.with_closure_hmm(
+        stream.as_ref(),
+        cfg,
+        ptr,
+        &mut device_ran,
+        |p: *mut Extreme| unsafe {
+            (*p).b *= scale  // GPU reads &scale via HMM
+        },
+    )
+}?;
 
 assert_eq!(data.b, 200);  // 50 * 4 = 200 ✓
 ```
@@ -148,15 +154,19 @@ let scale: i128 = 5;
 let offset: i128 = 7;
 // Closure captures BOTH by reference: { scale: &i128, offset: &i128 }
 
-module.with_closure_hmm(
-    stream.as_ref(),
-    cfg,
-    ptr,
-    &mut device_ran,
-    |p: *mut Extreme| unsafe {
-        (*p).b = (*p).b * scale + offset  // GPU reads both via HMM
-    },
-)?;
+// SAFETY: cfg launches one thread, and the HMM values and captured references
+// remain alive until the stream is synchronized.
+unsafe {
+    module.with_closure_hmm(
+        stream.as_ref(),
+        cfg,
+        ptr,
+        &mut device_ran,
+        |p: *mut Extreme| unsafe {
+            (*p).b = (*p).b * scale + offset  // GPU reads both via HMM
+        },
+    )
+}?;
 
 assert_eq!(data.b, 57);  // 10 * 5 + 7 = 57 ✓
 ```

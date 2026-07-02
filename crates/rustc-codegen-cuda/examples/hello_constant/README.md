@@ -32,6 +32,7 @@ Unlike slice parameters, raw pointers are passed directly without (ptr, len) pai
 ### Simple Launch
 
 ```rust
+// SAFETY: one thread writes through a valid one-element device pointer.
 unsafe {
     module.hello_constant(
         stream.as_ref(),

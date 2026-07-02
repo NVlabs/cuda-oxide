@@ -92,15 +92,17 @@ fn main() {
     let mut c_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded module");
-    module
-        .vecadd(
+    // SAFETY: `for_num_elems` is 1D and all three buffers contain N elements.
+    unsafe {
+        module.vecadd(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
         )
-        .unwrap();
+    }
+    .unwrap();
 
     let c_host = c_dev.to_host_vec(&stream).unwrap();
     let errors = (0..N)
@@ -146,13 +148,25 @@ The `#[device]` attribute exists but serves a different purpose: it marks a func
 
 ```rust
 let module = kernels::load(&ctx)?;
-module.vecadd(&stream, LaunchConfig::for_num_elems(N as u32), &a_dev, &b_dev, &mut c_dev)?;
+// SAFETY: this is a 1D launch and all three buffers contain N elements.
+unsafe {
+    module.vecadd(
+        &stream,
+        LaunchConfig::for_num_elems(N as u32),
+        &a_dev,
+        &b_dev,
+        &mut c_dev,
+    )
+}?;
 ```
 
 The loader reads the embedded device artifact from the host binary, caches kernel
 function handles, and exposes each `#[kernel]` as a Rust method. The method
 signature mirrors the kernel signature, with device slices mapped to
-`DeviceBuffer` borrows.
+`DeviceBuffer` borrows. This checks argument types, but a raw `LaunchConfig`
+does not prove that a 1D-index kernel was given a 1D launch. Raw generated
+launch methods are therefore unsafe. A declared launch contract enables the
+safe prepared path shown in [Launching Kernels](../gpu-programming/launching-kernels.md).
 
 `load_kernel_module` and `cuda_launch!` remain available as lower-level APIs
 for manual sidecar artifact loading and custom launch code. `cuda_launch!`
@@ -164,7 +178,7 @@ be wrapped in `unsafe { }`.
 Slices cross the host/device ABI as their `(ptr, len)` components -- the host passes them as two kernel arguments, and the device compiler reassembles the slice in the entry block. Structs and closures by value travel as one byval `.param` instead, so the host packet pushes the whole aggregate as a single slot (this matches what the launcher actually does and avoids mismatches with field-by-field declarations). All of this is fully transparent -- the kernel signature still looks like ordinary Rust:
 
 ```text
-Host:   module.vecadd(..., &data, ...)
+Host:   unsafe { module.vecadd(&stream, raw_config, &data, ...) }
           → extracts (ptr, len) for the slice, passes two args
 
 PTX:    .entry kernel(.param .u64 ptr, .param .u64 len, ...)
@@ -256,14 +270,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     // 4. Launch -- returns a lazy DeviceOperation, no GPU work yet.
-    module
-        .vecadd_async(
+    // SAFETY: this is 1D, buffers contain N elements, and module/scheduler
+    // both use device 0's context.
+    unsafe {
+        module.vecadd_async(
             LaunchConfig::for_num_elems(N as u32),
             &a_dev,
             &b_dev,
             &mut c_dev,
-        )?
-        .sync()?;  // Block until the GPU finishes.
+        )
+    }?
+    .sync()?;  // Block until the GPU finishes.
 
     // 5. Copy results back to host.
     let mut c_host = vec![0.0f32; N];

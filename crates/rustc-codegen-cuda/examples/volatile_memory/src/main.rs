@@ -59,13 +59,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scratch_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
 
-    module.round_trip(
-        &stream,
-        LaunchConfig::for_num_elems(N as u32),
-        &input_dev,
-        &mut scratch_dev,
-        &mut out_dev,
-    )?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.round_trip(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &input_dev,
+            &mut scratch_dev,
+            &mut out_dev,
+        )
+    }?;
 
     let out = out_dev.to_host_vec(&stream)?;
     assert_eq!(out, expected, "volatile_memory: kernel output mismatch");

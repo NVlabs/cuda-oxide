@@ -300,14 +300,17 @@ fn run_tma_copy_test(
     // Get raw device pointer to TMA descriptor
     let tensor_map_ptr = dev_tensor_map.cu_deviceptr() as *const TmaDescriptor;
 
-    module.tma_copy_2d_test(
-        (stream).as_ref(),
-        cfg,
-        tensor_map_ptr,
-        &mut dev_output,
-        tile_x,
-        tile_y,
-    )?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.tma_copy_2d_test(
+            (stream).as_ref(),
+            cfg,
+            tensor_map_ptr,
+            &mut dev_output,
+            tile_x,
+            tile_y,
+        )
+    }?;
 
     stream.synchronize()?;
 
@@ -385,7 +388,8 @@ fn run_tma_pipeline_test(
     // Get raw device pointer to TMA descriptor
     let tensor_map_ptr = dev_tensor_map.cu_deviceptr() as *const TmaDescriptor;
 
-    module.tma_pipeline_test((stream).as_ref(), cfg, tensor_map_ptr, &mut dev_output)?;
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.tma_pipeline_test((stream).as_ref(), cfg, tensor_map_ptr, &mut dev_output) }?;
 
     stream.synchronize()?;
 

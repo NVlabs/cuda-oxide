@@ -17,7 +17,7 @@
 
 use crate::device_context::with_deallocator_stream;
 use crate::error::DeviceError;
-use crate::launch::{AsyncKernelLaunch, KernelArgument};
+use crate::launch::{AsyncKernelLaunchBuilder, KernelArgument};
 use cuda_bindings::CUdeviceptr;
 use cuda_core::memory::free_async;
 use std::io::{self, Write};
@@ -49,7 +49,7 @@ impl<T> DevicePointer<T> {
 
 /// Pushes the underlying device address as a kernel argument.
 impl<T: Send + Sized> KernelArgument for DevicePointer<T> {
-    fn push_arg(self, launcher: &mut AsyncKernelLaunch<'_>) {
+    fn push_arg(self, launcher: &mut AsyncKernelLaunchBuilder<'_>) {
         launcher.push_arg(self.cu_deviceptr());
     }
 }

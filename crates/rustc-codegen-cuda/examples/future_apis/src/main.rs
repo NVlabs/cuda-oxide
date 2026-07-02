@@ -262,7 +262,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.test_cusimd((stream).as_ref(), cfg, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cusimd((stream).as_ref(), cfg, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<f32> = output_dev.to_host_vec(&stream)?;
@@ -301,7 +302,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.test_cusimd_u32((stream).as_ref(), cfg, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_cusimd_u32((stream).as_ref(), cfg, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<u32> = output_dev.to_host_vec(&stream)?;
@@ -331,7 +333,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.test_managed_barrier((stream).as_ref(), cfg, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_managed_barrier((stream).as_ref(), cfg, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<u32> = output_dev.to_host_vec(&stream)?;
@@ -362,7 +365,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.test_multi_barrier((stream).as_ref(), cfg, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_multi_barrier((stream).as_ref(), cfg, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<u32> = output_dev.to_host_vec(&stream)?;
@@ -393,7 +397,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shared_mem_bytes: 0,
         };
 
-        module.test_double_buffered_barriers((stream).as_ref(), cfg, &mut output_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_double_buffered_barriers((stream).as_ref(), cfg, &mut output_dev) }?;
         stream.synchronize()?;
 
         let output: Vec<u32> = output_dev.to_host_vec(&stream)?;

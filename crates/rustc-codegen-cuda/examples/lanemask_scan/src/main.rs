@@ -125,8 +125,8 @@ fn main() {
     println!("\n--- Test 1: lanemask_lt() per lane ---");
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-    module
-        .lanemask_lt_values((stream).as_ref(), cfg, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.lanemask_lt_values((stream).as_ref(), cfg, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
@@ -151,8 +151,8 @@ fn main() {
     let data_dev = DeviceBuffer::from_host(&stream, &data_host).unwrap();
     let mut ranks_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-    module
-        .warp_compact_rank((stream).as_ref(), cfg, &data_dev, &mut ranks_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.warp_compact_rank((stream).as_ref(), cfg, &data_dev, &mut ranks_dev) }
         .expect("Kernel launch failed");
 
     let ranks = ranks_dev.to_host_vec(&stream).unwrap();
@@ -191,8 +191,8 @@ fn main() {
         shared_mem_bytes: 0,
     };
 
-    module
-        .all_lanemasks((stream).as_ref(), cfg1, &mut all_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.all_lanemasks((stream).as_ref(), cfg1, &mut all_dev) }
         .expect("Kernel launch failed");
 
     let all = all_dev.to_host_vec(&stream).unwrap();

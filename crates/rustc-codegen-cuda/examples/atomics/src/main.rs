@@ -565,8 +565,8 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.atomic_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -605,8 +605,8 @@ fn main() {
         let flag_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_load_store_test((stream).as_ref(), cfg, &flag_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.atomic_load_store_test((stream).as_ref(), cfg, &flag_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -635,8 +635,8 @@ fn main() {
         let winner_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_cas_test((stream).as_ref(), cfg, &winner_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.atomic_cas_test((stream).as_ref(), cfg, &winner_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -667,9 +667,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_fetch_add_acqrel_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_fetch_add_acqrel_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -706,9 +708,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_fetch_add_seqcst_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_fetch_add_seqcst_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -746,15 +750,17 @@ fn main() {
         let cas_target_dev = DeviceBuffer::<i32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_i32_test(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_i32_test(
                 (stream).as_ref(),
                 cfg,
                 &counter_dev,
                 &cas_target_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -794,14 +800,16 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, total_threads).unwrap();
 
-        module
-            .atomic_multiblock_test(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_multiblock_test(
                 (stream).as_ref(),
                 multiblock_cfg,
                 &counter_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -841,9 +849,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<u64>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_u64_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_u64_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -878,15 +888,17 @@ fn main() {
         let cas_target_dev = DeviceBuffer::<i64>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<i64>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_i64_test(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_i64_test(
                 (stream).as_ref(),
                 cfg,
                 &counter_dev,
                 &cas_target_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -920,8 +932,8 @@ fn main() {
         let counter_dev = DeviceBuffer::from_host(&stream, &counter_host).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_fetch_sub_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.atomic_fetch_sub_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -963,8 +975,9 @@ fn main() {
 
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_bitwise_test(
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_bitwise_test(
                 (stream).as_ref(),
                 cfg,
                 &or_dev,
@@ -972,7 +985,8 @@ fn main() {
                 &xor_dev,
                 &mut out_dev,
             )
-            .expect("Kernel launch failed");
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let or_val = or_dev.to_host_vec(&stream).unwrap()[0];
@@ -1007,8 +1021,8 @@ fn main() {
         let target_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_swap_test((stream).as_ref(), cfg, &target_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.atomic_swap_test((stream).as_ref(), cfg, &target_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -1046,9 +1060,11 @@ fn main() {
         let max_dev = DeviceBuffer::from_host(&stream, &max_host).unwrap();
         let mut out_dev = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_minmax_test((stream).as_ref(), cfg, &min_dev, &max_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_minmax_test((stream).as_ref(), cfg, &min_dev, &max_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let min_val = min_dev.to_host_vec(&stream).unwrap()[0];
@@ -1075,9 +1091,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<f32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_f32_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_f32_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -1108,9 +1126,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<f64>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_f64_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_f64_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -1140,8 +1160,8 @@ fn main() {
         let target_dev = DeviceBuffer::<f32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_f32_swap_test((stream).as_ref(), cfg, &target_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.atomic_f32_swap_test((stream).as_ref(), cfg, &target_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -1176,9 +1196,17 @@ fn main() {
         let max_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_unsigned_minmax_test((stream).as_ref(), cfg, &min_dev, &max_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_unsigned_minmax_test(
+                (stream).as_ref(),
+                cfg,
+                &min_dev,
+                &max_dev,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let min_val = min_dev.to_host_vec(&stream).unwrap();
@@ -1213,9 +1241,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_block_scope_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_block_scope_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -1256,9 +1286,16 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .atomic_block_scope_acqrel_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.atomic_block_scope_acqrel_test(
+                (stream).as_ref(),
+                cfg,
+                &counter_dev,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();
@@ -1298,9 +1335,11 @@ fn main() {
         let counter_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .core_atomic_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
-            .expect("Kernel launch failed");
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.core_atomic_fetch_add_test((stream).as_ref(), cfg, &counter_dev, &mut out_dev)
+        }
+        .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
         let counter_val = counter_dev.to_host_vec(&stream).unwrap();

@@ -270,23 +270,27 @@ fn main() {
 
     // Control: plain u32 reads, stride 4 regardless of the fix.
     all_pass &= check("control_u32", &stream, &seq, &seq, |s, cfg, i, o| {
-        module.read_via_u32(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.read_via_u32(s, cfg, i, o) }.expect("launch")
     });
 
     // #[repr(u32)]: the original issue #118 shape. Buggy stride was 1.
     all_pass &= check("enum_ptr", &stream, &seq, &seq, |s, cfg, i, o| {
-        module.read_via_enum(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.read_via_enum(s, cfg, i, o) }.expect("launch")
     });
 
     // #[repr(C)]: tag is C int (4 bytes); repr().int cannot see this one.
     all_pass &= check("repr_c_enum", &stream, &seq, &seq, |s, cfg, i, o| {
-        module.read_via_repr_c_enum(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.read_via_repr_c_enum(s, cfg, i, o) }.expect("launch")
     });
 
     // Default repr, sparse discriminants: rustc picks a u32 tag.
     let sparse: Vec<u32> = vec![0, 1_000_000, 1_000_000, 0];
     all_pass &= check("sparse_enum", &stream, &sparse, &sparse, |s, cfg, i, o| {
-        module.read_via_sparse_enum(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.read_via_sparse_enum(s, cfg, i, o) }.expect("launch")
     });
 
     // Default repr, negative discriminant: SIGNED i8 tag; `as i32` must
@@ -298,13 +302,15 @@ fn main() {
         &stream,
         &neg_in,
         &neg_expected,
-        |s, cfg, i, o| module.read_via_neg_enum(s, cfg, i, o).expect("launch"),
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        |s, cfg, i, o| unsafe { module.read_via_neg_enum(s, cfg, i, o) }.expect("launch"),
     );
 
     // #[repr(usize)]: pointer-width tag; stride 8 over a u64 buffer.
     let useq: Vec<u64> = (0..N as u64).collect();
     all_pass &= check("usize_enum", &stream, &useq, &seq, |s, cfg, i, o| {
-        module.read_via_usize_enum(s, cfg, i, o).expect("launch")
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.read_via_usize_enum(s, cfg, i, o) }.expect("launch")
     });
 
     println!();

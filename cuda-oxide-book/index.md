@@ -52,9 +52,11 @@ fn main() {
     let b = DeviceBuffer::from_host(&stream, &[2.0f32; 1024]).unwrap();
     let mut c = DeviceBuffer::<f32>::zeroed(&stream, 1024).unwrap();
 
-    module
-        .vecadd(&stream, LaunchConfig::for_num_elems(1024), &a, &b, &mut c)
-        .unwrap();
+    // SAFETY: this is a 1D launch and all three buffers contain 1024 elements.
+    unsafe {
+        module.vecadd(&stream, LaunchConfig::for_num_elems(1024), &a, &b, &mut c)
+    }
+    .unwrap();
 
     let result = c.to_host_vec(&stream).unwrap();
     assert_eq!(result[0], 3.0);
@@ -66,6 +68,10 @@ Build and run with `cargo oxide run vecadd` upon installing the [prerequisites](
 :::{note}
 `#[cuda_module]` embeds the generated device artifact into the host binary and
 generates a typed `kernels::load` function plus one launch method per kernel.
+Kernel arguments are type-checked. A raw `LaunchConfig` call is still unsafe
+because the configuration does not prove the kernel's indexing shape or
+resource requirements. A declared launch contract provides the safe
+`PreparedLaunch` path described in [Launching Kernels](gpu-programming/launching-kernels.md).
 The lower-level `load_kernel_module` and unsafe `cuda_launch!` APIs remain
 available when you need to load a specific sidecar artifact or build custom
 launch code.

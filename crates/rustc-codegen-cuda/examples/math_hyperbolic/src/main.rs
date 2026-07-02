@@ -194,7 +194,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let [a, b, c, d, e, f, g, h, i] = &mut out64[..] else {
             unreachable!()
         };
-        module.hyper_f64(&stream, cfg, &xs64, &ys64, a, b, c, d, e, f, g, h, i)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.hyper_f64(&stream, cfg, &xs64, &ys64, a, b, c, d, e, f, g, h, i) }?;
     }
     let got64: Vec<Vec<f64>> = out64
         .iter()
@@ -211,7 +212,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let [a, b, c, d, e, f, g, h, i] = &mut out32[..] else {
             unreachable!()
         };
-        module.hyper_f32(&stream, cfg, &xs32, &ys32, a, b, c, d, e, f, g, h, i)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.hyper_f32(&stream, cfg, &xs32, &ys32, a, b, c, d, e, f, g, h, i) }?;
     }
     let got32: Vec<Vec<f32>> = out32
         .iter()

@@ -93,14 +93,16 @@ fn main() {
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    module
-        .fill(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.fill(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             &params_dev,
             &mut out_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let out_host = out_dev.to_host_vec(&stream).unwrap();
 

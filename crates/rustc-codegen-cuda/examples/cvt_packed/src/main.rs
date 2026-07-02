@@ -91,8 +91,8 @@ fn main() {
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, NUM_VARIANTS).unwrap();
     let cfg = LaunchConfig::for_num_elems(1);
 
-    module
-        .cvt_packed_variants(&stream, cfg, lo, hi, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.cvt_packed_variants(&stream, cfg, lo, hi, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let results = out_dev.to_host_vec(&stream).unwrap();
@@ -130,8 +130,8 @@ fn main() {
 
     // PTX specifies that `.relu` converts NaN results to canonical NaN rather
     // than clamping them to zero. Check both packed lanes for each format.
-    module
-        .cvt_packed_variants(&stream, cfg, f32::NAN, f32::NAN, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.cvt_packed_variants(&stream, cfg, f32::NAN, f32::NAN, &mut out_dev) }
         .expect("NaN kernel launch failed");
     let nan_results = out_dev.to_host_vec(&stream).unwrap();
     for (label, packed, expected_nan) in [

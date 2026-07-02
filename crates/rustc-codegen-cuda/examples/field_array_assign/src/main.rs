@@ -63,14 +63,16 @@ fn main() {
     let module = kernels::load(&ctx).expect("load module");
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .sum_packet(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.sum_packet(
             &stream,
             LaunchConfig::for_num_elems(N as u32),
             scale,
             &mut out_dev,
         )
-        .expect("kernel launch");
+    }
+    .expect("kernel launch");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
 

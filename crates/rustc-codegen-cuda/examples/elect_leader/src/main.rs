@@ -116,8 +116,8 @@ fn main() {
     let mut leader_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
     let mut elected_dev = DeviceBuffer::<u32>::zeroed(&stream, 32).unwrap();
 
-    module
-        .elect_full_warp((stream).as_ref(), cfg, &mut leader_dev, &mut elected_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.elect_full_warp((stream).as_ref(), cfg, &mut leader_dev, &mut elected_dev) }
         .expect("Kernel launch failed");
 
     let leader = leader_dev.to_host_vec(&stream).unwrap();
@@ -141,8 +141,8 @@ fn main() {
     println!("\n--- Test 2: is_elected_sync (upper-half subset) ---");
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
 
-    module
-        .elect_subset((stream).as_ref(), cfg, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.elect_subset((stream).as_ref(), cfg, &mut out_dev) }
         .expect("Kernel launch failed");
 
     let out = out_dev.to_host_vec(&stream).unwrap();

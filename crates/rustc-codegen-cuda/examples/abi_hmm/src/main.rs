@@ -147,13 +147,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let device_ran_ptr: *mut i32 = &mut device_ran;
         let scale: i128 = 2;
 
-        module.modify_extreme_hmm(
-            &stream,
-            LaunchConfig::for_num_elems(1),
-            data_ptr,
-            scale,
-            device_ran_ptr,
-        )?;
+        // SAFETY: exactly one thread uses the valid HMM pointers while their
+        // stack allocations remain alive until the stream is synchronized.
+        unsafe {
+            module.modify_extreme_hmm(
+                &stream,
+                LaunchConfig::for_num_elems(1),
+                data_ptr,
+                scale,
+                device_ran_ptr,
+            )
+        }?;
 
         stream.synchronize()?;
 
@@ -197,14 +201,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let device_ran_ptr: *mut i32 = &mut device_ran;
 
         let scale: i128 = 3;
+        let scale_b = move |p: *mut Extreme| unsafe { (*p).b *= scale };
 
-        module.with_closure_hmm::<_>(
-            &stream,
-            LaunchConfig::for_num_elems(1),
-            data_ptr,
-            device_ran_ptr,
-            move |p: *mut Extreme| unsafe { (*p).b *= scale },
-        )?;
+        // SAFETY: exactly one thread uses the valid HMM pointers while their
+        // stack allocations remain alive until the stream is synchronized.
+        unsafe {
+            module.with_closure_hmm::<_>(
+                &stream,
+                LaunchConfig::for_num_elems(1),
+                data_ptr,
+                device_ran_ptr,
+                scale_b,
+            )
+        }?;
 
         stream.synchronize()?;
 
@@ -243,14 +252,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "    &scale = {:p} (HOST address - closure captures this!)",
             &scale
         );
+        let scale_b = |p: *mut Extreme| unsafe { (*p).b *= scale };
 
-        module.with_closure_hmm::<_>(
-            &stream,
-            LaunchConfig::for_num_elems(1),
-            data_ptr,
-            device_ran_ptr,
-            |p: *mut Extreme| unsafe { (*p).b *= scale },
-        )?;
+        // SAFETY: exactly one thread uses valid HMM pointers and captured
+        // references while the stack values remain alive through synchronization.
+        unsafe {
+            module.with_closure_hmm::<_>(
+                &stream,
+                LaunchConfig::for_num_elems(1),
+                data_ptr,
+                device_ran_ptr,
+                scale_b,
+            )
+        }?;
 
         stream.synchronize()?;
 
@@ -299,14 +313,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "    &scale = {:p}, &offset = {:p} (both HOST addresses)",
             &scale, &offset
         );
+        let affine_b = |p: *mut Extreme| unsafe { (*p).b = (*p).b * scale + offset };
 
-        module.with_closure_hmm::<_>(
-            &stream,
-            LaunchConfig::for_num_elems(1),
-            data_ptr,
-            device_ran_ptr,
-            |p: *mut Extreme| unsafe { (*p).b = (*p).b * scale + offset },
-        )?;
+        // SAFETY: exactly one thread uses valid HMM pointers and captured
+        // references while the stack values remain alive through synchronization.
+        unsafe {
+            module.with_closure_hmm::<_>(
+                &stream,
+                LaunchConfig::for_num_elems(1),
+                data_ptr,
+                device_ran_ptr,
+                affine_b,
+            )
+        }?;
 
         stream.synchronize()?;
 

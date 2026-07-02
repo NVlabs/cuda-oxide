@@ -3156,6 +3156,41 @@ fn try_dispatch_intrinsic(
                 loc,
             )))
         }
+        "cuda_device::shared::__dynamic_shared_alignment" => {
+            // Zero-cost marker injected by #[launch_contract]. body.rs records
+            // the const alignment on the kernel; no runtime call survives.
+            let actual_prev_op = match prev_op {
+                Some(op) => op,
+                None => {
+                    let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+                    let dummy = Operation::new(
+                        ctx,
+                        MirConstantOp::get_concrete_op_info(),
+                        vec![bool_ty.into()],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    dummy.deref_mut(ctx).set_loc(loc.clone());
+                    let const_op = MirConstantOp::new(dummy);
+                    use pliron::builtin::attributes::IntegerAttr;
+                    use pliron::utils::apint::APInt;
+                    use std::num::NonZeroUsize;
+                    let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
+                    const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
+                    let dummy = const_op.get_operation();
+                    dummy.insert_at_front(block_ptr, ctx);
+                    dummy
+                }
+            };
+            Ok(Some(helpers::emit_goto(
+                ctx,
+                target.expect("__dynamic_shared_alignment must have target"),
+                actual_prev_op,
+                block_map,
+                loc,
+            )))
+        }
         // =================================================================
         // Warp Primitives (from intrinsics::warp)
         // =================================================================

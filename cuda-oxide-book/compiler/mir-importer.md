@@ -233,7 +233,7 @@ attention:
 | `bool`                | `IntegerType(1)`              | 1-bit integer, as is tradition       |
 | `(A, B, C)`           | `MirTupleType`                | Heterogeneous product type           |
 | `&[T]`                | `MirSliceType`                | Pointer + length                     |
-| `DisjointSlice<T>`    | `MirDisjointSliceType`        | Safety-verified mutable slice        |
+| `DisjointSlice<T>`    | `MirDisjointSliceType`        | Bounds-checked, typed-index mutable slice |
 | `struct Foo`          | `MirStructType`               | With field offsets from rustc layout |
 | `*mut T` / `*const T` | `MirPtrType`                  | With GPU address space               |
 | `enum Option<T>`      | `MirEnumType`                 | Discriminant + variants              |

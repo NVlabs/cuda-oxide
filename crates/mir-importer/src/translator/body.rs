@@ -69,6 +69,12 @@ pub struct LaunchBounds {
     pub min_blocks: u32,
 }
 
+/// Minimum extern-shared alignment declared by `#[launch_contract]`.
+#[derive(Debug, Clone, Copy)]
+pub struct DynamicSharedAlignment {
+    pub bytes: u64,
+}
+
 /// Scans MIR for `__cluster_config::<X, Y, Z>()` marker and extracts cluster dimensions.
 ///
 /// The `#[cluster(x,y,z)]` macro injects this call at the start of the kernel.
@@ -165,6 +171,43 @@ fn detect_launch_bounds_config(body: &mir::Body) -> Option<LaunchBounds> {
             max_threads: values[0],
             min_blocks: values[1],
         });
+    }
+    None
+}
+
+/// Scans MIR for the dynamic-shared alignment marker injected by
+/// `#[launch_contract]` and extracts its const generic argument. The importer
+/// records the value before removing the call from the executable path.
+fn detect_dynamic_shared_alignment(body: &mir::Body) -> Option<DynamicSharedAlignment> {
+    use rustc_public::ty::TyConstKind;
+
+    for block in &body.blocks {
+        let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
+            continue;
+        };
+        let mir::Operand::Constant(constant) = func else {
+            continue;
+        };
+        let ConstantKind::ZeroSized = constant.const_.kind() else {
+            continue;
+        };
+        let TyKind::RigidTy(RigidTy::FnDef(def_id, args)) = constant.const_.ty().kind() else {
+            continue;
+        };
+        let fn_name = def_id.name();
+        if fn_name != "__dynamic_shared_alignment"
+            && !fn_name.ends_with("::__dynamic_shared_alignment")
+        {
+            continue;
+        }
+        let rustc_public::ty::GenericArgKind::Const(alignment) = args.0.first()? else {
+            continue;
+        };
+        let bytes = match alignment.kind() {
+            TyConstKind::Value(_, alloc) => alloc.read_uint().ok().map(|value| value as u64),
+            _ => alignment.eval_target_usize().ok(),
+        }?;
+        return Some(DynamicSharedAlignment { bytes });
     }
     None
 }
@@ -856,6 +899,33 @@ pub fn translate_body(
                     );
                 }
             }
+        }
+    }
+
+    // Attribute macros may run before `#[kernel]`. Generic expansion forwards
+    // that marker to the entry but also keeps the original in its helper, so
+    // record markers on any function. mir-lower treats every marked local
+    // function as a propagation root and carries the minimum to its callees.
+    if let Some(alignment) = detect_dynamic_shared_alignment(body) {
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::builtin::types::Signedness;
+        use pliron::utils::apint::APInt;
+        use std::num::NonZero;
+
+        let u64_ty = pliron::builtin::types::IntegerType::get(ctx, 64, Signedness::Unsigned);
+        let value = APInt::from_u64(alignment.bytes, NonZero::new(64).unwrap());
+        let key: Identifier = "dynamic_shared_alignment".try_into().unwrap();
+        mir_func_op
+            .get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(key, IntegerAttr::new(u64_ty, value));
+
+        if std::env::var("CUDA_OXIDE_VERBOSE").is_ok() {
+            eprintln!(
+                "  Dynamic shared-memory contract alignment detected: {}",
+                alignment.bytes
+            );
         }
     }
 

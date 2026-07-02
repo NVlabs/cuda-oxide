@@ -143,8 +143,8 @@ fn main() {
     {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .barrier_sync_test((stream).as_ref(), cfg, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.barrier_sync_test((stream).as_ref(), cfg, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();
@@ -173,8 +173,8 @@ fn main() {
     {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
 
-        module
-            .barrier_shared_data_test((stream).as_ref(), cfg, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.barrier_shared_data_test((stream).as_ref(), cfg, &mut out_dev) }
             .expect("Kernel launch failed");
 
         stream.synchronize().unwrap();

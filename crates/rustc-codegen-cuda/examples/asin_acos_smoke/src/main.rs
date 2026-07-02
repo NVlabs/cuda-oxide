@@ -147,10 +147,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out_asin_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
     let mut out_acos_f64 = DeviceBuffer::<f64>::zeroed(&stream, n)?;
 
-    module.asin_f32(&stream, cfg, &xs32, &mut out_asin_f32)?;
-    module.acos_f32(&stream, cfg, &xs32, &mut out_acos_f32)?;
-    module.asin_f64(&stream, cfg, &xs64, &mut out_asin_f64)?;
-    module.acos_f64(&stream, cfg, &xs64, &mut out_acos_f64)?;
+    // SAFETY: these are 1D launches and every input and output slice has `n`
+    // elements, matching the guarded per-thread accesses in each kernel.
+    unsafe {
+        module.asin_f32(&stream, cfg, &xs32, &mut out_asin_f32)?;
+        module.acos_f32(&stream, cfg, &xs32, &mut out_acos_f32)?;
+        module.asin_f64(&stream, cfg, &xs64, &mut out_asin_f64)?;
+        module.acos_f64(&stream, cfg, &xs64, &mut out_acos_f64)?;
+    }
 
     let got_asin_f32 = out_asin_f32.to_host_vec(&stream)?;
     let got_acos_f32 = out_acos_f32.to_host_vec(&stream)?;

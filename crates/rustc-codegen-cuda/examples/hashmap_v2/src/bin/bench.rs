@@ -319,20 +319,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = LaunchConfig::for_num_elems(n_keys as u32);
         row_b_insert[col_idx] =
             bench_gpu_insert(&map, &keys_dev, &values_dev, n_keys, &stream, |m, k, v| {
-                module.insert_kernel(&stream, cfg, &m.ctrl, &m.slots, k, v)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe { module.insert_kernel(&stream, cfg, &m.ctrl, &m.slots, k, v) }?;
                 Ok(())
             })?;
 
         // ---- GPU INSERT — Protocol A -----------------------------------
         row_a_insert[col_idx] =
             bench_gpu_insert(&map, &keys_dev, &values_dev, n_keys, &stream, |m, k, v| {
-                module.insert_kernel_proto_a(&stream, cfg, &m.ctrl, &m.slots, k, v)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe { module.insert_kernel_proto_a(&stream, cfg, &m.ctrl, &m.slots, k, v) }?;
                 Ok(())
             })?;
 
         // ---- Build a final B-protocol map for the find benches ----------
         unsafe { reset_table_async(&map, &stream)? };
-        module.insert_kernel(&stream, cfg, &map.ctrl, &map.slots, &keys_dev, &values_dev)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.insert_kernel(&stream, cfg, &map.ctrl, &map.slots, &keys_dev, &values_dev)
+        }?;
         stream.synchronize()?;
 
         let cfg_warp = LaunchConfig::for_num_elems((n_keys * PROBE_TILE) as u32);
@@ -340,21 +345,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ---- GPU LOOKUP (hits) — single-thread --------------------------
         row_single_lookup[col_idx] =
             bench_gpu_find(&map, &keys_dev, &mut out_dev, n_keys, &stream, |m, k, o| {
-                module.find_kernel(&stream, cfg, &m.ctrl, &m.slots, k, o)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe { module.find_kernel(&stream, cfg, &m.ctrl, &m.slots, k, o) }?;
                 Ok(())
             })?;
 
         // ---- GPU LOOKUP (hits) — warp-cooperative -----------------------
         row_warp_lookup[col_idx] =
             bench_gpu_find(&map, &keys_dev, &mut out_dev, n_keys, &stream, |m, k, o| {
-                module.find_kernel_warp(&stream, cfg_warp, &m.ctrl, &m.slots, k, o)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe { module.find_kernel_warp(&stream, cfg_warp, &m.ctrl, &m.slots, k, o) }?;
                 Ok(())
             })?;
 
         // ---- GPU LOOKUP (hits) — warp-cooperative, typed CG API ---------
         row_warp_typed_lookup[col_idx] =
             bench_gpu_find(&map, &keys_dev, &mut out_dev, n_keys, &stream, |m, k, o| {
-                module.find_kernel_warp_typed(&stream, cfg_warp, &m.ctrl, &m.slots, k, o)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe {
+                    module.find_kernel_warp_typed(&stream, cfg_warp, &m.ctrl, &m.slots, k, o)
+                }?;
                 Ok(())
             })?;
 
@@ -366,7 +376,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_keys,
             &stream,
             |m, k, o| {
-                module.find_kernel(&stream, cfg, &m.ctrl, &m.slots, k, o)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe { module.find_kernel(&stream, cfg, &m.ctrl, &m.slots, k, o) }?;
                 Ok(())
             },
         )?;
@@ -379,7 +390,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_keys,
             &stream,
             |m, k, o| {
-                module.find_kernel_warp(&stream, cfg_warp, &m.ctrl, &m.slots, k, o)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe { module.find_kernel_warp(&stream, cfg_warp, &m.ctrl, &m.slots, k, o) }?;
                 Ok(())
             },
         )?;
@@ -392,7 +404,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             n_keys,
             &stream,
             |m, k, o| {
-                module.find_kernel_warp_typed(&stream, cfg_warp, &m.ctrl, &m.slots, k, o)?;
+                // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+                unsafe {
+                    module.find_kernel_warp_typed(&stream, cfg_warp, &m.ctrl, &m.slots, k, o)
+                }?;
                 Ok(())
             },
         )?;

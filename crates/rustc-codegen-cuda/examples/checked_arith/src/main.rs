@@ -88,8 +88,8 @@ fn main() {
     let a_dev = DeviceBuffer::from_host(&stream, &a_add).unwrap();
     let b_dev = DeviceBuffer::from_host(&stream, &b_add).unwrap();
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 4).unwrap();
-    module
-        .checked_add(&stream, cfg, &a_dev, &b_dev, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.checked_add(&stream, cfg, &a_dev, &b_dev, &mut out_dev) }
         .expect("checked_add launch");
     let out_add = out_dev.to_host_vec(&stream).unwrap();
 
@@ -103,8 +103,8 @@ fn main() {
     let a_dev = DeviceBuffer::from_host(&stream, &a_sub).unwrap();
     let b_dev = DeviceBuffer::from_host(&stream, &b_sub).unwrap();
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 4).unwrap();
-    module
-        .checked_sub(&stream, cfg, &a_dev, &b_dev, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.checked_sub(&stream, cfg, &a_dev, &b_dev, &mut out_dev) }
         .expect("checked_sub launch");
     let out_sub = out_dev.to_host_vec(&stream).unwrap();
 
@@ -118,8 +118,8 @@ fn main() {
     let a_dev = DeviceBuffer::from_host(&stream, &a_mul).unwrap();
     let b_dev = DeviceBuffer::from_host(&stream, &b_mul).unwrap();
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 4).unwrap();
-    module
-        .checked_mul(&stream, cfg, &a_dev, &b_dev, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.checked_mul(&stream, cfg, &a_dev, &b_dev, &mut out_dev) }
         .expect("checked_mul launch");
     let out_mul = out_dev.to_host_vec(&stream).unwrap();
 

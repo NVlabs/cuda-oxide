@@ -163,9 +163,11 @@ fn main() {
     let module = kernels::load(&ctx).expect("load module");
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .function_item_call(&stream, LaunchConfig::for_num_elems(N as u32), &mut out_dev)
-        .expect("kernel launch");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.function_item_call(&stream, LaunchConfig::for_num_elems(N as u32), &mut out_dev)
+    }
+    .expect("kernel launch");
 
     let out = out_dev.to_host_vec(&stream).unwrap();
     let expected: Vec<u32> = (0..N).map(|i| 11 * i as u32 + 1_049).collect();
@@ -175,14 +177,16 @@ fn main() {
     }
 
     let mut diverging_out = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
-    module
-        .diverging_callable(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.diverging_callable(
             &stream,
             LaunchConfig::for_num_elems(1),
             0,
             &mut diverging_out,
         )
-        .expect("diverging callable regression launch");
+    }
+    .expect("diverging callable regression launch");
     if diverging_out.to_host_vec(&stream).unwrap() != [0xd1ce] {
         eprintln!("FAIL: diverging callable regression took the wrong path");
         std::process::exit(1);

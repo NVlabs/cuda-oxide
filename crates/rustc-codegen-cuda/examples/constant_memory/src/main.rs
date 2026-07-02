@@ -73,11 +73,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // set + launch on the same stream → naturally ordered. The second
         // launch demonstrates that re-setting between launches is observed.
         module.set_coeffs(&stream, &coeffs)?;
-        module.apply(
-            &stream,
-            LaunchConfig::for_num_elems(N as u32),
-            &mut output_dev,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.apply(
+                &stream,
+                LaunchConfig::for_num_elems(N as u32),
+                &mut output_dev,
+            )
+        }?;
         verify(label, &output_dev.to_host_vec(&stream)?, &coeffs);
     }
 

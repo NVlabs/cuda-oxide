@@ -217,7 +217,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 div: 0xFFFF_FFFE / 2 = 0x7FFF_FFFF
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_u32_div_msb((stream).as_ref(), cfg, 0xFFFF_FFFEu32, 2u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_u32_div_msb((stream).as_ref(), cfg, 0xFFFF_FFFEu32, 2u32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 0x7FFF_FFFFu32 {
             println!("  [PASS] u32 div MSB: 0xFFFFFFFE / 2 = 0x{:08X}", r[0]);
@@ -236,7 +237,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 rem: 0xFFFF_FFFF % 10 = 5
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_u32_rem_msb((stream).as_ref(), cfg, 0xFFFF_FFFFu32, 10u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_u32_rem_msb((stream).as_ref(), cfg, 0xFFFF_FFFFu32, 10u32, &mut out)
+        }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 5u32 {
             println!("  [PASS] u32 rem MSB: 0xFFFFFFFF % 10 = {}", r[0]);
@@ -252,13 +256,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u64 div: 0x8000_0000_0000_0000 / 2 = 0x4000_0000_0000_0000
     {
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_u64_div_msb(
-            (stream).as_ref(),
-            cfg,
-            0x8000_0000_0000_0000u64,
-            2u64,
-            &mut out,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_u64_div_msb(
+                (stream).as_ref(),
+                cfg,
+                0x8000_0000_0000_0000u64,
+                2u64,
+                &mut out,
+            )
+        }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 0x4000_0000_0000_0000u64 {
             println!(
@@ -280,7 +287,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u64 rem: u64::MAX % 7 = 1
     {
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_u64_rem_msb((stream).as_ref(), cfg, u64::MAX, 7u64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_u64_rem_msb((stream).as_ref(), cfg, u64::MAX, 7u64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 1u64 {
             println!("  [PASS] u64 rem MSB: u64::MAX % 7 = {}", r[0]);
@@ -301,13 +309,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 gt: 0x8000_0000 > 0x7FFF_FFFF = true (1)
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_u32_cmp_gt_msb(
-            (stream).as_ref(),
-            cfg,
-            0x8000_0000u32,
-            0x7FFF_FFFFu32,
-            &mut out,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_u32_cmp_gt_msb(
+                (stream).as_ref(),
+                cfg,
+                0x8000_0000u32,
+                0x7FFF_FFFFu32,
+                &mut out,
+            )
+        }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 1u32 {
             println!("  [PASS] u32 gt MSB: 0x80000000 > 0x7FFFFFFF = true");
@@ -326,7 +337,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u64 gt: u64::MAX > 0 = true (1)
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_u64_cmp_gt_msb((stream).as_ref(), cfg, u64::MAX, 0u64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_u64_cmp_gt_msb((stream).as_ref(), cfg, u64::MAX, 0u64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 1u32 {
             println!("  [PASS] u64 gt MSB: u64::MAX > 0 = true");
@@ -342,13 +354,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 lt: 0x7FFF_FFFF < 0x8000_0000 = true (1)
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_u32_cmp_lt_msb(
-            (stream).as_ref(),
-            cfg,
-            0x7FFF_FFFFu32,
-            0x8000_0000u32,
-            &mut out,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_u32_cmp_lt_msb(
+                (stream).as_ref(),
+                cfg,
+                0x7FFF_FFFFu32,
+                0x8000_0000u32,
+                &mut out,
+            )
+        }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 1u32 {
             println!("  [PASS] u32 lt MSB: 0x7FFFFFFF < 0x80000000 = true");
@@ -372,7 +387,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // i32 shr: -8 >> 1 = -4
     {
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_i32_shr_negative((stream).as_ref(), cfg, -8i32, 1u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_i32_shr_negative((stream).as_ref(), cfg, -8i32, 1u32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -4i32 {
             println!("  [PASS] i32 shr: -8 >> 1 = {}", r[0]);
@@ -388,7 +404,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // i64 shr: -1024 >> 3 = -128
     {
         let mut out = DeviceBuffer::<i64>::zeroed(&stream, N)?;
-        module.test_i64_shr_negative((stream).as_ref(), cfg, -1024i64, 3u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_i64_shr_negative((stream).as_ref(), cfg, -1024i64, 3u32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -128i64 {
             println!("  [PASS] i64 shr: -1024 >> 3 = {}", r[0]);
@@ -410,16 +427,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let mut out_signed = DeviceBuffer::<i32>::zeroed(&stream, N)?;
         let mut out_unsigned = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_mixed_div(
-            (stream).as_ref(),
-            cfg,
-            -7i32,
-            2i32,
-            0xFFFF_FFFEu32,
-            2u32,
-            &mut out_signed,
-            &mut out_unsigned,
-        )?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_mixed_div(
+                (stream).as_ref(),
+                cfg,
+                -7i32,
+                2i32,
+                0xFFFF_FFFEu32,
+                2u32,
+                &mut out_signed,
+                &mut out_unsigned,
+            )
+        }?;
         let rs = out_signed.to_host_vec(&stream)?;
         let ru = out_unsigned.to_host_vec(&stream)?;
         let signed_ok = rs[0] == -3i32;
@@ -449,7 +469,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // u32 wrapping add: MAX + 1 = 0
     {
         let mut out = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        module.test_u32_wrapping_add((stream).as_ref(), cfg, u32::MAX, 1u32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_u32_wrapping_add((stream).as_ref(), cfg, u32::MAX, 1u32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 0u32 {
             println!("  [PASS] u32 wrapping add: MAX + 1 = {}", r[0]);
@@ -465,7 +486,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // i32 wrapping mul: i32::MAX * 2 = -2
     {
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_i32_wrapping_mul((stream).as_ref(), cfg, i32::MAX, 2i32, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_i32_wrapping_mul((stream).as_ref(), cfg, i32::MAX, 2i32, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -2i32 {
             println!("  [PASS] i32 wrapping mul: MAX * 2 = {}", r[0]);
@@ -486,7 +508,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // widening chain: u8(0xFF) -> u32 -> u64 = 255
     {
         let mut out = DeviceBuffer::<u64>::zeroed(&stream, N)?;
-        module.test_widening_chain((stream).as_ref(), cfg, 0xFFu8, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_widening_chain((stream).as_ref(), cfg, 0xFFu8, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == 255u64 {
             println!("  [PASS] widening chain: u8(0xFF) -> u32 -> u64 = {}", r[0]);
@@ -502,7 +525,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // narrowing signed: i64(-42) -> i32 = -42
     {
         let mut out = DeviceBuffer::<i32>::zeroed(&stream, N)?;
-        module.test_narrowing_signed((stream).as_ref(), cfg, -42i64, &mut out)?;
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_narrowing_signed((stream).as_ref(), cfg, -42i64, &mut out) }?;
         let r = out.to_host_vec(&stream)?;
         if r[0] == -42i32 {
             println!("  [PASS] narrowing signed: i64(-42) -> i32 = {}", r[0]);

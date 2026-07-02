@@ -55,28 +55,32 @@ fn main() {
 
     // Square [[u32; 4]; 4], write [2][3].
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
-    module
-        .nested_index_assignment_kernel(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.nested_index_assignment_kernel(
             &stream,
             LaunchConfig::for_num_elems(1),
             2usize,
             3usize,
             &mut out_dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
     assert_eq!(out_dev.to_host_vec(&stream).unwrap(), vec![0x5a00_0203]);
 
     // Non-square [[u32; 3]; 5], write the last element [4][2].
     let mut out_ns = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
-    module
-        .nested_index_assignment_nonsquare_kernel(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.nested_index_assignment_nonsquare_kernel(
             &stream,
             LaunchConfig::for_num_elems(1),
             4usize,
             2usize,
             &mut out_ns,
         )
-        .expect("Non-square kernel launch failed");
+    }
+    .expect("Non-square kernel launch failed");
     assert_eq!(out_ns.to_host_vec(&stream).unwrap(), vec![0x5a00_0402]);
 
     println!("PASS: nested runtime indexes assigned and read back correctly (square + non-square)");

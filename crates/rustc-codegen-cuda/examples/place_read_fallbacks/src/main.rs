@@ -129,8 +129,8 @@ fn main() {
     let mut failures = 0usize;
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .enum_payload_read(&stream, cfg, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.enum_payload_read(&stream, cfg, &mut out_dev) }
         .expect("enum_payload_read launch");
     let out = out_dev.to_host_vec(&stream).unwrap();
     let expected = [7, 108, 999, 11];
@@ -142,8 +142,8 @@ fn main() {
     }
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
-    module
-        .zst_reads(&stream, LaunchConfig::for_num_elems(1), &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.zst_reads(&stream, LaunchConfig::for_num_elems(1), &mut out_dev) }
         .expect("zst_reads launch");
     let out = out_dev.to_host_vec(&stream).unwrap();
     if out[0] != 59 {
@@ -152,8 +152,8 @@ fn main() {
     }
 
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .tuple_field_read(&stream, cfg, &mut out_dev)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.tuple_field_read(&stream, cfg, &mut out_dev) }
         .expect("tuple_field_read launch");
     let out = out_dev.to_host_vec(&stream).unwrap();
     for (i, &got) in out.iter().enumerate() {

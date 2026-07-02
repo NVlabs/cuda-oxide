@@ -97,14 +97,16 @@ fn main() {
     };
 
     let mut d_u32 = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .sum_u32_array(stream.as_ref(), cfg, &mut d_u32)
+    // SAFETY: the 32-thread 1D block matches both kernels' indexing model and
+    // the 32-element output allocations.
+    unsafe { module.sum_u32_array(stream.as_ref(), cfg, &mut d_u32) }
         .expect("launch sum_u32_array");
     let got_u32 = d_u32.to_host_vec(&stream).unwrap();
 
     let mut d_pts = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .sum_point_array(stream.as_ref(), cfg, &mut d_pts)
+    // SAFETY: the 32-thread 1D block matches the kernel's indexing model and
+    // the 32-element output allocation.
+    unsafe { module.sum_point_array(stream.as_ref(), cfg, &mut d_pts) }
         .expect("launch sum_point_array");
     let got_pts = d_pts.to_host_vec(&stream).unwrap();
 

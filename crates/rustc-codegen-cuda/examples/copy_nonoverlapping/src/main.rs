@@ -101,9 +101,8 @@ fn main() {
 
     // count == 1 per thread.
     let mut out_each = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .copy_each(&stream, cfg, &in_u32, &mut out_each)
-        .expect("copy_each launch");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.copy_each(&stream, cfg, &in_u32, &mut out_each) }.expect("copy_each launch");
     assert_eq!(
         out_each.to_host_vec(&stream).unwrap(),
         input_u32,
@@ -112,8 +111,8 @@ fn main() {
 
     // count == N in one call (byte scaling).
     let mut out_block = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .copy_block_u32(&stream, cfg, &in_u32, &mut out_block, N)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.copy_block_u32(&stream, cfg, &in_u32, &mut out_block, N) }
         .expect("copy_block_u32 launch");
     assert_eq!(
         out_block.to_host_vec(&stream).unwrap(),
@@ -123,8 +122,8 @@ fn main() {
 
     // u8 (no scaling).
     let mut out_u8 = DeviceBuffer::<u8>::zeroed(&stream, N).unwrap();
-    module
-        .copy_block_u8(&stream, cfg, &in_u8, &mut out_u8, N)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.copy_block_u8(&stream, cfg, &in_u8, &mut out_u8, N) }
         .expect("copy_block_u8 launch");
     assert_eq!(
         out_u8.to_host_vec(&stream).unwrap(),
@@ -134,8 +133,8 @@ fn main() {
 
     // shared destination.
     let mut out_shared = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .copy_into_shared(&stream, cfg, &in_u32, &mut out_shared)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.copy_into_shared(&stream, cfg, &in_u32, &mut out_shared) }
         .expect("copy_into_shared launch");
     assert_eq!(
         out_shared.to_host_vec(&stream).unwrap(),

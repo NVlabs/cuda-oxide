@@ -115,14 +115,14 @@ fn main() {
     let d_input = DeviceBuffer::from_host(&stream, &host_input).unwrap();
 
     let mut d_xmute = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
-    module
-        .opt_ref_transmute(stream.as_ref(), cfg, &d_input, &mut d_xmute)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.opt_ref_transmute(stream.as_ref(), cfg, &d_input, &mut d_xmute) }
         .expect("launch opt_ref_transmute");
     let got_xmute = d_xmute.to_host_vec(&stream).unwrap();
 
     let mut d_ctrl = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
-    module
-        .opt_ref_control(stream.as_ref(), cfg, &d_input, &mut d_ctrl)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.opt_ref_control(stream.as_ref(), cfg, &d_input, &mut d_ctrl) }
         .expect("launch opt_ref_control");
     let got_ctrl = d_ctrl.to_host_vec(&stream).unwrap();
 

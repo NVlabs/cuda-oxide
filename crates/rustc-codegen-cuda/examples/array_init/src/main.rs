@@ -103,9 +103,9 @@ fn main() {
     // --- array_sum ---
     // arr = [1, 2, 3, 4]; arr[2] += i; sum = 1 + 2 + (3 + i) + 4 = 10 + i
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .array_sum(&stream, cfg, &mut out_dev)
-        .expect("array_sum launch");
+    // SAFETY: this is a 1D launch and the output allocation has one element
+    // for every launched thread.
+    unsafe { module.array_sum(&stream, cfg, &mut out_dev) }.expect("array_sum launch");
     let out = out_dev.to_host_vec(&stream).unwrap();
 
     let mut errors = 0usize;
@@ -122,8 +122,9 @@ fn main() {
     // --- zeroed_array_sum ---
     // arr[k] = i + k; sum = sum_{k=0}^{7}(i + k) = 8i + 28
     let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .zeroed_array_sum(&stream, cfg, &mut out_dev)
+    // SAFETY: this is a 1D launch and the output allocation has one element
+    // for every launched thread.
+    unsafe { module.zeroed_array_sum(&stream, cfg, &mut out_dev) }
         .expect("zeroed_array_sum launch");
     let out2 = out_dev.to_host_vec(&stream).unwrap();
 
@@ -143,8 +144,8 @@ fn main() {
     // --- scratch_2d ---
     // scratch[2] = [0.0, 42.0]; out[0] = scratch[2][1]  => 42.0
     let mut out_dev = DeviceBuffer::<f64>::zeroed(&stream, 1).unwrap();
-    module
-        .scratch_2d(&stream, LaunchConfig::for_num_elems(1), &mut out_dev)
+    // SAFETY: `scratch_2d` is launched with one thread and writes one output.
+    unsafe { module.scratch_2d(&stream, LaunchConfig::for_num_elems(1), &mut out_dev) }
         .expect("scratch_2d launch");
     let out3 = out_dev.to_host_vec(&stream).unwrap();
     if (out3[0] - 42.0_f64).abs() > 1e-12 {

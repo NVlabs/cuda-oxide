@@ -152,8 +152,8 @@ fn main() {
         let want = expected_for_index(index);
 
         let mut d_out = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-        module
-            .match_runtime_index(stream.as_ref(), cfg, index, &mut d_out)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.match_runtime_index(stream.as_ref(), cfg, index, &mut d_out) }
             .expect("launch match_runtime_index");
         let got = d_out.to_host_vec(&stream).unwrap();
         for (tid, &g) in got.iter().enumerate() {
@@ -164,8 +164,8 @@ fn main() {
         }
 
         let mut d_out = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-        module
-            .match_deref_index(stream.as_ref(), cfg, index, &mut d_out)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.match_deref_index(stream.as_ref(), cfg, index, &mut d_out) }
             .expect("launch match_deref_index");
         let got = d_out.to_host_vec(&stream).unwrap();
         for (tid, &g) in got.iter().enumerate() {
@@ -181,8 +181,8 @@ fn main() {
         let want = expected_for_val(val);
 
         let mut d_out = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-        module
-            .match_const_index(stream.as_ref(), cfg, val, &mut d_out)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.match_const_index(stream.as_ref(), cfg, val, &mut d_out) }
             .expect("launch match_const_index");
         let got = d_out.to_host_vec(&stream).unwrap();
         for (tid, &g) in got.iter().enumerate() {

@@ -57,13 +57,15 @@ fn main() {
         .expect("Failed to load PTX module");
     let module = kernels::from_module(module).expect("Failed to initialize typed module");
 
-    module
-        .run(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.run(
             (stream).as_ref(),
             LaunchConfig::for_num_elems(N as u32),
             &mut dev,
         )
-        .expect("Kernel launch failed");
+    }
+    .expect("Kernel launch failed");
 
     let host = dev.to_host_vec(&stream).unwrap();
     println!("output = {:?}", host);

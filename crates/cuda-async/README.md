@@ -10,7 +10,7 @@ The crate is organized around a single idea: GPU work is described lazily, sched
   module.kernel_async(...)
          |
          v
-  AsyncKernelLaunch          <-- lazy description, no GPU work yet
+  AsyncKernelLaunch          <-- immutable lazy operation, no GPU work yet
          |
     .and_then(|()| ...)      <-- compose with other DeviceOperations
          |
@@ -62,19 +62,17 @@ Borrow buffers when the launch completes in the current scope:
 use cuda_async::device_context::init_device_contexts;
 use cuda_async::device_operation::DeviceOperation;
 use cuda_host::cuda_module;
-use cuda_core::LaunchConfig;
+use cuda_core::LaunchConfig1D;
 
 // 1. Enable cuda-host's "async" feature, then initialize once per thread.
 init_device_contexts(0, 1)?;
-let module = kernels::load_async(0)?;
+// SAFETY: this program loads the embedded artifact generated from this exact
+// contracted module, so its entry points and contract metadata match.
+let module = unsafe { kernels::load_async(0)? };
 
-// 2. Build a lazy operation
-let op = module.vecadd_async(
-    LaunchConfig::for_num_elems(1024),
-    &a_dev,
-    &b_dev,
-    &mut c_dev,
-)?;
+// 2. Prove the launch matches vecadd's declared 1-D contract, then build it.
+let prepared = module.prepare_vecadd(LaunchConfig1D::new(4, 256, 0))?;
+let op = module.vecadd_async(&prepared, &a_dev, &b_dev, &mut c_dev);
 
 // 3. Execute
 op.sync()?;       // blocking
@@ -87,18 +85,39 @@ Move buffers into the launch when it needs to be spawned or stored as a
 ```rust
 use std::future::IntoFuture;
 
-let op = module.vecadd_async_owned(
-    LaunchConfig::for_num_elems(1024),
-    a_dev,
-    b_dev,
-    c_dev,
-)?;
+let prepared = module.prepare_vecadd(LaunchConfig1D::new(4, 256, 0))?;
+let op = module.vecadd_async_owned(&prepared, a_dev, b_dev, c_dev);
 
 let (a_dev, b_dev, c_dev) = tokio::spawn(op.into_future()).await??;
 ```
 
 The owned form keeps device buffers alive until the CUDA stream reaches the
 kernel completion callback, then returns those buffers as the operation output.
+
+## Raw launch safety boundary
+
+The low-level builder is safe because it only stores inert data. A raw
+`LaunchConfig` becomes runnable only through an explicit unsafe transition:
+
+```text
+AsyncKernelLaunchBuilder
+       |  unsafe finalize_unchecked(raw_config)
+       v
+AsyncKernelLaunch          <-- DeviceOperation + IntoFuture
+```
+
+```rust,ignore
+let mut builder = AsyncKernelLaunchBuilder::new(function);
+builder.push_args((input_ptr, output_ptr, len));
+
+// SAFETY: this kernel uses 1-D indexing, accepts 256 threads per block, and
+// every pointer and argument matches its device-side signature.
+let operation = unsafe { builder.finalize_unchecked(config) };
+operation.sync()?;
+```
+
+Prefer generated prepared-launch methods. They validate the kernel's declared
+contract and keep this unsafe proof inside generated code.
 
 ## Cancellation and deferred reclamation
 

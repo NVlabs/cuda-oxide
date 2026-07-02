@@ -68,15 +68,17 @@ fn main() {
     let dev_b = DeviceBuffer::from_host(&stream, &b).unwrap();
     let mut dev_out = DeviceBuffer::<u32>::zeroed(&stream, a.len()).unwrap();
 
-    module
-        .bool_phi_cmp(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.bool_phi_cmp(
             &stream,
             LaunchConfig::for_num_elems(a.len() as u32),
             &dev_a,
             &dev_b,
             &mut dev_out,
         )
-        .expect("launch");
+    }
+    .expect("launch");
 
     let out = dev_out.to_host_vec(&stream).unwrap();
     println!("got    : {out:?}");

@@ -72,9 +72,8 @@ fn main() {
     };
 
     let mut d_out = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .fn_ptr_eq(stream.as_ref(), cfg, &mut d_out)
-        .expect("launch fn_ptr_eq");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.fn_ptr_eq(stream.as_ref(), cfg, &mut d_out) }.expect("launch fn_ptr_eq");
     let got = d_out.to_host_vec(&stream).unwrap();
 
     let failures = got.iter().filter(|&&g| g != 1).count();

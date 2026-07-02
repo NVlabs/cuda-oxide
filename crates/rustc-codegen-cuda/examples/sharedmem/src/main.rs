@@ -113,8 +113,8 @@ fn main() {
         let data_dev = DeviceBuffer::from_host(&stream, &data_host).unwrap();
         let mut out_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-        module
-            .shared_test((stream).as_ref(), cfg, &data_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.shared_test((stream).as_ref(), cfg, &data_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         let out_result = out_dev.to_host_vec(&stream).unwrap();
@@ -148,8 +148,8 @@ fn main() {
         let b_dev = DeviceBuffer::from_host(&stream, &b_host).unwrap();
         let mut out_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-        module
-            .shared_dual((stream).as_ref(), cfg, &a_dev, &b_dev, &mut out_dev)
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.shared_dual((stream).as_ref(), cfg, &a_dev, &b_dev, &mut out_dev) }
             .expect("Kernel launch failed");
 
         let out_result = out_dev.to_host_vec(&stream).unwrap();

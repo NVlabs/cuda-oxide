@@ -120,14 +120,14 @@ fn main() {
     };
 
     let mut d_u32 = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .opt_ref_unwrap_or_u32(stream.as_ref(), cfg, &mut d_u32)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.opt_ref_unwrap_or_u32(stream.as_ref(), cfg, &mut d_u32) }
         .expect("launch opt_ref_unwrap_or_u32");
     let got_u32 = d_u32.to_host_vec(&stream).unwrap();
 
     let mut d_f32 = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
-    module
-        .opt_ref_unwrap_or_f32(stream.as_ref(), cfg, &mut d_f32)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.opt_ref_unwrap_or_f32(stream.as_ref(), cfg, &mut d_f32) }
         .expect("launch opt_ref_unwrap_or_f32");
     let got_f32 = d_f32.to_host_vec(&stream).unwrap();
 

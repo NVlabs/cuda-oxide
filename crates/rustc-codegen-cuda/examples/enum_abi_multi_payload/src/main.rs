@@ -133,8 +133,8 @@ fn main() {
         .collect();
     let d_input = DeviceBuffer::from_host(&stream, &h_input).unwrap();
     let mut d_decoded = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
-    module
-        .decode(stream.as_ref(), cfg, &d_input, &mut d_decoded)
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.decode(stream.as_ref(), cfg, &d_input, &mut d_decoded) }
         .expect("launch decode");
     let decoded = d_decoded.to_host_vec(&stream).unwrap();
     for (i, (&got, want)) in decoded
@@ -152,9 +152,8 @@ fn main() {
     let h_src: Vec<u32> = (0..N as u32).collect();
     let d_src = DeviceBuffer::from_host(&stream, &h_src).unwrap();
     let mut d_encoded = DeviceBuffer::<E>::zeroed(&stream, N).unwrap();
-    module
-        .encode(stream.as_ref(), cfg, &d_src, &mut d_encoded)
-        .expect("launch encode");
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe { module.encode(stream.as_ref(), cfg, &d_src, &mut d_encoded) }.expect("launch encode");
     let encoded = d_encoded.to_host_vec(&stream).unwrap();
     for (i, v) in encoded.iter().enumerate() {
         let s = h_src[i];

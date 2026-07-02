@@ -47,8 +47,9 @@ fn main() {
     let values_dev = DeviceBuffer::from_host(&stream, &values).unwrap();
     let mut out_dev = DeviceBuffer::<i64>::zeroed(&stream, SLOTS).unwrap();
 
-    module
-        .pointer_distances(
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.pointer_distances(
             &stream,
             LaunchConfig::for_num_elems(1),
             &values_dev,
@@ -56,7 +57,8 @@ fn main() {
             hi,
             &mut out_dev,
         )
-        .expect("launch pointer_distances");
+    }
+    .expect("launch pointer_distances");
 
     let got = out_dev.to_host_vec(&stream).unwrap();
     let element_distance = (hi - lo) as i64;

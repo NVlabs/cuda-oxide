@@ -44,11 +44,11 @@
 
       <!-- Code block -->
       <rect x="12" y="74" width="224" height="110" rx="6" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
-      <text x="24" y="96" font-family="'RobotoMono', monospace" font-size="11" fill="#79c0ff">cuda_launch_async! {</text>
+      <text x="24" y="96" font-family="'RobotoMono', monospace" font-size="11" fill="#79c0ff">unsafe { cuda_launch_async! {</text>
       <text x="24" y="114" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">  kernel: vecadd,</text>
       <text x="24" y="132" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">  module: module,</text>
       <text x="24" y="150" font-family="'RobotoMono', monospace" font-size="11" fill="#c9d1d9">  config: cfg,</text>
-      <text x="24" y="168" font-family="'RobotoMono', monospace" font-size="11" fill="#79c0ff">}</text>
+      <text x="24" y="168" font-family="'RobotoMono', monospace" font-size="11" fill="#79c0ff">} }</text>
 
       <!-- Type badge -->
       <rect x="24" y="198" width="200" height="28" rx="6" fill="rgba(121, 192, 255, 0.15)" stroke="#79c0ff" stroke-width="1"/>
