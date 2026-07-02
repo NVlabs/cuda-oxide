@@ -34,11 +34,13 @@
 //! | `stmatrix.m8n8.b16`          | sm_90   | PTX 7.8+             |
 //! | TMA/mbarrier                  | sm_100  | Hopper+ compatible   |
 //! | bf16x2 add/sub/mul            | sm_90   | Hopper+ compatible   |
+//! | bf16x2 packed atomic add      | sm_90   | PTX 7.8+             |
 //! | other bf16x2 ALU              | sm_80   | Ampere+ compatible   |
 //! | BF16 `mma.m16n8k16`           | sm_80   | PTX 7.0+             |
 //! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
 //! | `movmatrix.m8n8.b16`          | sm_75   | PTX 7.8+             |
 //! | `ldmatrix.m8n8.b16`           | sm_75   | PTX 6.5+             |
+//! | f16x2 packed atomic add       | sm_70   | PTX 6.2+             |
 //! | Basic CUDA                    | sm_80   | Ampere+ (max compat) |
 //!
 //! Override with `CUDA_OXIDE_TARGET=<target>` environment variable.
@@ -1149,10 +1151,23 @@ fn contains_sm90_features(contents: &str) -> bool {
     ["add.rn.bf16x2", "sub.rn.bf16x2", "mul.rn.bf16x2"]
         .iter()
         .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+        || contains_packed_bf16_atomic_features(contents)
         || contains_stmatrix_features(contents)
         || contains_elect_features(contents)
         || contains_fence_acquire_release_features(contents)
         || contains_multimem_features(contents)
+}
+
+/// Native packed bf16 atomic add was added in PTX 7.8 for sm_90.
+fn contains_packed_bf16_atomic_features(contents: &str) -> bool {
+    contains_instruction_mnemonic(contents, "atom.global.add.noftz.bf16x2")
+}
+
+/// Packed f16 atomic add needs PTX 6.2. Its hardware floor predates
+/// cuda-oxide's Volta floor, so only the independent PTX ISA requirement must
+/// be raised.
+fn contains_packed_f16_atomic_features(contents: &str) -> bool {
+    contains_instruction_mnemonic(contents, "atom.global.add.noftz.f16x2")
 }
 
 fn contains_elect_features(contents: &str) -> bool {
@@ -1600,6 +1615,7 @@ impl std::ops::BitOr for DetectedFeatures {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PtxIsaRequirement {
     Default,
+    Ptx62,
     Ptx65,
     Ptx70,
     Ptx71,
@@ -1687,6 +1703,9 @@ fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
 
 fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements {
     let mut ptx_isa = PtxIsaRequirement::Default;
+    if contains_packed_f16_atomic_features(contents) {
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx62);
+    }
     if contains_ldmatrix_features(contents) {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx65);
     }
@@ -1704,6 +1723,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_ldmatrix_cta_state_space(contents)
         || contains_cluster_features(contents)
         || contains_mbarrier_ptx78_features(contents)
+        || contains_packed_bf16_atomic_features(contents)
     {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx78);
     }
@@ -1968,6 +1988,7 @@ fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<
     let minimum = target_minimum_ptx_isa(capability)?;
     let requested = match requirement {
         PtxIsaRequirement::Default => return None,
+        PtxIsaRequirement::Ptx62 => 62,
         PtxIsaRequirement::Ptx65 => 65,
         PtxIsaRequirement::Ptx70 => 70,
         PtxIsaRequirement::Ptx71 => 71,
@@ -1980,6 +2001,7 @@ fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<
     }
     match requirement {
         PtxIsaRequirement::Default => None,
+        PtxIsaRequirement::Ptx62 => Some("+ptx62"),
         PtxIsaRequirement::Ptx65 => Some("+ptx65"),
         PtxIsaRequirement::Ptx70 => Some("+ptx70"),
         PtxIsaRequirement::Ptx71 => Some("+ptx71"),
@@ -2936,6 +2958,134 @@ mod tests {
                 ptx_isa: PtxIsaRequirement::Ptx78,
             }
         );
+    }
+
+    #[test]
+    fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
+        for f16 in [
+            "atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "atom.global.add.noftz.f16x2\t$0, [$1], $2;",
+            "atom.global.add.noftz.f16x2\\09$0, [$1], $2;",
+            ";atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "prefix\\0Aatom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "\"atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "{atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "$L:atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "/* comment */atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "@p atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "@!%p\\09atom.global.add.noftz.f16x2 $0, [$1], $2;",
+        ] {
+            assert!(contains_packed_f16_atomic_features(f16), "{f16:?}");
+            assert!(!contains_packed_bf16_atomic_features(f16), "{f16:?}");
+            assert_eq!(detect_features_in_llvm_text(f16), DetectedFeatures::Basic);
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(f16).ptx_isa,
+                PtxIsaRequirement::Ptx62
+            );
+        }
+        assert_eq!(
+            required_ptx_feature("sm_70", PtxIsaRequirement::Ptx62),
+            Some("+ptx62")
+        );
+        assert_eq!(
+            resolve_ptx_target(Some("sm_70"), None, DetectedFeatures::Basic)
+                .unwrap()
+                .0,
+            "sm_70"
+        );
+
+        for bf16 in [
+            "atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+            "atom.global.add.noftz.bf16x2\t$0, [$1], $2;",
+            "atom.global.add.noftz.bf16x2\\0A$0, [$1], $2;",
+        ] {
+            assert!(contains_packed_bf16_atomic_features(bf16), "{bf16:?}");
+            assert!(!contains_packed_f16_atomic_features(bf16), "{bf16:?}");
+            assert_eq!(detect_features_in_llvm_text(bf16), DetectedFeatures::Sm90);
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(bf16).ptx_isa,
+                PtxIsaRequirement::Ptx78
+            );
+        }
+        assert_eq!(select_target(DetectedFeatures::Sm90).unwrap(), "sm_90");
+        let rejected = resolve_ptx_target(Some("sm_80"), None, DetectedFeatures::Sm90)
+            .expect_err("native bf16x2 atomic add must reject sm_80")
+            .to_string();
+        assert!(rejected.contains("cannot lower detected feature Sm90"));
+        let near_miss = resolve_ptx_target(Some("sm_89"), None, DetectedFeatures::Sm90)
+            .expect_err("the architecture immediately below sm_90 must be rejected")
+            .to_string();
+        assert!(near_miss.contains("cannot lower detected feature Sm90"));
+
+        let both = "atom.global.add.noftz.f16x2 $0, [$1], $2; \
+                    atom.global.add.noftz.bf16x2 $0, [$1], $2;";
+        let requirements = detect_module_requirements_in_llvm_text(both);
+        assert_eq!(requirements.features, DetectedFeatures::Sm90);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx78);
+
+        let dense_bf16_mma =
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};";
+        let mma_f16_requirements = detect_module_requirements_in_llvm_text(&format!(
+            "{dense_bf16_mma}\natom.global.add.noftz.f16x2 $0, [$1], $2;"
+        ));
+        assert_eq!(
+            mma_f16_requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+        assert_eq!(
+            select_target(mma_f16_requirements.features).unwrap(),
+            "sm_80"
+        );
+
+        let mma_bf16_requirements = detect_module_requirements_in_llvm_text(&format!(
+            "{dense_bf16_mma}\natom.global.add.noftz.bf16x2 $0, [$1], $2;"
+        ));
+        assert_eq!(
+            mma_bf16_requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+        assert_eq!(
+            select_target(mma_bf16_requirements.features).unwrap(),
+            "sm_90"
+        );
+
+        for near_miss in [
+            "atom.global.add.noftz.f16x2x $0, [$1], $2;",
+            "atom.global.add.noftz.bf16x2x $0, [$1], $2;",
+            "not_atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "not_atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+            "not.atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "not.atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+            "$atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "%atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+            "@atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "!atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+            "@!atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "not$atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "/atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+            ")atom.global.add.noftz.f16x2 $0, [$1], $2;",
+            "atom.shared.add.noftz.f16x2 $0, [$1], $2;",
+            "atom.global.add.bf16x2 $0, [$1], $2;",
+            "red.global.add.noftz.bf16x2 [$0], $1;",
+            "atom.global.add.noftz.f16x2\\5C09$0, [$1], $2;",
+        ] {
+            assert!(!contains_packed_f16_atomic_features(near_miss));
+            assert!(!contains_packed_bf16_atomic_features(near_miss));
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(near_miss),
+                ModuleRequirements {
+                    features: DetectedFeatures::Basic,
+                    ptx_isa: PtxIsaRequirement::Default,
+                },
+                "{near_miss:?}"
+            );
+        }
     }
 
     #[test]

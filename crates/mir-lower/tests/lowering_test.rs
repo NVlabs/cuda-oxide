@@ -3315,3 +3315,92 @@ fn test_mma_m16n8k16_f32_bf16_lowers_to_inline_asm() -> Result<(), anyhow::Error
     assert_eq!(found, 1, "expected one mma.sync inline-asm operation");
     Ok(())
 }
+
+#[test]
+fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
+    let address = entry.deref(&ctx).get_argument(0);
+    let addend = entry.deref(&ctx).get_argument(1);
+
+    for op_info in [
+        nvvm::NvvmAtomAddF16x2Op::get_concrete_op_info(),
+        nvvm::NvvmAtomAddBf16x2Op::get_concrete_op_info(),
+    ] {
+        Operation::new(
+            &mut ctx,
+            op_info,
+            vec![u32_ty.into()],
+            vec![address, addend],
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let expected = [
+        "atom.global.add.noftz.f16x2 $0, [$1], $2;",
+        "atom.global.add.noftz.bf16x2 $0, [$1], $2;",
+    ];
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let mut lowered = Vec::new();
+
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(function) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if function.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let body = function.get_operation().deref(&ctx).get_region(0);
+        for block in body.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap_or_default();
+                if !template.starts_with("atom.global.add.noftz.") {
+                    continue;
+                }
+                lowered.push((
+                    template,
+                    asm.get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .unwrap_or_default(),
+                    llvm::asm_kind(&ctx, &asm),
+                    body_op.deref(&ctx).get_num_operands(),
+                    body_op.deref(&ctx).get_num_results(),
+                ));
+            }
+        }
+    }
+
+    assert_eq!(lowered.len(), expected.len());
+    for instruction in expected {
+        let matches: Vec<_> = lowered
+            .iter()
+            .filter(|(template, _, _, _, _)| template == instruction)
+            .collect();
+        assert_eq!(matches.len(), 1, "missing exact lowering for {instruction}");
+        let (_, constraints, kind, operands, results) = matches[0];
+        assert_eq!(constraints, "=r,l,r,~{memory}");
+        assert_eq!(*kind, llvm::AsmKind::SideEffect);
+        assert_eq!(*operands, 2);
+        assert_eq!(*results, 1);
+    }
+
+    Ok(())
+}

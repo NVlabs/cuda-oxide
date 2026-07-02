@@ -6,8 +6,8 @@
 use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
     Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MmaM16N8K16F32Bf16Op, MovmatrixTransB16Op,
-    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
-    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
+    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
     ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
     ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
     ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
@@ -256,6 +256,114 @@ fn test_matrix_memory_ops_verify_pointer_and_packed_register_types() {
         0,
     );
     assert!(StmatrixM8n8X4Op::new(bad_store).verify(&ctx).is_err());
+}
+
+#[test]
+fn test_packed_atomic_add_verifies_exact_raw_u32_shape() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let signless_i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let generic_u32_ptr = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let global_u32_ptr = MirPtrType::get_global(&mut ctx, u32_ty.into(), true);
+    let immutable_u32_ptr = MirPtrType::get_generic(&mut ctx, u32_ty.into(), false);
+    let shared_u32_ptr = MirPtrType::get_shared(&mut ctx, u32_ty.into(), true);
+    let generic_u64_ptr = MirPtrType::get_generic(&mut ctx, u64_ty.into(), true);
+
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            generic_u32_ptr.into(),
+            global_u32_ptr.into(),
+            immutable_u32_ptr.into(),
+            shared_u32_ptr.into(),
+            generic_u64_ptr.into(),
+            u32_ty.into(),
+            signless_i32_ty.into(),
+        ],
+    );
+    let generic_ptr = block.deref(&ctx).get_argument(0);
+    let global_ptr = block.deref(&ctx).get_argument(1);
+    let immutable_ptr = block.deref(&ctx).get_argument(2);
+    let shared_ptr = block.deref(&ctx).get_argument(3);
+    let wrong_pointee_ptr = block.deref(&ctx).get_argument(4);
+    let addend = block.deref(&ctx).get_argument(5);
+    let signless_addend = block.deref(&ctx).get_argument(6);
+
+    macro_rules! check_variant {
+        ($op:ty) => {{
+            for pointer in [generic_ptr, global_ptr] {
+                let valid = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    vec![u32_ty.into()],
+                    vec![pointer, addend],
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
+            }
+
+            for pointer in [immutable_ptr, shared_ptr, wrong_pointee_ptr] {
+                let invalid = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    vec![u32_ty.into()],
+                    vec![pointer, addend],
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(invalid), &ctx).is_err());
+            }
+
+            let bad_address = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![u32_ty.into()],
+                vec![addend, addend],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(bad_address), &ctx).is_err());
+
+            let bad_addend = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![u32_ty.into()],
+                vec![generic_ptr, signless_addend],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(bad_addend), &ctx).is_err());
+
+            let bad_result = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![signless_i32_ty.into()],
+                vec![generic_ptr, addend],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(bad_result), &ctx).is_err());
+
+            let bad_counts = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![],
+                vec![generic_ptr],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(bad_counts), &ctx).is_err());
+        }};
+    }
+
+    check_variant!(NvvmAtomAddF16x2Op);
+    check_variant!(NvvmAtomAddBf16x2Op);
 }
 
 #[test]

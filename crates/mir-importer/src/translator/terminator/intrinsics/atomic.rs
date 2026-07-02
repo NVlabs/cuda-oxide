@@ -1334,12 +1334,27 @@ fn emit_core_atomic_cmpxchg(
 // Packed Atomic Add (f16x2, bf16x2) -- standalone intrinsics
 // =============================================================================
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PackedAtomicAddKind {
+    F16x2,
+    Bf16x2,
+}
+
+pub(crate) fn packed_atomic_add_kind(path: &str) -> Option<PackedAtomicAddKind> {
+    match path {
+        "cuda_device::atomic::atom_add_f16x2" => Some(PackedAtomicAddKind::F16x2),
+        "cuda_device::atomic::atom_add_bf16x2" => Some(PackedAtomicAddKind::Bf16x2),
+        _ => None,
+    }
+}
+
 /// Shared helper for packed atomic add intrinsics (f16x2, bf16x2).
 ///
 /// Args: `(addr: *mut u32, val: u32)`.
-/// Returns: `u32`, the previous packed value.
+/// Returns: `u32` containing the two previous lane values, which need not form
+/// one coherent previous 32-bit snapshot.
 #[allow(clippy::too_many_arguments)]
-fn emit_packed_atom_add(
+fn emit_packed_atom_add<O: Op>(
     ctx: &mut Context,
     body: &mir::Body,
     args: &[mir::Operand],
@@ -1350,7 +1365,6 @@ fn emit_packed_atom_add(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
-    op_info: pliron::op::ConcreteOpInfo,
     name: &str,
 ) -> TranslationResult<Ptr<Operation>> {
     if args.len() != 2 {
@@ -1391,7 +1405,7 @@ fn emit_packed_atom_add(
 
     let op_ptr = Operation::new(
         ctx,
-        op_info,
+        O::get_concrete_op_info(),
         vec![u32_ty.into()],
         vec![addr_val, val_val],
         vec![],
@@ -1434,7 +1448,7 @@ pub fn emit_atom_add_f16x2(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    emit_packed_atom_add(
+    emit_packed_atom_add::<NvvmAtomAddF16x2Op>(
         ctx,
         body,
         args,
@@ -1445,7 +1459,6 @@ pub fn emit_atom_add_f16x2(
         value_map,
         block_map,
         loc,
-        NvvmAtomAddF16x2Op::get_concrete_op_info(),
         "atom_add_f16x2",
     )
 }
@@ -1464,7 +1477,7 @@ pub fn emit_atom_add_bf16x2(
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    emit_packed_atom_add(
+    emit_packed_atom_add::<NvvmAtomAddBf16x2Op>(
         ctx,
         body,
         args,
@@ -1475,7 +1488,31 @@ pub fn emit_atom_add_bf16x2(
         value_map,
         block_map,
         loc,
-        NvvmAtomAddBf16x2Op::get_concrete_op_info(),
         "atom_add_bf16x2",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PackedAtomicAddKind, packed_atomic_add_kind};
+
+    #[test]
+    fn packed_atomic_paths_match_only_the_public_stubs() {
+        assert_eq!(
+            packed_atomic_add_kind("cuda_device::atomic::atom_add_f16x2"),
+            Some(PackedAtomicAddKind::F16x2)
+        );
+        assert_eq!(
+            packed_atomic_add_kind("cuda_device::atomic::atom_add_bf16x2"),
+            Some(PackedAtomicAddKind::Bf16x2)
+        );
+
+        for near_miss in [
+            "cuda_device::atomic::atom_add_f16x2_extra",
+            "cuda_device::atomic::atom_add_bf16x2_extra",
+            "other::atomic::atom_add_f16x2",
+        ] {
+            assert_eq!(packed_atomic_add_kind(near_miss), None, "{near_miss}");
+        }
+    }
 }

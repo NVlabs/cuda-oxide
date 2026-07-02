@@ -574,11 +574,18 @@ define_float_atomic! {
 
 /// Packed f16x2 atomic add on global memory.
 ///
-/// Atomically adds two packed f16 lanes in `val` to the two packed f16 lanes
-/// at `*addr`, stores the element-wise sum, and returns the **previous** value.
+/// Adds the two packed f16 lanes in `val` to the corresponding lanes at
+/// `*addr`. Each 16-bit lane is atomic independently; the two lane operations
+/// occur in an unspecified order.
 ///
 /// Both `val` and the return value are `u32` words carrying two f16 values
 /// (low 16 bits = first lane, high 16 bits = second lane).
+/// The returned lanes are the two prior lane values, but they need not come
+/// from one coherent 32-bit snapshot.
+///
+/// This is a relaxed, device-scope (`.gpu`) global-memory operation. It does
+/// not order other memory accesses and does not synchronize with host/system
+/// atomics.
 ///
 /// # PTX
 ///
@@ -586,18 +593,22 @@ define_float_atomic! {
 /// atom.global.add.noftz.f16x2 %old, [%addr], %val;
 /// ```
 ///
-/// `.noftz` = no flush-to-zero: denormalized f16 values are preserved.
+/// `.noftz` preserves subnormal values; each lane rounds to nearest-even.
 ///
 /// # Supported on
 ///
-/// - `sm_70+` (Volta onwards).
+/// - `sm_70+`, cuda-oxide's Volta floor (the PTX instruction itself requires
+///   PTX 6.2 and `sm_60+`).
 ///
 /// # Safety
 ///
 /// - `addr` must point to 4 writable bytes in global memory, naturally
 ///   aligned to 4 bytes.
-/// - Non-atomic reads or writes to `*addr` that race with this operation
-///   are undefined behavior.
+/// - Do not race this operation with a whole-word `u32` atomic or with any
+///   non-atomic access to either 16-bit lane; such overlapping accesses do not
+///   share this instruction's lane-wise atomicity and are undefined behavior.
+/// - Concurrent lane atomics must use scopes that include one another. This
+///   device-scope operation is not atomic with respect to host/system access.
 #[must_use]
 #[inline(never)]
 pub unsafe fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
@@ -607,11 +618,18 @@ pub unsafe fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
 
 /// Packed bf16x2 atomic add on global memory.
 ///
-/// Atomically adds two packed bf16 lanes in `val` to the two packed bf16 lanes
-/// at `*addr`, stores the element-wise sum, and returns the **previous** value.
+/// Adds the two packed bf16 lanes in `val` to the corresponding lanes at
+/// `*addr`. Each 16-bit lane is atomic independently; the two lane operations
+/// occur in an unspecified order.
 ///
 /// Both `val` and the return value are `u32` words carrying two bf16 values
 /// (low 16 bits = first lane, high 16 bits = second lane).
+/// The returned lanes are the two prior lane values, but they need not come
+/// from one coherent 32-bit snapshot.
+///
+/// This is a relaxed, device-scope (`.gpu`) global-memory operation. It does
+/// not order other memory accesses and does not synchronize with host/system
+/// atomics.
 ///
 /// # PTX
 ///
@@ -619,18 +637,23 @@ pub unsafe fn atom_add_f16x2(addr: *mut u32, val: u32) -> u32 {
 /// atom.global.add.noftz.bf16x2 %old, [%addr], %val;
 /// ```
 ///
-/// `.noftz` = no flush-to-zero: denormalized bf16 values are preserved.
+/// `.noftz` preserves subnormal values; each lane rounds to nearest-even.
 ///
 /// # Supported on
 ///
-/// - `sm_80+` (Ampere onwards).
+/// - `sm_90+` with PTX ISA 7.8+. CUDA C++ emulates this operation on older
+///   GPUs, but this low-level cuda-oxide intrinsic intentionally exposes only
+///   the native PTX instruction.
 ///
 /// # Safety
 ///
 /// - `addr` must point to 4 writable bytes in global memory, naturally
 ///   aligned to 4 bytes.
-/// - Non-atomic reads or writes to `*addr` that race with this operation
-///   are undefined behavior.
+/// - Do not race this operation with a whole-word `u32` atomic or with any
+///   non-atomic access to either 16-bit lane; such overlapping accesses do not
+///   share this instruction's lane-wise atomicity and are undefined behavior.
+/// - Concurrent lane atomics must use scopes that include one another. This
+///   device-scope operation is not atomic with respect to host/system access.
 #[must_use]
 #[inline(never)]
 pub unsafe fn atom_add_bf16x2(addr: *mut u32, val: u32) -> u32 {

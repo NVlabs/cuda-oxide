@@ -292,6 +292,12 @@ fn convert_packed_atom_add(
     ptx_type: &str,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 2 {
+        return pliron::input_err_noloc!(
+            "packed atomic add requires 2 operands (address, addend), got {}",
+            operands.len()
+        );
+    }
     let addr = operands[0];
     let val = operands[1];
 
