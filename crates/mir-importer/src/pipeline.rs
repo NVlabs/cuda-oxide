@@ -1041,6 +1041,184 @@ impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
     }
 }
 
+/// Configuration for [`compile_module_to_ptx`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PtxConfig {
+    /// Target arch string passed to `llc -mcpu=`, e.g. `"sm_120"`.
+    pub target_arch: String,
+    /// Run `opt -O2` on the exported `.ll` before `llc`.
+    pub optimize: bool,
+    /// Allow `fmul`+`fadd` contraction to `fma` (`-fp-contract=fast`).
+    pub fma: bool,
+    /// Emit debug info.
+    pub debug: bool,
+}
+
+impl PtxConfig {
+    /// Default config for `arch`: optimised, fma on, no debug.
+    pub fn new(arch: impl Into<String>) -> Self {
+        Self {
+            target_arch: arch.into(),
+            optimize: true,
+            fma: true,
+            debug: false,
+        }
+    }
+}
+
+/// RAII guard that snapshots the three process-global `CUDA_OXIDE_*` env vars
+/// used by `opt`/`llc`, applies caller-derived values on construction, and
+/// restores the prior values on drop.
+///
+/// Defined locally here; it is never part of the crate's public API.
+struct EnvGuard {
+    target: Option<String>,
+    no_opt: Option<String>,
+    no_fma: Option<String>,
+}
+
+impl EnvGuard {
+    /// Snapshot the current values of the three env vars, then apply the
+    /// `cfg`-derived values. The returned guard must be held alive until
+    /// `opt`/`llc` finish.
+    fn apply(target_arch: &str, optimize: bool, fma: bool) -> Self {
+        let guard = Self {
+            target: std::env::var("CUDA_OXIDE_TARGET").ok(),
+            no_opt: std::env::var("CUDA_OXIDE_NO_OPT").ok(),
+            no_fma: std::env::var("CUDA_OXIDE_NO_FMA").ok(),
+        };
+        // SAFETY: the caller's not-concurrent contract (see `compile_module_to_ptx`
+        // docs) ensures no other thread races on these env vars.
+        unsafe {
+            std::env::set_var("CUDA_OXIDE_TARGET", target_arch);
+            if optimize {
+                std::env::remove_var("CUDA_OXIDE_NO_OPT");
+            } else {
+                std::env::set_var("CUDA_OXIDE_NO_OPT", "1");
+            }
+            if fma {
+                std::env::remove_var("CUDA_OXIDE_NO_FMA");
+            } else {
+                std::env::set_var("CUDA_OXIDE_NO_FMA", "1");
+            }
+        }
+        guard
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: same not-concurrent contract as construction.
+        unsafe {
+            match &self.target {
+                Some(v) => std::env::set_var("CUDA_OXIDE_TARGET", v),
+                None => std::env::remove_var("CUDA_OXIDE_TARGET"),
+            }
+            match &self.no_opt {
+                Some(v) => std::env::set_var("CUDA_OXIDE_NO_OPT", v),
+                None => std::env::remove_var("CUDA_OXIDE_NO_OPT"),
+            }
+            match &self.no_fma {
+                Some(v) => std::env::set_var("CUDA_OXIDE_NO_FMA", v),
+                None => std::env::remove_var("CUDA_OXIDE_NO_FMA"),
+            }
+        }
+    }
+}
+
+/// Compiles a `dialect-mir` module to PTX bytes without rustc.
+///
+/// This is the front-end-agnostic hook into cuda-oxide's back end: it
+/// replicates the post-translation tail of [`run_pipeline`] (verify the
+/// module, lower MIR to the LLVM dialect, render `.ll`, run `opt`/`llc`,
+/// return the PTX bytes) on a module the caller assembled by any means, so it
+/// depends on neither CubeCL nor rustc. The `module_op` must be a
+/// `pliron::builtin::ops::ModuleOp` built against a [`Context`] whose dialects
+/// were registered via [`crate::translator::register_dialects`].
+///
+/// # Thread safety
+///
+/// The backing `opt`/`llc` helpers read process-global environment variables
+/// (`CUDA_OXIDE_TARGET`, `CUDA_OXIDE_NO_OPT`, `CUDA_OXIDE_NO_FMA`), which this
+/// function sets from `cfg` for the duration of the call and restores to their
+/// prior values on return. It is therefore **not** safe to call concurrently
+/// from multiple threads of the same process; serialise calls or compile in
+/// separate processes.
+///
+/// # Linking
+///
+/// `mir-importer` is `#![feature(rustc_private)]` and links `rustc_driver` as
+/// an `extern crate`. Any consumer crate or binary that links `mir-importer`
+/// (to call this function) must therefore:
+///
+/// 1. Be compiled on the same nightly toolchain as `mir-importer`.
+/// 2. Declare `#![feature(rustc_private)]` at its crate root.
+/// 3. Declare `extern crate rustc_driver;` at its crate root to force a single
+///    copy of the `rustc_driver` dylib in the final binary.
+///
+/// Failing to do so produces a linker error of the form "cannot satisfy
+/// dependencies so `rustc_driver` only shows up once".
+pub fn compile_module_to_ptx(
+    ctx: &mut Context,
+    module_op: Ptr<Operation>,
+    cfg: &PtxConfig,
+) -> Result<Vec<u8>, crate::ptx_error::PtxError> {
+    use crate::ptx_error::PtxError;
+
+    if cfg.target_arch.trim().is_empty() {
+        return Err(PtxError::InvalidConfig("empty target_arch".into()));
+    }
+
+    // Snapshot the three process-global env vars that `opt`/`llc` read, apply
+    // `cfg`-derived values for the duration of this call, and restore on drop.
+    // Trim whitespace from target_arch so " sm_120 " cannot reach llc -mcpu.
+    // The `EnvGuard` drop runs after PTX bytes are in hand, before returning.
+    let _env_guard = EnvGuard::apply(cfg.target_arch.trim(), cfg.optimize, cfg.fma);
+
+    let debug_kind = if cfg.debug {
+        DebugKind::Full
+    } else {
+        DebugKind::Off
+    };
+
+    // 1. Verify the module before lowering.
+    verify_operation(ctx, module_op, "module")?;
+
+    // 2. Lower dialect-mir -> LLVM dialect (registers mir-lower, runs
+    //    `lower_mir_to_llvm`).
+    lower_to_llvm(ctx, module_op)?;
+
+    // 3. Render the standard PTX `.ll` (no device externs, no NVVM dialect).
+    let llvm_ir = render_llvm_ir(ctx, module_op, &[], false, None, debug_kind)?;
+
+    // 4. Stage the `.ll` in a unique temp dir and run opt (gated on
+    //    CUDA_OXIDE_NO_OPT, set above) + llc via the existing helper, which
+    //    resolves the matched opt/llc toolchain itself.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir =
+        std::env::temp_dir().join(format!("cuda_oxide_ptx_{}_{}", std::process::id(), unique));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| PtxError::Codegen(format!("create temp dir: {e}")))?;
+    let ll_path = dir.join("module.ll");
+    let ptx_path = dir.join("module.ptx");
+    std::fs::write(&ll_path, &llvm_ir).map_err(|e| PtxError::Codegen(format!("write .ll: {e}")))?;
+
+    let result = generate_ptx(&ll_path, &ptx_path, debug_kind)
+        .map_err(PtxError::from)
+        .and_then(|_target| {
+            std::fs::read(&ptx_path).map_err(|e| PtxError::Codegen(format!("read .ptx: {e}")))
+        });
+
+    // Best-effort cleanup of the scratch dir regardless of outcome.
+    let _ = std::fs::remove_dir_all(&dir);
+
+    result
+}
+
 /// Checks for WGMMA instructions (Hopper sm_90a only, NOT forward-compatible).
 ///
 /// WGMMA (Warpgroup Matrix Multiply-Accumulate) requires sm_90a specifically.
