@@ -266,6 +266,101 @@ pub fn codegen_run(
 }
 
 // =============================================================================
+// Sanitize command
+// =============================================================================
+
+/// Build an example and run the produced host binary under NVIDIA Compute
+/// Sanitizer.
+#[allow(clippy::too_many_arguments)]
+pub fn codegen_sanitize(
+    ctx: &Context,
+    example: &str,
+    tool: &str,
+    sanitizer_args: &[String],
+    application_args: &[String],
+    verbose: bool,
+    arch: Option<&str>,
+    features: Option<&str>,
+    bin: Option<&str>,
+    no_fmad: bool,
+) {
+    let example_dir = if ctx.is_workspace {
+        resolve_example_dir(ctx, example)
+    } else {
+        ctx.workspace_root.clone()
+    };
+
+    let interop = load_interop_config(&example_dir);
+    let target_arch = configured_arch(ctx, arch);
+    let detected_device_arch = detect_run_target_arch(target_arch, false);
+
+    if let Some(interop) = interop.filter(|config| !config.device_crates.is_empty()) {
+        println!("=========================================");
+        println!("RUSTC-CODEGEN-CUDA SANITIZE INTEROP: {}", example);
+        println!("=========================================");
+        if let Some(kind) = &interop.kind {
+            println!("Interop kind: {}", kind);
+        }
+        if let Some(dev) = detected_device_arch.as_deref() {
+            println!("Detected GPU arch: {dev} (via nvidia-smi)");
+        }
+        println!("Compute Sanitizer tool: {tool}");
+        println!();
+
+        build_interop_device_crates(
+            ctx,
+            &example_dir,
+            &interop,
+            verbose,
+            target_arch,
+            detected_device_arch.as_deref(),
+        );
+        let binary = build_host_cargo(ctx, example, &example_dir, features, bin, verbose);
+        run_compute_sanitizer(
+            ctx,
+            &example_dir,
+            tool,
+            sanitizer_args,
+            application_args,
+            &binary,
+        );
+        return;
+    }
+
+    clean_generated_files(&example_dir, example);
+
+    println!("=========================================");
+    println!("RUSTC-CODEGEN-CUDA SANITIZE: {}", example);
+    println!("=========================================");
+    if let Some(dev) = detected_device_arch.as_deref() {
+        println!("Detected GPU arch: {dev} (via nvidia-smi)");
+    }
+    println!("Compute Sanitizer tool: {tool}");
+    println!();
+
+    touch_main_rs(&example_dir);
+    let binary = codegen_build_host_binary(
+        ctx,
+        example,
+        &example_dir,
+        verbose,
+        target_arch,
+        detected_device_arch.as_deref(),
+        features,
+        bin,
+        no_fmad,
+    );
+    run_compute_sanitizer(
+        ctx,
+        &example_dir,
+        tool,
+        sanitizer_args,
+        application_args,
+        &binary,
+    );
+}
+
+// =============================================================================
 // Interop host/device workflow
 // =============================================================================
 
@@ -494,6 +589,228 @@ fn run_host_cargo(
         );
         std::process::exit(status.code().unwrap_or(1));
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn codegen_build_host_binary(
+    ctx: &Context,
+    example: &str,
+    example_dir: &Path,
+    verbose: bool,
+    arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+    features: Option<&str>,
+    bin: Option<&str>,
+    no_fmad: bool,
+) -> PathBuf {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--release"]).current_dir(example_dir);
+
+    if let Some(bin) = bin {
+        cmd.args(["--bin", bin]);
+    }
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+
+    apply_common_codegen_env(&mut cmd, ctx, verbose, no_fmad);
+    apply_codegen_rustflags(&mut cmd, ctx, false, &[]);
+    apply_output_mode(&mut cmd, false, arch);
+    apply_device_arch_hint(&mut cmd, arch, detected_device_arch);
+
+    if let Some(bin) = bin {
+        println!("Building {} (bin: {})...", example, bin);
+    } else {
+        println!("Building {}...", example);
+    }
+    println!();
+
+    let status = cmd.status().expect("Failed to run cargo build");
+    if !status.success() {
+        eprintln!("\nBuild failed with exit code: {:?}", status.code());
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    release_binary_path(ctx, example_dir, bin)
+}
+
+fn build_host_cargo(
+    ctx: &Context,
+    example: &str,
+    example_dir: &Path,
+    features: Option<&str>,
+    bin: Option<&str>,
+    verbose: bool,
+) -> PathBuf {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--release"]).current_dir(example_dir);
+
+    if let Some(bin) = bin {
+        cmd.args(["--bin", bin]);
+    }
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+
+    apply_config_env(&mut cmd, ctx);
+    apply_ld_library_path(&mut cmd, ctx);
+
+    if let Some(bin) = bin {
+        println!("Building host crate {} (bin: {})...", example, bin);
+    } else {
+        println!("Building host crate {}...", example);
+    }
+    println!();
+
+    if verbose {
+        cmd.env("CUDA_OXIDE_VERBOSE", "1");
+    }
+
+    let status = cmd.status().expect("Failed to run host cargo build");
+    if !status.success() {
+        eprintln!(
+            "\nHost cargo build failed with exit code: {:?}",
+            status.code()
+        );
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    release_binary_path(ctx, example_dir, bin)
+}
+
+fn release_binary_path(ctx: &Context, package_dir: &Path, bin: Option<&str>) -> PathBuf {
+    let binary_name = bin
+        .map(str::to_string)
+        .unwrap_or_else(|| default_run_or_package_name(&package_dir.join("Cargo.toml")));
+    let target_dir = cargo_target_dir(ctx, package_dir);
+    let binary = target_dir
+        .join("release")
+        .join(format!("{binary_name}{}", std::env::consts::EXE_SUFFIX));
+
+    if !binary.exists() {
+        eprintln!(
+            "Error: expected release binary was not produced at {}",
+            binary.display()
+        );
+        eprintln!("If this package has multiple binaries, pass --bin <name>.");
+        std::process::exit(1);
+    }
+
+    binary
+}
+
+fn cargo_target_dir(ctx: &Context, package_dir: &Path) -> PathBuf {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .or_else(|| project_config_env(ctx, "CARGO_TARGET_DIR").map(PathBuf::from))
+        .unwrap_or_else(|| package_dir.join("target"));
+
+    if target.is_absolute() {
+        target
+    } else {
+        package_dir.join(target)
+    }
+}
+
+fn default_run_or_package_name(manifest_path: &Path) -> String {
+    let source = std::fs::read_to_string(manifest_path).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not read manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+    let document: toml::Value = toml::from_str(&source).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not parse manifest {}: {}",
+            manifest_path.display(),
+            e
+        );
+        std::process::exit(1);
+    });
+    let package = document.get("package").unwrap_or_else(|| {
+        eprintln!(
+            "Error: manifest {} is missing [package]",
+            manifest_path.display()
+        );
+        std::process::exit(1);
+    });
+
+    package
+        .get("default-run")
+        .or_else(|| package.get("name"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            eprintln!(
+                "Error: manifest {} is missing package.name",
+                manifest_path.display()
+            );
+            std::process::exit(1);
+        })
+}
+
+fn run_compute_sanitizer(
+    ctx: &Context,
+    example_dir: &Path,
+    tool: &str,
+    sanitizer_args: &[String],
+    application_args: &[String],
+    binary: &Path,
+) {
+    let compute_sanitizer = find_executable(
+        "compute-sanitizer",
+        &[
+            "/usr/local/cuda/bin/compute-sanitizer",
+            "/opt/cuda/bin/compute-sanitizer",
+            "/usr/bin/compute-sanitizer",
+        ],
+    )
+    .unwrap_or_else(|| {
+        eprintln!("Error: compute-sanitizer not found.");
+        eprintln!(
+            "It is installed with the CUDA Toolkit; run `cargo oxide doctor` to check CUDA setup."
+        );
+        std::process::exit(1);
+    });
+
+    let mut cmd = Command::new(compute_sanitizer);
+    cmd.args(["--tool", tool])
+        .args(sanitizer_args)
+        .arg(binary)
+        .args(application_args)
+        .current_dir(example_dir);
+    apply_config_env(&mut cmd, ctx);
+    apply_ld_library_path(&mut cmd, ctx);
+
+    let forwarded_args = if sanitizer_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", sanitizer_args.join(" "))
+    };
+    let displayed_application_args = if application_args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", application_args.join(" "))
+    };
+    println!(
+        "Running compute-sanitizer --tool {tool}{forwarded_args} {}{displayed_application_args}...",
+        binary.display()
+    );
+    println!();
+
+    let status = cmd.status().expect("Failed to run compute-sanitizer");
+    if !status.success() {
+        eprintln!(
+            "\nCompute Sanitizer failed with exit code: {:?}",
+            status.code()
+        );
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    println!();
+    println!("✓ Compute Sanitizer completed without reported errors");
 }
 
 // =============================================================================
@@ -2759,6 +3076,76 @@ mod tests {
             std::fs::read(&cached_cubin).unwrap(),
             b"persistent cache entry"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn default_run_or_package_name_prefers_default_run() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_default_run_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let manifest = root.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            r#"
+[package]
+name = "multi-bin-package"
+default-run = "main_bin"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(default_run_or_package_name(&manifest), "main_bin");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn release_binary_path_uses_configured_relative_target_dir() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cargo_oxide_sanitize_binary_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "package-bin"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        let binary = root
+            .join("configured-target")
+            .join("release")
+            .join(format!("chosen{}", std::env::consts::EXE_SUFFIX));
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, b"fake executable").unwrap();
+
+        let ctx = test_context(OxideConfig {
+            env: vec![(
+                "CARGO_TARGET_DIR".to_string(),
+                "configured-target".to_string(),
+            )],
+            ..OxideConfig::default()
+        });
+
+        assert_eq!(release_binary_path(&ctx, &root, Some("chosen")), binary);
         std::fs::remove_dir_all(root).unwrap();
     }
 
