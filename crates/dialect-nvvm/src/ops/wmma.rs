@@ -5,10 +5,9 @@
 
 //! Warp-level matrix dialect operations.
 
-use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
-    builtin::types::IntegerType,
+    builtin::types::{FP32Type, IntegerType},
     common_traits::Verify,
     context::Context,
     context::Ptr,
@@ -72,21 +71,21 @@ impl Verify for MovmatrixTransB16Op {
     }
 }
 
-/// Warp MMA: m16n8k16 with f32 accumulator and bf16 inputs.
+/// Register-only warp MMA: m16n8k16 with f32 accumulator and bf16 inputs.
 ///
 /// # Operands
 ///
-/// - `acc_ptr` (ptr): pointer to `[f32; 4]` accumulator (read-modify-write)
-/// - `a_ptr` (ptr): pointer to `[u32; 4]` A fragment (packed bf16)
-/// - `b_ptr` (ptr): pointer to `[u32; 2]` B fragment (packed bf16)
+/// - operands 0-3: four f32 C accumulator registers
+/// - operands 4-7: four i32 A fragment registers, each packing two BF16 values
+/// - operands 8-9: two i32 B fragment registers, each packing two BF16 values
 ///
 /// # Results
 ///
-/// - None (accumulator updated in-place via pointer)
+/// - results 0-3: four f32 D accumulator registers
 #[pliron_op(
     name = "nvvm.mma_m16n8k16_f32_bf16",
     format,
-    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
 )]
 pub struct MmaM16N8K16F32Bf16Op;
 
@@ -95,27 +94,60 @@ impl Verify for MmaM16N8K16F32Bf16Op {
         let op = self.get_operation().deref(ctx);
         let operands: Vec<_> = op.operands().collect();
 
-        if operands.len() != 3 {
+        if operands.len() != 10 {
             return verify_err!(
                 op.loc(),
-                "nvvm.mma_m16n8k16_f32_bf16 requires 3 pointer operands, got {}",
+                "nvvm.mma_m16n8k16_f32_bf16 requires 10 register operands, got {}",
                 operands.len()
             );
         }
 
-        for (i, operand) in operands.iter().enumerate() {
+        for (index, operand) in operands.iter().take(4).enumerate() {
             let ty = operand.get_type(ctx);
-            if ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+            if ty.deref(ctx).downcast_ref::<FP32Type>().is_none() {
                 return verify_err!(
                     op.loc(),
-                    "nvvm.mma_m16n8k16_f32_bf16 operand {} must be a MIR pointer",
-                    i
+                    "nvvm.mma_m16n8k16_f32_bf16 C operand {} must be f32",
+                    index
                 );
             }
         }
 
-        if op.get_num_results() != 0 {
-            return verify_err!(op.loc(), "nvvm.mma_m16n8k16_f32_bf16 must have 0 results");
+        for (index, operand) in operands.iter().enumerate().skip(4) {
+            let ty = operand.get_type(ctx);
+            let ty = ty.deref(ctx);
+            let Some(integer) = ty.downcast_ref::<IntegerType>() else {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.mma_m16n8k16_f32_bf16 packed operand {} must be i32",
+                    index
+                );
+            };
+            if integer.width() != 32 {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.mma_m16n8k16_f32_bf16 packed operand {} must be i32",
+                    index
+                );
+            }
+        }
+
+        if op.get_num_results() != 4 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mma_m16n8k16_f32_bf16 requires 4 f32 results"
+            );
+        }
+
+        for index in 0..4 {
+            let ty = op.get_result(index).get_type(ctx);
+            if ty.deref(ctx).downcast_ref::<FP32Type>().is_none() {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.mma_m16n8k16_f32_bf16 result {} must be f32",
+                    index
+                );
+            }
         }
 
         Ok(())

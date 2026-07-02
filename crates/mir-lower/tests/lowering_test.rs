@@ -3215,22 +3215,27 @@ fn test_ldmatrix_forms_return_registers_in_exact_convergent_memory_asm() -> Resu
 
 #[test]
 fn test_mma_m16n8k16_f32_bf16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use llvm_export::types::PointerType;
-
     let mut ctx = make_test_ctx();
-    let ptr_ty = PointerType::get(&mut ctx, 0);
-    let (module_ptr, entry) =
-        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
-
-    let acc_ptr = entry.deref(&ctx).get_argument(0);
-    let a_ptr = entry.deref(&ctx).get_argument(1);
-    let b_ptr = entry.deref(&ctx).get_argument(2);
+    let f32_ty = pliron::builtin::types::FP32Type::get(&ctx);
+    let i32_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        32,
+        pliron::builtin::types::Signedness::Signless,
+    );
+    let argument_types = (0..4)
+        .map(|_| f32_ty.into())
+        .chain((0..6).map(|_| i32_ty.into()))
+        .collect();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+    let operands = (0..10)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect();
 
     let op = Operation::new(
         &mut ctx,
         nvvm::MmaM16N8K16F32Bf16Op::get_concrete_op_info(),
-        vec![],
-        vec![acc_ptr, a_ptr, b_ptr],
+        vec![f32_ty.into(); 4],
+        operands,
         vec![],
         0,
     );
@@ -3268,20 +3273,40 @@ fn test_mma_m16n8k16_f32_bf16_lowers_to_inline_asm() -> Result<(), anyhow::Error
                     continue;
                 }
                 found += 1;
-                assert_eq!(constraints.as_deref(), Some("l,l,l,~{memory}"));
+                let template = template.expect("MMA inline asm must have a template");
+                assert_eq!(
+                    template,
+                    concat!(
+                        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 ",
+                        "{$0, $1, $2, $3}, ",
+                        "{$8, $9, $10, $11}, ",
+                        "{$12, $13}, ",
+                        "{$4, $5, $6, $7};"
+                    )
+                );
+                for forbidden in [".reg", "ld.", "st.", "["] {
+                    assert!(
+                        !template.contains(forbidden),
+                        "register-only MMA must not contain {forbidden:?}: {template}"
+                    );
+                }
+                assert_eq!(
+                    constraints.as_deref(),
+                    Some("=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r")
+                );
                 assert_eq!(
                     llvm::asm_kind_opt(&ctx, &asm),
                     Some(llvm::AsmKind::Convergent)
                 );
                 assert_eq!(
                     body_op.deref(&ctx).get_num_operands(),
-                    3,
-                    "expected 3 pointer operands (acc, a, b)"
+                    10,
+                    "expected C, A, and B scalar register operands"
                 );
                 assert_eq!(
                     body_op.deref(&ctx).get_num_results(),
-                    0,
-                    "MMA op returns void (stores via pointer)"
+                    1,
+                    "LLVM inline asm returns the four D registers as one struct"
                 );
             }
         }

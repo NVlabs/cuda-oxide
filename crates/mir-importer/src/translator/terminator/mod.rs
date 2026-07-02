@@ -3660,7 +3660,16 @@ fn try_dispatch_intrinsic(
         // =================================================================
         "cuda_device::wmma::mma_m16n8k16_f32_bf16" => {
             Ok(Some(intrinsics::wmma::emit_mma_m16n8k16_f32_bf16(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
             )?))
         }
 

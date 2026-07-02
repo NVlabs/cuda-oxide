@@ -35,6 +35,7 @@
 //! | TMA/mbarrier                  | sm_100  | Hopper+ compatible   |
 //! | bf16x2 add/sub/mul            | sm_90   | Hopper+ compatible   |
 //! | other bf16x2 ALU              | sm_80   | Ampere+ compatible   |
+//! | BF16 `mma.m16n8k16`           | sm_80   | PTX 7.0+             |
 //! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
 //! | `movmatrix.m8n8.b16`          | sm_75   | PTX 7.8+             |
 //! | `ldmatrix.m8n8.b16`           | sm_75   | PTX 6.5+             |
@@ -1163,13 +1164,36 @@ fn contains_movmatrix_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "movmatrix.sync.aligned.m8n8.trans.b16")
 }
 
+/// Checks the dense BF16 MMA form added by the typed device intrinsic.
+///
+/// MMA shapes and types have different architecture and PTX ISA floors, so
+/// this intentionally matches the complete operation-specific mnemonic.
+fn contains_mma_m16n8k16_f32_bf16_features(contents: &str) -> bool {
+    contains_instruction_mnemonic(
+        contents,
+        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32",
+    )
+}
+
 fn contains_instruction_mnemonic(contents: &str, mnemonic: &str) -> bool {
     contents.match_indices(mnemonic).any(|(index, _)| {
+        let preceding = &contents[..index];
         let following = &contents[index + mnemonic.len()..];
-        following.chars().next().is_some_and(char::is_whitespace)
-            || ["\\09", "\\0A", "\\0B", "\\0C", "\\0D"]
-                .iter()
-                .any(|escape| following.starts_with(escape))
+        let escapes = ["\\09", "\\0A", "\\0B", "\\0C", "\\0D"];
+        // Use PTX token delimiters rather than treating arbitrary punctuation
+        // as a boundary. In particular, `$` and `%` participate in PTX
+        // identifiers, and guarded opcodes have whitespace after `@{!}p`.
+        let begins_at_instruction_boundary = preceding.is_empty()
+            || preceding
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '"' | ';' | ':' | '{' | '}'))
+            || escapes.iter().any(|escape| preceding.ends_with(escape))
+            || preceding.ends_with("*/");
+        let ends_at_instruction_boundary =
+            following.chars().next().is_some_and(char::is_whitespace)
+                || escapes.iter().any(|escape| following.starts_with(escape));
+        begins_at_instruction_boundary && ends_at_instruction_boundary
     })
 }
 
@@ -1238,6 +1262,7 @@ fn contains_sm80_features(contents: &str) -> bool {
         || contents.contains("cp.async.wait.group")
         || contents.contains("cp.async.wait_all")
         || contents.contains("cp.async.wait.all")
+        || contains_mma_m16n8k16_f32_bf16_features(contents)
 }
 
 /// Checks for TMA/mbarrier instructions (Hopper+ compatible with Blackwell).
@@ -1665,7 +1690,10 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
     if contains_ldmatrix_features(contents) {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx65);
     }
-    if contains_mbarrier_features(contents) || contents.contains("redux.sync") {
+    if contains_mbarrier_features(contents)
+        || contents.contains("redux.sync")
+        || contains_mma_m16n8k16_f32_bf16_features(contents)
+    {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx70);
     }
     if contains_mbarrier_ptx71_features(contents) {
@@ -2830,6 +2858,84 @@ mod tests {
                 DetectedFeatures::Basic
             );
         }
+    }
+
+    #[test]
+    fn dense_bf16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
+        let mnemonic =
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};";
+        for spelling in [
+            mnemonic,
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32\t{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32\\09{$0}, {$1}, {$2}, {$3};",
+            ";mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "prefix\\0Amma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "\"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "{mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "$L:mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "/* comment */mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@p mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@!%p\\09mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                contains_mma_m16n8k16_f32_bf16_features(spelling),
+                "missed {spelling:?}"
+            );
+        }
+
+        let requirements = detect_module_requirements_in_llvm_text(mnemonic);
+        assert_eq!(
+            requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+        assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+
+        let lower_target =
+            resolve_ptx_target(Some("sm_75"), None, requirements.features).unwrap_err();
+        assert!(
+            lower_target
+                .to_string()
+                .contains("cannot lower detected feature Sm80"),
+            "{lower_target}"
+        );
+        let (target, _) = resolve_ptx_target(Some("sm_80"), None, requirements.features).unwrap();
+        assert_eq!(target, "sm_80");
+
+        for near_miss in [
+            "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k8.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sp.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32x {$0}, {$1}, {$2}, {$3};",
+            "not_mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "%mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "!mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@!mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "not$mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "/mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            ")mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                !contains_mma_m16n8k16_f32_bf16_features(near_miss),
+                "matched {near_miss:?}"
+            );
+        }
+
+        let combined = format!(
+            "{mnemonic}\n{}",
+            "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;"
+        );
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&combined),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
     }
 
     #[test]

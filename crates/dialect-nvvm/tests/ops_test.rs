@@ -5,7 +5,7 @@
 
 use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
-    Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MovmatrixTransB16Op,
+    Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MmaM16N8K16F32Bf16Op, MovmatrixTransB16Op,
     ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
     ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
     ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
@@ -69,6 +69,92 @@ fn test_movmatrix_requires_one_i32_operand_and_result() {
             "movmatrix must reject non-i32 carriers"
         );
     }
+}
+
+#[test]
+fn test_mma_m16n8k16_bf16_verifies_exact_register_signature() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![f32_ty.into(), i32_ty.into(), i64_ty.into()],
+    );
+    let f32_value = block.deref(&ctx).get_argument(0);
+    let i32_value = block.deref(&ctx).get_argument(1);
+    let i64_value = block.deref(&ctx).get_argument(2);
+
+    let valid_operands = (0..4)
+        .map(|_| f32_value)
+        .chain((0..6).map(|_| i32_value))
+        .collect();
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM16N8K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        valid_operands,
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16F32Bf16Op::new(valid), &ctx).is_ok());
+
+    let bad_c_operands = (0..4)
+        .map(|index| if index == 0 { i32_value } else { f32_value })
+        .chain((0..6).map(|_| i32_value))
+        .collect();
+    let bad_c = Operation::new(
+        &mut ctx,
+        MmaM16N8K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        bad_c_operands,
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16F32Bf16Op::new(bad_c), &ctx).is_err());
+
+    let bad_a_operands = (0..4)
+        .map(|_| f32_value)
+        .chain((0..6).map(|index| if index == 0 { i64_value } else { i32_value }))
+        .collect();
+    let bad_a = Operation::new(
+        &mut ctx,
+        MmaM16N8K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        bad_a_operands,
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16F32Bf16Op::new(bad_a), &ctx).is_err());
+
+    let bad_result = Operation::new(
+        &mut ctx,
+        MmaM16N8K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(), f32_ty.into(), f32_ty.into(), i32_ty.into()],
+        (0..4)
+            .map(|_| f32_value)
+            .chain((0..6).map(|_| i32_value))
+            .collect(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16F32Bf16Op::new(bad_result), &ctx).is_err());
+
+    let bad_arity = Operation::new(
+        &mut ctx,
+        MmaM16N8K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        (0..4)
+            .map(|_| f32_value)
+            .chain((0..5).map(|_| i32_value))
+            .collect(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16F32Bf16Op::new(bad_arity), &ctx).is_err());
 }
 
 /// The `(constructor, TypeId)` pair returned by `get_concrete_op_info()`.
@@ -593,8 +679,8 @@ fn test_shfl_sync_i64_construct_and_verify() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
 
     // A block supplies [mask (i32), value (i64), lane/delta (i32)].
     let block = BasicBlock::new(

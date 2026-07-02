@@ -5,8 +5,8 @@
 
 //! Warp-level matrix operations.
 //!
-//! This module provides a register-only 8×8 transpose (`movmatrix`) and
-//! warp-cooperative shared-memory loads (`ldmatrix`).
+//! This module provides register-only matrix operations (`movmatrix` and
+//! `mma.sync`) plus warp-cooperative shared-memory loads (`ldmatrix`).
 //!
 //! For ldmatrix, each group of four lanes loads one naturally aligned
 //! 16-byte row:
@@ -23,7 +23,8 @@
 //!
 //! Ldmatrix is a weak memory operation: .sync converges the warp but does not
 //! order memory. Callers need an appropriate barrier or fence around dependent
-//! memory accesses. Movmatrix is register-only and has no memory effect.
+//! memory accesses. Movmatrix and MMA are register-only and have no memory
+//! effect.
 
 /// Transpose an 8×8 matrix of b16 elements in-register across the warp.
 ///
@@ -163,22 +164,29 @@ pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
     unreachable!("ldmatrix_x4_trans called outside CUDA kernel context")
 }
 
-/// Warp MMA: D = A x B + C (m16n8k16, f32 output, bf16 inputs).
+/// Multiply one warp-distributed BF16 tile and add an f32 accumulator.
 ///
-/// Performs a 16x8x16 matrix multiplication using tensor cores with bf16 input
-/// fragments and f32 accumulator. All 32 threads in the warp participate.
+/// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with
+/// shape 16×16, column-major `B` with shape 16×8, and `C`/`D` with shape
+/// 16×8. Each lane supplies its fragments in registers and receives four f32
+/// result registers. The call itself does not access memory or act as a fence.
 ///
-/// # Matrix Dimensions
+/// `a[j / 2]` and `b[j / 2]` pack logical element `j` in low-to-high 16-bit
+/// order. For lane `lane`, let `group = lane / 4` and `thread = lane % 4`:
 ///
-/// - **A**: 16x16 (row-major, bf16), distributed as 4 x u32 per thread
-/// - **B**: 16x8 (col-major, bf16), distributed as 2 x u32 per thread
-/// - **D/C**: 16x8 (f32 accumulator), distributed as 4 x f32 per thread
+/// ```text
+/// A element j=0..7:
+///   row = group       for j in {0,1,4,5}; otherwise group + 8
+///   col = thread*2 + (j&1) + (if j >= 4 { 8 } else { 0 })
 ///
-/// # Parameters
+/// B element j=0..3:
+///   row = thread*2 + (j&1) + (if j >= 2 { 8 } else { 0 })
+///   col = group
 ///
-/// - `acc`: Mutable accumulator (4 x f32 per thread, read-modify-write: D = A*B + acc)
-/// - `a`: A fragment (4 x u32, each u32 contains 2 packed bf16 values)
-/// - `b`: B fragment (2 x u32, each u32 contains 2 packed bf16 values)
+/// C/D register j=0..3:
+///   row = group + (if j >= 2 { 8 } else { 0 })
+///   col = thread*2 + (j&1)
+/// ```
 ///
 /// # PTX
 ///
@@ -192,12 +200,16 @@ pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
 ///
 /// # Safety
 ///
-/// - All 32 lanes in the warp must execute the same call together.
-/// - Calling from divergent control flow is undefined behavior.
+/// - All 32 lanes must execute the same call with the same qualifiers. Calling
+///   from divergent control flow, or after any lane has exited, is undefined
+///   behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the layout
+///   above. A different layout computes a different matrix operation.
 /// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
-///   automatically.
+///   automatically and rejects an explicit lower target.
 #[inline(never)]
-pub unsafe fn mma_m16n8k16_f32_bf16(acc: &mut [f32; 4], a: &[u32; 4], b: &[u32; 2]) {
-    let _ = (acc, a, b);
+#[must_use]
+pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
     unreachable!("mma_m16n8k16_f32_bf16 called outside CUDA kernel context")
 }
