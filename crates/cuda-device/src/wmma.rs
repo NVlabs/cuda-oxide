@@ -214,6 +214,39 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
     unreachable!("mma_m16n8k16_f32_bf16 called outside CUDA kernel context")
 }
 
+/// Multiply one warp-distributed TF32 tile and add an f32 accumulator.
+///
+/// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with
+/// shape 16×8, column-major `B` with shape 8×8, and `C`/`D` with shape
+/// 16×8. Each lane supplies its fragments in registers and receives four f32
+/// result registers. The call itself does not access memory or act as a fence.
+///
+/// Each `a` register and `b` register packs one TF32 value (stored as a u32).
+/// The lane-to-element mapping matches [`mma_m16n8k16_f32_bf16`] scaled for
+/// the smaller k=8 dimension.
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k8_f32_tf32(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k8_f32_tf32 called outside CUDA kernel context")
+}
+
 /// Warp MMA: D = A x B + C (m8n8k4, f64 output, f64 inputs).
 ///
 /// Performs an 8x8x4 double-precision matrix multiplication using tensor cores.
