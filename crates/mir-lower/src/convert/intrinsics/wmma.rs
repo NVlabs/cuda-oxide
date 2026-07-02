@@ -105,6 +105,56 @@ pub(crate) fn convert_mma_m16n8k16_f32_bf16(
     Ok(())
 }
 
+/// Convert `mma_m16n8k16_f32_f16` to one register-only inline PTX operation.
+///
+/// Operand order is C[0..4], A[0..4], B[0..2]. The four D registers are
+/// returned as an LLVM struct and then split back into the dialect op's four
+/// SSA results. There are no hidden pointer, stack, load, or store operands.
+pub(crate) fn convert_mma_m16n8k16_f32_f16(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 10 {
+        return pliron::input_err_noloc!(
+            "mma_m16n8k16_f32_f16 requires 10 register operands, got {}",
+            operands.len()
+        );
+    }
+
+    let f32_ty = FP32Type::get(ctx);
+    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); 4]);
+    let template = concat!(
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+        "{$0, $1, $2, $3}, ",
+        "{$8, $9, $10, $11}, ",
+        "{$12, $13}, ",
+        "{$4, $5, $6, $7};"
+    );
+    let constraints = "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r";
+    let inline_asm = inline_asm_convergent(
+        ctx,
+        rewriter,
+        result_ty.into(),
+        operands,
+        template,
+        constraints,
+    );
+
+    let aggregate = inline_asm.deref(ctx).get_result(0);
+    let mut results = Vec::with_capacity(4);
+    for index in 0..4 {
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
+            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        results.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    rewriter.replace_operation_with_values(ctx, op, results);
+    Ok(())
+}
+
 /// Convert `mma_m8n8k4_f64` to inline PTX assembly.
 ///
 /// The operation consumes the two C registers plus A and B directly, and

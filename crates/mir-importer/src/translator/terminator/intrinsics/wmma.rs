@@ -14,7 +14,9 @@ use dialect_mir::{
     ops::{MirConstructArrayOp, MirExtractFieldOp},
     types::MirArrayType,
 };
-use dialect_nvvm::ops::{MmaM8N8K4F64Op, MmaM16N8K16F32Bf16Op, MovmatrixTransB16Op};
+use dialect_nvvm::ops::{
+    MmaM8N8K4F64Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MovmatrixTransB16Op,
+};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -288,6 +290,144 @@ pub fn emit_mma_m16n8k16_f32_bf16(
         block_map,
         loc,
         "mma_m16n8k16_f32_bf16 call without target block",
+    )
+}
+
+/// Emit `mma_m16n8k16_f32_f16` as a register-producing dialect operation.
+///
+/// Args:
+/// - `args[0]`: `[f32; 4]` C accumulator registers
+/// - `args[1]`: `[u32; 4]` packed A fragment registers
+/// - `args[2]`: `[u32; 2]` packed B fragment registers
+///
+/// Returns: `[f32; 4]` D accumulator registers.
+pub fn emit_mma_m16n8k16_f32_f16(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "mma_m16n8k16_f32_f16 expects 3 arguments (acc, a, b), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let f32_ty = FP32Type::get(ctx);
+    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let (c_array, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (c_registers, last_op) = extract_array_registers(
+        ctx,
+        c_array,
+        f32_ty.into(),
+        4,
+        block_ptr,
+        last_op,
+        loc.clone(),
+        "C",
+    )?;
+
+    let (a_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (a_registers, last_op) = extract_array_registers(
+        ctx,
+        a_array,
+        u32_ty.into(),
+        4,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "A",
+    )?;
+
+    let (b_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (b_registers, last_op) = extract_array_registers(
+        ctx,
+        b_array,
+        u32_ty.into(),
+        2,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "B",
+    )?;
+
+    let mut operands = c_registers;
+    operands.extend(a_registers);
+    operands.extend(b_registers);
+
+    let mma_op = Operation::new(
+        ctx,
+        MmaM16N8K16F32F16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        operands,
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+    mma_op.insert_after(ctx, last_op);
+
+    let d_registers = (0..4)
+        .map(|index| mma_op.deref(ctx).get_result(index))
+        .collect();
+    let array_ty = MirArrayType::get(ctx, f32_ty.into(), 4);
+    let d_array = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty.into()],
+        d_registers,
+        vec![],
+        0,
+    );
+    d_array.deref_mut(ctx).set_loc(loc.clone());
+    d_array.insert_after(ctx, mma_op);
+    let result = d_array.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        d_array,
+        value_map,
+        block_map,
+        loc,
+        "mma_m16n8k16_f32_f16 call without target block",
     )
 }
 
