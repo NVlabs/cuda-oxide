@@ -1047,10 +1047,16 @@ fn convert_rust_float_math_intrinsic(
 /// verification. Replacing the call with a binop here gives LLVM the explicit
 /// `fast` fast-math flag set promised by the Rust intrinsic contract, so f32
 /// and f64 monomorphizations both work without per-type intrinsic dispatch.
-fn fast_float_intrinsic_flags() -> FastmathFlagsAttr {
+/// A compilation-wide no-FMA request removes only the contraction permission;
+/// all other finite-input relaxations remain intact.
+fn fast_float_intrinsic_flags(ctx: &Context) -> FastmathFlagsAttr {
     // pliron-llvm's `FastmathFlagsAttr::default()` is `FastmathFlags::empty()`;
     // `core::intrinsics::f*_fast` needs the explicit LLVM `fast` flag group.
-    FastmathFlags::FAST.into()
+    let mut flags = FastmathFlags::FAST;
+    if !crate::context::lowering_options(ctx).allow_fma_contraction {
+        flags.remove(FastmathFlags::CONTRACT);
+    }
+    flags.into()
 }
 
 fn lower_fast_binop(
@@ -1068,7 +1074,7 @@ fn lower_fast_binop(
         }
     };
 
-    let flags = fast_float_intrinsic_flags();
+    let flags = fast_float_intrinsic_flags(ctx);
     let llvm_op = match binop {
         FastFloatBinop::Add => {
             llvm::FAddOp::new_with_fast_math_flags(ctx, lhs, rhs, flags).get_operation()
@@ -1471,6 +1477,23 @@ fn resolve_device_extern_symbol(callee_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_fma_policy_removes_only_contract_from_fast_float_intrinsics() {
+        let mut ctx = Context::new();
+        crate::context::set_lowering_options(
+            &mut ctx,
+            crate::LoweringOptions {
+                allow_fma_contraction: false,
+            },
+        );
+
+        let flags = fast_float_intrinsic_flags(&ctx).0;
+        assert!(!flags.contains(FastmathFlags::CONTRACT));
+        assert!(flags.contains(FastmathFlags::REASSOC));
+        assert!(flags.contains(FastmathFlags::NNAN));
+        assert!(flags.contains(FastmathFlags::NINF));
+    }
 
     #[test]
     fn test_resolve_device_extern_symbol() {

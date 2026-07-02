@@ -358,10 +358,14 @@ a zero status proves. The wrapper therefore never declares the report clean
 from process status alone; it reports completion and leaves the sanitizer
 output visible for inspection.
 
-The `--no-fmad` CLI flag is forwarded through both ordinary and interop builds,
-but it only requests the existing compiler behavior. It does not by itself
-resolve the backend contraction limitation tracked in
-[#315](https://github.com/NVlabs/cuda-oxide/issues/315).
+The `--no-fmad` CLI flag is forwarded through both ordinary and interop builds.
+It keeps ordinary multiply and add/subtract operations separate, with one
+rounding per operation. Explicit fused operations such as `f32::mul_add`
+remain fused.
+
+NVVM IR and LTOIR builds also produce `.options` and versioned `.target`
+sidecars. Keep both files with the artifact so later libNVVM and nvJitLink
+steps preserve the same FMA policy.
 
 Run `memcheck` first when investigating memory safety. The other tools are
 complementary and do not perform full memory-access checking.

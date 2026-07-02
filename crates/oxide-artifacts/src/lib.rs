@@ -15,11 +15,86 @@ pub const ARTIFACT_SECTION_NAME: &str = ".oxart";
 #[cfg(feature = "object-write")]
 const ARTIFACT_ANCHOR_SECTION_NAME: &str = ".oxlink";
 pub const ARTIFACT_MAGIC: [u8; 8] = *b"OXIDEART";
-pub const ARTIFACT_VERSION: u16 = 1;
+pub const ARTIFACT_VERSION: u16 = 2;
+const LEGACY_ARTIFACT_VERSION: u16 = 1;
 
 const HEADER_BYTES: usize = 32;
 const PAYLOAD_RECORD_BYTES: usize = 24;
 const ENTRY_RECORD_BYTES: usize = 24;
+
+const OPTION_NO_FMA_CONTRACTION: u64 = 1 << 0;
+const KNOWN_COMPILE_OPTIONS: u64 = OPTION_NO_FMA_CONTRACTION;
+
+/// Marker written on the second line of a versioned NVVM/LTOIR `.target`
+/// sidecar. Its presence makes older one-line readers reject the artifact
+/// instead of silently ignoring required compile policy.
+pub const COMPILE_OPTIONS_TARGET_MARKER: &str = "compile-options=v1";
+
+const COMPILE_OPTIONS_SIDECAR_HEADER: &str = "cuda-oxide-compile-options-v1";
+const COMPILE_OPTIONS_FMA_ON: &str = "cuda-oxide-compile-options-v1\nfma-contraction=on\n";
+const COMPILE_OPTIONS_FMA_OFF: &str = "cuda-oxide-compile-options-v1\nfma-contraction=off\n";
+
+/// Compilation policy that must remain attached to a device artifact until
+/// its final machine-code generation step.
+///
+/// A zero value preserves the historical defaults, which keeps version-1
+/// bundles emitted before this field was used fully compatible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ArtifactCompileOptions(u64);
+
+impl ArtifactCompileOptions {
+    /// Construct the historical default policy.
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    /// Record whether ordinary floating-point multiply/add expressions may
+    /// contract into fused operations.
+    pub const fn with_fma_contraction(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.0 &= !OPTION_NO_FMA_CONTRACTION;
+        } else {
+            self.0 |= OPTION_NO_FMA_CONTRACTION;
+        }
+        self
+    }
+
+    /// Whether ordinary floating-point multiply/add expressions may contract.
+    pub const fn fma_contraction_enabled(self) -> bool {
+        self.0 & OPTION_NO_FMA_CONTRACTION == 0
+    }
+
+    fn from_bits(bits: u64) -> Result<Self, ArtifactError> {
+        if bits & !KNOWN_COMPILE_OPTIONS != 0 {
+            return Err(ArtifactError::UnsupportedCompileOptions(bits));
+        }
+        Ok(Self(bits))
+    }
+
+    const fn bits(self) -> u64 {
+        self.0
+    }
+
+    /// Encode this policy for a sibling `.options` file.
+    pub const fn sidecar_text(self) -> &'static str {
+        if self.fma_contraction_enabled() {
+            COMPILE_OPTIONS_FMA_ON
+        } else {
+            COMPILE_OPTIONS_FMA_OFF
+        }
+    }
+
+    /// Parse a complete version-1 `.options` file.
+    pub fn from_sidecar_text(value: &str) -> Result<Self, ArtifactError> {
+        match value {
+            COMPILE_OPTIONS_FMA_ON => Ok(Self::new()),
+            COMPILE_OPTIONS_FMA_OFF => Ok(Self::new().with_fma_contraction(false)),
+            _ => Err(ArtifactError::MalformedCompileOptions(format!(
+                "expected `{COMPILE_OPTIONS_SIDECAR_HEADER}` with exactly one `fma-contraction=on|off` setting"
+            ))),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ArtifactPayloadKind {
@@ -112,6 +187,7 @@ impl<'a> ArtifactEntrySpec<'a> {
 pub struct ArtifactBundleSpec<'a> {
     pub name: &'a str,
     pub target: &'a str,
+    pub compile_options: ArtifactCompileOptions,
     pub payloads: Vec<ArtifactPayloadSpec<'a>>,
     pub entries: Vec<ArtifactEntrySpec<'a>>,
 }
@@ -121,6 +197,7 @@ impl<'a> ArtifactBundleSpec<'a> {
         Self {
             name,
             target,
+            compile_options: ArtifactCompileOptions::new(),
             payloads: Vec::new(),
             entries: Vec::new(),
         }
@@ -128,6 +205,11 @@ impl<'a> ArtifactBundleSpec<'a> {
 
     pub fn with_payload(mut self, payload: ArtifactPayloadSpec<'a>) -> Self {
         self.payloads.push(payload);
+        self
+    }
+
+    pub fn with_compile_options(mut self, options: ArtifactCompileOptions) -> Self {
+        self.compile_options = options;
         self
     }
 
@@ -155,6 +237,7 @@ pub struct ArtifactEntry<'a> {
 pub struct ArtifactBundle<'a> {
     pub name: &'a str,
     pub target: &'a str,
+    pub compile_options: ArtifactCompileOptions,
     pub payloads: Vec<ArtifactPayload<'a>>,
     pub entries: Vec<ArtifactEntry<'a>>,
 }
@@ -190,6 +273,7 @@ pub struct OwnedArtifactEntry {
 pub struct OwnedArtifactBundle {
     pub name: String,
     pub target: String,
+    pub compile_options: ArtifactCompileOptions,
     pub payloads: Vec<OwnedArtifactPayload>,
     pub entries: Vec<OwnedArtifactEntry>,
 }
@@ -212,6 +296,7 @@ impl<'a> From<ArtifactBundle<'a>> for OwnedArtifactBundle {
         Self {
             name: bundle.name.to_string(),
             target: bundle.target.to_string(),
+            compile_options: bundle.compile_options,
             payloads: bundle
                 .payloads
                 .into_iter()
@@ -245,6 +330,8 @@ pub enum ArtifactError {
     Truncated(&'static str),
     BadMagic,
     UnsupportedVersion(u16),
+    UnsupportedCompileOptions(u64),
+    MalformedCompileOptions(String),
     UnsupportedPayloadKind(u16),
     UnsupportedEntryKind(u16),
     InvalidUtf8(&'static str),
@@ -266,6 +353,15 @@ impl fmt::Display for ArtifactError {
             Self::BadMagic => f.write_str("embedded artifact has bad magic"),
             Self::UnsupportedVersion(version) => {
                 write!(f, "unsupported embedded artifact version {version}")
+            }
+            Self::UnsupportedCompileOptions(bits) => {
+                write!(
+                    f,
+                    "unsupported embedded artifact compile-options bits {bits:#x}"
+                )
+            }
+            Self::MalformedCompileOptions(message) => {
+                write!(f, "malformed cuda-oxide compile options: {message}")
             }
             Self::UnsupportedPayloadKind(kind) => {
                 write!(f, "unsupported embedded artifact payload kind {kind}")
@@ -340,7 +436,15 @@ pub fn build_artifact_blob(spec: &ArtifactBundleSpec<'_>) -> Result<Vec<u8>, Art
 
     let total_len = checked_u32(out.len(), "total length")?;
     out[0..8].copy_from_slice(&ARTIFACT_MAGIC);
-    write_u16(&mut out, 8, ARTIFACT_VERSION);
+    // Keep default-policy bundles on v1 for backward compatibility. A bundle
+    // that carries required compile policy uses v2 so an older reader rejects
+    // it instead of silently ignoring the semantic flag.
+    let version = if spec.compile_options == ArtifactCompileOptions::new() {
+        LEGACY_ARTIFACT_VERSION
+    } else {
+        ARTIFACT_VERSION
+    };
+    write_u16(&mut out, 8, version);
     write_u16(&mut out, 10, HEADER_BYTES as u16);
     write_u32(&mut out, 12, total_len);
     write_u16(&mut out, 16, checked_u16(spec.name.len(), "name length")?);
@@ -359,6 +463,7 @@ pub fn build_artifact_blob(spec: &ArtifactBundleSpec<'_>) -> Result<Vec<u8>, Art
         22,
         checked_u16(spec.entries.len(), "entry count")?,
     );
+    write_u64(&mut out, 24, spec.compile_options.bits());
 
     Ok(out)
 }
@@ -383,7 +488,7 @@ pub fn parse_artifact_blob(bytes: &[u8]) -> Result<ArtifactBundle<'_>, ArtifactE
         return Err(ArtifactError::BadMagic);
     }
     let version = read_u16(bytes, 8)?;
-    if version != ARTIFACT_VERSION {
+    if !matches!(version, LEGACY_ARTIFACT_VERSION | ARTIFACT_VERSION) {
         return Err(ArtifactError::UnsupportedVersion(version));
     }
     let header_len = read_u16(bytes, 10)? as usize;
@@ -406,6 +511,11 @@ pub fn parse_artifact_blob(bytes: &[u8]) -> Result<ArtifactBundle<'_>, ArtifactE
     let target_len = read_u16(bytes, 18)? as usize;
     let payload_count = read_u16(bytes, 20)? as usize;
     let entry_count = read_u16(bytes, 22)? as usize;
+    let compile_options = if version == LEGACY_ARTIFACT_VERSION {
+        ArtifactCompileOptions::new()
+    } else {
+        ArtifactCompileOptions::from_bits(read_u64(bytes, 24)?)?
+    };
 
     let mut cursor = HEADER_BYTES;
     let name = read_str(bytes, cursor, name_len, "bundle name")?;
@@ -468,6 +578,7 @@ pub fn parse_artifact_blob(bytes: &[u8]) -> Result<ArtifactBundle<'_>, ArtifactE
     Ok(ArtifactBundle {
         name,
         target,
+        compile_options,
         payloads,
         entries,
     })
@@ -815,11 +926,13 @@ mod tests {
     #[test]
     fn artifact_blob_round_trips_ptx_payload() {
         let blob = sample_blob();
+        assert_eq!(read_u16(&blob, 8).unwrap(), LEGACY_ARTIFACT_VERSION);
         let bundles = parse_artifact_section(&blob).unwrap();
 
         assert_eq!(bundles.len(), 1);
         assert_eq!(bundles[0].name, "demo");
         assert_eq!(bundles[0].target, "sm_90");
+        assert!(bundles[0].compile_options.fma_contraction_enabled());
         assert_eq!(
             bundles[0].payload(ArtifactPayloadKind::Ptx),
             Some(&b"ptx"[..])
@@ -834,6 +947,7 @@ mod tests {
     fn artifact_blob_round_trips_non_ptx_payload_kinds() {
         let blob = build_artifact_blob(
             &ArtifactBundleSpec::new("demo", "sm_90")
+                .with_compile_options(ArtifactCompileOptions::new().with_fma_contraction(false))
                 .with_payload(ArtifactPayloadSpec::new(
                     ArtifactPayloadKind::NvvmIr,
                     "demo.ll",
@@ -851,9 +965,11 @@ mod tests {
                 )),
         )
         .unwrap();
+        assert_eq!(read_u16(&blob, 8).unwrap(), ARTIFACT_VERSION);
         let bundles = parse_artifact_section(&blob).unwrap();
 
         assert_eq!(bundles.len(), 1);
+        assert!(!bundles[0].compile_options.fma_contraction_enabled());
         assert_eq!(
             bundles[0].payload(ArtifactPayloadKind::NvvmIr),
             Some(&b"nvvm ir"[..])
@@ -869,6 +985,42 @@ mod tests {
     }
 
     #[test]
+    fn legacy_v1_bundle_defaults_to_fma_contraction() {
+        let mut blob = sample_blob();
+        write_u16(&mut blob, 8, LEGACY_ARTIFACT_VERSION);
+        // Version 1 reserved these bytes. A new reader must ignore them and
+        // preserve the historical default rather than assigning new meaning.
+        write_u64(&mut blob, 24, OPTION_NO_FMA_CONTRACTION);
+
+        let bundle = parse_artifact_blob(&blob).unwrap();
+        assert!(bundle.compile_options.fma_contraction_enabled());
+    }
+
+    #[test]
+    fn version_2_rejects_unknown_compile_option_bits() {
+        let mut blob = sample_blob();
+        write_u16(&mut blob, 8, ARTIFACT_VERSION);
+        write_u64(&mut blob, 24, 1 << 63);
+
+        assert!(matches!(
+            parse_artifact_blob(&blob),
+            Err(ArtifactError::UnsupportedCompileOptions(bits)) if bits == 1 << 63
+        ));
+    }
+
+    #[test]
+    fn compile_options_sidecar_round_trips_both_policies() {
+        for allow_fma_contraction in [true, false] {
+            let expected =
+                ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction);
+            let parsed =
+                ArtifactCompileOptions::from_sidecar_text(expected.sidecar_text()).unwrap();
+            assert_eq!(parsed, expected);
+        }
+        assert!(ArtifactCompileOptions::from_sidecar_text("fma-contraction=off\n").is_err());
+    }
+
+    #[test]
     fn artifact_section_ignores_trailing_zero_padding() {
         let mut section = sample_blob();
         section.extend_from_slice(&[0; HEADER_BYTES]);
@@ -880,10 +1032,11 @@ mod tests {
 
     #[test]
     fn artifact_section_parses_concatenated_blobs() {
-        let first = build_artifact_blob(&ArtifactBundleSpec::new("a", "sm_80").with_payload(
+        let mut first = build_artifact_blob(&ArtifactBundleSpec::new("a", "sm_80").with_payload(
             ArtifactPayloadSpec::new(ArtifactPayloadKind::Ptx, "a.ptx", b"a"),
         ))
         .unwrap();
+        write_u16(&mut first, 8, LEGACY_ARTIFACT_VERSION);
         let second = build_artifact_blob(&ArtifactBundleSpec::new("b", "sm_90").with_payload(
             ArtifactPayloadSpec::new(ArtifactPayloadKind::Ptx, "b.ptx", b"b"),
         ))
@@ -949,9 +1102,15 @@ mod tests {
     #[cfg(all(feature = "object-read", feature = "object-write"))]
     #[test]
     fn host_object_round_trips_section_on_supported_formats() {
-        let blob = build_artifact_blob(&ArtifactBundleSpec::new("demo", "sm_90").with_payload(
-            ArtifactPayloadSpec::new(ArtifactPayloadKind::Ptx, "demo.ptx", b"ptx"),
-        ))
+        let blob = build_artifact_blob(
+            &ArtifactBundleSpec::new("demo", "sm_90")
+                .with_compile_options(ArtifactCompileOptions::new().with_fma_contraction(false))
+                .with_payload(ArtifactPayloadSpec::new(
+                    ArtifactPayloadKind::Ptx,
+                    "demo.ptx",
+                    b"ptx",
+                )),
+        )
         .unwrap();
 
         for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
@@ -962,6 +1121,7 @@ mod tests {
                 bundles[0].payload(ArtifactPayloadKind::Ptx),
                 Some(&b"ptx"[..])
             );
+            assert!(!bundles[0].compile_options.fma_contraction_enabled());
         }
     }
 

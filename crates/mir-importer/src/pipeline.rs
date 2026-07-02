@@ -176,6 +176,9 @@ pub struct CompilationResult {
     pub artifact_kind: CompilationArtifactKind,
     /// GPU target architecture used (e.g., `sm_90a`, `sm_80`).
     pub target: String,
+    /// Floating-point contraction policy that later compilation stages must
+    /// preserve.
+    pub allow_fma_contraction: bool,
 }
 
 /// Configuration for the compilation pipeline.
@@ -218,6 +221,11 @@ pub struct PipelineConfig {
     pub device_arch_hint: Option<String>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
+    /// Whether ordinary floating-point multiply/add or multiply/subtract
+    /// expressions may contract into fused operations.
+    ///
+    /// Explicit fused operations, such as `f32::mul_add`, are unaffected.
+    pub allow_fma_contraction: bool,
 }
 
 impl Default for PipelineConfig {
@@ -232,6 +240,7 @@ impl Default for PipelineConfig {
             target_arch: None,
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            allow_fma_contraction: true,
         }
     }
 }
@@ -435,7 +444,7 @@ pub fn run_pipeline(
     if config.verbose {
         eprintln!("\n=== Lowering dialect-mir → LLVM dialect ===");
     }
-    lower_to_llvm(&mut ctx, module_op_ptr)?;
+    lower_to_llvm(&mut ctx, module_op_ptr, config.allow_fma_contraction)?;
 
     // Detect CUDA libdevice usage.
     //
@@ -567,6 +576,13 @@ pub fn run_pipeline(
             .as_ref()
             .expect("NVVM target was resolved before export")
             .sm();
+        write_nvvm_compile_options_sidecar(
+            &config.output_dir,
+            &config.output_name,
+            config.allow_fma_contraction,
+        )?;
+        // Publish the target last: its version marker is the completion record
+        // that says the sibling options file is required.
         write_nvvm_target_sidecar(&config.output_dir, &config.output_name, &target)?;
         Ok(CompilationResult {
             artifact_path: ll_path.clone(),
@@ -574,6 +590,7 @@ pub fn run_pipeline(
             ll_path,
             ptx_path,
             target,
+            allow_fma_contraction: config.allow_fma_contraction,
         })
     } else {
         if config.verbose {
@@ -582,7 +599,12 @@ pub fn run_pipeline(
         let ptx_path = config
             .output_dir
             .join(format!("{}.ptx", config.output_name));
-        let target = generate_ptx(&ll_path, &ptx_path, config.debug_kind)?;
+        let target = generate_ptx(
+            &ll_path,
+            &ptx_path,
+            config.debug_kind,
+            config.allow_fma_contraction,
+        )?;
         if config.verbose {
             eprintln!(
                 "✓ PTX written to {} (target: {})",
@@ -597,6 +619,7 @@ pub fn run_pipeline(
             ll_path,
             ptx_path,
             target,
+            allow_fma_contraction: config.allow_fma_contraction,
         })
     }
 }
@@ -699,10 +722,20 @@ fn append_to_module(ctx: &Context, module_op_ptr: Ptr<Operation>, func_op_ptr: P
 /// `dialect-mir`/`dialect-nvvm` op to its LLVM dialect equivalent. The LLVM
 /// dialect auto-registers when the `Context` is created, so no explicit
 /// registration is needed here.
-fn lower_to_llvm(ctx: &mut Context, module_op_ptr: Ptr<Operation>) -> Result<(), PipelineError> {
+fn lower_to_llvm(
+    ctx: &mut Context,
+    module_op_ptr: Ptr<Operation>,
+    allow_fma_contraction: bool,
+) -> Result<(), PipelineError> {
     mir_lower::register(ctx);
 
-    match mir_lower::lower_mir_to_llvm(ctx, module_op_ptr) {
+    match mir_lower::lower_mir_to_llvm_with_options(
+        ctx,
+        module_op_ptr,
+        mir_lower::LoweringOptions {
+            allow_fma_contraction,
+        },
+    ) {
         Ok(()) => Ok(()),
         // Format with `ctx` so the failing op's location/span survives.
         Err(e) => Err(PipelineError::Lowering(e.disp(ctx).to_string())),
@@ -909,9 +942,32 @@ fn write_nvvm_target_sidecar(
     target: &str,
 ) -> Result<(), PipelineError> {
     let path = output_dir.join(format!("{output_name}.target"));
-    std::fs::write(&path, format!("{target}\n")).map_err(|error| {
+    std::fs::write(
+        &path,
+        format!(
+            "{target}\n{}\n",
+            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+        ),
+    )
+    .map_err(|error| {
         PipelineError::Export(format!(
             "failed to record NVVM target in {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn write_nvvm_compile_options_sidecar(
+    output_dir: &Path,
+    output_name: &str,
+    allow_fma_contraction: bool,
+) -> Result<(), PipelineError> {
+    let path = output_dir.join(format!("{output_name}.options"));
+    let options =
+        oxide_artifacts::ArtifactCompileOptions::new().with_fma_contraction(allow_fma_contraction);
+    std::fs::write(&path, options.sidecar_text()).map_err(|error| {
+        PipelineError::Export(format!(
+            "failed to record NVVM compile options in {}: {error}",
             path.display()
         ))
     })
@@ -921,7 +977,15 @@ fn clear_stale_compilation_artifacts(
     output_dir: &Path,
     output_name: &str,
 ) -> Result<(), PipelineError> {
-    for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+    for suffix in [
+        "ll",
+        "ptx",
+        "target",
+        "options",
+        "ltoir",
+        "cubin",
+        "cubin.target",
+    ] {
         let path = output_dir.join(format!("{output_name}.{suffix}"));
         match std::fs::remove_file(&path) {
             Ok(()) => {}
@@ -2162,6 +2226,7 @@ fn generate_ptx(
     ll_path: &Path,
     ptx_path: &Path,
     debug_kind: DebugKind,
+    allow_fma_contraction: bool,
 ) -> Result<String, PipelineError> {
     // Explicit, hard override: `--arch` or a parent-set `CUDA_OXIDE_TARGET`.
     let explicit_override = std::env::var("CUDA_OXIDE_TARGET").ok();
@@ -2273,8 +2338,9 @@ fn generate_ptx(
     // Fuse fmul+fadd/fsub into fma.rn.f32, matching nvcc's default --fmad=true.
     // The IR-side `contract` flag (set by add_fastmath_flags in mir-lower) grants
     // permission; this llc flag activates the NVPTX backend's contract mode.
-    // Set CUDA_OXIDE_NO_FMA=1 or pass --no-fmad to cargo oxide to opt out.
-    if std::env::var("CUDA_OXIDE_NO_FMA").is_err() {
+    // The same compilation-wide policy controls the IR permission and this
+    // backend gate, so the two stages cannot disagree about contraction.
+    if allow_fma_contraction {
         llc_cmd.arg("-fp-contract=fast");
     }
     let result = llc_cmd.arg(llc_input).arg("-o").arg(ptx_path).output();
@@ -2459,6 +2525,7 @@ mod tests {
         assert_eq!(config.target_arch, None);
         assert_eq!(config.device_arch_hint, None);
         assert_eq!(config.debug_kind, DebugKind::Off);
+        assert!(config.allow_fma_contraction);
     }
 
     #[test]
@@ -2473,7 +2540,15 @@ mod tests {
             unique
         ));
         fs::create_dir_all(&root).unwrap();
-        for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+        for suffix in [
+            "ll",
+            "ptx",
+            "target",
+            "options",
+            "ltoir",
+            "cubin",
+            "cubin.target",
+        ] {
             fs::write(root.join(format!("kernel.{suffix}")), b"stale").unwrap();
         }
         let cached_cubin =
@@ -2483,7 +2558,15 @@ mod tests {
 
         clear_stale_compilation_artifacts(&root, "kernel").unwrap();
 
-        for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+        for suffix in [
+            "ll",
+            "ptx",
+            "target",
+            "options",
+            "ltoir",
+            "cubin",
+            "cubin.target",
+        ] {
             assert!(!root.join(format!("kernel.{suffix}")).exists(), "{suffix}");
         }
         assert_eq!(
@@ -2551,6 +2634,7 @@ mod tests {
             target_arch: Some("sm_86".to_string()),
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            allow_fma_contraction: false,
         };
 
         let result = run_pipeline(&[], &[], &config).expect("pipeline run");
@@ -2562,7 +2646,16 @@ mod tests {
         assert_eq!(result.target, "sm_86");
         assert_eq!(
             fs::read_to_string(output_dir.join("empty.target")).unwrap(),
-            "sm_86\n"
+            format!(
+                "sm_86\n{}\n",
+                oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(output_dir.join("empty.options")).unwrap(),
+            oxide_artifacts::ArtifactCompileOptions::new()
+                .with_fma_contraction(false)
+                .sidecar_text()
         );
 
         fs::remove_dir_all(&root).expect("clean up temp output dir");
@@ -2589,6 +2682,7 @@ mod tests {
             target_arch: Some("sm_86".to_string()),
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            allow_fma_contraction: true,
         };
         let externs = [DeviceExternDecl {
             export_name: "consume_float".to_string(),

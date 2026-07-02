@@ -98,8 +98,8 @@ enum Commands {
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
-        /// Forward the experimental no-FMA request to device codegen.
-        /// Also settable via CUDA_OXIDE_NO_FMA=1; see issue #315.
+        /// Disable implicit FMA contraction in device codegen.
+        /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
         /// Additional arguments passed to compute-sanitizer before the binary.
@@ -166,7 +166,8 @@ enum Commands {
     ///
     /// Produces the SIMT artifact a tile or C++ kernel links against
     /// (NVVM IR emission followed by libNVVM `-gen-lto`), writing
-    /// `<crate>.ltoir`. See the Tile-to-SIMT interop tracker (#96).
+    /// `<crate>.ltoir` plus target/options sidecars. See the Tile-to-SIMT
+    /// interop tracker (#96).
     EmitLtoir {
         /// Crate name (required in workspace, optional for standalone projects)
         example: Option<String>,
@@ -183,6 +184,10 @@ enum Commands {
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
+        /// Disable implicit FMA contraction in both libNVVM and nvJitLink.
+        /// Also settable via CUDA_OXIDE_NO_FMA=1.
+        #[arg(long)]
+        no_fmad: bool,
     },
     /// Show the full compilation pipeline (MIR -> PTX/NVVM IR) with verbose output
     Pipeline {
@@ -435,6 +440,7 @@ fn main() {
             features,
             output,
             verbose,
+            no_fmad,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "emit-ltoir");
@@ -445,6 +451,7 @@ fn main() {
                 features.as_deref(),
                 output.as_deref(),
                 verbose,
+                no_fmad,
             );
         }
         Commands::Pipeline {

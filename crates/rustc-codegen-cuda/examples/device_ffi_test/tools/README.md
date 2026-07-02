@@ -45,6 +45,10 @@ Compiles LLVM IR to LTOIR using libNVVM with `-gen-lto`:
 ./compile_ltoir kernel.ll sm_90 kernel.ltoir
 ```
 
+The tool reads `<input>.options` when present, passes the recorded `-fma=0` or
+`-fma=1` policy to libNVVM, and writes matching `.options` and versioned
+`.target` files beside the LTOIR output. Keep those sidecars with the LTOIR.
+
 ### link_ltoir
 
 Links multiple LTOIR files into a single cubin:
@@ -58,6 +62,10 @@ Links multiple LTOIR files into a single cubin:
     ../external_device_funcs.ltoir \
     ../cccl_wrappers.ltoir
 ```
+
+The linker reads every input's `.options` file. If any input disables FMA
+contraction, the whole nvJitLink LTO step uses `-fma=0`; inputs without
+metadata retain the legacy `-fma=1` default.
 
 ### launch_cubin (legacy)
 

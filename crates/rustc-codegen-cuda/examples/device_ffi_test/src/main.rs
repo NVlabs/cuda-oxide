@@ -316,8 +316,24 @@ fn build_tools(example_dir: &Path) -> Result<(), String> {
     let tools_dir = example_dir.join("tools");
     let compile_ltoir = tools_dir.join("compile_ltoir");
     let link_ltoir = tools_dir.join("link_ltoir");
+    let compile_source = tools_dir.join("compile_ltoir.c");
+    let link_source = tools_dir.join("link_ltoir.c");
+    let options_header = tools_dir.join("compile_options.h");
+    let build_script = tools_dir.join("build_tools.sh");
 
-    if compile_ltoir.exists() && link_ltoir.exists() {
+    let compile_sources = [
+        compile_source.as_path(),
+        options_header.as_path(),
+        build_script.as_path(),
+    ];
+    let link_sources = [
+        link_source.as_path(),
+        options_header.as_path(),
+        build_script.as_path(),
+    ];
+    if !file_needs_rebuild(&compile_ltoir, &compile_sources)
+        && !file_needs_rebuild(&link_ltoir, &link_sources)
+    {
         return Ok(());
     }
 
@@ -380,6 +396,7 @@ fn build_external_ltoir(example_dir: &Path) -> Result<(), String> {
 /// `cargo oxide run device_ffi_test --emit-nvvm-ir --arch=<your_arch>`  (e.g., sm_120)
 fn compile_cuda_oxide_ltoir(example_dir: &Path) -> Result<(), String> {
     let ll_file = example_dir.join("device_ffi_test.ll");
+    let options_file = example_dir.join("device_ffi_test.options");
     let ltoir_file = example_dir.join("device_ffi_test.ltoir");
     let tools_dir = example_dir.join("tools");
 
@@ -392,7 +409,7 @@ fn compile_cuda_oxide_ltoir(example_dir: &Path) -> Result<(), String> {
         ));
     }
 
-    if !file_needs_rebuild(&ltoir_file, &[&ll_file]) {
+    if !file_needs_rebuild(&ltoir_file, &[&ll_file, &options_file]) {
         return Ok(());
     }
 

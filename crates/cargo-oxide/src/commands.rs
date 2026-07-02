@@ -204,6 +204,7 @@ pub fn codegen_run(
             detected_device_arch.as_deref(),
             features,
             bin,
+            no_fmad,
         );
         return;
     }
@@ -387,6 +388,15 @@ struct InteropDeviceBuildOptions {
     sanitizer_line_tables: bool,
 }
 
+impl InteropDeviceBuildOptions {
+    fn standard(no_fmad: bool) -> Self {
+        Self {
+            no_fmad,
+            sanitizer_line_tables: false,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn codegen_run_interop(
     ctx: &Context,
@@ -399,6 +409,7 @@ fn codegen_run_interop(
     detected_device_arch: Option<&str>,
     features: Option<&str>,
     bin: Option<&str>,
+    no_fmad: bool,
 ) {
     reject_interop_nvvm_ir(emit_nvvm_ir);
 
@@ -420,7 +431,7 @@ fn codegen_run_interop(
         verbose,
         arch,
         detected_device_arch,
-        InteropDeviceBuildOptions::default(),
+        InteropDeviceBuildOptions::standard(no_fmad),
     );
     run_host_cargo(ctx, example, example_dir, "run", features, bin, verbose);
 }
@@ -435,6 +446,7 @@ fn codegen_build_interop(
     emit_nvvm_ir: bool,
     arch: Option<&str>,
     features: Option<&str>,
+    no_fmad: bool,
 ) {
     reject_interop_nvvm_ir(emit_nvvm_ir);
 
@@ -455,7 +467,7 @@ fn codegen_build_interop(
         verbose,
         arch,
         None,
-        InteropDeviceBuildOptions::default(),
+        InteropDeviceBuildOptions::standard(no_fmad),
     );
     run_host_cargo(ctx, example, example_dir, "build", features, None, verbose);
 }
@@ -981,6 +993,7 @@ pub fn codegen_build(
             emit_nvvm_ir,
             target_arch,
             features,
+            no_fmad,
         );
         return;
     }
@@ -1026,7 +1039,8 @@ pub fn codegen_build(
 /// halves into one command for the Tile-to-SIMT interop workflow (#96): it
 /// builds the crate in NVVM IR mode, then compiles the emitted `<crate>.ll`
 /// with libNVVM `-gen-lto` and writes `<crate>.ltoir` (or `output`) plus the
-/// matching `.target` file used for runtime loading.
+/// matching `.target` and `.options` files used for runtime loading and final
+/// nvJitLink policy.
 ///
 /// `arch` is required because LTOIR is architecture-specific. It accepts
 /// `sm_XX`, `compute_XX`, or a bare `XX`, all mapped to libNVVM's
@@ -1038,6 +1052,7 @@ pub fn emit_ltoir(
     features: Option<&str>,
     output: Option<&Path>,
     verbose: bool,
+    no_fmad: bool,
 ) {
     let example_dir = if ctx.is_workspace {
         resolve_example_dir(ctx, example)
@@ -1060,11 +1075,18 @@ pub fn emit_ltoir(
     let sm_arch = parsed_arch.sm();
 
     // Step 1: build in NVVM IR mode so the backend writes `<crate>.ll` as
-    // libNVVM-ready NVVM IR. codegen_build exits on build failure. FMA
-    // contraction stays at its default (on) for the LTOIR build. Pass
+    // libNVVM-ready NVVM IR. codegen_build exits on build failure. Pass
     // quiet=true so the intermediate "✓ Build succeeded" line is suppressed;
     // emit_ltoir prints its own unified summary at the end.
-    codegen_build(ctx, example, verbose, true, Some(&sm_arch), features, false);
+    codegen_build(
+        ctx,
+        example,
+        verbose,
+        true,
+        Some(&sm_arch),
+        features,
+        no_fmad,
+    );
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.
     let ll_path = example_dir.join(format!("{example}.ll"));
@@ -1075,14 +1097,53 @@ pub fn emit_ltoir(
         );
         std::process::exit(1);
     });
+    let source_options_path = ll_path.with_extension("options");
+    let source_options = std::fs::read_to_string(&source_options_path).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not read emitted compile options at {}: {e}",
+            source_options_path.display()
+        );
+        std::process::exit(1);
+    });
+    let compile_options = oxide_artifacts::ArtifactCompileOptions::from_sidecar_text(
+        &source_options,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!(
+            "Error: invalid emitted compile options at {}: {e}",
+            source_options_path.display()
+        );
+        std::process::exit(1);
+    });
 
     let compute_arch = parsed_arch.compute();
-    let ltoir = compile_nvvm_to_ltoir(&ir, example, &parsed_arch);
+    let ltoir = compile_nvvm_to_ltoir(
+        &ir,
+        example,
+        &parsed_arch,
+        compile_options.fma_contraction_enabled(),
+    );
 
     // Step 3: write the artifact.
     let out_path = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| example_dir.join(format!("{example}.ltoir")));
+    for metadata_path in [
+        out_path.with_extension("target"),
+        out_path.with_extension("options"),
+    ] {
+        match std::fs::remove_file(&metadata_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                eprintln!(
+                    "Error: could not clear stale LTOIR metadata {}: {error}",
+                    metadata_path.display()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
     std::fs::write(&out_path, &ltoir).unwrap_or_else(|e| {
         eprintln!(
             "Error: could not write LTOIR to {}: {e}",
@@ -1090,8 +1151,23 @@ pub fn emit_ltoir(
         );
         std::process::exit(1);
     });
+    let options_path = out_path.with_extension("options");
+    std::fs::write(&options_path, compile_options.sidecar_text()).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not write LTOIR compile options to {}: {e}",
+            options_path.display()
+        );
+        std::process::exit(1);
+    });
     let target_path = out_path.with_extension("target");
-    std::fs::write(&target_path, format!("{sm_arch}\n")).unwrap_or_else(|e| {
+    std::fs::write(
+        &target_path,
+        format!(
+            "{sm_arch}\n{}\n",
+            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+        ),
+    )
+    .unwrap_or_else(|e| {
         eprintln!(
             "Error: could not write LTOIR target metadata to {}: {e}",
             target_path.display()
@@ -1123,7 +1199,12 @@ fn parse_nvvm_arch(arch: &str) -> Result<libnvvm_sys::CudaArch, libnvvm_sys::Cud
 /// Compile NVVM IR text to binary LTOIR with libNVVM `-gen-lto`. Exits with a
 /// diagnostic on any libNVVM failure (the program log is attached to the error).
 ///
-fn compile_nvvm_to_ltoir(ir: &[u8], name: &str, arch: &libnvvm_sys::CudaArch) -> Vec<u8> {
+fn compile_nvvm_to_ltoir(
+    ir: &[u8],
+    name: &str,
+    arch: &libnvvm_sys::CudaArch,
+    allow_fma_contraction: bool,
+) -> Vec<u8> {
     let nvvm = libnvvm_sys::LibNvvm::load().unwrap_or_else(|e| {
         eprintln!("Error: could not load libNVVM: {e}");
         eprintln!("libNVVM ships with the CUDA Toolkit at <CUDA>/nvvm/lib64/libnvvm.so.");
@@ -1202,8 +1283,13 @@ fn compile_nvvm_to_ltoir(ir: &[u8], name: &str, arch: &libnvvm_sys::CudaArch) ->
         eprintln!("Error: libNVVM verification failed: {e}");
         std::process::exit(1);
     });
+    let fma_opt = if allow_fma_contraction {
+        "-fma=1"
+    } else {
+        "-fma=0"
+    };
     program
-        .compile(&[&arch_opt, "-gen-lto"])
+        .compile(&[&arch_opt, "-gen-lto", fma_opt])
         .unwrap_or_else(|e| {
             eprintln!("Error: libNVVM -gen-lto compilation failed: {e}");
             std::process::exit(1);
@@ -2918,6 +3004,7 @@ fn clean_generated_files(example_dir: &Path, example: &str) {
         "ltoir",
         "cubin",
         "target",
+        "options",
         "cubin.target",
     ] {
         let file = example_dir.join(format!("{}.{}", stem, ext));
@@ -3515,6 +3602,22 @@ path = "src/main.rs"
         apply_codegen_rustflags(&mut cmd, &ctx, false, &[fingerprint]);
         let encoded = command_env(&cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
         assert!(has_codegen_env_fingerprint(&decoded_rustflags(&encoded)));
+    }
+
+    #[test]
+    fn standard_interop_codegen_forwards_no_fmad_without_debug_override() {
+        let ctx = test_context(OxideConfig::default());
+        let mut cmd = Command::new("cargo");
+
+        apply_interop_device_codegen_options(
+            &mut cmd,
+            &ctx,
+            false,
+            InteropDeviceBuildOptions::standard(true),
+        );
+
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
+        assert_eq!(command_env(&cmd, "CUDA_OXIDE_DEBUG"), None);
     }
 
     #[test]

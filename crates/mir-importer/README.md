@@ -45,15 +45,22 @@ variables remain in stable memory locations for cuda-gdb.
 4. **Unroll** — Apply supported `#[unroll]` and `#[unroll(N)]` requests to the
    SSA form.
 5. **Lower and export** — Convert `dialect-mir` → LLVM dialect (via `mir-lower`)
-   and export LLVM IR. Float ops carry the `contract` fast-math flag so NVPTX
-   can fuse `fmul+fadd` into `fma.rn.f32` (matching nvcc's `--fmad=true`).
+   and export LLVM IR. By default, ordinary float operations carry the
+   `contract` fast-math flag so NVPTX can fuse `fmul+fadd` into `fma.rn.f32`
+   (matching nvcc's `--fmad=true`). `--no-fmad` omits that permission.
 6. **Optimize** — Run `opt -O2` (via `LlvmToolchain`) on the exported IR.
    Skipped for full-debug builds (`-G`) so locals stay inspectable under
    cuda-gdb. Override with `CUDA_OXIDE_NO_OPT=1`.
 7. **Generate** — Invoke `llc -fp-contract=fast` for PTX (or emit NVVM IR).
    The `-fp-contract=fast` flag activates the NVPTX backend's FMA contract
-   mode; pair with the IR `contract` flag from step 5. Disable with
-   `CUDA_OXIDE_NO_FMA=1` or `cargo oxide run --no-fmad`.
+   mode; pair with the IR `contract` flag from step 5. Disable both gates with
+   `CUDA_OXIDE_NO_FMA=1` or `cargo oxide run --no-fmad`. Explicit fused
+   operations such as `f32::mul_add` remain fused.
+
+NVVM IR and LTOIR defer final code generation. Their versioned `.target` file
+requires the sibling `.options` file, which tells cuda-host, libNVVM, and
+nvJitLink whether to use `-fma=0` or `-fma=1`. Copy both sidecars with the
+artifact; a missing required sidecar is an error rather than a silent fallback.
 
 ## Output Modes
 

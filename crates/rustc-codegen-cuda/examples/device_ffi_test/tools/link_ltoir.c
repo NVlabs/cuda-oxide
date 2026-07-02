@@ -16,12 +16,16 @@
  * Example:
  *   ./link_ltoir -arch=sm_120 -o merged.cubin \
  *       device_ffi_test.ltoir external_device_funcs.ltoir
+ *
+ * Sibling .options files preserve cuda-oxide's FMA policy. If any input
+ * disables contraction, the complete nvJitLink LTO step uses -fma=0.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <nvJitLink.h>
+#include "compile_options.h"
 
 #define MAX_INPUTS 32
 
@@ -97,7 +101,11 @@ char* read_file(const char* path, size_t* size_out) {
     fseek(f, 0, SEEK_SET);
 
     char* data = (char*)malloc(size);
-    fread(data, 1, size, f);
+    if (!data || fread(data, 1, size, f) != size) {
+        fclose(f);
+        free(data);
+        return NULL;
+    }
     fclose(f);
 
     *size_out = size;
@@ -128,6 +136,7 @@ int main(int argc, char** argv) {
     int verbose = 0;
     const char* input_files[MAX_INPUTS];
     int num_inputs = 0;
+    int allow_fma_contraction = 1;
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -159,6 +168,15 @@ int main(int argc, char** argv) {
         print_usage(argv[0]);
         return 1;
     }
+    for (int i = 0; i < num_inputs; i++) {
+        int input_allows_fma = 1;
+        if (cuda_oxide_read_fma_policy(input_files[i], &input_allows_fma) != 0) {
+            return 1;
+        }
+        if (!input_allows_fma) {
+            allow_fma_contraction = 0;
+        }
+    }
 
     printf("=== nvJitLink LTOIR Linker ===\n");
     printf("Architecture: %s\n", arch);
@@ -171,9 +189,12 @@ int main(int argc, char** argv) {
 
     const char* options[] = {
         arch_opt,
-        "-lto"
+        "-lto",
+        allow_fma_contraction ? "-fma=1" : "-fma=0"
     };
-    int num_options = 2;
+    int num_options = 3;
+
+    printf("FMA contraction: %s\n", allow_fma_contraction ? "on" : "off");
 
     nvJitLinkHandle handle;
     nvJitLinkResult result = nvJitLinkCreate(&handle, num_options, options);

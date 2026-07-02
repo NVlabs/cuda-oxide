@@ -802,7 +802,18 @@ fn write_device_artifact_object(
             oxide_artifacts::ArtifactPayloadKind::Cubin
         }
     };
+    let compile_options = if matches!(
+        artifact.kind,
+        device_codegen::DeviceCodegenArtifactKind::NvvmIr
+            | device_codegen::DeviceCodegenArtifactKind::Ltoir
+    ) {
+        oxide_artifacts::ArtifactCompileOptions::new()
+            .with_fma_contraction(result.allow_fma_contraction)
+    } else {
+        oxide_artifacts::ArtifactCompileOptions::new()
+    };
     let mut spec = oxide_artifacts::ArtifactBundleSpec::new(&bundle_name, &result.target)
+        .with_compile_options(compile_options)
         .with_payload(oxide_artifacts::ArtifactPayloadSpec::new(
             payload_kind,
             &artifact.name,

@@ -7,7 +7,9 @@
 
 use crate::{CudaContext, CudaModule, DriverError};
 use oxide_artifacts::ArtifactError;
-pub use oxide_artifacts::{ArtifactPayloadKind, OwnedArtifactBundle};
+pub use oxide_artifacts::{
+    ArtifactCompileOptions, ArtifactPayloadKind, COMPILE_OPTIONS_TARGET_MARKER, OwnedArtifactBundle,
+};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -161,6 +163,7 @@ mod tests {
         let bundle = OwnedArtifactBundle {
             name: "demo".to_string(),
             target: "sm_90".to_string(),
+            compile_options: ArtifactCompileOptions::new(),
             payloads: Vec::new(),
             entries: Vec::new(),
         };
@@ -173,6 +176,7 @@ mod tests {
         let bundle = OwnedArtifactBundle {
             name: "demo".to_string(),
             target: "sm_90".to_string(),
+            compile_options: ArtifactCompileOptions::new(),
             payloads: vec![OwnedArtifactPayload {
                 kind: ArtifactPayloadKind::Ptx,
                 name: "demo.ptx".to_string(),
@@ -191,6 +195,7 @@ mod tests {
         let bundle = OwnedArtifactBundle {
             name: "demo".to_string(),
             target: "sm_90".to_string(),
+            compile_options: ArtifactCompileOptions::new(),
             payloads: vec![OwnedArtifactPayload {
                 kind: ArtifactPayloadKind::Cubin,
                 name: "demo.cubin".to_string(),

@@ -430,8 +430,15 @@ verdict_compile() {
     fi
     if [[ -s "${ex_dir}/${artifact}.ll" ]]; then
         local target_file="${ex_dir}/${artifact}.target"
-        if [[ -s "${target_file}" ]] && grep -qE '^sm_[0-9]+[af]?$' "${target_file}"; then
-            echo "PASS (compiled NVVM IR for $(tr -d '[:space:]' < "${target_file}"))"
+        local target
+        target="$(sed -n '1p' "${target_file}" 2>/dev/null)"
+        if [[ "${target}" =~ ^sm_[0-9]+[af]?$ ]]; then
+            if grep -qx 'compile-options=v1' "${target_file}" && \
+               [[ ! -s "${ex_dir}/${artifact}.options" ]]; then
+                echo "FAIL (versioned NVVM IR target is missing its .options sidecar)"
+                return 1
+            fi
+            echo "PASS (compiled NVVM IR for ${target})"
             return 0
         fi
         echo "FAIL (NVVM IR emitted without a concrete .target sidecar)"

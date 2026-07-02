@@ -202,6 +202,7 @@ dependencies = [
  "clap",
  "libnvvm-sys",
  "nvjitlink-sys",
+ "oxide-artifacts",
  "serde_json",
  "toml",
 ]
@@ -787,6 +788,7 @@ dependencies = [
  "mir-transforms",
  "nvvm-transforms",
  "once_cell",
+ "oxide-artifacts",
  "pliron",
  "pliron-derive",
  "rustc-hash",

@@ -242,6 +242,9 @@ pub struct DeviceCodegenResult {
     pub ptx_content: Option<String>,
     /// Device artifact payload selected for embedding.
     pub artifact: Option<DeviceCodegenArtifact>,
+    /// Whether later compilation stages may contract ordinary floating-point
+    /// multiply/add expressions.
+    pub allow_fma_contraction: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -669,6 +672,11 @@ pub fn generate_device_code<'tcx>(
         let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
         let target_arch = std::env::var("CUDA_OXIDE_TARGET").ok();
         let device_arch_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
+        let allow_fma_contraction = std::env::var_os("CUDA_OXIDE_NO_FMA").is_none();
+
+        if verbose && !allow_fma_contraction {
+            eprintln!("[device_codegen] FMA contraction disabled");
+        }
 
         // Create pipeline config
         let pipeline_config = mir_importer::PipelineConfig {
@@ -681,6 +689,7 @@ pub fn generate_device_code<'tcx>(
             target_arch,
             device_arch_hint,
             debug_kind,
+            allow_fma_contraction,
         };
 
         // Run the cuda-oxide pipeline!
@@ -727,6 +736,7 @@ pub fn generate_device_code<'tcx>(
                     target: compilation_result.target,
                     ptx_content,
                     artifact,
+                    allow_fma_contraction: compilation_result.allow_fma_contraction,
                 })
             }
             Err(pipeline_err) => Err(DeviceCodegenError::PtxGeneration(format!(
@@ -856,6 +866,7 @@ mod tests {
             artifact_path: ll_path,
             artifact_kind: mir_importer::CompilationArtifactKind::NvvmIr,
             target: "sm_90".to_string(),
+            allow_fma_contraction: false,
         };
 
         let artifact = read_compilation_artifact(&result).unwrap().unwrap();
@@ -881,6 +892,7 @@ mod tests {
             artifact_path: cubin_path,
             artifact_kind: mir_importer::CompilationArtifactKind::Cubin,
             target: "sm_90".to_string(),
+            allow_fma_contraction: true,
         };
 
         let artifact = read_compilation_artifact(&result).unwrap().unwrap();

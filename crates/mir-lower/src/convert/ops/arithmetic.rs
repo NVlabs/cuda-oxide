@@ -113,17 +113,23 @@ fn is_signed_int_op(
     }
 }
 
-/// Add fastmath flags to a floating-point operation.
+/// Add the configured fast-math flags to a floating-point operation.
 ///
-/// Sets ONLY `contract`, which lets the NVPTX backend fuse an `fmul`
-/// feeding an `fadd`/`fsub` into a single `fma.rn.f32`. This matches
-/// nvcc's default `--fmad=true`: the one fast-math relaxation NVIDIA
-/// enables out of the box. The only IEEE deviation is the single (more
-/// accurate) rounding of the fused op. We deliberately do NOT set
-/// reassoc/nnan/ninf/nsz/arcp, so results stay bit-comparable to a
-/// contracted reference (no algebraic reordering).
+/// By default this sets ONLY `contract`, which lets the NVPTX backend fuse an
+/// `fmul` feeding an `fadd`/`fsub` into a single `fma.rn.f32`. This matches
+/// nvcc's default `--fmad=true`: the one fast-math relaxation NVIDIA enables
+/// out of the box. When the caller disables contraction, no fast-math
+/// permission is granted and multiply/add operations round separately.
+///
+/// We deliberately never set reassoc/nnan/ninf/nsz/arcp, so results stay
+/// bit-comparable to the selected contracted or uncontracted reference.
 fn add_fastmath_flags(ctx: &mut Context, op: Ptr<Operation>) {
-    let flags = FastmathFlagsAttr(FastmathFlags::CONTRACT);
+    let flags = if crate::context::lowering_options(ctx).allow_fma_contraction {
+        FastmathFlags::CONTRACT
+    } else {
+        FastmathFlags::empty()
+    };
+    let flags = FastmathFlagsAttr(flags);
     let key: pliron::identifier::Identifier = "llvm_fast_math_flags".try_into().unwrap();
     op.deref_mut(ctx).attributes.set(key, flags);
 }
@@ -879,5 +885,68 @@ mod tests {
             FastmathFlags::CONTRACT,
             "float add must carry exactly the contract fast-math flag"
         );
+    }
+
+    /// Disabling contraction removes the IR-level permission from both sides
+    /// of a multiply-add chain. The backend command-line gate alone is not
+    /// sufficient when either instruction still carries `contract`.
+    #[test]
+    fn no_fma_contraction_omits_contract_flags_from_mul_add_sub_chains() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![f32_ty, f32_ty, f32_ty], vec![]);
+        let lhs = block.deref(&ctx).get_argument(0);
+        let rhs = block.deref(&ctx).get_argument(1);
+        let addend = block.deref(&ctx).get_argument(2);
+
+        let mul_op = Operation::new(
+            &mut ctx,
+            mir::MirMulOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![lhs, rhs],
+            vec![],
+            0,
+        );
+        let product = mul_op.deref(&ctx).get_result(0);
+        mul_op.insert_at_back(block, &ctx);
+
+        let add_op = Operation::new(
+            &mut ctx,
+            mir::MirAddOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![product, addend],
+            vec![],
+            0,
+        );
+        add_op.insert_at_back(block, &ctx);
+
+        let sub_op = Operation::new(
+            &mut ctx,
+            mir::MirSubOp::get_concrete_op_info(),
+            vec![f32_ty],
+            vec![product, addend],
+            vec![],
+            0,
+        );
+        sub_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm_with_options(
+            &mut ctx,
+            module_ptr,
+            crate::LoweringOptions {
+                allow_fma_contraction: false,
+            },
+        )
+        .expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let fmul = find_first::<llvm::FMulOp>(&ctx, &body).expect("expected one llvm.fmul");
+        let fadd = find_first::<llvm::FAddOp>(&ctx, &body).expect("expected one llvm.fadd");
+        let fsub = find_first::<llvm::FSubOp>(&ctx, &body).expect("expected one llvm.fsub");
+        assert_eq!(fmul.fast_math_flags(&ctx).0, FastmathFlags::empty());
+        assert_eq!(fadd.fast_math_flags(&ctx).0, FastmathFlags::empty());
+        assert_eq!(fsub.fast_math_flags(&ctx).0, FastmathFlags::empty());
     }
 }

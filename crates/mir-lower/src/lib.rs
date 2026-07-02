@@ -154,6 +154,24 @@ use type_conversion_interface::MirConvertibleType;
 // DialectConversion driver
 // ============================================================================
 
+/// Options controlling the `dialect-mir` to LLVM dialect lowering pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoweringOptions {
+    /// Whether ordinary floating-point multiply/add or multiply/subtract
+    /// expressions may contract into fused operations.
+    ///
+    /// This does not affect explicit fused operations such as `f32::mul_add`.
+    pub allow_fma_contraction: bool,
+}
+
+impl Default for LoweringOptions {
+    fn default() -> Self {
+        Self {
+            allow_fma_contraction: true,
+        }
+    }
+}
+
 /// `dialect-mir` → LLVM dialect conversion driver.
 ///
 /// Implements pliron's `DialectConversion` trait. The `rewrite` method uses
@@ -302,6 +320,19 @@ impl DialectConversion for MirToLlvmConversionDriver {
 ///
 /// `Ok(())` if all operations were successfully converted.
 pub fn lower_mir_to_llvm(ctx: &mut Context, module_op: Ptr<Operation>) -> Result<()> {
+    lower_mir_to_llvm_with_options(ctx, module_op, LoweringOptions::default())
+}
+
+/// Runs the `dialect-mir` → LLVM dialect lowering pass with explicit options.
+///
+/// Use this entry point when the caller needs compilation-wide floating-point
+/// policy such as disabling implicit FMA contraction.
+pub fn lower_mir_to_llvm_with_options(
+    ctx: &mut Context,
+    module_op: Ptr<Operation>,
+    options: LoweringOptions,
+) -> Result<()> {
+    context::set_lowering_options(ctx, options);
     let mut conversion = MirToLlvmConversionDriver {
         shared_globals: FxHashMap::default(),
         device_globals: FxHashMap::default(),

@@ -52,7 +52,7 @@ cargo oxide setup                   # explicitly build the codegen backend
 | `--device-codegen-crate <LIST>` | build/test passthrough        | Comma-separated device owner crate filter       |
 | `--device-cfg <NAME>`        | build/test passthrough           | Append `--cfg NAME` to rustflags                |
 | `-v, --verbose`              | run, sanitize, build, test, emit-ltoir | Show detailed compilation output           |
-| `--no-fmad`                  | run, sanitize, build, pipeline   | Request separate mul+add; backend limitation tracked in [#315](https://github.com/NVlabs/cuda-oxide/issues/315) |
+| `--no-fmad`                  | run, sanitize, build, emit-ltoir, pipeline | Keep ordinary multiply and add/subtract operations separate |
 | `--async`                    | new                              | Use the async template                          |
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
 | `--tui`                      | debug                            | Use GDB's TUI interface                         |
@@ -63,10 +63,13 @@ artifacts are architecture-specific. Without an override, `run` detects the
 local GPU, while `build` and `pipeline` use the compiler's feature-based target
 so they remain useful for cross-compilation.
 
-`--no-fmad` forwards the same experimental request as
-`CUDA_OXIDE_NO_FMA=1`. The current IR-level `contract` flag can still fuse
-`fmul+fadd`, so code that requires two separate roundings must not rely on this
-request until [#315](https://github.com/NVlabs/cuda-oxide/issues/315) is fixed.
+`--no-fmad` (or `CUDA_OXIDE_NO_FMA=1`) disables implicit contraction of an
+ordinary multiply followed by an add or subtract, so the two operations round
+separately. Explicit fused operations such as `f32::mul_add` remain fused.
+For NVVM IR and LTOIR, cuda-oxide records the policy in matching `.options`
+and versioned `.target` files and passes `-fma=0` through libNVVM and
+nvJitLink. Keep both sidecars with the artifact when another build system
+consumes it.
 
 ## Commands
 

@@ -7,8 +7,9 @@
 
 use crate::ltoir;
 pub use cuda_core::embedded::{
-    ArtifactPayloadKind, EmbeddedModule, OwnedArtifactBundle, artifact_bundles_from_binary_path,
-    artifact_bundles_from_current_exe, embedded_modules_from_current_exe,
+    ArtifactCompileOptions, ArtifactPayloadKind, EmbeddedModule, OwnedArtifactBundle,
+    artifact_bundles_from_binary_path, artifact_bundles_from_current_exe,
+    embedded_modules_from_current_exe,
 };
 use cuda_core::{CudaContext, CudaModule, DriverError};
 use std::sync::Arc;
@@ -147,13 +148,20 @@ fn load_bundle(
     if let Some(nvvm_ir) = bundle.payload(ArtifactPayloadKind::NvvmIr) {
         let emitted = target_arch_for_bundle(bundle)?;
         let execution = ltoir::execution_arch_for_context(ctx)?;
+        let allow_fma_contraction = bundle.compile_options.fma_contraction_enabled();
         let image = match ltoir::execution_route(&emitted, &execution)? {
-            ltoir::ExecutionRoute::Cubin => {
-                ltoir::build_cubin_from_nvvm_ir(nvvm_ir, &bundle.name, &emitted.sm())?
-            }
-            ltoir::ExecutionRoute::PtxBridge => {
-                ltoir::build_ptx_from_nvvm_ir(nvvm_ir, &bundle.name, &emitted.sm())?
-            }
+            ltoir::ExecutionRoute::Cubin => ltoir::build_cubin_from_nvvm_ir_with_options(
+                nvvm_ir,
+                &bundle.name,
+                &emitted.sm(),
+                allow_fma_contraction,
+            )?,
+            ltoir::ExecutionRoute::PtxBridge => ltoir::build_ptx_from_nvvm_ir_with_options(
+                nvvm_ir,
+                &bundle.name,
+                &emitted.sm(),
+                allow_fma_contraction,
+            )?,
         };
         return Ok(ctx.load_module_from_image(&image)?);
     }
@@ -161,13 +169,20 @@ fn load_bundle(
     if let Some(ltoir) = bundle.payload(ArtifactPayloadKind::Ltoir) {
         let emitted = target_arch_for_bundle(bundle)?;
         let execution = ltoir::execution_arch_for_context(ctx)?;
+        let allow_fma_contraction = bundle.compile_options.fma_contraction_enabled();
         let image = match ltoir::execution_route(&emitted, &execution)? {
-            ltoir::ExecutionRoute::Cubin => {
-                ltoir::link_ltoir_to_cubin(ltoir, &bundle.name, &emitted.sm())?
-            }
-            ltoir::ExecutionRoute::PtxBridge => {
-                ltoir::link_ltoir_to_ptx(ltoir, &bundle.name, &emitted.sm())?
-            }
+            ltoir::ExecutionRoute::Cubin => ltoir::link_ltoir_to_cubin_with_options(
+                ltoir,
+                &bundle.name,
+                &emitted.sm(),
+                allow_fma_contraction,
+            )?,
+            ltoir::ExecutionRoute::PtxBridge => ltoir::link_ltoir_to_ptx_with_options(
+                ltoir,
+                &bundle.name,
+                &emitted.sm(),
+                allow_fma_contraction,
+            )?,
         };
         return Ok(ctx.load_module_from_image(&image)?);
     }
@@ -210,6 +225,7 @@ mod tests {
         OwnedArtifactBundle {
             name: "demo".to_string(),
             target: target.to_string(),
+            compile_options: ArtifactCompileOptions::new(),
             payloads: Vec::new(),
             entries: Vec::new(),
         }

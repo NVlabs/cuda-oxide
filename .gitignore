@@ -3,6 +3,7 @@ target/
 *.ptx
 *.ltoir
 *.target
+*.options
 .ltoir_arch
 *.ll
 *.bc

@@ -349,6 +349,7 @@ dependencies = [
  "mir-transforms",
  "nvvm-transforms",
  "once_cell",
+ "oxide-artifacts",
  "pliron",
  "pliron-derive",
  "rustc-hash",

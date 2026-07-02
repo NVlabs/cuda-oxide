@@ -22,12 +22,16 @@
  * before compiling, so any `__nv_*` math symbols in the input are resolved
  * during this step. The resulting LTOIR is self-contained and `link_ltoir`
  * does not need to add libdevice separately.
+ *
+ * A sibling <input>.options file selects -fma=0 or -fma=1. The tool writes
+ * matching .options and versioned .target files beside the output LTOIR.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <nvvm.h>
+#include "compile_options.h"
 
 /**
  * Check an NVVM result and exit with error message if it failed.
@@ -72,6 +76,7 @@ int main(int argc, char** argv) {
     const char* arch = argv[2];
     const char* outputFile = NULL;
     const char* libdeviceFile = NULL;
+    int allowFmaContraction = 1;
 
     // Positional output file is optional and must come before --libdevice.
     int argi = 3;
@@ -86,6 +91,10 @@ int main(int argc, char** argv) {
             fprintf(stderr, "Error: unknown argument: %s\n", argv[argi]);
             return 1;
         }
+    }
+
+    if (cuda_oxide_read_fma_policy(inputFile, &allowFmaContraction) != 0) {
+        return 1;
     }
 
     // Print libNVVM version info
@@ -112,7 +121,12 @@ int main(int argc, char** argv) {
     size_t size = ftell(f);
     fseek(f, 0, SEEK_SET);
     char* buffer = malloc(size + 1);
-    fread(buffer, 1, size, f);
+    if (!buffer || fread(buffer, 1, size, f) != size) {
+        fprintf(stderr, "Error: Cannot read %s\n", inputFile);
+        fclose(f);
+        free(buffer);
+        return 1;
+    }
     buffer[size] = '\0';
     fclose(f);
     printf("Read %zu bytes from %s\n", size, inputFile);
@@ -138,7 +152,14 @@ int main(int argc, char** argv) {
         libdeviceSize = ftell(lf);
         fseek(lf, 0, SEEK_SET);
         libdeviceBuffer = malloc(libdeviceSize);
-        fread(libdeviceBuffer, 1, libdeviceSize, lf);
+        if (!libdeviceBuffer || fread(libdeviceBuffer, 1, libdeviceSize, lf) != libdeviceSize) {
+            fprintf(stderr, "Error: Cannot read libdevice file %s\n", libdeviceFile);
+            fclose(lf);
+            nvvmDestroyProgram(&prog);
+            free(buffer);
+            free(libdeviceBuffer);
+            return 1;
+        }
         fclose(lf);
         printf("Read %zu bytes of libdevice from %s\n", libdeviceSize, libdeviceFile);
 
@@ -188,11 +209,12 @@ int main(int argc, char** argv) {
 
     const char* options[] = {
         archOption,
-        "-gen-lto"  // Generate LTOIR for link-time optimization
+        "-gen-lto",  // Generate LTOIR for link-time optimization
+        allowFmaContraction ? "-fma=1" : "-fma=0"
     };
-    int numOptions = 2;
+    int numOptions = 3;
 
-    printf("Compiling with options: %s %s\n", options[0], options[1]);
+    printf("Compiling with options: %s %s %s\n", options[0], options[1], options[2]);
 
     // Compile
     nvvmResult compileResult = nvvmCompileProgram(prog, numOptions, options);
@@ -222,27 +244,33 @@ int main(int argc, char** argv) {
     check_nvvm(nvvmGetCompiledResult(prog, result), "nvvmGetCompiledResult", prog);
 
     // Save LTOIR
-    if (outputFile) {
-        FILE* out = fopen(outputFile, "wb");
-        if (out) {
-            fwrite(result, 1, resultSize, out);
-            fclose(out);
-            printf("Saved LTOIR to: %s\n", outputFile);
-        } else {
-            fprintf(stderr, "Error: Cannot write to %s\n", outputFile);
+    char autoOutput[4096];
+    if (!outputFile) {
+        const char* dot = strrchr(inputFile, '.');
+        size_t stemLength = dot ? (size_t)(dot - inputFile) : strlen(inputFile);
+        if (stemLength + sizeof(".ltoir") > sizeof(autoOutput)) {
+            fprintf(stderr, "Error: output path is too long\n");
+            return 1;
         }
-    } else {
-        // Generate output filename from input
-        char autoOutput[256];
-        snprintf(autoOutput, sizeof(autoOutput), "%.*s.ltoir",
-                 (int)(strrchr(inputFile, '.') - inputFile), inputFile);
-        FILE* out = fopen(autoOutput, "wb");
-        if (out) {
-            fwrite(result, 1, resultSize, out);
-            fclose(out);
-            printf("Saved LTOIR to: %s\n", autoOutput);
-        }
+        memcpy(autoOutput, inputFile, stemLength);
+        memcpy(autoOutput + stemLength, ".ltoir", sizeof(".ltoir"));
+        outputFile = autoOutput;
     }
+    if (cuda_oxide_clear_compile_metadata(outputFile) != 0) {
+        return 1;
+    }
+    FILE* out = fopen(outputFile, "wb");
+    if (!out || fwrite(result, 1, resultSize, out) != resultSize || fclose(out) != 0) {
+        fprintf(stderr, "Error: Cannot write to %s\n", outputFile);
+        return 1;
+    }
+    if (cuda_oxide_write_fma_policy(outputFile, allowFmaContraction) != 0) {
+        return 1;
+    }
+    if (cuda_oxide_write_target_metadata(outputFile, arch) != 0) {
+        return 1;
+    }
+    printf("Saved LTOIR to: %s\n", outputFile);
 
     // Cleanup
     free(result);
