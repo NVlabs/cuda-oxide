@@ -321,6 +321,27 @@ inspect the GPU state.
 Guard it with a compile-time flag or only use it during debugging sessions.
 :::
 
+## `cargo oxide sanitize` -- Compute Sanitizer
+
+For memory and synchronization correctness checks, run the same build path under
+NVIDIA Compute Sanitizer:
+
+```bash
+cargo oxide sanitize vecadd
+cargo oxide sanitize sharedmem --tool racecheck
+cargo oxide sanitize debug --tool synccheck -- --kernel-name kns=clock
+cargo oxide sanitize my_app -- --leak-check full -- --app-flag value
+```
+
+`memcheck` is the default tool. Use `racecheck` for shared-memory hazards,
+`initcheck` for uninitialized global-memory reads, and `synccheck` for invalid
+synchronization usage. Extra arguments after `--` are passed directly to
+`compute-sanitizer` before the executable; use a second `--` to pass arguments
+to the target program after the executable.
+
+Run `memcheck` first when investigating memory safety. The other tools are
+complementary and do not perform full memory-access checking.
+
 ## `cargo oxide doctor` -- environment validation
 
 Before debugging kernel failures, verify your environment is correctly set up:
