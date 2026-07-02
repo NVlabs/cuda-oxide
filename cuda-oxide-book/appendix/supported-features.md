@@ -94,6 +94,7 @@ layout-aware field decoding rather than the primitive byte-slicing rule.
 | LTOIR Linking | **Full** | Device-side LTO via libNVVM and nvJitLink. |
 | Float Math Intrinsics (libdevice) | **Full** | Rust `f32`/`f64` math methods (`sin`, `cos`, `exp`, `pow`, `sqrt`, ...) lower to CUDA libdevice (`__nv_*`) on pre-Blackwell and Blackwell GPUs. cuda-oxide selects the matching NVVM IR syntax automatically. On Blackwell, the runtime can also JIT PTX produced from a standard pre-Blackwell target such as `sm_86`. |
 | Pipeline Inspection | **Full** | `cargo oxide pipeline <example>` shows imported and post-`mem2reg` MIR, LLVM dialect, exported LLVM IR, and PTX. |
+| Compute Sanitizer Wrapper | **Full** | `cargo oxide sanitize <example>` builds the example and runs the host binary under NVIDIA Compute Sanitizer (`memcheck`, `racecheck`, `initcheck`, or `synccheck`). |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
 | cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, and structs/tuples/arrays with their fields. Enums, ABI-split bare slices, closures, and projections (`x.0`) are not yet described. |
 

@@ -31,6 +31,7 @@ cargo oxide test                    # cargo test with cuda-oxide defaults
 cargo oxide test -- -p my_app       # arbitrary cargo test through cuda-oxide
 cargo oxide pipeline vecadd         # verbose pipeline dump
                                     # (MIR -> dialect-mir -> LLVM dialect -> LLVM IR -> PTX)
+cargo oxide sanitize vecadd         # build + run under NVIDIA Compute Sanitizer
 cargo oxide debug vecadd --tui      # build + launch cuda-gdb
 cargo oxide fmt                     # format all crates
 cargo oxide fmt --check             # check formatting
@@ -43,14 +44,15 @@ cargo oxide setup                   # explicitly build the codegen backend
 | Flag                         | Applies to                       | Description                                     |
 |------------------------------|----------------------------------|-------------------------------------------------|
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
-| `--arch <sm_XX>`             | run, build, test, pipeline, emit-ltoir | Target architecture override          |
-| `--features <F>`             | run, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
+| `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir | Target architecture override |
+| `--features <F>`             | run, sanitize, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
+| `--tool <T>`                 | sanitize                         | Compute Sanitizer tool: `memcheck`, `racecheck`, `initcheck`, or `synccheck` |
 | `-o, --output <P>`           | emit-ltoir                       | Output path for the `.ltoir` artifact           |
 | `--cargo-target-dir <PATH>`  | build/test passthrough           | Cargo target directory                          |
 | `--device-codegen-crate <LIST>` | build/test passthrough        | Comma-separated device owner crate filter       |
 | `--device-cfg <NAME>`        | build/test passthrough           | Append `--cfg NAME` to rustflags                |
-| `-v, --verbose`              | run, build, test, emit-ltoir     | Show detailed compilation output                |
-| `--no-fmad`                  | run, build, pipeline             | Disable FMA contraction (keep separate mul+add) |
+| `-v, --verbose`              | run, sanitize, build, test, emit-ltoir | Show detailed compilation output           |
+| `--no-fmad`                  | run, sanitize, build, pipeline   | Disable FMA contraction (keep separate mul+add) |
 | `--async`                    | new                              | Use the async template                          |
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
 | `--tui`                      | debug                            | Use GDB's TUI interface                         |
@@ -93,6 +95,27 @@ configured location, and then builds/runs the host crate normally.
 `cutile_inter_kernel` uses this path:
 the host crate is a cutile-rs program, while `simt/` is a cuda-oxide SIMT PTX
 crate loaded by the host at runtime.
+
+### `cargo oxide sanitize <example>`
+
+Builds an example like `cargo oxide run`, then executes the produced release
+binary under NVIDIA Compute Sanitizer. `memcheck` is the default tool; use
+`--tool racecheck`, `--tool initcheck`, or `--tool synccheck` for shared-memory
+hazard, uninitialized global-memory, or synchronization checks.
+
+```bash
+cargo oxide sanitize vecadd --arch sm_75
+cargo oxide sanitize sharedmem --tool racecheck
+cargo oxide sanitize debug --tool synccheck -- --kernel-name kns=sync
+cargo oxide sanitize vecadd -- --leak-check full
+cargo oxide sanitize my_app -- --leak-check full -- --app-flag value
+```
+
+Arguments after the first `--` are passed to `compute-sanitizer` before the
+executable. A second `--` splits target program arguments, matching
+`compute-sanitizer [options] [your-program] [your-program-options]`.
+NVIDIA recommends treating the tools as complementary: `racecheck`,
+`initcheck`, and `synccheck` do not replace `memcheck` memory-access checking.
 
 ### `cargo oxide build <example>`
 
