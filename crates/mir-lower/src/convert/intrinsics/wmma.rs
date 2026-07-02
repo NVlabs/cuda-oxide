@@ -8,7 +8,7 @@
 use crate::convert::intrinsics::common::*;
 use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
-use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
@@ -107,52 +107,41 @@ pub(crate) fn convert_mma_m16n8k16_f32_bf16(
 
 /// Convert `mma_m8n8k4_f64` to inline PTX assembly.
 ///
-/// The inline asm block:
-/// 1. Loads 2 f64 accumulators from `acc_ptr`
-/// 2. Loads 1 f64 A-fragment value from `a_ptr`
-/// 3. Loads 1 f64 B-fragment value from `b_ptr`
-/// 4. Executes `mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64`
-/// 5. Stores 2 f64 results back to `acc_ptr`
+/// The operation consumes the two C registers plus A and B directly, and
+/// returns both D fragment registers. No pointer or memory operand is involved.
 pub(crate) fn convert_mma_m8n8k4_f64(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() < 3 {
+    if operands.len() != 4 {
         return pliron::input_err_noloc!(
-            "mma_m8n8k4_f64 requires 3 operands (acc_ptr, a_ptr, b_ptr)"
+            "mma_m8n8k4_f64 requires 4 f64 operands (c0, c1, a, b), got {}",
+            operands.len()
         );
     }
 
-    // $0 = acc_ptr, $1 = a_ptr, $2 = b_ptr
-    let asm = "\
-        .reg .f64 c<2>; \
-        .reg .f64 d<2>; \
-        .reg .f64 a0; \
-        .reg .f64 b0; \
-        ld.f64 c0, [$0]; \
-        ld.f64 c1, [$0+8]; \
-        ld.f64 a0, [$1]; \
-        ld.f64 b0, [$2]; \
-        mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 \
-            {d0, d1}, \
-            {a0}, \
-            {b0}, \
-            {c0, c1}; \
-        st.f64 [$0], d0; \
-        st.f64 [$0+8], d1;";
-
-    inline_asm_convergent(
+    let f64_ty = FP64Type::get(ctx);
+    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![f64_ty.into(), f64_ty.into()]);
+    let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
-        void_ty.into(),
+        result_ty.into(),
         operands,
-        asm,
-        "l,l,l,~{memory}",
+        "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 \
+         {$0, $1}, {$4}, {$5}, {$2, $3};",
+        "=d,=d,d,d,d,d",
     );
-    rewriter.erase_operation(ctx, op);
+
+    let aggregate = inline_asm.deref(ctx).get_result(0);
+    let mut results = Vec::with_capacity(2);
+    for index in 0..2 {
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index])?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        results.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    rewriter.replace_operation_with_values(ctx, op, results);
     Ok(())
 }

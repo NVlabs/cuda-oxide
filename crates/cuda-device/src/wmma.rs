@@ -225,11 +225,19 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
 /// - **B**: 4x8 (col-major, f64), distributed as 1 x f64 per thread
 /// - **D/C**: 8x8 (f64 accumulator), distributed as 2 x f64 per thread
 ///
-/// # Parameters
+/// Each lane owns these matrix elements:
 ///
-/// - `acc`: Mutable accumulator (2 x f64 per thread, read-modify-write: D = A*B + acc)
-/// - `a`: A fragment (1 x f64)
-/// - `b`: B fragment (1 x f64)
+/// ```text
+/// A:   row = lane / 4, column = lane % 4
+/// B:   row = lane % 4, column = lane / 4
+/// C/D: row = lane / 4, columns = 2 * (lane % 4) + {0, 1}
+/// ```
+///
+/// `acc` contains the lane's two C-fragment registers. The return value is
+/// the lane's two D-fragment registers. `a` and `b` are the lane's single
+/// multiplicand registers.
+///
+/// The multiply-add uses round-to-nearest-even (`.rn`) rounding.
 ///
 /// # PTX
 ///
@@ -245,10 +253,12 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
 ///
 /// - All 32 lanes in the warp must execute the same call together.
 /// - Calling from divergent control flow is undefined behavior.
+/// - No participating lane may have exited before the call.
 /// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
 ///   automatically.
 #[inline(never)]
-pub unsafe fn mma_m8n8k4_f64(acc: &mut [f64; 2], a: &f64, b: &f64) {
+#[must_use]
+pub unsafe fn mma_m8n8k4_f64(acc: [f64; 2], a: f64, b: f64) -> [f64; 2] {
     let _ = (acc, a, b);
     unreachable!("mma_m8n8k4_f64 called outside CUDA kernel context")
 }

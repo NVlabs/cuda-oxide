@@ -3654,12 +3654,6 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
-        // =================================================================
-        // WMMA (from intrinsics::wmma), Ampere+ mma.sync
-        // =================================================================
-        "cuda_device::wmma::mma_m8n8k4_f64" => Ok(Some(intrinsics::wmma::emit_mma_m8n8k4_f64(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-        )?)),
 
         // =================================================================
         // WMMA (from intrinsics::wmma), Ampere+ mma.sync
@@ -3678,6 +3672,18 @@ fn try_dispatch_intrinsic(
                 loc,
             )?))
         }
+        "cuda_device::wmma::mma_m8n8k4_f64" => Ok(Some(intrinsics::wmma::emit_mma_m8n8k4_f64(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
 
         // =================================================================
         // WGMMA (from intrinsics::wgmma)

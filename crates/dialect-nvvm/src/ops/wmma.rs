@@ -5,10 +5,9 @@
 
 //! Warp-level matrix dialect operations.
 
-use dialect_mir::types::MirPtrType;
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
-    builtin::types::{FP32Type, IntegerType},
+    builtin::types::{FP32Type, FP64Type, IntegerType},
     common_traits::Verify,
     context::Context,
     context::Ptr,
@@ -166,17 +165,17 @@ impl MmaM16N8K16F32Bf16Op {
 ///
 /// # Operands
 ///
-/// - `acc_ptr` (ptr): pointer to `[f64; 2]` accumulator (read-modify-write)
-/// - `a_ptr` (ptr): pointer to `f64` A fragment
-/// - `b_ptr` (ptr): pointer to `f64` B fragment
+/// - `c0`, `c1` (f64): lane-local accumulator fragment
+/// - `a` (f64): lane-local A fragment
+/// - `b` (f64): lane-local B fragment
 ///
 /// # Results
 ///
-/// - None (accumulator updated in-place via pointer)
+/// - `d0`, `d1` (f64): lane-local result fragment
 #[pliron_op(
     name = "nvvm.mma_m8n8k4_f64",
     format,
-    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+    interfaces = [NOpdsInterface<4>, NResultsInterface<2>],
 )]
 pub struct MmaM8N8K4F64Op;
 
@@ -185,27 +184,33 @@ impl Verify for MmaM8N8K4F64Op {
         let op = self.get_operation().deref(ctx);
         let operands: Vec<_> = op.operands().collect();
 
-        if operands.len() != 3 {
+        if operands.len() != 4 {
             return verify_err!(
                 op.loc(),
-                "nvvm.mma_m8n8k4_f64 requires 3 pointer operands, got {}",
+                "nvvm.mma_m8n8k4_f64 requires 4 f64 operands (c0, c1, a, b), got {}",
                 operands.len()
             );
         }
 
         for (i, operand) in operands.iter().enumerate() {
             let ty = operand.get_type(ctx);
-            if ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
-                return verify_err!(
-                    op.loc(),
-                    "nvvm.mma_m8n8k4_f64 operand {} must be a MIR pointer",
-                    i
-                );
+            if ty.deref(ctx).downcast_ref::<FP64Type>().is_none() {
+                return verify_err!(op.loc(), "nvvm.mma_m8n8k4_f64 operand {} must be f64", i);
             }
         }
 
-        if op.get_num_results() != 0 {
-            return verify_err!(op.loc(), "nvvm.mma_m8n8k4_f64 must have 0 results");
+        if op.get_num_results() != 2 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mma_m8n8k4_f64 requires 2 f64 results (d0, d1), got {}",
+                op.get_num_results()
+            );
+        }
+        for i in 0..2 {
+            let ty = op.get_result(i).get_type(ctx);
+            if ty.deref(ctx).downcast_ref::<FP64Type>().is_none() {
+                return verify_err!(op.loc(), "nvvm.mma_m8n8k4_f64 result {} must be f64", i);
+            }
         }
 
         Ok(())

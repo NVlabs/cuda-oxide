@@ -3407,22 +3407,23 @@ fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), any
 
 #[test]
 fn test_mma_m8n8k4_f64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use llvm_export::types::PointerType;
+    use pliron::builtin::types::FP64Type;
 
     let mut ctx = make_test_ctx();
-    let ptr_ty = PointerType::get(&mut ctx, 0);
-    let (module_ptr, entry) =
-        build_test_kernel(&mut ctx, vec![ptr_ty.into(), ptr_ty.into(), ptr_ty.into()]);
-
-    let acc_ptr = entry.deref(&ctx).get_argument(0);
-    let a_ptr = entry.deref(&ctx).get_argument(1);
-    let b_ptr = entry.deref(&ctx).get_argument(2);
+    let f64_ty = FP64Type::get(&ctx);
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![f64_ty.into(), f64_ty.into(), f64_ty.into(), f64_ty.into()],
+    );
+    let operands = (0..4)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect();
 
     let op = Operation::new(
         &mut ctx,
         nvvm::MmaM8N8K4F64Op::get_concrete_op_info(),
-        vec![],
-        vec![acc_ptr, a_ptr, b_ptr],
+        vec![f64_ty.into(), f64_ty.into()],
+        operands,
         vec![],
         0,
     );
@@ -3461,20 +3462,28 @@ fn test_mma_m8n8k4_f64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
                     continue;
                 }
                 found += 1;
-                assert_eq!(constraints.as_deref(), Some("l,l,l,~{memory}"));
+                let template = template.unwrap();
+                assert_eq!(
+                    template,
+                    "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 {$0, $1}, {$4}, {$5}, {$2, $3};"
+                );
+                assert!(!template.contains(".reg"));
+                assert!(!template.contains("ld."));
+                assert!(!template.contains("st."));
+                assert_eq!(constraints.as_deref(), Some("=d,=d,d,d,d,d"));
                 assert_eq!(
                     llvm::asm_kind_opt(&ctx, &asm),
                     Some(llvm::AsmKind::Convergent)
                 );
                 assert_eq!(
                     body_op.deref(&ctx).get_num_operands(),
-                    3,
-                    "expected 3 pointer operands (acc, a, b)"
+                    4,
+                    "expected four register inputs (c0, c1, a, b)"
                 );
                 assert_eq!(
                     body_op.deref(&ctx).get_num_results(),
-                    0,
-                    "MMA op returns void (stores via pointer)"
+                    1,
+                    "LLVM inline asm returns one aggregate containing d0 and d1"
                 );
             }
         }

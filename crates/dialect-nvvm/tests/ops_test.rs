@@ -16,12 +16,68 @@ use dialect_nvvm::ops::{
 };
 use pliron::{
     basic_block::BasicBlock,
-    builtin::types::{FP32Type, IntegerType, Signedness},
+    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
     common_traits::Verify,
     context::Context,
     op::{Op, verify_op},
     operation::Operation,
 };
+
+#[test]
+fn test_mma_m8n8k4_f64_requires_four_f64_operands_and_two_f64_results() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let f64_ty = FP64Type::get(&ctx);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            f64_ty.into(),
+            f64_ty.into(),
+            f64_ty.into(),
+            f64_ty.into(),
+            f32_ty.into(),
+        ],
+    );
+    let f64_operands = (0..4)
+        .map(|index| block.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let f32_value = block.deref(&ctx).get_argument(4);
+
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM8N8K4F64Op::get_concrete_op_info(),
+        vec![f64_ty.into(), f64_ty.into()],
+        f64_operands.clone(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM8N8K4F64Op::new(valid), &ctx).is_ok());
+
+    let mut bad_operands = f64_operands.clone();
+    bad_operands[2] = f32_value;
+    let invalid_operand = Operation::new(
+        &mut ctx,
+        MmaM8N8K4F64Op::get_concrete_op_info(),
+        vec![f64_ty.into(), f64_ty.into()],
+        bad_operands,
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM8N8K4F64Op::new(invalid_operand), &ctx).is_err());
+
+    let invalid_result = Operation::new(
+        &mut ctx,
+        MmaM8N8K4F64Op::get_concrete_op_info(),
+        vec![f64_ty.into(), f32_ty.into()],
+        f64_operands,
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM8N8K4F64Op::new(invalid_result), &ctx).is_err());
+}
 
 #[test]
 fn test_movmatrix_requires_one_i32_operand_and_result() {

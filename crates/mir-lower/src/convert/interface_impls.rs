@@ -2646,25 +2646,6 @@ impl MirToLlvmConversion for NanosleepOp {
     }
 }
 
-// ---- NVVM WMMA ops ---------------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MmaM8N8K4F64Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::wmma::convert_mma_m8n8k4_f64(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
 // ---- NVVM WGMMA ops --------------------------------------------------------
 
 #[op_interface_impl]
@@ -2753,6 +2734,23 @@ impl MirToLlvmConversion for MmaM16N8K16F32Bf16Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::wmma::convert_mma_m16n8k16_f32_bf16(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM8N8K4F64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wmma::convert_mma_m8n8k4_f64(
             ctx,
             rewriter,
             self.get_operation(),
