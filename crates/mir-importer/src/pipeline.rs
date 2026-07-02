@@ -3096,6 +3096,62 @@ mod tests {
     }
 
     #[test]
+    fn fp64_mma_and_packed_atomics_take_the_strongest_target_floor() {
+        let dense_bf16_mma =
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};";
+        let dense_fp64_mma =
+            "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 {$0, $1}, {$2}, {$3}, {$4, $5};";
+
+        let fp64_f16_requirements = detect_module_requirements_in_llvm_text(&format!(
+            "{dense_fp64_mma}\natom.global.add.noftz.f16x2 $0, [$1], $2;"
+        ));
+        assert_eq!(
+            fp64_f16_requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+        assert_eq!(
+            select_target(fp64_f16_requirements.features).unwrap(),
+            "sm_80"
+        );
+
+        let fp64_bf16_requirements = detect_module_requirements_in_llvm_text(&format!(
+            "{dense_fp64_mma}\natom.global.add.noftz.bf16x2 $0, [$1], $2;"
+        ));
+        assert_eq!(
+            fp64_bf16_requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+        assert_eq!(
+            select_target(fp64_bf16_requirements.features).unwrap(),
+            "sm_90"
+        );
+
+        let all_four = format!(
+            "{dense_bf16_mma}\n{dense_fp64_mma}\n\
+             atom.global.add.noftz.f16x2 $0, [$1], $2;\n\
+             atom.global.add.noftz.bf16x2 $0, [$1], $2;"
+        );
+        let all_four_requirements = detect_module_requirements_in_llvm_text(&all_four);
+        assert_eq!(
+            all_four_requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+        assert_eq!(
+            select_target(all_four_requirements.features).unwrap(),
+            "sm_90"
+        );
+    }
+
+    #[test]
     fn mma_m8n8k4_f64_detection_enforces_sm80_and_ptx70() {
         let mnemonic = concat!(
             "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 ",
