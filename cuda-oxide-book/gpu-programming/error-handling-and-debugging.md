@@ -312,6 +312,12 @@ frame; select the kernel frame (`frame 1`) to inspect kernel locals.
 4. Inspect threads: `cuda thread`, `cuda block`, `cuda warp`
 5. Print variables: `print idx`, `print *c_elem`
 
+`cargo oxide debug` selects the executable from Cargo's build artifact
+metadata instead of assuming `target/release/<example>`. That keeps debugging
+working with custom binary names, `package.default-run`, configured target
+directories, host target triples, and virtual workspaces. Use `--bin <name>`
+when a package has multiple binaries and no unambiguous default.
+
 For programmatic breakpoints, use `debug::breakpoint()` in your kernel code.
 When cuda-gdb hits the `brkpt` instruction, it pauses execution and lets you
 inspect the GPU state.

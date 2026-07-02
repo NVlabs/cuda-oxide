@@ -45,7 +45,8 @@ cargo oxide setup                   # explicitly build the codegen backend
 |------------------------------|----------------------------------|-------------------------------------------------|
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
 | `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir | Target architecture override |
-| `--features <F>`             | run, sanitize, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
+| `--features <F>`             | run, sanitize, debug, build, build passthrough, emit-ltoir | Comma-separated cargo features to enable |
+| `--bin <NAME>`               | run, sanitize, debug                | Specific binary target to build/run      |
 | `--tool <T>`                 | sanitize                         | Compute Sanitizer tool: `memcheck`, `racecheck`, `initcheck`, or `synccheck` |
 | `-o, --output <P>`           | emit-ltoir                       | Output path for the `.ltoir` artifact           |
 | `--cargo-target-dir <PATH>`  | build/test passthrough           | Cargo target directory                          |
@@ -216,7 +217,13 @@ cargo oxide pipeline device_ffi_test --emit-nvvm-ir --arch sm_120
 
 ### `cargo oxide debug <example>`
 
-Builds with debug info (`-C debuginfo=2`) and launches cuda-gdb. Supports `--tui` for GDB's TUI mode and `--cgdb` for the cgdb frontend.
+Builds with debug info (`-C debuginfo=2`) and launches cuda-gdb. Supports
+`--tui` for GDB's TUI mode and `--cgdb` for the cgdb frontend.
+
+`debug` uses Cargo's reported executable artifact, so custom binary names,
+`package.default-run`, configured target directories, host target triples, and
+virtual workspaces do not require path guessing. Use `--bin <name>` when a
+package has multiple binaries and no unambiguous default.
 
 ### `cargo oxide new <name> [--async]`
 

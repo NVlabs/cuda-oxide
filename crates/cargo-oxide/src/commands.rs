@@ -1708,10 +1708,13 @@ pub fn codegen_debug(
     ctx: &Context,
     example: &str,
     arch: Option<&str>,
+    features: Option<&str>,
+    bin: Option<&str>,
     use_cgdb: bool,
     use_tui: bool,
 ) {
-    let cuda_gdb = find_executable(
+    let cuda_gdb = find_cuda_toolkit_executable(
+        ctx,
         "cuda-gdb",
         &[
             "/usr/local/cuda/bin/cuda-gdb",
@@ -1722,8 +1725,10 @@ pub fn codegen_debug(
     .unwrap_or_else(|| {
         eprintln!("Error: cuda-gdb not found!");
         eprintln!();
-        eprintln!("Make sure CUDA toolkit is installed and cuda-gdb is in your PATH:");
+        eprintln!("Make sure CUDA toolkit is installed and cuda-gdb is in your PATH");
+        eprintln!("or configured CUDA toolkit root:");
         eprintln!("  export PATH=\"/usr/local/cuda/bin:$PATH\"");
+        eprintln!("  export CUDA_TOOLKIT_PATH=/usr/local/cuda");
         std::process::exit(1);
     });
 
@@ -1746,7 +1751,11 @@ pub fn codegen_debug(
     let target_arch = configured_arch(ctx, arch);
     let detected_device_arch = detect_run_target_arch(target_arch, false);
 
-    println!("Building {} with debug info...", example);
+    if let Some(bin) = bin {
+        println!("Building {} (bin: {}) with debug info...", example, bin);
+    } else {
+        println!("Building {} with debug info...", example);
+    }
     if let Some(dev) = detected_device_arch.as_deref() {
         println!("Detected GPU arch: {dev} (via nvidia-smi)");
     }
@@ -1758,6 +1767,13 @@ pub fn codegen_debug(
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
+    if let Some(bin) = bin {
+        cmd.args(["--bin", bin]);
+    }
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+
     apply_config_env(&mut cmd, ctx);
     apply_codegen_rustflags(&mut cmd, ctx, true, &[]);
     cmd.env("CARGO_PROFILE_RELEASE_DEBUG", "2");
@@ -1765,15 +1781,20 @@ pub fn codegen_debug(
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
     apply_ld_library_path(&mut cmd, ctx);
 
-    let status = cmd.status().expect("Failed to run cargo build");
-    if !status.success() {
-        eprintln!("Failed to build {}", example);
-        std::process::exit(status.code().unwrap_or(1));
-    }
-
-    let binary = example_dir.join("target/release").join(example);
+    let preferred_bin = bin
+        .map(str::to_string)
+        .or_else(|| preferred_binary_name(&example_dir.join("Cargo.toml")));
+    let binary = run_cargo_build_for_executable(&mut cmd, preferred_bin.as_deref()).unwrap_or_else(
+        |message| {
+            eprintln!("Failed to build {example}: {message}");
+            std::process::exit(1);
+        },
+    );
     if !binary.exists() {
-        eprintln!("Error: Binary not found at {:?}", binary);
+        eprintln!(
+            "Error: Cargo reported executable artifact {}, but it does not exist",
+            binary.display()
+        );
         std::process::exit(1);
     }
 
@@ -3428,7 +3449,7 @@ edition = "2024"
             .expect("system time before unix epoch")
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_sanitize_binary_{}_{}",
+            "cargo_oxide_artifact_binary_{}_{}",
             std::process::id(),
             unique
         ));
@@ -3481,7 +3502,7 @@ path = "src/main.rs"
             .expect("system time before unix epoch")
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_sanitize_workspace_{}_{}",
+            "cargo_oxide_artifact_workspace_{}_{}",
             std::process::id(),
             unique
         ));

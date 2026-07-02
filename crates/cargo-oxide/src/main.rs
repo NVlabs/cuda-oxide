@@ -214,6 +214,12 @@ enum Commands {
         /// in the environment for a non-interactive override.
         #[arg(long)]
         arch: Option<String>,
+        /// Cargo features to enable
+        #[arg(long)]
+        features: Option<String>,
+        /// Specific binary target to build and debug
+        #[arg(long)]
+        bin: Option<String>,
         /// Use cgdb frontend (better source view, vim keys)
         #[arg(long)]
         cgdb: bool,
@@ -468,12 +474,22 @@ fn main() {
         Commands::Debug {
             example,
             arch,
+            features,
+            bin,
             cgdb,
             tui,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "debug");
-            commands::codegen_debug(&ctx, &example, arch.as_deref(), cgdb, tui);
+            commands::codegen_debug(
+                &ctx,
+                &example,
+                arch.as_deref(),
+                features.as_deref(),
+                bin.as_deref(),
+                cgdb,
+                tui,
+            );
         }
         Commands::Fmt { check } => {
             let ctx = commands::resolve_context();
@@ -661,6 +677,36 @@ mod tests {
             panic!("expected sanitize command");
         };
         assert_eq!(tool, SanitizerTool::Memcheck);
+    }
+
+    #[test]
+    fn debug_parser_accepts_bin_and_features() {
+        let cli = Cli::try_parse_from([
+            "cargo-oxide",
+            "debug",
+            "my_app",
+            "--bin",
+            "debug-target",
+            "--features",
+            "foo,bar",
+            "--tui",
+        ])
+        .expect("debug command should parse");
+
+        let Commands::Debug {
+            example,
+            features,
+            bin,
+            tui,
+            ..
+        } = cli.command
+        else {
+            panic!("expected debug command");
+        };
+        assert_eq!(example.as_deref(), Some("my_app"));
+        assert_eq!(bin.as_deref(), Some("debug-target"));
+        assert_eq!(features.as_deref(), Some("foo,bar"));
+        assert!(tui);
     }
 
     #[test]
