@@ -107,6 +107,9 @@ cargo oxide run host_closure
 # Show full compilation pipeline (Rust MIR → dialect-mir → mem2reg → LLVM dialect → LLVM IR → PTX)
 cargo oxide pipeline vecadd
 
+# Run CUDA correctness checks
+cargo oxide sanitize vecadd --tool memcheck
+
 # Debug with cuda-gdb
 cargo oxide debug vecadd --tui
 ```
@@ -115,7 +118,7 @@ cargo oxide debug vecadd --tui
 
 ### Requirements
 
-- **cargo-oxide** — cargo subcommand that drives the build pipeline (`cargo oxide run`, `build`, `debug`, etc.)
+- **cargo-oxide** — cargo subcommand that drives the build pipeline (`cargo oxide run`, `build`, `sanitize`, `debug`, etc.)
 - **Rust nightly** with `rust-src` and `rustc-dev` and `llvm-tools` components (pinned in `rust-toolchain.toml`)
 - **CUDA Toolkit** (12.x+)
 - **Clang + libclang dev headers** (`clang-21` / `libclang-common-21-dev`) — needed by `bindgen` when building the host `cuda-bindings` crate
@@ -214,6 +217,9 @@ cargo oxide doctor
 
 # Build and run an example end-to-end
 cargo oxide run vecadd
+
+# Run the same example under NVIDIA Compute Sanitizer
+cargo oxide sanitize vecadd
 ```
 
 `cargo oxide doctor` validates your Rust toolchain, CUDA toolkit, LLVM, and

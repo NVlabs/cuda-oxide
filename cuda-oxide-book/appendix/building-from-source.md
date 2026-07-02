@@ -178,6 +178,9 @@ cargo oxide run <example>
 # Show the full compilation pipeline (MIR → LLVM IR → PTX)
 cargo oxide pipeline <example>
 
+# Run under NVIDIA Compute Sanitizer
+cargo oxide sanitize <example> --tool memcheck
+
 # Debug with cuda-gdb
 cargo oxide debug <example> --tui
 
