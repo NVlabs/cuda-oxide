@@ -2874,6 +2874,169 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
     Ok(())
 }
 
+// =============================================================================
+// Packed f16x2 arithmetic lowering tests
+// =============================================================================
+
+#[test]
+fn test_f16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
+
+    type OpInfo = (
+        fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
+    );
+    let cases: [(OpInfo, usize, &str, &str); 9] = [
+        (
+            nvvm::AddF16x2Op::get_concrete_op_info(),
+            2,
+            "add.rn.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::SubF16x2Op::get_concrete_op_info(),
+            2,
+            "sub.rn.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MulF16x2Op::get_concrete_op_info(),
+            2,
+            "mul.rn.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::FmaF16x2Op::get_concrete_op_info(),
+            3,
+            "fma.rn.f16x2 $0, $1, $2, $3;",
+            "=r,r,r,r",
+        ),
+        (
+            nvvm::NegF16x2Op::get_concrete_op_info(),
+            1,
+            "neg.f16x2 $0, $1;",
+            "=r,r",
+        ),
+        (
+            nvvm::AbsF16x2Op::get_concrete_op_info(),
+            1,
+            "abs.f16x2 $0, $1;",
+            "=r,r",
+        ),
+        (
+            nvvm::MinF16x2Op::get_concrete_op_info(),
+            2,
+            "min.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MaxF16x2Op::get_concrete_op_info(),
+            2,
+            "max.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::FmaReluF16x2Op::get_concrete_op_info(),
+            3,
+            "fma.rn.relu.f16x2 $0, $1, $2, $3;",
+            "=r,r,r,r",
+        ),
+    ];
+
+    let operands = [
+        entry.deref(&ctx).get_argument(0),
+        entry.deref(&ctx).get_argument(1),
+        entry.deref(&ctx).get_argument(2),
+    ];
+    for &(op_info, operand_count, _, _) in &cases {
+        let op = Operation::new(
+            &mut ctx,
+            op_info,
+            vec![i32_ty.into()],
+            operands[..operand_count].to_vec(),
+            vec![],
+            0,
+        );
+        op.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut lowered = Vec::new();
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let inline_asm_op = inline_asm.get_operation();
+                let operand_count = inline_asm_op.deref(&ctx).operands().count();
+                let result_count = inline_asm_op.deref(&ctx).get_num_results();
+                lowered.push((
+                    inline_asm
+                        .get_attr_inline_asm_template(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .expect("f16x2 inline asm must have a template"),
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                        .expect("f16x2 inline asm must have constraints"),
+                    llvm::asm_kind_opt(&ctx, &inline_asm),
+                    inline_asm
+                        .get_attr_inline_asm_convergent(&ctx)
+                        .map(|b| bool::from((*b).clone())),
+                    operand_count,
+                    result_count,
+                ));
+            }
+        }
+    }
+
+    assert_eq!(
+        lowered.len(),
+        cases.len(),
+        "each f16x2 operation must lower to exactly one inline-asm op"
+    );
+    for &(_, expected_operand_count, expected_template, expected_constraints) in &cases {
+        let matches: Vec<_> = lowered
+            .iter()
+            .filter(|(template, _, _, _, _, _)| template == expected_template)
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one exact `{expected_template}` lowering"
+        );
+        let (_, constraints, kind, convergent, operand_count, result_count) = matches[0];
+        assert_eq!(constraints, expected_constraints, "{expected_template}");
+        assert_eq!(*kind, Some(llvm::AsmKind::Pure), "{expected_template}");
+        assert_eq!(*convergent, Some(false), "{expected_template}");
+        assert_eq!(
+            *operand_count, expected_operand_count,
+            "{expected_template} input arity"
+        );
+        assert_eq!(*result_count, 1, "{expected_template} result arity");
+    }
+
+    Ok(())
+}
+
 #[test]
 fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;

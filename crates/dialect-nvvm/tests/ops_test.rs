@@ -5,15 +5,17 @@
 
 use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
-    Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
-    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
-    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
-    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
-    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
-    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    AbsF16x2Op, AddF16x2Op, Barrier0Op, ElectSyncOp, FmaBf16x2Op, FmaF16x2Op, FmaReluF16x2Op,
+    LdmatrixX2Op, MaxF16x2Op, MinF16x2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
+    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, MulF16x2Op,
+    NegF16x2Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, ReadPtxSregDynamicSmemSizeOp,
+    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
+    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
+    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
+    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
+    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
+    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op, SubF16x2Op,
+    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -1154,4 +1156,205 @@ fn test_shfl_sync_i64_construct_and_verify() {
         );
         assert!(verify_op(&ShflSyncIdxI64Op::new(bad), &ctx).is_err());
     }
+}
+
+#[test]
+fn test_f16x2_binary_ops_verify_two_i32_operands_and_one_i32_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i64_ty.into()]);
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    macro_rules! check_binary_f16x2 {
+        ($op:ty) => {{
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(valid), &ctx).expect(concat!(
+                stringify!($op),
+                " must accept 2 i32 operands and 1 i32 result",
+            ));
+
+            let bad_operand = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value, i64_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_operand), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject i64 operand"));
+
+            let bad_result = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![f32_ty.into()],
+                vec![i32_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_result), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject f32 result"));
+
+            let bad_arity = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_arity), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject wrong operand count"));
+        }};
+    }
+
+    check_binary_f16x2!(AddF16x2Op);
+    check_binary_f16x2!(SubF16x2Op);
+    check_binary_f16x2!(MulF16x2Op);
+    check_binary_f16x2!(MinF16x2Op);
+    check_binary_f16x2!(MaxF16x2Op);
+}
+
+#[test]
+fn test_f16x2_ternary_ops_verify_three_i32_operands_and_one_i32_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i64_ty.into()]);
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    macro_rules! check_ternary_f16x2 {
+        ($op:ty) => {{
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value, i32_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(valid), &ctx).expect(concat!(
+                stringify!($op),
+                " must accept 3 i32 operands and 1 i32 result",
+            ));
+
+            let bad_operand = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value, i64_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_operand), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject i64 operand"));
+
+            let bad_result = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![f32_ty.into()],
+                vec![i32_value, i32_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_result), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject f32 result"));
+
+            let bad_arity = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_arity), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject wrong operand count"));
+        }};
+    }
+
+    check_ternary_f16x2!(FmaF16x2Op);
+    check_ternary_f16x2!(FmaReluF16x2Op);
+}
+
+#[test]
+fn test_f16x2_unary_ops_verify_one_i32_operand_and_one_i32_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i64_ty.into()]);
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    macro_rules! check_unary_f16x2 {
+        ($op:ty) => {{
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(valid), &ctx).expect(concat!(
+                stringify!($op),
+                " must accept 1 i32 operand and 1 i32 result",
+            ));
+
+            let bad_operand = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i64_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_operand), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject i64 operand"));
+
+            let bad_result = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![f32_ty.into()],
+                vec![i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_result), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject f32 result"));
+
+            let bad_arity = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![i32_value, i32_value],
+                vec![],
+                0,
+            );
+            verify_op(&<$op>::new(bad_arity), &ctx)
+                .expect_err(concat!(stringify!($op), " must reject wrong operand count"));
+        }};
+    }
+
+    check_unary_f16x2!(NegF16x2Op);
+    check_unary_f16x2!(AbsF16x2Op);
 }

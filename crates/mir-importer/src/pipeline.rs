@@ -36,6 +36,8 @@
 //! | bf16x2 add/sub/mul            | sm_90   | Hopper+ compatible   |
 //! | bf16x2 packed atomic add      | sm_90   | PTX 7.8+             |
 //! | other bf16x2 ALU              | sm_80   | Ampere+ compatible   |
+//! | f16x2 min/max/fma.relu         | sm_80   | Ampere+ compatible   |
+//! | f16x2 add/sub/mul/fma/neg/abs  | sm_53   | Below Volta floor    |
 //! | BF16 `mma.m16n8k16`           | sm_80   | PTX 7.0+             |
 //! | INT8 `mma.m16n8k32`           | sm_80   | PTX 7.0+             |
 //! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
@@ -1235,6 +1237,32 @@ fn contains_packed_f16_atomic_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "atom.global.add.noftz.f16x2")
 }
 
+/// Checks for packed f16x2 ALU instructions available since sm_53 (PTX ISA 4.2).
+///
+/// These are below cuda-oxide's Volta floor, so they do not affect
+/// architecture target selection. The function exists for pipeline
+/// completeness and testing.
+#[cfg(test)]
+fn contains_f16x2_basic_features(contents: &str) -> bool {
+    [
+        "add.rn.f16x2",
+        "sub.rn.f16x2",
+        "mul.rn.f16x2",
+        "fma.rn.f16x2",
+        "neg.f16x2",
+        "abs.f16x2",
+    ]
+    .iter()
+    .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
+/// Checks for packed f16x2 ALU instructions requiring sm_80+ (Ampere).
+#[cfg(test)]
+fn contains_f16x2_sm80_features(contents: &str) -> bool {
+    ["fma.rn.relu.f16x2", "min.f16x2", "max.f16x2"]
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
 fn contains_elect_features(contents: &str) -> bool {
     contents.contains("elect.sync")
 }
@@ -1364,6 +1392,9 @@ fn contains_sm80_features(contents: &str) -> bool {
         "max.bf16x2",
         "neg.bf16x2",
         "abs.bf16x2",
+        "fma.rn.relu.f16x2",
+        "min.f16x2",
+        "max.f16x2",
     ]
     .iter()
     .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
@@ -3015,6 +3046,85 @@ mod tests {
             "add.rn.bf16x2\\5C09$0, $1, $2;",
         ] {
             assert!(!contains_sm90_features(near_miss));
+            assert!(!contains_sm80_features(near_miss));
+            assert_eq!(
+                detect_features_in_llvm_text(near_miss),
+                DetectedFeatures::Basic
+            );
+        }
+    }
+
+    #[test]
+    fn test_f16x2_detection_matches_exact_architecture_floors() {
+        // sm_53+ ops: these are below the Volta floor, so they detect
+        // as Basic (no architecture bump).
+        for mnemonic in [
+            "add.rn.f16x2 $0, $1, $2;",
+            "sub.rn.f16x2 $0, $1, $2;",
+            "mul.rn.f16x2 $0, $1, $2;",
+            "fma.rn.f16x2 $0, $1, $2, $3;",
+            "neg.f16x2 $0, $1;",
+            "abs.f16x2 $0, $1;",
+        ] {
+            assert!(
+                contains_f16x2_basic_features(mnemonic),
+                "missed sm_53+ f16x2: {mnemonic}"
+            );
+            assert!(
+                !contains_f16x2_sm80_features(mnemonic),
+                "false sm_80+ match: {mnemonic}"
+            );
+            assert!(!contains_sm90_features(mnemonic));
+            assert!(
+                !contains_sm80_features(mnemonic),
+                "sm_53+ f16x2 op should not trigger sm_80 detection: {mnemonic}"
+            );
+            assert_eq!(
+                detect_features_in_llvm_text(mnemonic),
+                DetectedFeatures::Basic
+            );
+        }
+
+        // Whitespace/tab variants should also work.
+        for mnemonic in [
+            "add.rn.f16x2\\09$0, $1, $2;",
+            "fma.rn.f16x2\\09$0, $1, $2, $3;",
+        ] {
+            assert!(
+                contains_f16x2_basic_features(mnemonic),
+                "missed tab-delimited f16x2: {mnemonic}"
+            );
+        }
+
+        // sm_80+ ops: these DO trigger sm_80 detection.
+        for mnemonic in [
+            "fma.rn.relu.f16x2 $0, $1, $2, $3;",
+            "min.f16x2 $0, $1, $2;",
+            "max.f16x2 $0, $1, $2;",
+        ] {
+            assert!(
+                contains_f16x2_sm80_features(mnemonic),
+                "missed sm_80+ f16x2: {mnemonic}"
+            );
+            assert!(!contains_sm90_features(mnemonic));
+            assert!(
+                contains_sm80_features(mnemonic),
+                "sm_80+ f16x2 must trigger sm_80 detection: {mnemonic}"
+            );
+            assert_eq!(
+                detect_features_in_llvm_text(mnemonic),
+                DetectedFeatures::Sm80
+            );
+        }
+
+        // Near-misses must NOT match.
+        for near_miss in [
+            "add.rn.f16x2x $0, $1, $2;",
+            "fma.rn.f16x2x $0, $1, $2, $3;",
+            "min.f16x2x $0, $1, $2;",
+        ] {
+            assert!(!contains_f16x2_basic_features(near_miss));
+            assert!(!contains_f16x2_sm80_features(near_miss));
             assert!(!contains_sm80_features(near_miss));
             assert_eq!(
                 detect_features_in_llvm_text(near_miss),

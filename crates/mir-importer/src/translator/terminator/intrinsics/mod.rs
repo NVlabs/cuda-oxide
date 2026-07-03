@@ -46,6 +46,7 @@ pub mod convert;
 pub mod cp_async;
 pub mod debug;
 pub mod dotprod;
+pub mod f16x2;
 pub mod float_math;
 pub mod indexing;
 pub mod ldmatrix;

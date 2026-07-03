@@ -39,8 +39,8 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    AbsBf16x2Op, ActiveMaskOp, AddBf16x2Op, BarWarpSyncOp, Barrier0Op, BreakpointOp,
-    ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp,
+    AbsBf16x2Op, AbsF16x2Op, ActiveMaskOp, AddBf16x2Op, AddF16x2Op, BarWarpSyncOp, Barrier0Op,
+    BreakpointOp, ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp,
     ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp, ClusterSyncOp,
     CpAsyncBulkCommitGroupOp, CpAsyncBulkTensorG2sTile1dOp,
     CpAsyncBulkTensorG2sTile2dMulticastCg2Op, CpAsyncBulkTensorG2sTile2dMulticastOp,
@@ -53,15 +53,16 @@ use dialect_nvvm::ops::{
     Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, DsmemReadU32Op, ElectSyncOp,
     FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, FmaBf16x2Op,
-    FmaReluBf16x2Op, InlinePtxOp, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp,
-    LdmatrixX4Op, LdmatrixX4TransOp, MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
-    MatchAnySyncI32Op, MatchAnySyncI64Op, MaxBf16x2Op, MbarrierArriveClusterOp,
-    MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
-    MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
-    MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp,
-    MinBf16x2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, MulBf16x2Op, NanosleepOp, NegBf16x2Op,
-    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
+    FmaF16x2Op, FmaReluBf16x2Op, FmaReluF16x2Op, InlinePtxOp, LdmatrixX1Op, LdmatrixX1TransOp,
+    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MapaSharedClusterOp,
+    MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MaxBf16x2Op,
+    MaxF16x2Op, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
+    MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp, MbarrierInitSharedOp,
+    MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MbarrierTryWaitParityClusterOp,
+    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, MinBf16x2Op, MinF16x2Op,
+    MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
+    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, MulBf16x2Op, MulF16x2Op, NanosleepOp, NegBf16x2Op,
+    NegF16x2Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
     NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp,
     ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp,
     ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp,
@@ -77,17 +78,17 @@ use dialect_nvvm::ops::{
     ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyF32Op, ShflSyncBflyI32Op, ShflSyncBflyI64Op,
     ShflSyncDownF32Op, ShflSyncDownI32Op, ShflSyncDownI64Op, ShflSyncIdxF32Op, ShflSyncIdxI32Op,
     ShflSyncIdxI64Op, ShflSyncUpF32Op, ShflSyncUpI32Op, ShflSyncUpI64Op, StmatrixM8n8X2Op,
-    StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, SubBf16x2Op, Tcgen05AllocCg2Op,
-    Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp,
-    Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op,
-    Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
-    Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
-    Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
-    Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
-    Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, TrapOp,
-    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VprintfOp, WgmmaCommitGroupSyncAlignedOp,
-    WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaWaitGroupSyncAlignedOp,
+    StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, SubBf16x2Op, SubF16x2Op,
+    Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op,
+    Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp,
+    Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp,
+    Tcgen05FenceAfterThreadSyncOp, Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp,
+    Tcgen05Ld16x256bX8PureOp, Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op,
+    Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op, Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op,
+    Tcgen05RelinquishAllocPermitOp, Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp,
+    ThreadfenceSystemOp, TrapOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VprintfOp,
+    WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -3311,6 +3312,159 @@ impl MirToLlvmConversion for AbsBf16x2Op {
     }
 }
 
+// ---- NVVM f16x2 arithmetic ops --------------------------------------------
+#[op_interface_impl]
+impl MirToLlvmConversion for AddF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_add_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for SubF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_sub_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MulF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_mul_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for FmaF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_fma_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for NegF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_neg_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for AbsF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_abs_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MinF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_min_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MaxF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_max_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for FmaReluF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::f16x2::convert_fma_relu_f16x2(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
 // ---- NVVM integer dot product ops -----------------------------------------
 
 #[op_interface_impl]
