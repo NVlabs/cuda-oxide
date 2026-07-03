@@ -490,4 +490,214 @@ pub(super) fn register(ctx: &mut Context) {
     MmaM16N8K8F32Tf32Op::register(ctx);
     MmaM16N8K32S32S8Op::register(ctx);
     MmaM8N8K4F64Op::register(ctx);
+    MmaM16N8K32S32S8U8Op::register(ctx);
+    MmaM16N8K32S32U8S8Op::register(ctx);
+    MmaM16N8K16S32S8U8Op::register(ctx);
+    MmaM16N8K16S32U8S8Op::register(ctx);
+}
+
+// =============================================================================
+// Mixed-signedness INT8 mma.sync operations
+// =============================================================================
+
+/// Verify that a mixed-signedness INT8 MMA operation has all-i32 operands and results.
+fn verify_int8_mma(
+    ctx: &Context,
+    op: &Operation,
+    op_name: &str,
+    expected_operands: usize,
+    expected_results: usize,
+) -> Result<(), Error> {
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != expected_operands {
+        return verify_err!(
+            op.loc(),
+            "{} requires {} register operands, got {}",
+            op_name,
+            expected_operands,
+            operands.len()
+        );
+    }
+
+    for (index, operand) in operands.iter().enumerate() {
+        let ty = operand.get_type(ctx);
+        let ty_ref = ty.deref(ctx);
+        let Some(integer) = ty_ref.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "{} operand {} must be i32", op_name, index);
+        };
+        if integer.width() != 32 {
+            return verify_err!(op.loc(), "{} operand {} must be i32", op_name, index);
+        }
+    }
+
+    if op.get_num_results() != expected_results {
+        return verify_err!(
+            op.loc(),
+            "{} requires {} i32 results, got {}",
+            op_name,
+            expected_results,
+            op.get_num_results()
+        );
+    }
+
+    for index in 0..expected_results {
+        let ty = op.get_result(index).get_type(ctx);
+        let ty_ref = ty.deref(ctx);
+        let Some(integer) = ty_ref.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "{} result {} must be i32", op_name, index);
+        };
+        if integer.width() != 32 {
+            return verify_err!(op.loc(), "{} result {} must be i32", op_name, index);
+        }
+    }
+
+    Ok(())
+}
+
+/// Register-only warp MMA: m16n8k32 with s32 accumulator, s8 A and u8 B.
+///
+/// # Operands
+///
+/// - operands 0-3: four i32 C accumulator registers
+/// - operands 4-7: four i32 A fragment registers (packed s8)
+/// - operands 8-9: two i32 B fragment registers (packed u8)
+///
+/// # Results
+///
+/// - results 0-3: four i32 D accumulator registers
+#[pliron_op(
+    name = "nvvm.mma_m16n8k32_s32_s8_u8",
+    format,
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K32S32S8U8Op;
+
+impl Verify for MmaM16N8K32S32S8U8Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_int8_mma(
+            ctx,
+            &self.get_operation().deref(ctx),
+            "nvvm.mma_m16n8k32_s32_s8_u8",
+            10,
+            4,
+        )
+    }
+}
+
+impl MmaM16N8K32S32S8U8Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+/// Register-only warp MMA: m16n8k32 with s32 accumulator, u8 A and s8 B.
+///
+/// # Operands
+///
+/// - operands 0-3: four i32 C accumulator registers
+/// - operands 4-7: four i32 A fragment registers (packed u8)
+/// - operands 8-9: two i32 B fragment registers (packed s8)
+///
+/// # Results
+///
+/// - results 0-3: four i32 D accumulator registers
+#[pliron_op(
+    name = "nvvm.mma_m16n8k32_s32_u8_s8",
+    format,
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K32S32U8S8Op;
+
+impl Verify for MmaM16N8K32S32U8S8Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_int8_mma(
+            ctx,
+            &self.get_operation().deref(ctx),
+            "nvvm.mma_m16n8k32_s32_u8_s8",
+            10,
+            4,
+        )
+    }
+}
+
+impl MmaM16N8K32S32U8S8Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+/// Register-only warp MMA: m16n8k16 with s32 accumulator, s8 A and u8 B.
+///
+/// # Operands
+///
+/// - operands 0-3: four i32 C accumulator registers
+/// - operands 4-5: two i32 A fragment registers (packed s8)
+/// - operand 6: one i32 B fragment register (packed u8)
+///
+/// # Results
+///
+/// - results 0-3: four i32 D accumulator registers
+#[pliron_op(
+    name = "nvvm.mma_m16n8k16_s32_s8_u8",
+    format,
+    interfaces = [NOpdsInterface<7>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K16S32S8U8Op;
+
+impl Verify for MmaM16N8K16S32S8U8Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_int8_mma(
+            ctx,
+            &self.get_operation().deref(ctx),
+            "nvvm.mma_m16n8k16_s32_s8_u8",
+            7,
+            4,
+        )
+    }
+}
+
+impl MmaM16N8K16S32S8U8Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+/// Register-only warp MMA: m16n8k16 with s32 accumulator, u8 A and s8 B.
+///
+/// # Operands
+///
+/// - operands 0-3: four i32 C accumulator registers
+/// - operands 4-5: two i32 A fragment registers (packed u8)
+/// - operand 6: one i32 B fragment register (packed s8)
+///
+/// # Results
+///
+/// - results 0-3: four i32 D accumulator registers
+#[pliron_op(
+    name = "nvvm.mma_m16n8k16_s32_u8_s8",
+    format,
+    interfaces = [NOpdsInterface<7>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K16S32U8S8Op;
+
+impl Verify for MmaM16N8K16S32U8S8Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_int8_mma(
+            ctx,
+            &self.get_operation().deref(ctx),
+            "nvvm.mma_m16n8k16_s32_u8_s8",
+            7,
+            4,
+        )
+    }
+}
+
+impl MmaM16N8K16S32U8S8Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
 }

@@ -295,3 +295,177 @@ pub(crate) fn convert_mma_m8n8k4_f64(
     rewriter.replace_operation_with_values(ctx, op, results);
     Ok(())
 }
+
+// =============================================================================
+// Mixed-signedness INT8 mma.sync lowering
+// =============================================================================
+
+/// Convert `mma_m16n8k32_s32_s8_u8` to inline PTX (10 operands, 4 results).
+pub(crate) fn convert_mma_m16n8k32_s32_s8_u8(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_int8_mma_k32(
+        ctx,
+        rewriter,
+        op,
+        "mma_m16n8k32_s32_s8_u8",
+        concat!(
+            "mma.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32 ",
+            "{$0, $1, $2, $3}, ",
+            "{$8, $9, $10, $11}, ",
+            "{$12, $13}, ",
+            "{$4, $5, $6, $7};"
+        ),
+    )
+}
+
+/// Convert `mma_m16n8k32_s32_u8_s8` to inline PTX (10 operands, 4 results).
+pub(crate) fn convert_mma_m16n8k32_s32_u8_s8(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_int8_mma_k32(
+        ctx,
+        rewriter,
+        op,
+        "mma_m16n8k32_s32_u8_s8",
+        concat!(
+            "mma.sync.aligned.m16n8k32.row.col.s32.u8.s8.s32 ",
+            "{$0, $1, $2, $3}, ",
+            "{$8, $9, $10, $11}, ",
+            "{$12, $13}, ",
+            "{$4, $5, $6, $7};"
+        ),
+    )
+}
+
+/// Convert `mma_m16n8k16_s32_s8_u8` to inline PTX (7 operands, 4 results).
+pub(crate) fn convert_mma_m16n8k16_s32_s8_u8(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_int8_mma_k16(
+        ctx,
+        rewriter,
+        op,
+        "mma_m16n8k16_s32_s8_u8",
+        concat!(
+            "mma.sync.aligned.m16n8k16.row.col.s32.s8.u8.s32 ",
+            "{$0, $1, $2, $3}, ",
+            "{$8, $9}, ",
+            "{$10}, ",
+            "{$4, $5, $6, $7};"
+        ),
+    )
+}
+
+/// Convert `mma_m16n8k16_s32_u8_s8` to inline PTX (7 operands, 4 results).
+pub(crate) fn convert_mma_m16n8k16_s32_u8_s8(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_int8_mma_k16(
+        ctx,
+        rewriter,
+        op,
+        "mma_m16n8k16_s32_u8_s8",
+        concat!(
+            "mma.sync.aligned.m16n8k16.row.col.s32.u8.s8.s32 ",
+            "{$0, $1, $2, $3}, ",
+            "{$8, $9}, ",
+            "{$10}, ",
+            "{$4, $5, $6, $7};"
+        ),
+    )
+}
+
+/// Shared lowering for m16n8k32 INT8 MMA variants (10 operands, 4 i32 results).
+fn convert_int8_mma_k32(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    name: &str,
+    template: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 10 {
+        return pliron::input_err_noloc!(
+            "{} requires 10 register operands, got {}",
+            name,
+            operands.len()
+        );
+    }
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty.into(); 4]);
+    let constraints = "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r";
+    let inline_asm = inline_asm_convergent(
+        ctx,
+        rewriter,
+        result_ty.into(),
+        operands,
+        template,
+        constraints,
+    );
+
+    let aggregate = inline_asm.deref(ctx).get_result(0);
+    let mut results = Vec::with_capacity(4);
+    for index in 0..4 {
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
+            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        results.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    rewriter.replace_operation_with_values(ctx, op, results);
+    Ok(())
+}
+
+/// Shared lowering for m16n8k16 INT8 MMA variants (7 operands, 4 i32 results).
+fn convert_int8_mma_k16(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    name: &str,
+    template: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 7 {
+        return pliron::input_err_noloc!(
+            "{} requires 7 register operands, got {}",
+            name,
+            operands.len()
+        );
+    }
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty.into(); 4]);
+    let constraints = "=r,=r,=r,=r,r,r,r,r,r,r,r";
+    let inline_asm = inline_asm_convergent(
+        ctx,
+        rewriter,
+        result_ty.into(),
+        operands,
+        template,
+        constraints,
+    );
+
+    let aggregate = inline_asm.deref(ctx).get_result(0);
+    let mut results = Vec::with_capacity(4);
+    for index in 0..4 {
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
+            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        results.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    rewriter.replace_operation_with_values(ctx, op, results);
+    Ok(())
+}

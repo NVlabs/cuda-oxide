@@ -443,3 +443,143 @@ pub unsafe fn mma_m16n8k32_s32_s8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32
     let _ = (c, a, b);
     unreachable!("mma_m16n8k32_s32_s8 called outside CUDA kernel context")
 }
+
+// =============================================================================
+// Mixed-signedness INT8 mma.sync variants
+// =============================================================================
+
+/// Warp MMA: D = A x B + C (m16n8k32, s32 output, s8*u8 inputs).
+///
+/// Performs a 16x8x32 integer matrix multiplication where A uses signed 8-bit
+/// elements and B uses unsigned 8-bit elements. Each `u32` register packs
+/// four INT8 values. All 32 threads in the warp participate.
+///
+/// # Matrix Dimensions
+///
+/// - **A**: 16x32 (row-major, s8), distributed as 4 x u32 per thread
+/// - **B**: 32x8 (col-major, u8), distributed as 2 x u32 per thread
+/// - **D/C**: 16x8 (s32 accumulator), distributed as 4 x i32 per thread
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k32_s32_s8_u8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_s32_s8_u8 called outside CUDA kernel context")
+}
+
+/// Warp MMA: D = A x B + C (m16n8k32, s32 output, u8*s8 inputs).
+///
+/// Performs a 16x8x32 integer matrix multiplication where A uses unsigned
+/// 8-bit elements and B uses signed 8-bit elements. Each `u32` register
+/// packs four INT8 values. All 32 threads in the warp participate.
+///
+/// # Matrix Dimensions
+///
+/// - **A**: 16x32 (row-major, u8), distributed as 4 x u32 per thread
+/// - **B**: 32x8 (col-major, s8), distributed as 2 x u32 per thread
+/// - **D/C**: 16x8 (s32 accumulator), distributed as 4 x i32 per thread
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k32.row.col.s32.u8.s8.s32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k32_s32_u8_s8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_s32_u8_s8 called outside CUDA kernel context")
+}
+
+/// Warp MMA: D = A x B + C (m16n8k16, s32 output, s8*u8 inputs).
+///
+/// Performs a 16x8x16 integer matrix multiplication where A uses signed 8-bit
+/// elements and B uses unsigned 8-bit elements. Each `u32` register packs
+/// four INT8 values. All 32 threads in the warp participate.
+///
+/// # Matrix Dimensions
+///
+/// - **A**: 16x16 (row-major, s8), distributed as 2 x u32 per thread
+/// - **B**: 16x8 (col-major, u8), distributed as 1 x u32 per thread
+/// - **D/C**: 16x8 (s32 accumulator), distributed as 4 x i32 per thread
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k16.row.col.s32.s8.u8.s32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1},
+///     {%b0},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k16_s32_s8_u8(c: [i32; 4], a: [u32; 2], b: u32) -> [i32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k16_s32_s8_u8 called outside CUDA kernel context")
+}
+
+/// Warp MMA: D = A x B + C (m16n8k16, s32 output, u8*s8 inputs).
+///
+/// Performs a 16x8x16 integer matrix multiplication where A uses unsigned
+/// 8-bit elements and B uses signed 8-bit elements. Each `u32` register
+/// packs four INT8 values. All 32 threads in the warp participate.
+///
+/// # Matrix Dimensions
+///
+/// - **A**: 16x16 (row-major, u8), distributed as 2 x u32 per thread
+/// - **B**: 16x8 (col-major, s8), distributed as 1 x u32 per thread
+/// - **D/C**: 16x8 (s32 accumulator), distributed as 4 x i32 per thread
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k16.row.col.s32.u8.s8.s32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1},
+///     {%b0},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same call together.
+/// - Calling from divergent control flow is undefined behavior.
+/// - Requires `sm_80+` and PTX ISA 7.0+.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k16_s32_u8_s8(c: [i32; 4], a: [u32; 2], b: u32) -> [i32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k16_s32_u8_s8 called outside CUDA kernel context")
+}

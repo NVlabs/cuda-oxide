@@ -16,7 +16,8 @@ use dialect_mir::{
 };
 use dialect_nvvm::ops::{
     MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
+    MmaM16N8K16S32S8U8Op, MmaM16N8K16S32U8S8Op, MmaM16N8K32S32S8Op, MmaM16N8K32S32S8U8Op,
+    MmaM16N8K32S32U8S8Op, MovmatrixTransB16Op,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
@@ -28,6 +29,7 @@ use pliron::operation::Operation;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 use rustc_public::mir;
+type OpInfo = (fn(Ptr<Operation>) -> pliron::op::OpObj, std::any::TypeId);
 
 /// Emit movmatrix_trans_b16: in-register 8×8 matrix transpose.
 ///
@@ -948,4 +950,417 @@ mod tests {
             "shared fragment diagnostics must not name a different MMA operation: {message}"
         );
     }
+}
+
+// =============================================================================
+// Mixed-signedness INT8 mma.sync emitters
+// =============================================================================
+
+/// Emit `mma_m16n8k32_s32_s8_u8` as a register-producing dialect operation.
+///
+/// Args:
+/// - `args[0]`: `[i32; 4]` C accumulator registers
+/// - `args[1]`: `[u32; 4]` packed A fragment registers
+/// - `args[2]`: `[u32; 2]` packed B fragment registers
+///
+/// Returns: `[i32; 4]` D accumulator registers.
+pub fn emit_mma_m16n8k32_s32_s8_u8(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_int8_mma_k32(
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        "mma_m16n8k32_s32_s8_u8",
+        MmaM16N8K32S32S8U8Op::get_concrete_op_info(),
+    )
+}
+
+/// Emit `mma_m16n8k32_s32_u8_s8` as a register-producing dialect operation.
+///
+/// Args:
+/// - `args[0]`: `[i32; 4]` C accumulator registers
+/// - `args[1]`: `[u32; 4]` packed A fragment registers
+/// - `args[2]`: `[u32; 2]` packed B fragment registers
+///
+/// Returns: `[i32; 4]` D accumulator registers.
+pub fn emit_mma_m16n8k32_s32_u8_s8(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_int8_mma_k32(
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        "mma_m16n8k32_s32_u8_s8",
+        MmaM16N8K32S32U8S8Op::get_concrete_op_info(),
+    )
+}
+
+/// Emit `mma_m16n8k16_s32_s8_u8` as a register-producing dialect operation.
+///
+/// Args:
+/// - `args[0]`: `[i32; 4]` C accumulator registers
+/// - `args[1]`: `[u32; 2]` packed A fragment registers
+/// - `args[2]`: `u32` packed B fragment register (scalar)
+///
+/// Returns: `[i32; 4]` D accumulator registers.
+pub fn emit_mma_m16n8k16_s32_s8_u8(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_int8_mma_k16(
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        "mma_m16n8k16_s32_s8_u8",
+        MmaM16N8K16S32S8U8Op::get_concrete_op_info(),
+    )
+}
+
+/// Emit `mma_m16n8k16_s32_u8_s8` as a register-producing dialect operation.
+///
+/// Args:
+/// - `args[0]`: `[i32; 4]` C accumulator registers
+/// - `args[1]`: `[u32; 2]` packed A fragment registers
+/// - `args[2]`: `u32` packed B fragment register (scalar)
+///
+/// Returns: `[i32; 4]` D accumulator registers.
+pub fn emit_mma_m16n8k16_s32_u8_s8(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_int8_mma_k16(
+        ctx,
+        body,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        "mma_m16n8k16_s32_u8_s8",
+        MmaM16N8K16S32U8S8Op::get_concrete_op_info(),
+    )
+}
+
+/// Shared emitter for m16n8k32 INT8 MMA variants (10 operands, 4 results).
+///
+/// C is `[i32; 4]`, A is `[u32; 4]`, B is `[u32; 2]`.
+#[allow(clippy::too_many_arguments)]
+fn emit_int8_mma_k32(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    fn_name: &str,
+    op_info: OpInfo,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{fn_name} expects 3 arguments (acc, a, b), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let (c_array, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (c_registers, last_op) = extract_array_registers(
+        ctx,
+        c_array,
+        i32_ty.into(),
+        4,
+        block_ptr,
+        last_op,
+        loc.clone(),
+        "C",
+    )?;
+
+    let (a_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (a_registers, last_op) = extract_array_registers(
+        ctx,
+        a_array,
+        u32_ty.into(),
+        4,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "A",
+    )?;
+
+    let (b_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (b_registers, last_op) = extract_array_registers(
+        ctx,
+        b_array,
+        u32_ty.into(),
+        2,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "B",
+    )?;
+
+    let mut operands = c_registers;
+    operands.extend(a_registers);
+    operands.extend(b_registers);
+
+    let mma_op = Operation::new(ctx, op_info, vec![i32_ty.into(); 4], operands, vec![], 0);
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+    mma_op.insert_after(ctx, last_op);
+
+    let d_registers = (0..4)
+        .map(|index| mma_op.deref(ctx).get_result(index))
+        .collect();
+    let array_ty = MirArrayType::get(ctx, i32_ty.into(), 4);
+    let d_array = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty.into()],
+        d_registers,
+        vec![],
+        0,
+    );
+    d_array.deref_mut(ctx).set_loc(loc.clone());
+    d_array.insert_after(ctx, mma_op);
+    let result = d_array.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        d_array,
+        value_map,
+        block_map,
+        loc,
+        &format!("{fn_name} call without target block"),
+    )
+}
+
+/// Shared emitter for m16n8k16 INT8 MMA variants (7 operands, 4 results).
+///
+/// C is `[i32; 4]`, A is `[u32; 2]`, B is scalar `u32`.
+#[allow(clippy::too_many_arguments)]
+fn emit_int8_mma_k16(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    fn_name: &str,
+    op_info: OpInfo,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{fn_name} expects 3 arguments (acc, a, b), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    let (c_array, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (c_registers, last_op) = extract_array_registers(
+        ctx,
+        c_array,
+        i32_ty.into(),
+        4,
+        block_ptr,
+        last_op,
+        loc.clone(),
+        "C",
+    )?;
+
+    let (a_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (a_registers, last_op) = extract_array_registers(
+        ctx,
+        a_array,
+        u32_ty.into(),
+        2,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "A",
+    )?;
+
+    // B is a scalar u32, not an array
+    let (b_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let last_op = last_op_after.unwrap_or(last_op);
+
+    // Verify B is u32
+    {
+        let ty = b_val.get_type(ctx);
+        let ty_ref = ty.deref(ctx);
+        let valid_b = ty_ref
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|int_ty| int_ty.width() == 32);
+        if !valid_b {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!("{fn_name} B fragment must have type u32"))
+            );
+        }
+    }
+
+    let mut operands = c_registers;
+    operands.extend(a_registers);
+    operands.push(b_val);
+
+    let mma_op = Operation::new(ctx, op_info, vec![i32_ty.into(); 4], operands, vec![], 0);
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+    mma_op.insert_after(ctx, last_op);
+
+    let d_registers = (0..4)
+        .map(|index| mma_op.deref(ctx).get_result(index))
+        .collect();
+    let array_ty = MirArrayType::get(ctx, i32_ty.into(), 4);
+    let d_array = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty.into()],
+        d_registers,
+        vec![],
+        0,
+    );
+    d_array.deref_mut(ctx).set_loc(loc.clone());
+    d_array.insert_after(ctx, mma_op);
+    let result = d_array.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        d_array,
+        value_map,
+        block_map,
+        loc,
+        &format!("{fn_name} call without target block"),
+    )
 }

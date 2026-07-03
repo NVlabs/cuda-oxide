@@ -6,7 +6,8 @@
 use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
     Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
-    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
+    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K16S32S8U8Op, MmaM16N8K16S32U8S8Op,
+    MmaM16N8K32S32S8Op, MmaM16N8K32S32S8U8Op, MmaM16N8K32S32U8S8Op, MovmatrixTransB16Op,
     NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
     ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
     ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
@@ -1154,4 +1155,268 @@ fn test_shfl_sync_i64_construct_and_verify() {
         );
         assert!(verify_op(&ShflSyncIdxI64Op::new(bad), &ctx).is_err());
     }
+}
+
+#[test]
+fn test_mma_m16n8k32_s32_s8_u8_verifies_all_i32_register_signature() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    // Valid: 10 i32 operands, 4 i32 results.
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..10).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K32S32S8U8Op::new(valid), &ctx).is_ok());
+
+    // Bad operand type: one i64 among the i32 operands.
+    let bad_operand = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..10)
+            .map(|i| if i == 0 { i64_value } else { i32_value })
+            .collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K32S32S8U8Op::new(bad_operand), &ctx)
+        .expect_err("MMA must reject non-i32 register operands");
+
+    // Bad result type: one f32 among the i32 results.
+    let bad_result = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), f32_ty.into()],
+        (0..10).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K32S32S8U8Op::new(bad_result), &ctx)
+        .expect_err("MMA must reject wrong result type");
+
+    // Bad operand arity: 9 instead of 10.
+    let bad_arity = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..9).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K32S32S8U8Op::new(bad_arity), &ctx)
+        .expect_err("MMA must reject wrong operand count");
+}
+
+#[test]
+fn test_mma_m16n8k32_s32_u8_s8_verifies_all_i32_register_signature() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    // Valid: 10 i32 operands, 4 i32 results.
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..10).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K32S32U8S8Op::new(valid), &ctx).is_ok());
+
+    // Bad operand type: one i64 among the i32 operands.
+    let bad_operand = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..10)
+            .map(|i| if i == 0 { i64_value } else { i32_value })
+            .collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K32S32U8S8Op::new(bad_operand), &ctx)
+        .expect_err("MMA must reject non-i32 register operands");
+
+    // Bad result type: one f32 among the i32 results.
+    let bad_result = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), f32_ty.into()],
+        (0..10).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K32S32U8S8Op::new(bad_result), &ctx)
+        .expect_err("MMA must reject wrong result type");
+
+    // Bad operand arity: 9 instead of 10.
+    let bad_arity = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..9).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K32S32U8S8Op::new(bad_arity), &ctx)
+        .expect_err("MMA must reject wrong operand count");
+}
+
+#[test]
+fn test_mma_m16n8k16_s32_s8_u8_verifies_all_i32_register_signature() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    // Valid: 7 i32 operands, 4 i32 results.
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..7).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16S32S8U8Op::new(valid), &ctx).is_ok());
+
+    // Bad operand type: one i64 among the i32 operands.
+    let bad_operand = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..7)
+            .map(|i| if i == 0 { i64_value } else { i32_value })
+            .collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K16S32S8U8Op::new(bad_operand), &ctx)
+        .expect_err("MMA must reject non-i32 register operands");
+
+    // Bad result type: one f32 among the i32 results.
+    let bad_result = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), f32_ty.into()],
+        (0..7).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K16S32S8U8Op::new(bad_result), &ctx)
+        .expect_err("MMA must reject wrong result type");
+
+    // Bad operand arity: 6 instead of 7.
+    let bad_arity = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32S8U8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..6).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K16S32S8U8Op::new(bad_arity), &ctx)
+        .expect_err("MMA must reject wrong operand count");
+}
+
+#[test]
+fn test_mma_m16n8k16_s32_u8_s8_verifies_all_i32_register_signature() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+
+    // Valid: 7 i32 operands, 4 i32 results.
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..7).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K16S32U8S8Op::new(valid), &ctx).is_ok());
+
+    // Bad operand type: one i64 among the i32 operands.
+    let bad_operand = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..7)
+            .map(|i| if i == 0 { i64_value } else { i32_value })
+            .collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K16S32U8S8Op::new(bad_operand), &ctx)
+        .expect_err("MMA must reject non-i32 register operands");
+
+    // Bad result type: one f32 among the i32 results.
+    let bad_result = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), f32_ty.into()],
+        (0..7).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K16S32U8S8Op::new(bad_result), &ctx)
+        .expect_err("MMA must reject wrong result type");
+
+    // Bad operand arity: 6 instead of 7.
+    let bad_arity = Operation::new(
+        &mut ctx,
+        MmaM16N8K16S32U8S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        (0..6).map(|_| i32_value).collect(),
+        vec![],
+        0,
+    );
+    verify_op(&MmaM16N8K16S32U8S8Op::new(bad_arity), &ctx)
+        .expect_err("MMA must reject wrong operand count");
 }
