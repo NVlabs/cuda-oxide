@@ -460,8 +460,23 @@ pub fn run_pipeline(
     // The example is then expected to feed the `.ll` through the LTOIR
     // pipeline (compile_ltoir + link_ltoir) and load the resulting cubin.
     let needs_libdevice = module_uses_libdevice(&ctx, module_op_ptr);
-    let emit_nvvm_ir = config.emit_nvvm_ir || needs_libdevice;
-    if needs_libdevice && !config.emit_nvvm_ir && config.verbose {
+    // When a pre-Blackwell module uses BOTH libdevice (__nv_* calls) AND f16
+    // types (MMA/WMMA intrinsics), auto-forcing NVVM IR mode would fail
+    // because the legacy LLVM 7 dialect rejects scalar f16. In that case,
+    // stay on the PTX path and let the user link libdevice externally (via
+    // llvm-link or the LTOIR pipeline). This matches how build_and_run.sh
+    // already handles the combination.
+    let has_f16_types = module_contains_f16(&ctx, module_op_ptr);
+    let libdevice_blocked_by_f16 = needs_libdevice && has_f16_types && !config.emit_nvvm_ir;
+    let emit_nvvm_ir = config.emit_nvvm_ir || (needs_libdevice && !libdevice_blocked_by_f16);
+    if libdevice_blocked_by_f16 {
+        eprintln!(
+            "\n=== Warning: module uses both f16 types and libdevice (`__nv_*`) calls. ===\n\
+             === The legacy NVVM IR path (pre-Blackwell) cannot compile f16; staying  ===\n\
+             === on the PTX path. Unresolved `__nv_*` calls must be linked externally ===\n\
+             === (e.g., `llvm-link module.ll libdevice.10.bc` before `llc`).          ==="
+        );
+    } else if needs_libdevice && !config.emit_nvvm_ir && config.verbose {
         eprintln!(
             "\n=== Detected CUDA libdevice (`__nv_*`) calls; \
              auto-emitting NVVM IR (skip llc) ==="
@@ -678,6 +693,61 @@ fn op_uses_libdevice(ctx: &Context, op_ptr: Ptr<Operation>) -> bool {
         }
     }
 
+    false
+}
+
+/// Returns `true` if any operation in the module tree uses an f16 (half) type.
+///
+/// This is a lightweight scan used before choosing the NVVM IR dialect.
+/// When f16 types are present AND the target requires the legacy LLVM 7
+/// dialect, auto-forcing NVVM IR mode would fail because that dialect
+/// rejects scalar f16. The pipeline can then fall back to the PTX path.
+fn module_contains_f16(ctx: &Context, module_op_ptr: Ptr<Operation>) -> bool {
+    op_contains_f16(ctx, module_op_ptr)
+}
+
+fn op_contains_f16(ctx: &Context, op_ptr: Ptr<Operation>) -> bool {
+    use pliron::builtin::types::FP16Type;
+    use pliron::r#type::Typed;
+
+    let op_ref = op_ptr.deref(ctx);
+
+    // Check operand and result types for f16.
+    let has_f16_value = op_ref
+        .operands()
+        .any(|v| v.get_type(ctx).deref(ctx).is::<FP16Type>())
+        || op_ref
+            .results()
+            .any(|v| v.get_type(ctx).deref(ctx).is::<FP16Type>());
+    if has_f16_value {
+        return true;
+    }
+
+    // Check function signature types.
+    if let Some(func) = Operation::get_op::<llvm_export::ops::FuncOp>(op_ptr, ctx) {
+        use pliron::builtin::type_interfaces::FunctionTypeInterface;
+        let func_ty_handle = func.get_type(ctx);
+        let func_ty = func_ty_handle.deref(ctx);
+        if func_ty.result_type().deref(ctx).is::<FP16Type>()
+            || func_ty
+                .arg_types()
+                .into_iter()
+                .any(|arg| arg.deref(ctx).is::<FP16Type>())
+        {
+            return true;
+        }
+    }
+
+    // Recurse into nested regions.
+    for region in op_ref.regions() {
+        for block in region.deref(ctx).iter(ctx) {
+            for child_op in block.deref(ctx).iter(ctx) {
+                if op_contains_f16(ctx, child_op) {
+                    return true;
+                }
+            }
+        }
+    }
     false
 }
 
@@ -4618,6 +4688,108 @@ mod tests {
         assert!(
             module_uses_libdevice(&ctx, module_ptr),
             "direct call to a `__nv_*` symbol must be detected"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // module_contains_f16
+    // ---------------------------------------------------------------
+
+    /// Build a module containing a single function declaration whose
+    /// signature uses the given return type and argument types. This is
+    /// a generalised version of `build_module_with_func_decl` that
+    /// accepts arbitrary types so we can test f16 detection.
+    fn build_module_with_typed_func_decl(
+        ctx: &mut Context,
+        name: &str,
+        ret_ty: pliron::r#type::TypeHandle,
+        arg_tys: Vec<pliron::r#type::TypeHandle>,
+    ) -> Ptr<Operation> {
+        use llvm_export::ops::FuncOp as LlvmFuncOp;
+        use llvm_export::types::FuncType as LlvmFuncType;
+        use pliron::basic_block::BasicBlock;
+        use pliron::builtin::ops::ModuleOp;
+
+        let module = ModuleOp::new(ctx, "test_module".try_into().unwrap());
+        let module_ptr = module.get_operation();
+        let module_region = module_ptr.deref(ctx).get_region(0);
+
+        let module_block = {
+            let region_ref = module_region.deref(ctx);
+            if let Some(first_block) = region_ref.iter(ctx).next() {
+                first_block
+            } else {
+                drop(region_ref);
+                let new_block = BasicBlock::new(ctx, None, vec![]);
+                new_block.insert_at_back(module_region, ctx);
+                new_block
+            }
+        };
+
+        let func_ty = LlvmFuncType::get(ctx, ret_ty, arg_tys, false);
+        let func = LlvmFuncOp::new(ctx, name.try_into().unwrap(), func_ty);
+        func.get_operation().insert_at_back(module_block, ctx);
+
+        module_ptr
+    }
+
+    #[test]
+    fn test_module_contains_f16_detects_f16_return_type() {
+        use pliron::builtin::types::{FP16Type, IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        let f16_ty = FP16Type::get(&ctx).into();
+        let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let module_ptr =
+            build_module_with_typed_func_decl(&mut ctx, "mma_kernel", f16_ty, vec![i32_ty]);
+        assert!(
+            module_contains_f16(&ctx, module_ptr),
+            "module with f16 return type must be detected"
+        );
+    }
+
+    #[test]
+    fn test_module_contains_f16_detects_f16_arg_type() {
+        use pliron::builtin::types::{FP16Type, IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        let f16_ty = FP16Type::get(&ctx).into();
+        let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let module_ptr =
+            build_module_with_typed_func_decl(&mut ctx, "mma_kernel", i32_ty, vec![f16_ty]);
+        assert!(
+            module_contains_f16(&ctx, module_ptr),
+            "module with f16 argument type must be detected"
+        );
+    }
+
+    #[test]
+    fn test_module_contains_f16_negative_for_f32_only() {
+        use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        let f32_ty = FP32Type::get(&ctx).into();
+        let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let module_ptr = build_module_with_typed_func_decl(
+            &mut ctx,
+            "regular_kernel",
+            f32_ty,
+            vec![i32_ty, f32_ty],
+        );
+        assert!(
+            !module_contains_f16(&ctx, module_ptr),
+            "module without any f16 types must not be detected"
+        );
+    }
+
+    #[test]
+    fn test_module_contains_f16_negative_for_i32_only() {
+        let mut ctx = Context::new();
+        // Re-use the original i32→i32 helper.
+        let module_ptr = build_module_with_func_decl(&mut ctx, "int_kernel");
+        assert!(
+            !module_contains_f16(&ctx, module_ptr),
+            "module with only i32 types must not be detected"
         );
     }
 }
