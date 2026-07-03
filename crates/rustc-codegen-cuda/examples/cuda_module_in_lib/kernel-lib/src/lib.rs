@@ -22,29 +22,33 @@
 //! The package name deliberately contains a hyphen so the symbol-name
 //! sanitization (hyphen to underscore) is exercised too.
 
-use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_device::cuda_module;
 
 #[cuda_module]
 pub mod kernels {
-    use super::*;
+    /// The root intentionally owns no direct kernels. Keeping the artifact
+    /// must depend on `kernels::load()`, not on a child view being referenced.
+    pub mod ops {
+        use cuda_device::{DisjointSlice, kernel, thread};
 
-    /// Multiply every input element by a constant factor.
-    #[kernel]
-    pub fn scale_f32(factor: f32, input: &[f32], mut out: DisjointSlice<f32>) {
-        let idx = thread::index_1d();
-        let idx_raw = idx.get();
-        if let Some(out_elem) = out.get_mut(idx) {
-            *out_elem = input[idx_raw] * factor;
+        /// Multiply every input element by a constant factor.
+        #[kernel]
+        pub fn scale_f32(factor: f32, input: &[f32], mut out: DisjointSlice<f32>) {
+            let idx = thread::index_1d();
+            let idx_raw = idx.get();
+            if let Some(out_elem) = out.get_mut(idx) {
+                *out_elem = input[idx_raw] * factor;
+            }
         }
-    }
 
-    /// Element-wise addition of two input slices.
-    #[kernel]
-    pub fn add_f32(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
-        let idx = thread::index_1d();
-        let idx_raw = idx.get();
-        if let Some(c_elem) = c.get_mut(idx) {
-            *c_elem = a[idx_raw] + b[idx_raw];
+        /// Element-wise addition of two input slices.
+        #[kernel]
+        pub fn add_f32(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
+            let idx = thread::index_1d();
+            let idx_raw = idx.get();
+            if let Some(c_elem) = c.get_mut(idx) {
+                *c_elem = a[idx_raw] + b[idx_raw];
+            }
         }
     }
 }

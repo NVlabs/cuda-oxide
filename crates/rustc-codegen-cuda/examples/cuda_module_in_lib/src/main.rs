@@ -36,6 +36,8 @@
 //! 2. The binary's own bundle ("cuda_module_in_lib") still coexists with
 //!    the library bundle, and both load by name.
 //! 3. Kernels from both modules launch and produce correct results.
+//! 4. The library module root has only nested kernels, so its root `load()`
+//!    must pin descendant device code without depending on a child view call.
 //!
 //! Step 1 runs before CUDA initialization on purpose: on a GPU-less
 //! machine the linkage regression is still caught by the bundle check.
@@ -94,6 +96,11 @@ fn main() {
     }
     println!("  ✓ PASSED: library and binary bundles are both embedded\n");
 
+    if std::env::args().any(|arg| arg == "--verify-bundles") {
+        println!("SUCCESS: nested-only library bundle survived archive linking");
+        return;
+    }
+
     // =========================================================================
     // CUDA setup
     // =========================================================================
@@ -109,33 +116,33 @@ fn main() {
         // This is the exact call that used to fail with
         // ModuleNotFound { name: "module-kernels" }.
         let module = kernels::load(&ctx).expect("Failed to load library cuda_module");
+        let ops = kernels::ops::LoadedModule::from_parent(&module)
+            .expect("Failed to bind library kernel launchers");
 
         let factor: f32 = 2.5;
         let input: Vec<f32> = (0..N).map(|i| i as f32).collect();
         let input_dev = DeviceBuffer::from_host(&stream, &input).unwrap();
         let mut output_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
-        module
-            .scale_f32(
-                &stream,
-                LaunchConfig::for_num_elems(N as u32),
-                factor,
-                &input_dev,
-                &mut output_dev,
-            )
-            .expect("scale_f32 launch failed");
+        ops.scale_f32(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            factor,
+            &input_dev,
+            &mut output_dev,
+        )
+        .expect("scale_f32 launch failed");
         let scaled: Vec<f32> = output_dev.to_host_vec(&stream).unwrap();
 
         let mut sum_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
-        module
-            .add_f32(
-                &stream,
-                LaunchConfig::for_num_elems(N as u32),
-                &input_dev,
-                &output_dev,
-                &mut sum_dev,
-            )
-            .expect("add_f32 launch failed");
+        ops.add_f32(
+            &stream,
+            LaunchConfig::for_num_elems(N as u32),
+            &input_dev,
+            &output_dev,
+            &mut sum_dev,
+        )
+        .expect("add_f32 launch failed");
         let sums: Vec<f32> = sum_dev.to_host_vec(&stream).unwrap();
 
         let errors = (0..N)

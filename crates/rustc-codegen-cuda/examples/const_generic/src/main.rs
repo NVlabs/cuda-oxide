@@ -116,7 +116,9 @@ fn main() {
     }
     if args.iter().any(|arg| arg == "--verify-ptx") {
         verify_generated_ptx();
-        println!("host lookup names, retained PTX entries, launch bounds, and constants agree");
+        println!(
+            "const_generic: PASS (host lookup names, retained PTX entries, launch bounds, and constants agree)"
+        );
         return;
     }
 
@@ -169,7 +171,7 @@ fn main() {
         assert_eq!(same_8[index], index as u32);
     }
 
-    println!("const-generic kernel entries produced distinct VALUE=4 and VALUE=8 results");
+    println!("const_generic: PASS (distinct VALUE=4 and VALUE=8 kernel results)");
 }
 
 #[cfg(test)]

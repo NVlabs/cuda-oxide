@@ -1,0 +1,24 @@
+error[E0308]: mismatched types
+  --> tests/compile_fail/cuda_module_nested_type_mismatch.rs:32:47
+   |
+32 |     let _ = child.child_typed(stream, config, kernels::Params { value: 1 });
+   |                   -----------                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `child::Params`, found `kernels::Params`
+   |                   |
+   |                   arguments to this method are incorrect
+   |
+   = note: `kernels::Params` and `child::Params` have similar names, but are actually distinct types
+note: `kernels::Params` is defined in module `crate::kernels` of the current crate
+  --> tests/compile_fail/cuda_module_nested_type_mismatch.rs:10:5
+   |
+10 |     pub struct Params {
+   |     ^^^^^^^^^^^^^^^^^
+note: `child::Params` is defined in module `crate::kernels::child` of the current crate
+  --> tests/compile_fail/cuda_module_nested_type_mismatch.rs:16:9
+   |
+16 |         pub struct Params {
+   |         ^^^^^^^^^^^^^^^^^
+note: method defined here
+  --> tests/compile_fail/cuda_module_nested_type_mismatch.rs:21:16
+   |
+21 |         pub fn child_typed(params: Params) {
+   |                ^^^^^^^^^^^ --------------

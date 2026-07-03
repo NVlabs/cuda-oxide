@@ -16,14 +16,13 @@
 //!
 //! 1. Simple standalone device functions (no kernel, no GPU intrinsics)
 //! 2. Device function calling another device function (transitive collection)
-//! 3. Generic logic via concrete device function wrappers
+//! 3. Generic logic via concrete wrappers, including multiple monomorphizations
 //! 4. Device function using GPU intrinsics (thread indexing)
-//! 5. Multiple monomorphizations of the same generic
-//! 6. Typed device stub through MIR import and lowering to exact PTX
+//! 5. F16, TF32, and INT8 warp-MMA lowering through the complete PTX pipeline
 
-use cuda_device::device;
 use cuda_device::thread;
-use cuda_device::wmma;
+use cuda_device::wmma::{mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_f16, mma_m16n8k32_s32_s8};
+use cuda_device::{device, ptx_asm};
 
 // =============================================================================
 // TEST 1: Simple standalone device functions
@@ -144,22 +143,72 @@ pub fn get_global_thread_id() -> usize {
 }
 
 // =============================================================================
-// TEST 5: Device stub through MIR import and PTX lowering
+// TEST 5: Warp-MMA stubs through the complete compiler pipeline
 //
-// The raw INT8 MMA intrinsic is never executed by this host-only example. Its
-// device wrapper gives the compiler a checked-in end-to-end path from the
-// cuda-device stub through mir-importer and mir-lower to generated PTX.
+// The host never calls these functions. Compiling them proves that the public
+// cuda-device stubs and the required f32-to-TF32 conversion reach exact PTX.
 // =============================================================================
 
-/// Apply one lane's register fragments for warp-wide INT8 MMA.
+/// Emits one register-only F16 tensor-core MMA instruction.
 ///
 /// # Safety
 ///
-/// The caller must uphold [`wmma::mma_m16n8k32_s32_s8`]'s warp participation
-/// and per-lane fragment-layout contract.
+/// The caller must satisfy [`mma_m16n8k16_f32_f16`]'s warp participation and
+/// lane-fragment layout contract.
+#[device]
+pub unsafe fn mma_m16n8k16_f32_f16_stub(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    unsafe { mma_m16n8k16_f32_f16(c, a, b) }
+}
+
+/// Emits one register-only TF32 tensor-core MMA instruction from raw TF32 bits.
+///
+/// # Safety
+///
+/// The caller must satisfy [`mma_m16n8k8_f32_tf32`]'s warp participation,
+/// fragment-layout, and valid-TF32-register contract.
+#[device]
+pub unsafe fn mma_m16n8k8_f32_tf32_raw_stub(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    unsafe { mma_m16n8k8_f32_tf32(c, a, b) }
+}
+
+/// Converts lane-local f32 fragments to TF32 before emitting the MMA.
+///
+/// # Safety
+///
+/// All 32 lanes must execute this function together with A, B, and C elements
+/// in the per-lane layout documented by [`mma_m16n8k8_f32_tf32`].
+#[device]
+pub unsafe fn mma_m16n8k8_f32_tf32_from_f32_stub(
+    c: [f32; 4],
+    a: [f32; 4],
+    b: [f32; 2],
+) -> [f32; 4] {
+    let a0: u32;
+    let a1: u32;
+    let a2: u32;
+    let a3: u32;
+    let b0: u32;
+    let b1: u32;
+    unsafe {
+        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a0, in("f") a[0], options(register_only));
+        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a1, in("f") a[1], options(register_only));
+        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a2, in("f") a[2], options(register_only));
+        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") a3, in("f") a[3], options(register_only));
+        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") b0, in("f") b[0], options(register_only));
+        ptx_asm!("cvt.rna.tf32.f32 %0, %1;", out("=r") b1, in("f") b[1], options(register_only));
+        mma_m16n8k8_f32_tf32(c, [a0, a1, a2, a3], [b0, b1])
+    }
+}
+
+/// Emits one register-only signed INT8 tensor-core MMA instruction.
+///
+/// # Safety
+///
+/// The caller must satisfy [`mma_m16n8k32_s32_s8`]'s warp participation and
+/// per-lane fragment-layout contract.
 #[device]
 pub unsafe fn int8_mma_registers(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
-    unsafe { wmma::mma_m16n8k32_s32_s8(c, a, b) }
+    unsafe { mma_m16n8k32_s32_s8(c, a, b) }
 }
 
 // =============================================================================
@@ -194,10 +243,16 @@ fn main() {
             "get_global_thread_id",
             "Test 4: device fn with GPU intrinsics",
         ),
+        ("mma_m16n8k16_f32_f16_stub", "Test 5: F16 warp-MMA stub"),
         (
-            "int8_mma_registers",
-            "Test 5: cuda-device stub imported and lowered",
+            "mma_m16n8k8_f32_tf32_raw_stub",
+            "Test 5: raw TF32 warp-MMA stub",
         ),
+        (
+            "mma_m16n8k8_f32_tf32_from_f32_stub",
+            "Test 5: f32-to-TF32 conversion path",
+        ),
+        ("int8_mma_registers", "Test 5: signed INT8 warp-MMA stub"),
     ];
 
     let mut passed = 0;
@@ -211,6 +266,33 @@ fn main() {
             println!("  FAIL  {} — {}", func_name, description);
             failed += 1;
         }
+    }
+
+    let f16_mma = "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32";
+    if ptx_content.contains(f16_mma) {
+        println!("  PASS  exact F16 warp-MMA instruction emitted");
+        passed += 1;
+    } else {
+        println!("  FAIL  exact F16 warp-MMA instruction missing");
+        failed += 1;
+    }
+
+    let tf32_mma = "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32";
+    if ptx_content.contains(tf32_mma) {
+        println!("  PASS  exact TF32 warp-MMA instruction emitted");
+        passed += 1;
+    } else {
+        println!("  FAIL  exact TF32 warp-MMA instruction missing");
+        failed += 1;
+    }
+
+    let tf32_conversions = ptx_content.matches("cvt.rna.tf32.f32").count();
+    if tf32_conversions == 6 {
+        println!("  PASS  six f32-to-TF32 register conversions emitted");
+        passed += 1;
+    } else {
+        println!("  FAIL  expected six f32-to-TF32 conversions, found {tf32_conversions}");
+        failed += 1;
     }
 
     // Test 3b: Verify uninstantiated generic does NOT appear in PTX
@@ -276,7 +358,7 @@ fn main() {
 
     println!();
     if failed == 0 {
-        let total = tests.len() + 5;
+        let total = tests.len() + 8;
         println!(
             "SUCCESS: {}/{} tests passed — all device functions compiled to PTX!",
             passed, total

@@ -1255,6 +1255,14 @@ fn contains_mma_m16n8k16_f32_bf16_features(contents: &str) -> bool {
     )
 }
 
+/// Checks for the Ampere TF32 MMA operation (PTX 7.0, sm_80+).
+fn contains_mma_m16n8k8_f32_tf32_features(contents: &str) -> bool {
+    contains_instruction_mnemonic(
+        contents,
+        "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32",
+    )
+}
+
 /// Checks for the Ampere INT8 MMA operation (PTX 7.0, sm_80+).
 ///
 /// PTX permits both wrapping and `.satfinite` accumulator-overflow behavior.
@@ -1272,6 +1280,17 @@ fn contains_mma_m16n8k32_s32_s8_features(contents: &str) -> bool {
 /// Checks for the Ampere FP64 tensor-core MMA operation (PTX 7.0, sm_80+).
 fn contains_mma_m8n8k4_f64_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64")
+}
+
+/// Checks the dense F16 MMA form added by the typed device intrinsic.
+///
+/// MMA shapes and types have different architecture and PTX ISA floors, so
+/// this intentionally matches the complete operation-specific mnemonic.
+fn contains_mma_m16n8k16_f32_f16_features(contents: &str) -> bool {
+    contains_instruction_mnemonic(
+        contents,
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32",
+    )
 }
 
 fn contains_instruction_mnemonic(contents: &str, mnemonic: &str) -> bool {
@@ -1363,6 +1382,8 @@ fn contains_sm80_features(contents: &str) -> bool {
         || contents.contains("cp.async.wait_all")
         || contents.contains("cp.async.wait.all")
         || contains_mma_m16n8k16_f32_bf16_features(contents)
+        || contains_mma_m16n8k16_f32_f16_features(contents)
+        || contains_mma_m16n8k8_f32_tf32_features(contents)
         || contains_mma_m16n8k32_s32_s8_features(contents)
 }
 
@@ -1798,6 +1819,8 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
     if contains_mbarrier_features(contents)
         || contents.contains("redux.sync")
         || contains_mma_m16n8k16_f32_bf16_features(contents)
+        || contains_mma_m16n8k16_f32_f16_features(contents)
+        || contains_mma_m16n8k8_f32_tf32_features(contents)
         || contains_mma_m16n8k32_s32_s8_features(contents)
         || contains_mma_m8n8k4_f64_features(contents)
     {
@@ -3079,6 +3102,83 @@ mod tests {
     }
 
     #[test]
+    fn dense_f16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
+        let mnemonic = "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};";
+        for spelling in [
+            mnemonic,
+            "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32\t{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32\\09{$0}, {$1}, {$2}, {$3};",
+            ";mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "prefix\\0Amma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "\"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "{mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "$L:mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "/* comment */mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@p mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@!%p\\09mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                contains_mma_m16n8k16_f32_f16_features(spelling),
+                "missed {spelling:?}"
+            );
+        }
+
+        let requirements = detect_module_requirements_in_llvm_text(mnemonic);
+        assert_eq!(
+            requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+        assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+
+        let lower_target =
+            resolve_ptx_target(Some("sm_75"), None, requirements.features).unwrap_err();
+        assert!(
+            lower_target
+                .to_string()
+                .contains("cannot lower detected feature Sm80"),
+            "{lower_target}"
+        );
+        let (target, _) = resolve_ptx_target(Some("sm_80"), None, requirements.features).unwrap();
+        assert_eq!(target, "sm_80");
+
+        for near_miss in [
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sp.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32x {$0}, {$1}, {$2}, {$3};",
+            "not_mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "%mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "!mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "@!mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "not$mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "/mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            ")mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                !contains_mma_m16n8k16_f32_f16_features(near_miss),
+                "matched {near_miss:?}"
+            );
+        }
+
+        let combined = format!(
+            "{mnemonic}\n{}",
+            "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;"
+        );
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&combined),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+    }
+
+    #[test]
     fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
         for f16 in [
             "atom.global.add.noftz.f16x2 $0, [$1], $2;",
@@ -3329,6 +3429,81 @@ mod tests {
         assert!(validate_target_features(&sm_80, requirements.features).is_ok());
         let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
             .expect_err("sm_75 must not accept FP64 tensor-core MMA")
+            .to_string();
+        assert!(
+            error.contains("cannot lower detected feature Sm80"),
+            "{error}"
+        );
+
+        let combined = format!("{mnemonic}\nmovmatrix.sync.aligned.m8n8.trans.b16 $0, $1;");
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&combined),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+    }
+
+    #[test]
+    fn tf32_mma_detection_applies_exact_sm80_and_ptx70_floors() {
+        let mnemonic = concat!(
+            "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 ",
+            "{$0, $1, $2, $3}, {$4, $5, $6, $7}, {$8, $9}, {$10, $11, $12, $13};"
+        );
+        for spelling in [
+            mnemonic,
+            "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32\t{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32\\09{$0}, {$1}, {$2}, {$3};",
+            ";mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "prefix\\0Amma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "\"mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "{mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "$L:mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "/* comment */mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "@p mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "@!%p\\09mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                contains_mma_m16n8k8_f32_tf32_features(spelling),
+                "missed {spelling:?}"
+            );
+        }
+
+        let requirements = detect_module_requirements_in_llvm_text(mnemonic);
+        assert_eq!(requirements.features, DetectedFeatures::Sm80);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70);
+        let (target, _) =
+            resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
+        assert_eq!(target, "sm_80");
+
+        for near_miss in [
+            "mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sp.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32x {$0}, {$1}, {$2}, {$3};",
+            "not_mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "%mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "@mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "!mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "@!mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "not$mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            "/mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+            ")mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                !contains_mma_m16n8k8_f32_tf32_features(near_miss),
+                "matched {near_miss:?}"
+            );
+        }
+
+        let sm_75: CudaArch = "sm_75".parse().unwrap();
+        let sm_80: CudaArch = "sm_80".parse().unwrap();
+        assert!(validate_target_features(&sm_75, requirements.features).is_err());
+        assert!(validate_target_features(&sm_80, requirements.features).is_ok());
+        let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
+            .expect_err("sm_75 must not accept TF32 tensor-core MMA")
             .to_string();
         assert!(
             error.contains("cannot lower detected feature Sm80"),

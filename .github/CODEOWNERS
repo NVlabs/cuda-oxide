@@ -1,5 +1,2 @@
-# crates/cuda-bindings is under the NVIDIA Software License and cannot
-# accept external contributions; changes to it always need maintainer
-# review (enforced by the cuda-bindings-guard workflow, and by branch
-# protection when "require review from Code Owners" is enabled).
+# Low-level CUDA FFI changes require review from the cuda-bindings maintainer.
 /crates/cuda-bindings/ @nihalpasham

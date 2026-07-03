@@ -1,0 +1,5 @@
+error: cuda-oxide PTX entry names are currently bare function names, so #[cuda_module] requires kernel names to be unique across its inline module tree: `step` in `second` conflicts with `step` in `first`; rename one of the kernels
+  --> tests/compile_fail/cuda_module_duplicate_nested_kernel.rs:21:16
+   |
+21 |         pub fn step(value: u32) {
+   |                ^^^^
