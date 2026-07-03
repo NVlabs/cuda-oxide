@@ -115,9 +115,7 @@ pub fn find_or_build_backend(workspace_root: &Path, configured_backend: Option<&
     // 3. Local repo
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
-        let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
-        build_backend_from_source(&codegen_crate);
-        return so_path;
+        return build_backend_from_source(&codegen_crate);
     }
 
     // 4. Cached .so. Only honored when it isn't older than the running
@@ -357,19 +355,13 @@ fn invalidate_cache(cache_dir: &Path) {
 }
 
 /// Builds the backend from a local source tree.
-pub fn build_backend_from_source(codegen_crate: &Path) {
+pub fn build_backend_from_source(codegen_crate: &Path) -> PathBuf {
     println!("Building rustc-codegen-cuda backend...");
 
     let rustc_sysroot = get_rustc_sysroot();
     let lib_path = rustc_sysroot.as_ref().map(|s| format!("{}/lib", s));
 
-    let mut cmd = Command::new("cargo");
-    cmd.args(["build"]).current_dir(codegen_crate);
-
-    if let Some(ref path) = lib_path {
-        cmd.env("LIBRARY_PATH", build_library_path(path));
-        cmd.env("LD_LIBRARY_PATH", build_ld_library_path(path));
-    }
+    let mut cmd = backend_build_command(codegen_crate, lib_path.as_deref());
 
     let status = cmd.status().expect("Failed to run cargo build");
 
@@ -384,6 +376,23 @@ pub fn build_backend_from_source(codegen_crate: &Path) {
     } else {
         eprintln!("Warning: Expected .so not found at {}", so_path.display());
     }
+    so_path
+}
+
+fn backend_build_command(codegen_crate: &Path, rustc_lib_path: Option<&str>) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build"]).current_dir(codegen_crate);
+    // `cargo oxide debug/run/sanitize` may be launched with an application
+    // CARGO_TARGET_DIR. The backend has a stable repo/cache location contract,
+    // so force the backend build back to `<codegen_crate>/target`.
+    cmd.env("CARGO_TARGET_DIR", "target");
+
+    if let Some(path) = rustc_lib_path {
+        cmd.env("LIBRARY_PATH", build_library_path(path));
+        cmd.env("LD_LIBRARY_PATH", build_ld_library_path(path));
+    }
+
+    cmd
 }
 
 /// Returns the cache directory for cuda-oxide artifacts: `~/.cargo/cuda-oxide/`.
@@ -442,9 +451,7 @@ fn auto_fetch_and_build() -> PathBuf {
     }
 
     let codegen_crate = src_dir.join("crates/rustc-codegen-cuda");
-    build_backend_from_source(&codegen_crate);
-
-    let built_so = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+    let built_so = build_backend_from_source(&codegen_crate);
     if built_so.exists() {
         std::fs::copy(&built_so, &so_path).expect("Failed to copy backend to cache");
         write_toolchain_fingerprint(&cache_dir);
@@ -492,9 +499,27 @@ pub fn build_ld_library_path(sysroot_lib: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::time::{Duration, SystemTime};
+
+    /// The codegen backend is part of the cuda-oxide toolchain, not the
+    /// application being debugged/sanitized. A user-supplied
+    /// `CARGO_TARGET_DIR` for the application must therefore not change where
+    /// cargo-oxide builds or looks for `librustc_codegen_cuda.so`.
+    #[test]
+    fn backend_build_command_removes_application_cargo_target_dir() {
+        let command = backend_build_command(Path::new("/tmp/codegen"), Some("/tmp/rustc/lib"));
+
+        let cargo_target_dir = command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("CARGO_TARGET_DIR"))
+            .map(|(_, value)| value);
+
+        assert_eq!(cargo_target_dir.flatten(), Some(OsStr::new("target")));
+        assert_eq!(command.get_current_dir(), Some(Path::new("/tmp/codegen")));
+    }
 
     /// A cached `.so` whose mtime predates the running test binary should
     /// be reported stale. The test binary is `current_exe()`, which was

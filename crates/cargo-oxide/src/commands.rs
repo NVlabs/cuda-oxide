@@ -677,10 +677,7 @@ fn codegen_build_host_binary(
     }
     println!();
 
-    let preferred_bin = bin
-        .map(str::to_string)
-        .or_else(|| preferred_binary_name(&example_dir.join("Cargo.toml")));
-    run_cargo_build_for_executable(&mut cmd, preferred_bin.as_deref()).unwrap_or_else(|message| {
+    run_cargo_build_for_executable(&mut cmd, example_dir, bin).unwrap_or_else(|message| {
         eprintln!("\nBuild failed: {message}");
         std::process::exit(1);
     })
@@ -718,10 +715,7 @@ fn build_host_cargo(
         cmd.env("CUDA_OXIDE_VERBOSE", "1");
     }
 
-    let preferred_bin = bin
-        .map(str::to_string)
-        .or_else(|| preferred_binary_name(&example_dir.join("Cargo.toml")));
-    run_cargo_build_for_executable(&mut cmd, preferred_bin.as_deref()).unwrap_or_else(|message| {
+    run_cargo_build_for_executable(&mut cmd, example_dir, bin).unwrap_or_else(|message| {
         eprintln!("\nHost cargo build failed: {message}");
         std::process::exit(1);
     })
@@ -729,8 +723,11 @@ fn build_host_cargo(
 
 fn run_cargo_build_for_executable(
     cmd: &mut Command,
-    preferred_bin: Option<&str>,
+    manifest_dir: &Path,
+    explicit_bin: Option<&str>,
 ) -> Result<PathBuf, String> {
+    let selection = cargo_executable_selection(manifest_dir, explicit_bin)?;
+
     cmd.arg("--message-format=json-render-diagnostics");
     let output = cmd
         .output()
@@ -741,7 +738,7 @@ fn run_cargo_build_for_executable(
         eprint!("{stderr}");
     }
 
-    let mut executables = BTreeMap::<PathBuf, String>::new();
+    let mut executables = Vec::<CargoExecutableArtifact>::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let message: serde_json::Value = match serde_json::from_str(line) {
             Ok(message) => message,
@@ -775,6 +772,12 @@ fn run_cargo_build_for_executable(
         let Some(path) = message.get("executable").and_then(|path| path.as_str()) else {
             continue;
         };
+        let Some(package_id) = message
+            .get("package_id")
+            .and_then(|package_id| package_id.as_str())
+        else {
+            continue;
+        };
         let Some(name) = message
             .get("target")
             .and_then(|target| target.get("name"))
@@ -782,52 +785,187 @@ fn run_cargo_build_for_executable(
         else {
             continue;
         };
-        executables.insert(PathBuf::from(path), name.to_string());
+        executables.push(CargoExecutableArtifact {
+            package_id: package_id.to_string(),
+            target_name: name.to_string(),
+            path: PathBuf::from(path),
+        });
     }
 
     if !output.status.success() {
         return Err(format!("Cargo exited with status {}", output.status));
     }
 
-    if executables.len() == 1 {
-        return Ok(executables.into_keys().next().expect("one executable"));
-    }
-
-    if let Some(preferred_bin) = preferred_bin {
-        let mut matches = executables
-            .iter()
-            .filter(|(_, name)| name.as_str() == preferred_bin)
-            .map(|(path, _)| path.clone());
-        if let Some(path) = matches.next()
-            && matches.next().is_none()
-        {
-            return Ok(path);
-        }
-    }
-
-    if executables.is_empty() {
-        return Err("Cargo produced no executable binary artifact".to_string());
-    }
-
-    let choices = executables
-        .iter()
-        .map(|(path, name)| format!("{name} ({})", path.display()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "Cargo produced multiple executable binaries: {choices}; pass --bin <name>"
-    ))
+    select_cargo_executable_artifact(&selection, &executables)
 }
 
-fn preferred_binary_name(manifest_path: &Path) -> Option<String> {
-    let source = std::fs::read_to_string(manifest_path).ok()?;
-    let document: toml::Value = toml::from_str(&source).ok()?;
-    let package = document.get("package")?;
-    package
-        .get("default-run")
-        .or_else(|| package.get("name"))
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
+#[derive(Debug, PartialEq, Eq)]
+struct CargoExecutableSelection {
+    package_id: String,
+    package_name: String,
+    target_name: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CargoExecutableArtifact {
+    package_id: String,
+    target_name: String,
+    path: PathBuf,
+}
+
+fn cargo_executable_selection(
+    manifest_dir: &Path,
+    explicit_bin: Option<&str>,
+) -> Result<CargoExecutableSelection, String> {
+    let metadata = cargo_metadata(manifest_dir)?;
+    let manifest_path = manifest_dir.join("Cargo.toml");
+    let manifest_path = manifest_path
+        .canonicalize()
+        .map_err(|error| format!("could not resolve {}: {error}", manifest_path.display()))?;
+
+    let packages = metadata
+        .get("packages")
+        .and_then(|packages| packages.as_array())
+        .ok_or_else(|| "Cargo metadata did not include packages".to_string())?;
+
+    let selected_package = packages
+        .iter()
+        .find(|package| {
+            package
+                .get("manifest_path")
+                .and_then(|path| path.as_str())
+                .and_then(|path| PathBuf::from(path).canonicalize().ok())
+                .is_some_and(|path| path == manifest_path)
+        })
+        .or_else(|| {
+            let default_members = metadata
+                .get("workspace_default_members")
+                .and_then(|members| members.as_array())?;
+            if default_members.len() != 1 {
+                return None;
+            }
+            let default_package_id = default_members.first()?.as_str()?;
+            packages.iter().find(|package| {
+                package.get("id").and_then(|id| id.as_str()) == Some(default_package_id)
+            })
+        })
+        .ok_or_else(|| {
+            "could not determine the Cargo package to debug; pass --bin in a package directory or configure a single workspace default member".to_string()
+        })?;
+
+    cargo_executable_selection_from_package(selected_package, explicit_bin)
+}
+
+fn cargo_metadata(manifest_dir: &Path) -> Result<serde_json::Value, String> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version=1", "--no-deps"])
+        .current_dir(manifest_dir)
+        .output()
+        .map_err(|error| format!("could not start cargo metadata: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "cargo metadata failed with status {}{}{}",
+            output.status,
+            if stderr.is_empty() { "" } else { ": " },
+            stderr.trim()
+        ));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("could not parse cargo metadata JSON: {error}"))
+}
+
+fn cargo_executable_selection_from_package(
+    package: &serde_json::Value,
+    explicit_bin: Option<&str>,
+) -> Result<CargoExecutableSelection, String> {
+    let package_id = package
+        .get("id")
+        .and_then(|id| id.as_str())
+        .ok_or_else(|| "Cargo metadata package is missing id".to_string())?;
+    let package_name = package
+        .get("name")
+        .and_then(|name| name.as_str())
+        .ok_or_else(|| "Cargo metadata package is missing name".to_string())?;
+    let bin_targets = package
+        .get("targets")
+        .and_then(|targets| targets.as_array())
+        .ok_or_else(|| format!("Cargo metadata for package `{package_name}` is missing targets"))?
+        .iter()
+        .filter_map(|target| {
+            let is_binary = target
+                .get("kind")
+                .and_then(|kind| kind.as_array())
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")));
+            is_binary
+                .then(|| target.get("name").and_then(|name| name.as_str()))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+
+    let target_name = if let Some(explicit_bin) = explicit_bin {
+        if !bin_targets.contains(&explicit_bin) {
+            return Err(format!(
+                "package `{package_name}` has no binary target named `{explicit_bin}`"
+            ));
+        }
+        explicit_bin
+    } else if let Some(default_run) = package.get("default_run").and_then(|name| name.as_str()) {
+        if !bin_targets.contains(&default_run) {
+            return Err(format!(
+                "package `{package_name}` default-run `{default_run}` is not a binary target"
+            ));
+        }
+        default_run
+    } else {
+        match bin_targets.as_slice() {
+            [target] => target,
+            [] => {
+                return Err(format!(
+                    "package `{package_name}` has no executable binary target"
+                ));
+            }
+            _ => {
+                let choices = bin_targets.join(", ");
+                return Err(format!(
+                    "package `{package_name}` has multiple binary targets: {choices}; pass --bin <name>"
+                ));
+            }
+        }
+    };
+
+    Ok(CargoExecutableSelection {
+        package_id: package_id.to_string(),
+        package_name: package_name.to_string(),
+        target_name: target_name.to_string(),
+    })
+}
+
+fn select_cargo_executable_artifact(
+    selection: &CargoExecutableSelection,
+    executables: &[CargoExecutableArtifact],
+) -> Result<PathBuf, String> {
+    let matches = executables
+        .iter()
+        .filter(|artifact| {
+            artifact.package_id == selection.package_id
+                && artifact.target_name == selection.target_name
+        })
+        .collect::<Vec<_>>();
+
+    match matches.as_slice() {
+        [artifact] => Ok(artifact.path.clone()),
+        [] => Err(format!(
+            "Cargo produced no executable artifact for package `{}` target `{}`",
+            selection.package_name, selection.target_name
+        )),
+        _ => Err(format!(
+            "Cargo produced multiple executable artifacts for package `{}` target `{}`",
+            selection.package_name, selection.target_name
+        )),
+    }
 }
 
 const DEFAULT_SANITIZER_ERROR_EXITCODE: &str = "86";
@@ -1781,15 +1919,11 @@ pub fn codegen_debug(
     apply_device_arch_hint(&mut cmd, target_arch, detected_device_arch.as_deref());
     apply_ld_library_path(&mut cmd, ctx);
 
-    let preferred_bin = bin
-        .map(str::to_string)
-        .or_else(|| preferred_binary_name(&example_dir.join("Cargo.toml")));
-    let binary = run_cargo_build_for_executable(&mut cmd, preferred_bin.as_deref()).unwrap_or_else(
-        |message| {
+    let binary =
+        run_cargo_build_for_executable(&mut cmd, &example_dir, bin).unwrap_or_else(|message| {
             eprintln!("Failed to build {example}: {message}");
             std::process::exit(1);
-        },
-    );
+        });
     if !binary.exists() {
         eprintln!(
             "Error: Cargo reported executable artifact {}, but it does not exist",
@@ -3372,6 +3506,14 @@ mod tests {
         }
     }
 
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), unique))
+    }
+
     #[test]
     fn artifact_stem_normalizes_hyphens_like_cargo() {
         assert_eq!(artifact_stem("rustlantis-smoke"), "rustlantis_smoke");
@@ -3411,48 +3553,43 @@ mod tests {
     }
 
     #[test]
-    fn preferred_binary_name_prefers_default_run() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_default_run_{}_{}",
-            std::process::id(),
-            unique
-        ));
+    fn cargo_metadata_selection_prefers_default_run() {
+        let root = unique_temp_dir("cargo_oxide_default_run");
         std::fs::create_dir_all(&root).unwrap();
-        let manifest = root.join("Cargo.toml");
         std::fs::write(
-            &manifest,
+            root.join("Cargo.toml"),
             r#"
 [package]
 name = "multi-bin-package"
 default-run = "main_bin"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "main_bin"
+path = "src/main.rs"
+
+[[bin]]
+name = "other_bin"
+path = "src/other.rs"
 "#,
         )
         .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("src/other.rs"), "fn main() {}\n").unwrap();
 
-        assert_eq!(
-            preferred_binary_name(&manifest).as_deref(),
-            Some("main_bin")
-        );
+        let selection = cargo_executable_selection(&root, None).unwrap();
+        assert!(selection.package_id.starts_with("path+file://"));
+        assert!(selection.package_id.contains("multi-bin-package@0.1.0"));
+        assert_eq!(selection.package_name, "multi-bin-package");
+        assert_eq!(selection.target_name, "main_bin");
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn cargo_json_selects_custom_bin_in_configured_target_dir() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_artifact_binary_{}_{}",
-            std::process::id(),
-            unique
-        ));
+        let root = unique_temp_dir("cargo_oxide_artifact_binary");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(root.join(".cargo")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -3479,7 +3616,7 @@ path = "src/main.rs"
 
         let mut cmd = Command::new("cargo");
         cmd.args(["build", "--release"]).current_dir(&root);
-        let binary = run_cargo_build_for_executable(&mut cmd, Some("package-bin")).unwrap();
+        let binary = run_cargo_build_for_executable(&mut cmd, &root, None).unwrap();
 
         assert!(binary.exists());
         let expected_name = format!("actual-bin{}", std::env::consts::EXE_SUFFIX);
@@ -3497,15 +3634,7 @@ path = "src/main.rs"
 
     #[test]
     fn cargo_json_selects_single_binary_from_virtual_workspace() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "cargo_oxide_artifact_workspace_{}_{}",
-            std::process::id(),
-            unique
-        ));
+        let root = unique_temp_dir("cargo_oxide_artifact_workspace");
         let member = root.join("member");
         std::fs::create_dir_all(member.join("src")).unwrap();
         std::fs::write(
@@ -3529,10 +3658,9 @@ path = "src/main.rs"
         .unwrap();
         std::fs::write(member.join("src/main.rs"), "fn main() {}\n").unwrap();
 
-        assert_eq!(preferred_binary_name(&root.join("Cargo.toml")), None);
         let mut cmd = Command::new("cargo");
         cmd.args(["build", "--release"]).current_dir(&root);
-        let binary = run_cargo_build_for_executable(&mut cmd, None).unwrap();
+        let binary = run_cargo_build_for_executable(&mut cmd, &root, None).unwrap();
 
         let expected_name = format!("workspace-bin{}", std::env::consts::EXE_SUFFIX);
         assert_eq!(
@@ -3540,6 +3668,159 @@ path = "src/main.rs"
             Some(expected_name.as_str())
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cargo_json_honors_virtual_workspace_default_member_default_run() {
+        let root = unique_temp_dir("cargo_oxide_artifact_default_member");
+        let app = root.join("app");
+        let ignored = root.join("ignored");
+        std::fs::create_dir_all(app.join("src")).unwrap();
+        std::fs::create_dir_all(ignored.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"app\", \"ignored\"]\ndefault-members = [\"app\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("Cargo.toml"),
+            r#"
+[package]
+name = "selected-package"
+default-run = "chosen-bin"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "chosen-bin"
+path = "src/chosen.rs"
+
+[[bin]]
+name = "other-bin"
+path = "src/other.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(app.join("src/chosen.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(app.join("src/other.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(
+            ignored.join("Cargo.toml"),
+            r#"
+[package]
+name = "ignored-package"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        std::fs::write(ignored.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--release"]).current_dir(&root);
+        let binary = run_cargo_build_for_executable(&mut cmd, &root, None).unwrap();
+
+        let expected_name = format!("chosen-bin{}", std::env::consts::EXE_SUFFIX);
+        assert_eq!(
+            binary.file_name().and_then(OsStr::to_str),
+            Some(expected_name.as_str())
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cargo_json_errors_when_requested_bin_was_not_built() {
+        let root = unique_temp_dir("cargo_oxide_artifact_missing_bin");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "package-bin"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "actual-bin"
+path = "src/actual.rs"
+
+[[bin]]
+name = "other-bin"
+path = "src/other.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/actual.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("src/other.rs"), "fn main() {}\n").unwrap();
+
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--release", "--bin", "actual-bin"])
+            .current_dir(&root);
+        let error = run_cargo_build_for_executable(&mut cmd, &root, Some("other-bin"))
+            .expect_err("requested but unbuilt binary should be rejected");
+
+        assert!(error.contains("target `other-bin`"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cargo_json_errors_when_default_run_was_not_built() {
+        let root = unique_temp_dir("cargo_oxide_artifact_missing_default_run");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "package-bin"
+default-run = "default-bin"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "default-bin"
+path = "src/default.rs"
+
+[[bin]]
+name = "other-bin"
+path = "src/other.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/default.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("src/other.rs"), "fn main() {}\n").unwrap();
+
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--release", "--bin", "other-bin"])
+            .current_dir(&root);
+        let error = run_cargo_build_for_executable(&mut cmd, &root, None)
+            .expect_err("unbuilt default-run binary should be rejected");
+
+        assert!(error.contains("target `default-bin`"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn artifact_selection_ignores_executable_artifacts_from_other_packages() {
+        let selection = CargoExecutableSelection {
+            package_id: "app 0.1.0".to_string(),
+            package_name: "app".to_string(),
+            target_name: "app-bin".to_string(),
+        };
+        let artifacts = vec![
+            CargoExecutableArtifact {
+                package_id: "build-tool 0.1.0".to_string(),
+                target_name: "app-bin".to_string(),
+                path: PathBuf::from("/tmp/build-tool/app-bin"),
+            },
+            CargoExecutableArtifact {
+                package_id: "app 0.1.0".to_string(),
+                target_name: "helper-bin".to_string(),
+                path: PathBuf::from("/tmp/app/helper-bin"),
+            },
+        ];
+
+        let error = select_cargo_executable_artifact(&selection, &artifacts)
+            .expect_err("foreign package artifacts must not be selected");
+        assert!(error.contains("package `app` target `app-bin`"), "{error}");
     }
 
     #[test]
