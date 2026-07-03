@@ -16,12 +16,13 @@
 //!
 //! 1. Simple standalone device functions (no kernel, no GPU intrinsics)
 //! 2. Device function calling another device function (transitive collection)
-//! 3. Generic logic via concrete device function wrappers
+//! 3. Generic logic via concrete wrappers, including multiple monomorphizations
 //! 4. Device function using GPU intrinsics (thread indexing)
-//! 5. Multiple monomorphizations of the same generic
+//! 5. Raw F16 warp-MMA lowering through the complete PTX pipeline
 
 use cuda_device::device;
 use cuda_device::thread;
+use cuda_device::wmma::mma_m16n8k16_f32_f16;
 
 // =============================================================================
 // TEST 1: Simple standalone device functions
@@ -142,6 +143,28 @@ pub fn get_global_thread_id() -> usize {
 }
 
 // =============================================================================
+// TEST 5: Raw warp-MMA stub through the complete compiler pipeline
+//
+// The host never calls this function. Compiling it proves that the public
+// cuda-device stub is recognized by mir-importer and lowered to exact PTX.
+// =============================================================================
+
+/// Emits one register-only F16 tensor-core MMA instruction.
+///
+/// # Safety
+///
+/// The caller must satisfy [`mma_m16n8k16_f32_f16`]'s warp participation and
+/// lane-fragment layout contract.
+#[device]
+pub unsafe fn mma_m16n8k16_f32_f16_stub(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+) -> [f32; 4] {
+    unsafe { mma_m16n8k16_f32_f16(c, a, b) }
+}
+
+// =============================================================================
 // HOST CODE - Verifies PTX was generated correctly
 // =============================================================================
 
@@ -173,6 +196,10 @@ fn main() {
             "get_global_thread_id",
             "Test 4: device fn with GPU intrinsics",
         ),
+        (
+            "mma_m16n8k16_f32_f16_stub",
+            "Test 5: F16 warp-MMA stub",
+        ),
     ];
 
     let mut passed = 0;
@@ -186,6 +213,15 @@ fn main() {
             println!("  FAIL  {} — {}", func_name, description);
             failed += 1;
         }
+    }
+
+    let f16_mma = "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32";
+    if ptx_content.contains(f16_mma) {
+        println!("  PASS  exact F16 warp-MMA instruction emitted");
+        passed += 1;
+    } else {
+        println!("  FAIL  exact F16 warp-MMA instruction missing");
+        failed += 1;
     }
 
     // Test 3b: Verify uninstantiated generic does NOT appear in PTX
@@ -211,7 +247,7 @@ fn main() {
 
     println!();
     if failed == 0 {
-        let total = tests.len() + 2; // +1 for lerp-absent check, +1 for no-.entry check
+        let total = tests.len() + 3; // +1 MMA, +1 lerp absent, +1 no .entry
         println!(
             "SUCCESS: {}/{} tests passed — all device functions compiled to PTX!",
             passed, total

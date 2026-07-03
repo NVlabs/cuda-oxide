@@ -221,8 +221,32 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
 /// 16×8. Each lane supplies its fragments in registers and receives four f32
 /// result registers. The call itself does not access memory or act as a fence.
 ///
-/// `a[j / 2]` and `b[j / 2]` pack logical element `j` in low-to-high 16-bit
-/// order. The lane-to-element mapping is the same as [`mma_m16n8k16_f32_bf16`].
+/// The Rust arrays use the same order as the PTX register lists below:
+///
+/// - `c[0..4]` contains `%c0..%c3`, one `.f32` accumulator per element. The
+///   returned array contains `%d0..%d3` in the same order.
+/// - `a[0..4]` contains `%a0..%a3`, and `b[0..2]` contains `%b0..%b1`.
+///   Each `u32` is a raw `.b32` carrier holding two `.f16` values; element
+///   `j` is in `a[j / 2]` or `b[j / 2]`, low 16 bits before high 16 bits.
+///
+/// For lane `lane`, let `group = lane / 4` and `thread = lane % 4`:
+///
+/// ```text
+/// A element j=0..7:
+///   row = group       for j in {0,1,4,5}; otherwise group + 8
+///   col = thread*2 + (j&1) + (if j >= 4 { 8 } else { 0 })
+///
+/// B element j=0..3:
+///   row = thread*2 + (j&1) + (if j >= 2 { 8 } else { 0 })
+///   col = group
+///
+/// C/D register j=0..3:
+///   row = group + (if j >= 2 { 8 } else { 0 })
+///   col = thread*2 + (j&1)
+/// ```
+///
+/// These coordinates are the `.row.col` layout: A is row-major and B is
+/// column-major.
 ///
 /// # PTX
 ///
@@ -236,11 +260,12 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
 ///
 /// # Safety
 ///
-/// - All 32 lanes must execute the same call with the same qualifiers. Calling
-///   from divergent control flow, or after any lane has exited, is undefined
-///   behavior.
+/// - All 32 lanes must execute the same `mma.sync.aligned` instruction with
+///   the same qualifiers. Calling from divergent control flow, or after any
+///   lane has exited, is undefined behavior.
 /// - `c`, `a`, and `b` must contain the calling lane's fragments in the layout
-///   described in [`mma_m16n8k16_f32_bf16`].
+///   above. A different array order or layout computes a different matrix
+///   operation.
 /// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
 ///   automatically and rejects an explicit lower target.
 #[inline(never)]

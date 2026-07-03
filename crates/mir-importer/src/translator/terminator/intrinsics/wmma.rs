@@ -125,7 +125,7 @@ fn extract_array_registers(
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "mma_m16n8k16_f32_bf16 {fragment_name} fragment must be an array of {expected_len} scalar registers"
+                "MMA {fragment_name} fragment must be an array of {expected_len} scalar registers"
             ))
         );
     }
@@ -647,18 +647,25 @@ mod tests {
             );
         }
 
+        let message = extract_array_registers(
+            &mut ctx,
+            array,
+            f32_ty.into(),
+            2,
+            block,
+            Some(last_op),
+            Location::Unknown,
+            "B",
+        )
+        .expect_err("invalid fragment must report an error")
+        .to_string();
         assert!(
-            extract_array_registers(
-                &mut ctx,
-                array,
-                f32_ty.into(),
-                2,
-                block,
-                Some(last_op),
-                Location::Unknown,
-                "B",
-            )
-            .is_err()
+            message.contains("MMA B fragment must be an array of 2 scalar registers"),
+            "unexpected fragment diagnostic: {message}"
+        );
+        assert!(
+            !message.contains("bf16") && !message.contains("tf32") && !message.contains("f16"),
+            "shared fragment diagnostics must not name a different MMA operation: {message}"
         );
     }
 }
