@@ -97,21 +97,20 @@ fn main() {
     let mut doubled_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
-    let init = kernels::init::LoadedModule::from_parent(&module)
-        .expect("Failed to bind init launchers");
-    let scale = kernels::scale::LoadedModule::from_parent(&module)
-        .expect("Failed to bind scale launchers");
+    let init =
+        kernels::init::LoadedModule::from_parent(&module).expect("Failed to bind init launchers");
+    let scale =
+        kernels::scale::LoadedModule::from_parent(&module).expect("Failed to bind scale launchers");
     let offset = kernels::offset::LoadedModule::from_parent(&module)
         .expect("Failed to bind offset launchers");
-    let post = kernels::post::LoadedModule::from_parent(&module)
-        .expect("Failed to bind post launchers");
+    let post =
+        kernels::post::LoadedModule::from_parent(&module).expect("Failed to bind post launchers");
     let double = kernels::post::double::LoadedModule::from_parent(&post)
         .expect("Failed to bind double launchers");
     let config = LaunchConfig::for_num_elems(N as u32);
 
     // The init kernel feeds the three processing kernels.
-    init
-        .fill_index(&stream, config, &mut idx_dev)
+    init.fill_index(&stream, config, &mut idx_dev)
         .expect("fill_index launch failed");
     scale
         .scale_by(&stream, config, &idx_dev, &mut scaled_dev)
