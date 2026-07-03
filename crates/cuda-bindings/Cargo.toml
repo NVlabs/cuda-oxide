@@ -4,7 +4,7 @@ version = "0.2.1"
 edition.workspace = true
 description = "Raw FFI bindings to the CUDA driver API via bindgen"
 authors.workspace = true
-license-file = "../../LICENSE-NVIDIA"
+license.workspace = true
 repository.workspace = true
 
 [lib]
