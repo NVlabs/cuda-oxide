@@ -108,6 +108,7 @@ mod dotprod;
 mod grid;
 mod ldmatrix;
 mod mbarrier;
+mod prmt;
 mod shared;
 mod stmatrix;
 mod tcgen05;
@@ -132,6 +133,7 @@ pub use dotprod::*;
 pub use grid::*;
 pub use ldmatrix::*;
 pub use mbarrier::*;
+pub use prmt::*;
 pub use shared::*;
 pub use stmatrix::*;
 pub use tcgen05::*;
@@ -166,4 +168,5 @@ pub fn register(ctx: &mut Context) {
     debug::register(ctx);
     dotprod::register(ctx);
     wmma::register(ctx);
+    prmt::register(ctx);
 }

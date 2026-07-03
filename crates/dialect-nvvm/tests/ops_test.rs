@@ -7,13 +7,14 @@ use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
     Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
     MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
-    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
-    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
-    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
-    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PrmtOp, ReadPtxSregDynamicSmemSizeOp,
+    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
+    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
+    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
+    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
+    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
+    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp,
+    ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -1154,4 +1155,77 @@ fn test_shfl_sync_i64_construct_and_verify() {
         );
         assert!(verify_op(&ShflSyncIdxI64Op::new(bad), &ctx).is_err());
     }
+}
+
+#[test]
+fn test_prmt_op_verifies_three_i32_operands_and_one_i32_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+    let f32_value = block.deref(&ctx).get_argument(2);
+
+    // Valid: 3 i32 operands [a, b, control], 1 i32 result [d].
+    let valid = Operation::new(
+        &mut ctx,
+        PrmtOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![i32_value, i32_value, i32_value],
+        vec![],
+        0,
+    );
+    verify_op(&PrmtOp::new(valid), &ctx).expect("prmt must accept 3 i32 operands and 1 i32 result");
+
+    // Bad operand type: i64 instead of i32.
+    let bad_operand = Operation::new(
+        &mut ctx,
+        PrmtOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![i32_value, i64_value, i32_value],
+        vec![],
+        0,
+    );
+    verify_op(&PrmtOp::new(bad_operand), &ctx).expect_err("prmt must reject i64 operand");
+
+    // Bad result type: f32 instead of i32.
+    let bad_result = Operation::new(
+        &mut ctx,
+        PrmtOp::get_concrete_op_info(),
+        vec![f32_ty.into()],
+        vec![i32_value, i32_value, i32_value],
+        vec![],
+        0,
+    );
+    verify_op(&PrmtOp::new(bad_result), &ctx).expect_err("prmt must reject f32 result");
+
+    // Bad operand arity: 2 instead of 3.
+    let bad_arity = Operation::new(
+        &mut ctx,
+        PrmtOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![i32_value, i32_value],
+        vec![],
+        0,
+    );
+    verify_op(&PrmtOp::new(bad_arity), &ctx).expect_err("prmt must reject wrong operand count");
+
+    // Bad f32 operand: non-integer type.
+    let bad_f32_operand = Operation::new(
+        &mut ctx,
+        PrmtOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![f32_value, i32_value, i32_value],
+        vec![],
+        0,
+    );
+    verify_op(&PrmtOp::new(bad_f32_operand), &ctx).expect_err("prmt must reject f32 operand");
 }

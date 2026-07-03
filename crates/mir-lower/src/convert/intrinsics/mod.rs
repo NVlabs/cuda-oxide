@@ -83,6 +83,7 @@ pub mod debug;
 pub mod dotprod;
 pub mod ldmatrix;
 pub mod mbarrier;
+pub mod prmt;
 pub mod stmatrix;
 pub mod tcgen05;
 pub mod tma;

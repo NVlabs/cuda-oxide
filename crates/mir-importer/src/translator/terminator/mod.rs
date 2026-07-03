@@ -4198,6 +4198,21 @@ fn try_dispatch_intrinsic(
             loc,
         )?)),
         // =================================================================
+        // Byte permute (from intrinsics::prmt)
+        // =================================================================
+        "cuda_device::prmt::prmt" => Ok(Some(intrinsics::prmt::emit_prmt(
+            ctx,
+            body,
+            args,
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        // =================================================================
         // bf16x2 packed arithmetic (from intrinsics::bf16x2)
         // =================================================================
         "cuda_device::bf16x2::fma_relu_bf16x2" => {

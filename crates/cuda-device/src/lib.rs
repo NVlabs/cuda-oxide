@@ -27,6 +27,7 @@ pub mod disjoint;
 pub mod dotprod;
 pub mod fence;
 pub mod grid;
+pub mod prmt;
 pub mod ptx;
 pub mod shared;
 pub mod tcgen05;
