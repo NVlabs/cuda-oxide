@@ -156,11 +156,7 @@ pub fn get_global_thread_id() -> usize {
 /// The caller must satisfy [`mma_m16n8k16_f32_f16`]'s warp participation and
 /// lane-fragment layout contract.
 #[device]
-pub unsafe fn mma_m16n8k16_f32_f16_stub(
-    c: [f32; 4],
-    a: [u32; 4],
-    b: [u32; 2],
-) -> [f32; 4] {
+pub unsafe fn mma_m16n8k16_f32_f16_stub(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
     unsafe { mma_m16n8k16_f32_f16(c, a, b) }
 }
 
@@ -196,10 +192,7 @@ fn main() {
             "get_global_thread_id",
             "Test 4: device fn with GPU intrinsics",
         ),
-        (
-            "mma_m16n8k16_f32_f16_stub",
-            "Test 5: F16 warp-MMA stub",
-        ),
+        ("mma_m16n8k16_f32_f16_stub", "Test 5: F16 warp-MMA stub"),
     ];
 
     let mut passed = 0;
