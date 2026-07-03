@@ -9,6 +9,7 @@ members = [
     "crates/dialect-mir",
     "crates/dialect-nvvm",
     "crates/mir-importer",
+    "crates/cuda-oxide-codegen",
     "crates/mir-lower",
     "crates/mir-transforms",
     "crates/nvvm-transforms",
@@ -55,6 +56,7 @@ dialect-mir = { path = "crates/dialect-mir" }
 dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
 mir-importer = { path = "crates/mir-importer" }
+cuda-oxide-codegen = { path = "crates/cuda-oxide-codegen" }
 mir-transforms = { path = "crates/mir-transforms" }
 nvvm-transforms = { path = "crates/nvvm-transforms" }
 cuda-device = { path = "crates/cuda-device" }

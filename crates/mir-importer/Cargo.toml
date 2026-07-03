@@ -19,6 +19,7 @@ mir-transforms = { workspace = true }
 nvvm-transforms = { workspace = true }
 libnvvm-sys = { workspace = true }
 oxide-artifacts = { workspace = true }
+cuda-oxide-codegen = { workspace = true }
 thiserror = { workspace = true }
 linkme = { workspace = true }
 once_cell = { workspace = true }

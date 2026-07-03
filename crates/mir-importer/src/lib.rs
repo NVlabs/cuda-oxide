@@ -79,12 +79,13 @@ extern crate rustc_public_bridge;
 extern crate rustc_span;
 
 pub mod error;
-mod llvm_tools;
 pub mod pipeline;
 pub mod translator;
 
 pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DeviceExternAttrs,
-    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, run_pipeline,
+    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, PtxConfig,
+    compile_to_ptx, run_pipeline,
 };
+pub use cuda_oxide_codegen::PtxError;

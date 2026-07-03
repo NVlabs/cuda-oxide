@@ -405,6 +405,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuda-oxide-codegen"
+version = "0.1.0"
+dependencies = [
+ "dialect-mir",
+ "dialect-nvvm",
+ "libnvvm-sys",
+ "llvm-export",
+ "mir-lower",
+ "pliron",
+ "thiserror",
+]
+
+[[package]]
 name = "dialect-mir"
 version = "0.2.1"
 dependencies = [
@@ -779,6 +792,7 @@ name = "mir-importer"
 version = "0.2.1"
 dependencies = [
  "combine",
+ "cuda-oxide-codegen",
  "dialect-mir",
  "dialect-nvvm",
  "libnvvm-sys",
