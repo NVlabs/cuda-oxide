@@ -1,10 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
- *
- * Licensed under the NVIDIA Software License (see LICENSE-NVIDIA at the
- * repository root). This crate, unlike the rest of the workspace, is not
- * Apache-2.0.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 //! Low-level FFI to the CUDA Driver API (`cuda.h`).

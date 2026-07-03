@@ -3316,6 +3316,113 @@ fn test_mma_m16n8k16_f32_bf16_lowers_to_inline_asm() -> Result<(), anyhow::Error
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// mma.sync m16n8k16 f16 intrinsic lowering test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mma_m16n8k16_f32_f16_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let f32_ty = pliron::builtin::types::FP32Type::get(&ctx);
+    let i32_ty = pliron::builtin::types::IntegerType::get(
+        &ctx,
+        32,
+        pliron::builtin::types::Signedness::Signless,
+    );
+    let argument_types = (0..4)
+        .map(|_| f32_ty.into())
+        .chain((0..6).map(|_| i32_ty.into()))
+        .collect();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+    let operands = (0..10)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect();
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K16F32F16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        operands,
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut found = 0;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for module_op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(function) = Operation::get_op::<llvm::FuncOp>(module_op, &ctx) else {
+            continue;
+        };
+        if function.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let body = function.get_operation().deref(&ctx).get_region(0);
+        for block in body.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                let constraints = asm
+                    .get_attr_inline_asm_constraints(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                if !template.as_deref().is_some_and(|t| {
+                    t.contains("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32")
+                }) {
+                    continue;
+                }
+                found += 1;
+                let template = template.expect("MMA inline asm must have a template");
+                assert_eq!(
+                    template,
+                    concat!(
+                        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+                        "{$0, $1, $2, $3}, ",
+                        "{$8, $9, $10, $11}, ",
+                        "{$12, $13}, ",
+                        "{$4, $5, $6, $7};"
+                    )
+                );
+                for forbidden in [".reg", "ld.", "st.", "["] {
+                    assert!(
+                        !template.contains(forbidden),
+                        "register-only MMA must not contain {forbidden:?}: {template}"
+                    );
+                }
+                assert_eq!(
+                    constraints.as_deref(),
+                    Some("=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r")
+                );
+                assert_eq!(
+                    llvm::asm_kind_opt(&ctx, &asm),
+                    Some(llvm::AsmKind::Convergent)
+                );
+                assert_eq!(
+                    body_op.deref(&ctx).get_num_operands(),
+                    10,
+                    "expected C, A, and B scalar register operands"
+                );
+                assert_eq!(
+                    body_op.deref(&ctx).get_num_results(),
+                    1,
+                    "LLVM inline asm returns the four D registers as one struct"
+                );
+            }
+        }
+    }
+
+    assert_eq!(found, 1, "expected one mma.sync inline-asm operation");
+    Ok(())
+}
+
 #[test]
 fn test_mma_m16n8k8_f32_tf32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     let mut ctx = make_test_ctx();

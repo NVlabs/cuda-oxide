@@ -15,15 +15,6 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-[[licenses.clarify]]
-name = "cuda-bindings"
-expression = "LicenseRef-NVIDIA"
-license-files = [{ path = "../../LICENSE-NVIDIA", hash = 0x3863c5ac }]
-
-[[licenses.exceptions]]
-allow = ["LicenseRef-NVIDIA"]
-name = "cuda-bindings"
-
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"

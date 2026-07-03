@@ -1,0 +1,5 @@
+error: #[cuda_module] reserves launcher method name `from_parent` in nested kernel namespaces; rename the kernel
+  --> tests/compile_fail/cuda_module_reserved_from_parent.rs:10:16
+   |
+10 |         pub fn from_parent() {}
+   |                ^^^^^^^^^^^

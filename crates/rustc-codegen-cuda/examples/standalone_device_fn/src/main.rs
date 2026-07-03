@@ -18,10 +18,10 @@
 //! 2. Device function calling another device function (transitive collection)
 //! 3. Generic logic via concrete wrappers, including multiple monomorphizations
 //! 4. Device function using GPU intrinsics (thread indexing)
-//! 5. TF32 conversion and warp-MMA lowering through the complete PTX pipeline
+//! 5. F16 and TF32 warp-MMA lowering through the complete PTX pipeline
 
 use cuda_device::thread;
-use cuda_device::wmma::mma_m16n8k8_f32_tf32;
+use cuda_device::wmma::{mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_f16};
 use cuda_device::{device, ptx_asm};
 
 // =============================================================================
@@ -143,11 +143,22 @@ pub fn get_global_thread_id() -> usize {
 }
 
 // =============================================================================
-// TEST 5: Raw TF32 warp-MMA stubs through the complete compiler pipeline
+// TEST 5: F16 and TF32 warp-MMA stubs through the complete compiler pipeline
 //
 // The host never calls these functions. Compiling them proves that the public
-// cuda-device stub and the required f32-to-TF32 conversion reach exact PTX.
+// cuda-device stubs and the required f32-to-TF32 conversion reach exact PTX.
 // =============================================================================
+
+/// Emits one register-only F16 tensor-core MMA instruction.
+///
+/// # Safety
+///
+/// The caller must satisfy [`mma_m16n8k16_f32_f16`]'s warp participation and
+/// lane-fragment layout contract.
+#[device]
+pub unsafe fn mma_m16n8k16_f32_f16_stub(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    unsafe { mma_m16n8k16_f32_f16(c, a, b) }
+}
 
 /// Emits one register-only TF32 tensor-core MMA instruction from raw TF32 bits.
 ///
@@ -221,6 +232,7 @@ fn main() {
             "get_global_thread_id",
             "Test 4: device fn with GPU intrinsics",
         ),
+        ("mma_m16n8k16_f32_f16_stub", "Test 5: F16 warp-MMA stub"),
         (
             "mma_m16n8k8_f32_tf32_raw_stub",
             "Test 5: raw TF32 warp-MMA stub",
@@ -242,6 +254,15 @@ fn main() {
             println!("  FAIL  {} — {}", func_name, description);
             failed += 1;
         }
+    }
+
+    let f16_mma = "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32";
+    if ptx_content.contains(f16_mma) {
+        println!("  PASS  exact F16 warp-MMA instruction emitted");
+        passed += 1;
+    } else {
+        println!("  FAIL  exact F16 warp-MMA instruction missing");
+        failed += 1;
     }
 
     let tf32_mma = "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32";
@@ -285,7 +306,7 @@ fn main() {
 
     println!();
     if failed == 0 {
-        let total = tests.len() + 4; // +2 TF32 checks, +1 lerp absent, +1 no .entry
+        let total = tests.len() + 5; // +2 MMA, +1 TF32 conversion, +1 lerp, +1 no .entry
         println!(
             "SUCCESS: {}/{} tests passed — all device functions compiled to PTX!",
             passed, total

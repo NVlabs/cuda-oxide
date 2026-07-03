@@ -1,0 +1,5 @@
+error: #[cuda_module] reserves the name `LoadedModule` in every inline namespace that contains kernels
+ --> tests/compile_fail/cuda_module_raw_loaded_module.rs:9:16
+  |
+9 |         struct r#LoadedModule;
+  |                ^^^^^^^^^^^^^^

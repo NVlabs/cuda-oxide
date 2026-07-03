@@ -516,6 +516,49 @@ fn print_gemm_dispatch_plan(
 // HOST CODE
 // =============================================================================
 
+fn can_execute_tcgen05_ptx(major: i32, minor: i32) -> bool {
+    matches!((major, minor), (10, 0) | (10, 1) | (10, 3) | (11, 0))
+}
+
+fn verify_tcgen05_ptx_contract(ptx: &str) -> Result<(), String> {
+    const TARGETS: [&str; 8] = [
+        ".target sm_100a",
+        ".target sm_101a",
+        ".target sm_103a",
+        ".target sm_110a",
+        ".target sm_100f",
+        ".target sm_101f",
+        ".target sm_103f",
+        ".target sm_110f",
+    ];
+    const ENTRIES: [&str; 2] = [
+        ".visible .entry gemm_sol_clc_multicast_4_stage_pipeline(",
+        ".visible .entry gemm_sol_clc_multicast_4_stage_pipeline_large(",
+    ];
+
+    let has_target = ptx.lines().map(str::trim).any(|line| {
+        TARGETS.iter().any(|target| {
+            line == *target
+                || line
+                    .strip_prefix(target)
+                    .is_some_and(|suffix| suffix.starts_with(','))
+        })
+    });
+    if !has_target {
+        return Err("missing a supported datacenter tcgen05 target".to_string());
+    }
+    for entry in ENTRIES {
+        if !ptx
+            .lines()
+            .map(str::trim_start)
+            .any(|line| line.starts_with(entry))
+        {
+            return Err(format!("missing expected kernel entry `{entry}`"));
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("═══════════════════════════════════════════════════════");
     println!("  GEMM SoL — gemm_sol_final (size-specialized)");
@@ -551,7 +594,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (major, minor) = ctx.compute_capability()?;
     println!("GPU: sm_{}{}", major, minor);
 
-    if major < 10 {
+    // Keep this execution set in sync with mir-importer's tcgen05 target
+    // support. Other GPU generations may inspect and assemble the generated
+    // artifact, but must not turn a module-load failure into an execution pass.
+    if !can_execute_tcgen05_ptx(major, minor) {
         println!("\nWARNING: tcgen05 requires a compatible datacenter Blackwell GPU");
         return verify_ptx_only();
     }
@@ -559,17 +605,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
     println!("Loading PTX: {}", ptx_path.display());
     let ptx_str = ptx_path.to_str().ok_or("PTX path must be valid UTF-8")?;
-    let module = match ctx.load_module_from_file(ptx_str) {
-        Ok(module) => module,
-        Err(error) if error.0 == cuda_core::sys::cudaError_enum_CUDA_ERROR_INVALID_PTX => {
-            println!("\nThe GPU/driver could not load the tcgen05 PTX.");
-            println!(
-                "PTX generation succeeded; execution requires a compatible sm_100+ datacenter Blackwell GPU."
-            );
-            return verify_ptx_only();
-        }
-        Err(error) => return Err(error.into()),
-    };
+    let module = ctx.load_module_from_file(ptx_str)?;
     let module = kernels::from_module(module).expect("failed to initialize typed CUDA module");
     println!("PTX loaded\n");
 
@@ -624,6 +660,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n═══════════════════════════════════════════════════════");
     println!("  GEMM SoL target complete");
     println!("═══════════════════════════════════════════════════════");
+    println!("PASS: requested GEMM SoL work completed");
     Ok(())
 }
 
@@ -998,15 +1035,15 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
 
 fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
-
-    if !ptx_path.exists() {
-        return Err("PTX file not found".into());
-    }
+    let ptx = std::fs::read_to_string(&ptx_path)?;
+    verify_tcgen05_ptx_contract(&ptx)
+        .map_err(|error| format!("PTX verification failed: {error}"))?;
 
     println!("\nPTX Verification:");
     println!("   PTX file generated at: {}", ptx_path.display());
     println!("\n   To inspect generated PTX:");
     println!("   cat {}", ptx_path.display());
+    println!("PASS: PTX was generated successfully; GPU execution skipped");
 
     Ok(())
 }
@@ -1126,6 +1163,34 @@ mod kernel_family_tests {
         let problem = GemmProblem::new(m, m, m);
         let selected = select_gemm_variant(family, &problem, mode).unwrap();
         (*selected.variant().id(), selected.source())
+    }
+
+    #[test]
+    fn tcgen05_execution_gate_matches_backend_targets() {
+        for capability in [(10, 0), (10, 1), (10, 3), (11, 0)] {
+            assert!(can_execute_tcgen05_ptx(capability.0, capability.1));
+        }
+        for capability in [(9, 0), (12, 0), (12, 1)] {
+            assert!(!can_execute_tcgen05_ptx(capability.0, capability.1));
+        }
+    }
+
+    #[test]
+    fn ptx_only_pass_requires_target_and_both_kernel_entries() {
+        let target = ".target sm_100a";
+        let small = ".visible .entry gemm_sol_clc_multicast_4_stage_pipeline(";
+        let large = ".visible .entry gemm_sol_clc_multicast_4_stage_pipeline_large(";
+
+        assert!(verify_tcgen05_ptx_contract(&format!("{target}\n{small}\n{large}")).is_ok());
+        assert!(verify_tcgen05_ptx_contract(&format!("{target}, debug\n{small}\n{large}")).is_ok());
+        assert!(verify_tcgen05_ptx_contract("").is_err());
+        assert!(verify_tcgen05_ptx_contract(&format!("{target}\n{small}")).is_err());
+        assert!(
+            verify_tcgen05_ptx_contract(&format!(".target sm_120a\n{small}\n{large}")).is_err()
+        );
+        assert!(
+            verify_tcgen05_ptx_contract(&format!("// {target}\n// {small}\n// {large}")).is_err()
+        );
     }
 
     #[test]

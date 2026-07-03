@@ -32,4 +32,5 @@ use cuda_bindings::{cuInit, cuDeviceGet, CUdevice};
 
 ## License
 
-- The crate is licensed under [LICENSE-NVIDIA](../../LICENSE-NVIDIA).
+This crate is licensed under the Apache License, Version 2.0. See
+[LICENSE](LICENSE).

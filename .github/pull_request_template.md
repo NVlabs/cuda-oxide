@@ -16,7 +16,6 @@
 ## Checklist
 
 - [ ] All commits signed off (`git commit -s`)
-- [ ] No files under `cuda-bindings/` modified by an external contributor (see CONTRIBUTING.md)
 - [ ] SPDX headers on new source files
 
 ---

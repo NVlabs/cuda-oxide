@@ -1,0 +1,15 @@
+error[E0425]: cannot find type `LoadedModule` in module `kernels::file_kernel`
+  --> tests/compile_fail/cuda_module_file_kernel_boundary.rs:18:43
+   |
+18 | fn undiscovered(_: &kernels::file_kernel::LoadedModule) {}
+   |                                           ^^^^^^^^^^^^ not found in `kernels::file_kernel`
+   |
+help: consider importing this struct
+   |
+ 6 + use crate::kernels::LoadedModule;
+   |
+help: if you import `LoadedModule`, refer to it directly
+   |
+18 - fn undiscovered(_: &kernels::file_kernel::LoadedModule) {}
+18 + fn undiscovered(_: &LoadedModule) {}
+   |

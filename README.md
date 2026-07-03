@@ -323,4 +323,6 @@ cuda-oxide is one of several Rust + GPU efforts under active development. Projec
 
 ## License
 
-The `cuda-bindings` crate is licensed under the NVIDIA Software License: [LICENSE-NVIDIA](LICENSE-NVIDIA). All other crates are licensed under the Apache License, Version 2.0: [LICENSE-APACHE](LICENSE-APACHE).
+cuda-oxide is licensed under the Apache License, Version 2.0: [LICENSE](LICENSE).
+Third-party components retain the licenses stated in their files; see
+[dependency-licenses.csv](dependency-licenses.csv) for the tracked license inventory.

@@ -214,6 +214,67 @@ pub unsafe fn mma_m16n8k16_f32_bf16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f
     unreachable!("mma_m16n8k16_f32_bf16 called outside CUDA kernel context")
 }
 
+/// Multiply one warp-distributed F16 tile and add an f32 accumulator.
+///
+/// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with
+/// shape 16×16, column-major `B` with shape 16×8, and `C`/`D` with shape
+/// 16×8. Each lane supplies its fragments in registers and receives four f32
+/// result registers. The call itself does not access memory or act as a fence.
+///
+/// The Rust arrays use the same order as the PTX register lists below:
+///
+/// - `c[0..4]` contains `%c0..%c3`, one `.f32` accumulator per element. The
+///   returned array contains `%d0..%d3` in the same order.
+/// - `a[0..4]` contains `%a0..%a3`, and `b[0..2]` contains `%b0..%b1`.
+///   Each `u32` is a raw `.b32` carrier holding two `.f16` values; element
+///   `j` is in `a[j / 2]` or `b[j / 2]`, low 16 bits before high 16 bits.
+///
+/// For lane `lane`, let `group = lane / 4` and `thread = lane % 4`:
+///
+/// ```text
+/// A element j=0..7:
+///   row = group       for j in {0,1,4,5}; otherwise group + 8
+///   col = thread*2 + (j&1) + (if j >= 4 { 8 } else { 0 })
+///
+/// B element j=0..3:
+///   row = thread*2 + (j&1) + (if j >= 2 { 8 } else { 0 })
+///   col = group
+///
+/// C/D register j=0..3:
+///   row = group + (if j >= 2 { 8 } else { 0 })
+///   col = thread*2 + (j&1)
+/// ```
+///
+/// These coordinates are the `.row.col` layout: A is row-major and B is
+/// column-major.
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same `mma.sync.aligned` instruction with
+///   the same qualifiers. Calling from divergent control flow, or after any
+///   lane has exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the layout
+///   above. A different array order or layout computes a different matrix
+///   operation.
+/// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
+///   automatically and rejects an explicit lower target.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k16_f32_f16(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k16_f32_f16 called outside CUDA kernel context")
+}
+
 /// Multiply one warp-distributed TF32 tile and add an f32 accumulator.
 ///
 /// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with

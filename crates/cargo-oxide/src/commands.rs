@@ -2259,9 +2259,8 @@ pub fn doctor(ctx: &Context) {
 ///
 /// Kept in lockstep BY HAND with `crates/cuda-bindings/build.rs`
 /// (`cuda_toolkit_dir` / `find_cuda_include_dir` / `toolkit_target_dir`):
-/// doctor cannot import that probe because build.rs logic is not a library,
-/// and cuda-bindings is the NVIDIA-proprietary crate cargo-oxide must not
-/// depend on. If the build.rs discovery changes, mirror it here.
+/// doctor cannot import that probe because build.rs logic is not a library.
+/// If the build.rs discovery changes, mirror it here.
 fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>) -> String {
     ["CUDA_TOOLKIT_PATH", "CUDA_HOME"]
         .iter()
