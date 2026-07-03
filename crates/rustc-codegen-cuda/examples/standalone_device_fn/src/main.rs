@@ -158,11 +158,7 @@ pub fn get_global_thread_id() -> usize {
 /// The caller must uphold [`wmma::mma_m16n8k32_s32_s8`]'s warp participation
 /// and per-lane fragment-layout contract.
 #[device]
-pub unsafe fn int8_mma_registers(
-    c: [i32; 4],
-    a: [u32; 4],
-    b: [u32; 2],
-) -> [i32; 4] {
+pub unsafe fn int8_mma_registers(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
     unsafe { wmma::mma_m16n8k32_s32_s8(c, a, b) }
 }
 
@@ -263,7 +259,12 @@ fn main() {
     let sm_target = ptx_content
         .lines()
         .find_map(|line| line.trim().strip_prefix(".target sm_"))
-        .map(|target| target.chars().take_while(char::is_ascii_digit).collect::<String>())
+        .map(|target| {
+            target
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
         .and_then(|target| target.parse::<u32>().ok());
     if sm_target.is_some_and(|target| target >= 80) {
         println!("  PASS  INT8 MMA selected sm_80 or newer");
