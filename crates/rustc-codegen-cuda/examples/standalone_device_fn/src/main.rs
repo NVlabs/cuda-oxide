@@ -19,9 +19,11 @@
 //! 3. Generic logic via concrete device function wrappers
 //! 4. Device function using GPU intrinsics (thread indexing)
 //! 5. Multiple monomorphizations of the same generic
+//! 6. Typed device stub through MIR import and lowering to exact PTX
 
 use cuda_device::device;
 use cuda_device::thread;
+use cuda_device::wmma;
 
 // =============================================================================
 // TEST 1: Simple standalone device functions
@@ -142,6 +144,29 @@ pub fn get_global_thread_id() -> usize {
 }
 
 // =============================================================================
+// TEST 5: Device stub through MIR import and PTX lowering
+//
+// The raw INT8 MMA intrinsic is never executed by this host-only example. Its
+// device wrapper gives the compiler a checked-in end-to-end path from the
+// cuda-device stub through mir-importer and mir-lower to generated PTX.
+// =============================================================================
+
+/// Apply one lane's register fragments for warp-wide INT8 MMA.
+///
+/// # Safety
+///
+/// The caller must uphold [`wmma::mma_m16n8k32_s32_s8`]'s warp participation
+/// and per-lane fragment-layout contract.
+#[device]
+pub unsafe fn int8_mma_registers(
+    c: [i32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+) -> [i32; 4] {
+    unsafe { wmma::mma_m16n8k32_s32_s8(c, a, b) }
+}
+
+// =============================================================================
 // HOST CODE - Verifies PTX was generated correctly
 // =============================================================================
 
@@ -172,6 +197,10 @@ fn main() {
         (
             "get_global_thread_id",
             "Test 4: device fn with GPU intrinsics",
+        ),
+        (
+            "int8_mma_registers",
+            "Test 5: cuda-device stub imported and lowered",
         ),
     ];
 
@@ -209,9 +238,44 @@ fn main() {
         failed += 1;
     }
 
+    let int8_mma = "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32";
+    if ptx_content.contains(int8_mma) {
+        println!("  PASS  INT8 MMA lowered to the exact PTX instruction");
+        passed += 1;
+    } else {
+        println!("  FAIL  Missing exact INT8 MMA PTX instruction");
+        failed += 1;
+    }
+
+    let ptx_version = ptx_content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(".version "))
+        .and_then(|version| version.split_once('.'))
+        .and_then(|(major, minor)| Some((major.parse::<u32>().ok()?, minor.parse::<u32>().ok()?)));
+    if ptx_version.is_some_and(|version| version >= (7, 0)) {
+        println!("  PASS  INT8 MMA selected PTX 7.0 or newer");
+        passed += 1;
+    } else {
+        println!("  FAIL  Generated PTX did not meet the PTX 7.0 floor");
+        failed += 1;
+    }
+
+    let sm_target = ptx_content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(".target sm_"))
+        .map(|target| target.chars().take_while(char::is_ascii_digit).collect::<String>())
+        .and_then(|target| target.parse::<u32>().ok());
+    if sm_target.is_some_and(|target| target >= 80) {
+        println!("  PASS  INT8 MMA selected sm_80 or newer");
+        passed += 1;
+    } else {
+        println!("  FAIL  Generated PTX did not meet the sm_80 floor");
+        failed += 1;
+    }
+
     println!();
     if failed == 0 {
-        let total = tests.len() + 2; // +1 for lerp-absent check, +1 for no-.entry check
+        let total = tests.len() + 5;
         println!(
             "SUCCESS: {}/{} tests passed — all device functions compiled to PTX!",
             passed, total

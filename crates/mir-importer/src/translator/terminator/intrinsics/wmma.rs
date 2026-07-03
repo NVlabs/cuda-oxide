@@ -125,7 +125,7 @@ fn extract_array_registers(
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "mma_m16n8k16_f32_bf16 {fragment_name} fragment must be an array of {expected_len} scalar registers"
+                "MMA {fragment_name} fragment must be an array of {expected_len} scalar registers"
             ))
         );
     }
@@ -647,18 +647,25 @@ mod tests {
             );
         }
 
+        let error = extract_array_registers(
+            &mut ctx,
+            array,
+            f32_ty.into(),
+            2,
+            block,
+            Some(last_op),
+            Location::Unknown,
+            "B",
+        )
+        .expect_err("wrong-sized fragment must be rejected")
+        .to_string();
         assert!(
-            extract_array_registers(
-                &mut ctx,
-                array,
-                f32_ty.into(),
-                2,
-                block,
-                Some(last_op),
-                Location::Unknown,
-                "B",
-            )
-            .is_err()
+            error.contains("MMA B fragment must be an array of 2 scalar registers"),
+            "unexpected operation-neutral diagnostic: {error}"
+        );
+        assert!(
+            !error.contains("bf16"),
+            "diagnostic leaked a sibling op: {error}"
         );
     }
 }

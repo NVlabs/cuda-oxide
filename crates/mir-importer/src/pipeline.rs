@@ -37,6 +37,7 @@
 //! | bf16x2 packed atomic add      | sm_90   | PTX 7.8+             |
 //! | other bf16x2 ALU              | sm_80   | Ampere+ compatible   |
 //! | BF16 `mma.m16n8k16`           | sm_80   | PTX 7.0+             |
+//! | INT8 `mma.m16n8k32`           | sm_80   | PTX 7.0+             |
 //! | `cp.async` (non-bulk)         | sm_80   | Ampere+              |
 //! | `movmatrix.m8n8.b16`          | sm_75   | PTX 7.8+             |
 //! | `ldmatrix.m8n8.b16`           | sm_75   | PTX 6.5+             |
@@ -1255,8 +1256,17 @@ fn contains_mma_m16n8k16_f32_bf16_features(contents: &str) -> bool {
 }
 
 /// Checks for the Ampere INT8 MMA operation (PTX 7.0, sm_80+).
+///
+/// PTX permits both wrapping and `.satfinite` accumulator-overflow behavior.
+/// Match each complete legal mnemonic so a qualifier near-miss cannot raise
+/// the module target accidentally.
 fn contains_mma_m16n8k32_s32_s8_features(contents: &str) -> bool {
-    contains_instruction_mnemonic(contents, "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32")
+    [
+        "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32",
+    ]
+    .into_iter()
+    .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
 }
 
 /// Checks for the Ampere FP64 tensor-core MMA operation (PTX 7.0, sm_80+).
@@ -3341,11 +3351,19 @@ mod tests {
             "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 ",
             "{$0, $1, $2, $3}, {$4, $5, $6, $7}, {$8, $9}, {$10, $11, $12, $13};"
         );
+        let satfinite_mnemonic = concat!(
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 ",
+            "{$0, $1, $2, $3}, {$4, $5, $6, $7}, {$8, $9}, {$10, $11, $12, $13};"
+        );
         for spelling in [
             mnemonic,
+            satfinite_mnemonic,
             "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32\t{$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32\\09{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32\t{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32\\09{$0}, {$1}, {$2}, {$3};",
             ";mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            ";mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "prefix\\0Amma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "\"mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "{mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
@@ -3353,6 +3371,7 @@ mod tests {
             "/* comment */mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "@p mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "@!%p\\09mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "@p mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
         ] {
             assert!(
                 contains_mma_m16n8k32_s32_s8_features(spelling),
@@ -3360,9 +3379,12 @@ mod tests {
             );
         }
 
+        for spelling in [mnemonic, satfinite_mnemonic] {
+            let requirements = detect_module_requirements_in_llvm_text(spelling);
+            assert_eq!(requirements.features, DetectedFeatures::Sm80, "{spelling}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70, "{spelling}");
+        }
         let requirements = detect_module_requirements_in_llvm_text(mnemonic);
-        assert_eq!(requirements.features, DetectedFeatures::Sm80);
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70);
         let (target, _) =
             resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
         assert_eq!(target, "sm_80");
@@ -3372,8 +3394,14 @@ mod tests {
             "mma.sync.aligned.m16n8k32.col.row.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32x {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32.satfinite {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfiniteX.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32x {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.u32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "not_mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "$mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "%mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "@mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "!mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",

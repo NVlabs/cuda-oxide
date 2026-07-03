@@ -6,14 +6,14 @@
 use dialect_mir::types::MirPtrType;
 use dialect_nvvm::ops::{
     Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixX2Op, MmaM8N8K4F64Op, MmaM16N8K16F32Bf16Op,
-    MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, ReadPtxSregDynamicSmemSizeOp,
-    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
-    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
-    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
-    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
-    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
-    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp,
-    ThreadfenceOp, ThreadfenceSystemOp,
+    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
+    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
+    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
+    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -212,6 +212,81 @@ fn test_mma_m16n8k16_bf16_verifies_exact_register_signature() {
         0,
     );
     assert!(verify_op(&MmaM16N8K16F32Bf16Op::new(bad_arity), &ctx).is_err());
+}
+
+#[test]
+fn test_mma_m16n8k32_s8_verifies_exact_register_signature() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i64_ty.into(), f32_ty.into()],
+    );
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let i64_value = block.deref(&ctx).get_argument(1);
+    let f32_value = block.deref(&ctx).get_argument(2);
+    let valid_operands = vec![i32_value; 10];
+
+    let valid = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        valid_operands.clone(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K32S32S8Op::new(valid), &ctx).is_ok());
+
+    for bad_value in [i64_value, f32_value] {
+        let mut bad_operands = valid_operands.clone();
+        bad_operands[4] = bad_value;
+        let invalid = Operation::new(
+            &mut ctx,
+            MmaM16N8K32S32S8Op::get_concrete_op_info(),
+            vec![i32_ty.into(); 4],
+            bad_operands,
+            vec![],
+            0,
+        );
+        assert!(
+            verify_op(&MmaM16N8K32S32S8Op::new(invalid), &ctx).is_err(),
+            "MMA must reject non-i32 register operands"
+        );
+    }
+
+    for bad_results in [
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), i64_ty.into()],
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), f32_ty.into()],
+        vec![i32_ty.into(); 3],
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            MmaM16N8K32S32S8Op::get_concrete_op_info(),
+            bad_results,
+            valid_operands.clone(),
+            vec![],
+            0,
+        );
+        assert!(
+            verify_op(&MmaM16N8K32S32S8Op::new(invalid), &ctx).is_err(),
+            "MMA must reject the wrong result register signature"
+        );
+    }
+
+    let invalid_arity = Operation::new(
+        &mut ctx,
+        MmaM16N8K32S32S8Op::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        vec![i32_value; 9],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&MmaM16N8K32S32S8Op::new(invalid_arity), &ctx).is_err());
 }
 
 /// The `(constructor, TypeId)` pair returned by `get_concrete_op_info()`.
