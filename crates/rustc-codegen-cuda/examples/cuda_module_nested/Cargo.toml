@@ -8,9 +8,8 @@ license = "Apache-2.0"
 # Mark as standalone crate (not part of parent workspace)
 [workspace]
 
-# This example demonstrates #[cuda_module] kernel collection from nested
-# modules: an inline `mod`, an `include!("...")` file, and an out-of-line
-# `mod foo;` file. Build with:
+# This example demonstrates namespace-local launchers for kernels in nested
+# inline modules. Build with:
 #   cargo oxide run cuda_module_nested
 
 [dependencies]

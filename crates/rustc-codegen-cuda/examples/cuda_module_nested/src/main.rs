@@ -5,40 +5,37 @@
 
 //! Nested-module `#[cuda_module]` example.
 //!
-//! Kernels live at three levels of nesting, one per collection mechanism:
+//! Kernels live at three levels of inline nesting:
 //!
-//! - `fill_index` at the module root (the pre-existing flat layout),
-//! - `scale::scale_by` in an inline nested `mod`,
-//! - `offset::offset_by` spliced in with `include!("stages/offset.rs")`,
-//! - `double::double_all` in an out-of-line `mod double;`
-//!   (`src/kernels/double.rs`).
+//! - `init::fill_index`, `scale::scale_by`, and `offset::offset_by` one level
+//!   down,
+//! - `post::double::double_all` two levels down.
 //!
-//! The generated launcher API stays flat: every kernel becomes a method on
-//! `kernels::LoadedModule` regardless of nesting depth, so kernel names must
-//! be unique across the whole module tree.
+//! Each namespace owns a `LoadedModule` launcher view. Child views borrow the
+//! same loaded CUDA module through `LoadedModule::from_parent`.
 //!
 //! Build and run with:
 //!   cargo oxide run cuda_module_nested
 
-// Required only for the out-of-line `pub mod double;` below: rustc gates
-// non-inline modules in proc-macro input (rust-lang/rust#54727). Inline
-// nested modules and include! need no feature gate.
-#![feature(proc_macro_hygiene)]
-
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
+use cuda_device::cuda_module;
 
 #[cuda_module]
 mod kernels {
-    use super::*;
+    /// Inline nested module: out[i] = i.
+    ///
+    /// The root intentionally has no direct kernel. This checks that calling
+    /// `kernels::load()` still pins an artifact owned entirely by descendants.
+    pub mod init {
+        use cuda_device::{DisjointSlice, kernel, thread};
 
-    /// Root-level kernel: out[i] = i
-    #[kernel]
-    pub fn fill_index(mut out: DisjointSlice<f32>) {
-        let idx = thread::index_1d();
-        let idx_raw = idx.get();
-        if let Some(elem) = out.get_mut(idx) {
-            *elem = idx_raw as f32;
+        #[kernel]
+        pub fn fill_index(mut out: DisjointSlice<f32>) {
+            let idx = thread::index_1d();
+            let idx_raw = idx.get();
+            if let Some(elem) = out.get_mut(idx) {
+                *elem = idx_raw as f32;
+            }
         }
     }
 
@@ -56,15 +53,35 @@ mod kernels {
         }
     }
 
-    /// include!-backed nested module: out[i] = a[i] + 10
-    /// (rustc and the macro both resolve the literal relative to this file.)
+    /// Inline nested module: out[i] = a[i] + 10
     pub mod offset {
-        include!("stages/offset.rs");
+        use cuda_device::{DisjointSlice, kernel, thread};
+
+        #[kernel]
+        pub fn offset_by(a: &[f32], mut out: DisjointSlice<f32>) {
+            let idx = thread::index_1d();
+            let idx_raw = idx.get();
+            if let Some(elem) = out.get_mut(idx) {
+                *elem = a[idx_raw] + 10.0;
+            }
+        }
     }
 
-    /// Out-of-line nested module: out[i] = a[i] + a[i]
-    /// (resolved by module directory: src/kernels/double.rs)
-    pub mod double;
+    /// An empty bridge namespace containing a doubly nested kernel module.
+    pub mod post {
+        pub mod double {
+            use cuda_device::{DisjointSlice, kernel, thread};
+
+            #[kernel]
+            pub fn double_all(a: &[f32], mut out: DisjointSlice<f32>) {
+                let idx = thread::index_1d();
+                let idx_raw = idx.get();
+                if let Some(elem) = out.get_mut(idx) {
+                    *elem = a[idx_raw] + a[idx_raw];
+                }
+            }
+        }
+    }
 }
 
 fn main() {
@@ -80,19 +97,29 @@ fn main() {
     let mut doubled_dev = DeviceBuffer::<f32>::zeroed(&stream, N).unwrap();
 
     let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
+    let init = kernels::init::LoadedModule::from_parent(&module)
+        .expect("Failed to bind init launchers");
+    let scale = kernels::scale::LoadedModule::from_parent(&module)
+        .expect("Failed to bind scale launchers");
+    let offset = kernels::offset::LoadedModule::from_parent(&module)
+        .expect("Failed to bind offset launchers");
+    let post = kernels::post::LoadedModule::from_parent(&module)
+        .expect("Failed to bind post launchers");
+    let double = kernels::post::double::LoadedModule::from_parent(&post)
+        .expect("Failed to bind double launchers");
     let config = LaunchConfig::for_num_elems(N as u32);
 
-    // Root kernel feeds the three nested kernels.
-    module
+    // The init kernel feeds the three processing kernels.
+    init
         .fill_index(&stream, config, &mut idx_dev)
         .expect("fill_index launch failed");
-    module
+    scale
         .scale_by(&stream, config, &idx_dev, &mut scaled_dev)
         .expect("scale_by launch failed");
-    module
+    offset
         .offset_by(&stream, config, &idx_dev, &mut offset_dev)
         .expect("offset_by launch failed");
-    module
+    double
         .double_all(&stream, config, &idx_dev, &mut doubled_dev)
         .expect("double_all launch failed");
 
@@ -120,7 +147,7 @@ fn main() {
     }
 
     if errors == 0 {
-        println!("✓ SUCCESS: root, inline-mod, include!, and out-of-line kernels all ran");
+        println!("✓ SUCCESS: root-loaded nested inline kernels all ran");
     } else {
         println!("✗ FAILED: {errors} errors");
         std::process::exit(1);

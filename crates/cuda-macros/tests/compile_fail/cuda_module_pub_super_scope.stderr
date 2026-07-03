@@ -1,0 +1,8 @@
+error[E0624]: method `scoped` is private
+  --> tests/compile_fail/cuda_module_pub_super_scope.rs:27:19
+   |
+ 7 | #[cuda_module]
+   | -------------- private method defined here
+...
+27 |     let _ = child.scoped(stream, config, 1u32);
+   |                   ^^^^^^ private method

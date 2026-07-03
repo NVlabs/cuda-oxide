@@ -15,7 +15,7 @@ cuda_module_in_lib/
 ├── README.md            # This file
 └── kernel-lib/          # Library crate "module-kernels"
     ├── Cargo.toml
-    └── src/lib.rs       # The #[cuda_module] itself (concrete kernels)
+    └── src/lib.rs       # The #[cuda_module] itself (nested concrete kernels)
 ```
 
 ## The Bug
@@ -45,6 +45,9 @@ After:  artifact .o defines  cuda_oxide_artifact_anchor_246e25db_module_kernels_
 2. The binary's own bundle (`cuda_module_in_lib`) coexists with the
    library bundle, and both load by name.
 3. Kernels from both modules launch and produce correct results.
+4. The library's root `LoadedModule` has no direct kernel. Its `load()` still
+   pins the descendant artifact without relying on `ops::LoadedModule` being
+   referenced first.
 
 Contrast with [cross_crate_kernel](../cross_crate_kernel/), where the
 library exports *generic* kernels: those monomorphize (and embed their
@@ -55,6 +58,13 @@ exercised here.
 
 ```bash
 cargo oxide run cuda_module_in_lib
+```
+
+On a machine without a CUDA driver, the archive-link check can run by itself:
+
+```bash
+cargo oxide build cuda_module_in_lib
+./crates/rustc-codegen-cuda/examples/cuda_module_in_lib/target/release/cuda_module_in_lib --verify-bundles
 ```
 
 ## Expected Output
