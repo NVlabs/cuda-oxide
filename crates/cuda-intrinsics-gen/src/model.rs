@@ -1,0 +1,870 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+use crate::ptx::InstructionPattern;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamLock {
+    pub schema: u32,
+    pub llvm: LockedLlvm,
+    pub llvm_tblgen: LockedTool,
+    #[serde(default)]
+    pub comparison_tools: Vec<LockedTool>,
+    pub dumps: LockedDumps,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockedLlvm {
+    pub repository: String,
+    pub revision: String,
+    pub provenance: String,
+    pub public_output_allowed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockedTool {
+    pub name: String,
+    pub version_line: String,
+    pub sha256: String,
+    #[serde(default)]
+    pub enforce_sha256: bool,
+    pub provenance: String,
+    pub built_from_llvm_revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockedDumps {
+    pub intrinsics_sha256: String,
+    pub nvptx_sha256: String,
+    pub normalized_imported_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedFile {
+    pub schema: u32,
+    pub source: ImportedSource,
+    pub intrinsics: Vec<ImportedIntrinsic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedSource {
+    pub llvm_repository: String,
+    pub llvm_revision: String,
+    pub llvm_tblgen_version: String,
+    pub llvm_tblgen_source_revision: String,
+    pub intrinsics_json_sha256: String,
+    pub nvptx_json_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedIntrinsic {
+    pub source_record: String,
+    pub llvm_name: String,
+    pub arguments: Vec<String>,
+    pub results: Vec<String>,
+    pub classes: Vec<String>,
+    pub properties: Vec<String>,
+    pub selections: Vec<ImportedSelection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedSelection {
+    pub source_record: String,
+    pub asm: String,
+    pub predicates: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "ImportedSelectionConstraints::is_empty"
+    )]
+    pub constraints: ImportedSelectionConstraints,
+}
+
+/// Normalized constraints attached to an NVPTX instruction-selection record.
+///
+/// TableGen represents address-space-specific patterns through anonymous
+/// `PatFrag` records. Keeping that fact separate from the assembly spelling
+/// lets policy select the `.shared` overload without parsing PTX text.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedSelectionConstraints {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_space: Option<ImportedAddressSpace>,
+}
+
+impl ImportedSelectionConstraints {
+    pub fn is_empty(&self) -> bool {
+        self.address_space.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportedAddressSpace {
+    Generic,
+    Shared,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayFile {
+    pub schema: u32,
+    pub catalog_version: String,
+    pub intrinsic_abi: u32,
+    pub backend_profile: String,
+    #[serde(rename = "intrinsic")]
+    pub intrinsics: Vec<OverlayIntrinsic>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayIntrinsic {
+    pub id: String,
+    pub abi_id: String,
+    pub operation_key: String,
+    pub family: String,
+    /// Imported LLVM records use the legacy `source_record` field below.
+    /// PTX-native records must instead carry an explicit tagged source.
+    #[serde(default)]
+    pub source: Option<IntrinsicSource>,
+    #[serde(default)]
+    pub source_record: Option<String>,
+    pub rust_module: String,
+    pub rust_name: String,
+    #[serde(default)]
+    pub rust_arguments: Vec<String>,
+    pub rust_result: String,
+    pub safe: bool,
+    #[serde(default)]
+    pub must_use: bool,
+    pub safe_allowlist_reason: Option<String>,
+    pub public_rust_path: String,
+    #[serde(default)]
+    pub compatibility_rust_paths: Vec<String>,
+    pub dialect_op_type: String,
+    pub dialect_op_name: String,
+    #[serde(default)]
+    pub dialect_operands: Vec<String>,
+    #[serde(default)]
+    pub dialect_results: Vec<String>,
+    #[serde(default)]
+    pub llvm_symbol: Option<String>,
+    #[serde(default)]
+    pub resolved_llvm_symbol: Option<String>,
+    #[serde(default)]
+    pub llvm_arguments: Vec<String>,
+    #[serde(default)]
+    pub llvm_results: Vec<String>,
+    pub pure: bool,
+    pub memory: String,
+    pub convergent: bool,
+    pub execution_scope: String,
+    pub minimum_ptx: String,
+    #[serde(default)]
+    pub minimum_sm: Option<String>,
+    pub ptx_result: String,
+    pub targets: String,
+    pub ptx_isa_version: String,
+    pub ptx_isa_section: String,
+    pub ptx_isa_url: String,
+    pub lowering: String,
+    #[serde(default)]
+    pub backend_lowerings: Vec<OverlayBackendLowering>,
+    #[serde(default)]
+    pub packed_atomic: Option<PackedAtomic>,
+    #[serde(default)]
+    pub ldmatrix_variant: Option<LdmatrixVariant>,
+    #[serde(default)]
+    pub ldmatrix_safety: Option<LdmatrixSafety>,
+    #[serde(default)]
+    pub ldmatrix_adapter: Option<LdmatrixAdapter>,
+    #[serde(default)]
+    pub selected_address_space: Option<ImportedAddressSpace>,
+    pub expected_ptx: InstructionPattern,
+    pub summary: String,
+}
+
+/// Backend-specific lowering selected by reviewed evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayBackendLowering {
+    pub backend: IntrinsicBackend,
+    pub mechanism: BackendLoweringMechanism,
+    pub evidence_profile: String,
+    /// Optional backend-profile floor. When absent, the intrinsic's native
+    /// target requirement is used.
+    #[serde(default)]
+    pub minimum_ptx: Option<String>,
+    #[serde(default)]
+    pub minimum_sm: Option<String>,
+}
+
+/// Provenance for a generated intrinsic. PTX-native operations deliberately
+/// have no invented LLVM TableGen record or LLVM intrinsic symbol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum IntrinsicSource {
+    LlvmImported { source_record: String },
+    PtxNative { instruction: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntrinsicBackend {
+    LlvmNvptx,
+    LibNvvm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendLoweringMechanism {
+    TypedNvvm,
+    InlinePtx,
+}
+
+/// Closed semantic identity for the generated `ldmatrix` family.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LdmatrixVariant {
+    pub shape: LdmatrixShape,
+    pub multiplicity: LdmatrixMultiplicity,
+    pub layout: LdmatrixLayout,
+    pub element: LdmatrixElement,
+    pub state_space: LdmatrixStateSpace,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixShape {
+    M8n8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixMultiplicity {
+    X1,
+    X2,
+    X4,
+}
+
+impl LdmatrixMultiplicity {
+    pub const fn register_count(self) -> usize {
+        match self {
+            Self::X1 => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixLayout {
+    Normal,
+    Transposed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixElement {
+    B16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixStateSpace {
+    Shared,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LdmatrixSafety {
+    pub participation: LdmatrixParticipation,
+    pub address_contract: LdmatrixAddressContract,
+    pub memory_order: LdmatrixMemoryOrder,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixParticipation {
+    AllWarpLanesSameInstruction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixAddressContract {
+    WarpLaneAddressesMappedByMultiplicitySixteenByteAlignedSixteenBytesReadableWithSm75Replication,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixMemoryOrder {
+    Weak,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeValidation {
+    Unexecuted,
+    Executed,
+}
+
+/// Closed semantic contract for the generated packed global atomic-add
+/// family. These fields are intentionally enums rather than free-form strings:
+/// accepting an unreviewed state space, scope, or floating-point mode must
+/// require a generator change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedAtomic {
+    pub format: PackedAtomicFormat,
+    /// PTX ISA hardware floor, kept separate from cuda-oxide's admitted floor
+    /// and from backend-profile floors.
+    pub native_minimum_sm: u16,
+    pub operation: PackedAtomicOperation,
+    pub state_space: PackedAtomicStateSpace,
+    pub ordering: PackedAtomicOrdering,
+    pub scope: PackedAtomicScope,
+    pub rounding: PackedAtomicRounding,
+    pub subnormal: PackedAtomicSubnormal,
+    pub atomicity: PackedAtomicAtomicity,
+    pub pointer_contract: PackedAtomicPointerContract,
+    pub access_contract: PackedAtomicAccessContract,
+    pub scope_contract: PackedAtomicScopeContract,
+    pub codegen_contract: PackedAtomicCodegenContract,
+    pub return_contract: PackedAtomicReturnContract,
+    pub adapter: PackedAtomicAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicFormat {
+    F16x2,
+    Bf16x2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicOperation {
+    Add,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicStateSpace {
+    Global,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicOrdering {
+    Relaxed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicScope {
+    Gpu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicRounding {
+    NearestEven,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicSubnormal {
+    Preserve,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicAtomicity {
+    PerElement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicPointerContract {
+    MutableGlobalU32Aligned4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicAccessContract {
+    NoMixedWholeWordOrNonAtomicAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicScopeContract {
+    RacingAtomicsMutuallyInclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicCodegenContract {
+    ExactNativeInstruction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicReturnContract {
+    OldValuesPerElementMayBeNoncoherent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAtomicAdapter {
+    OldPackedU32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LdmatrixAdapter {
+    MultipleResultsToArray,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbiLedgerFile {
+    pub schema: u32,
+    pub intrinsic_abi: u32,
+    #[serde(rename = "entry")]
+    pub entries: Vec<AbiLedgerEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbiLedgerEntry {
+    pub abi_id: String,
+    pub status: String,
+    pub catalog_id: String,
+    pub operation_key: String,
+    pub raw_rust_signature: AbiRawRustSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbiRawRustSignature {
+    pub safe: bool,
+    pub arguments: Vec<String>,
+    pub result: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceFile {
+    pub schema: u32,
+    pub backend_profile: String,
+    #[serde(default)]
+    pub backend_kind: Option<IntrinsicBackend>,
+    pub llvm_revision: String,
+    pub backend_version: String,
+    pub backend_sha256: String,
+    #[serde(default)]
+    pub artifact_path: Option<String>,
+    #[serde(default)]
+    pub build_id_prefix: Option<String>,
+    #[serde(default)]
+    pub nvvm_ir_version: Option<String>,
+    #[serde(default)]
+    pub debug_ir_version: Option<String>,
+    pub records: Vec<EvidenceRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceRecord {
+    pub id: String,
+    #[serde(default)]
+    pub source: Option<IntrinsicSource>,
+    #[serde(default)]
+    pub source_record: Option<String>,
+    #[serde(default)]
+    pub llvm_symbol: Option<String>,
+    #[serde(default)]
+    pub resolved_llvm_symbol: Option<String>,
+    #[serde(default)]
+    pub llvm_arguments: Vec<String>,
+    #[serde(default)]
+    pub llvm_results: Vec<String>,
+    #[serde(default)]
+    pub concrete_llvm_arguments: Vec<String>,
+    #[serde(default)]
+    pub concrete_llvm_results: Vec<String>,
+    pub target_triple: String,
+    pub gpu_target: String,
+    pub ptx_feature: String,
+    pub status: String,
+    #[serde(default)]
+    pub stages: Vec<EvidenceStage>,
+    #[serde(default)]
+    pub declaration_attributes_canonicalized: Option<bool>,
+    #[serde(default)]
+    pub runtime_validation: Option<RuntimeValidation>,
+    pub expected_ptx: InstructionPattern,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceStage {
+    pub targets: Vec<String>,
+    pub representation: String,
+    pub stage: EvidenceStageKind,
+    #[serde(default)]
+    pub mechanism: Option<BackendLoweringMechanism>,
+    pub outcome: String,
+    pub detail: String,
+    #[serde(default)]
+    pub artifact_kind: Option<EvidenceArtifactKind>,
+    #[serde(default)]
+    pub tool_path: Option<String>,
+    #[serde(default)]
+    pub tool_version: Option<String>,
+    #[serde(default)]
+    pub tool_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceArtifactKind {
+    Cubin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStageKind {
+    DeclarationCanonicalization,
+    BackendCodegen,
+    DeviceLink,
+    PtxAssembly,
+    Runtime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogFile {
+    pub schema: u32,
+    pub catalog_version: String,
+    pub intrinsic_abi: u32,
+    pub generator_version: String,
+    pub source: CatalogSource,
+    pub inputs: CatalogInputs,
+    pub intrinsics: Vec<CatalogIntrinsic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSource {
+    pub llvm_repository: String,
+    pub llvm_revision: String,
+    pub llvm_tblgen_version: String,
+    pub llvm_tblgen_source_revision: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogInputs {
+    pub imported_sha256: String,
+    pub overlay_sha256: String,
+    pub abi_ledger_sha256: String,
+    pub evidence_sha256: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogIntrinsic {
+    pub id: String,
+    pub operation_key: String,
+    pub family: String,
+    pub source: IntrinsicSource,
+    pub selections: Vec<CatalogSelection>,
+    pub rust: CatalogRust,
+    pub dialect: CatalogDialect,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llvm: Option<CatalogLlvm>,
+    pub semantics: CatalogSemantics,
+    pub target: CatalogTarget,
+    pub backend: CatalogBackend,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backend_lowerings: Vec<CatalogBackendLowering>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packed_atomic: Option<PackedAtomic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ldmatrix: Option<CatalogLdmatrix>,
+    pub lowering: String,
+    pub expected_ptx: InstructionPattern,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSelection {
+    pub source_record: String,
+    pub asm: String,
+    pub predicates: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "ImportedSelectionConstraints::is_empty"
+    )]
+    pub constraints: ImportedSelectionConstraints,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogRust {
+    pub abi_id: String,
+    pub module: String,
+    pub name: String,
+    pub arguments: Vec<String>,
+    pub result: String,
+    pub safe: bool,
+    pub must_use: bool,
+    pub safe_allowlist_reason: Option<String>,
+    pub canonical_path: String,
+    pub public_path: String,
+    pub compatibility_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogDialect {
+    pub op_type: String,
+    pub op_name: String,
+    pub operands: Vec<String>,
+    pub results: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogLlvm {
+    pub symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_symbol: Option<String>,
+    pub arguments: Vec<String>,
+    pub results: Vec<String>,
+    pub properties: Vec<String>,
+    pub result_facts: CatalogLlvmResultFacts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogLlvmResultFacts {
+    pub no_undef: bool,
+    pub range: Option<CatalogHalfOpenRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogHalfOpenRange {
+    pub lower: String,
+    pub upper_exclusive: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogSemantics {
+    pub pure: bool,
+    pub memory: String,
+    pub convergent: bool,
+    pub execution_scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogTarget {
+    pub minimum_ptx: PtxVersion,
+    pub hardware: CatalogHardwareTarget,
+    pub ptx_result: String,
+    pub targets: String,
+    pub ptx_isa_version: String,
+    pub ptx_isa_section: String,
+    pub ptx_isa_url: String,
+}
+
+/// A PTX ISA version encoded as `major * 10 + minor`.
+///
+/// PTX currently uses one decimal minor digit. The resolver validates that
+/// shape before constructing this value, so generated consumers compare a
+/// number rather than reparsing policy text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PtxVersion(u16);
+
+impl PtxVersion {
+    pub const fn encoded(self) -> u16 {
+        self.0
+    }
+
+    pub const fn major(self) -> u16 {
+        self.0 / 10
+    }
+
+    pub const fn minor(self) -> u16 {
+        self.0 % 10
+    }
+}
+
+impl FromStr for PtxVersion {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (major, minor) = value
+            .split_once('.')
+            .ok_or_else(|| "expected major.minor".to_owned())?;
+        if major.is_empty()
+            || !major.bytes().all(|byte| byte.is_ascii_digit())
+            || minor.len() != 1
+            || !minor.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err("expected numeric major.minor with one minor digit".to_owned());
+        }
+        let major: u16 = major.parse().map_err(|_| "major version is too large")?;
+        let minor: u16 = minor.parse().unwrap();
+        if format!("{major}.{minor}") != value {
+            return Err("version is not in canonical major.minor form".to_owned());
+        }
+        let encoded = major
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(minor))
+            .ok_or_else(|| "version is too large".to_owned())?;
+        Ok(Self(encoded))
+    }
+}
+
+impl Serialize for PtxVersion {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for PtxVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for PtxVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.major(), self.minor())
+    }
+}
+
+/// Reviewed hardware availability for an intrinsic.
+///
+/// The current overlay accepts `All` and monotonic `MinimumSm` requirements.
+/// The explicit suffix variants reserve a typed representation for PTX `a`
+/// architecture sets and `f` family sets without incorrectly reducing either
+/// to a monotonic minimum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CatalogHardwareTarget {
+    All,
+    AnyOf {
+        alternatives: Vec<CatalogHardwareAlternative>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CatalogHardwareAlternative {
+    MinimumSm { sm: u16 },
+    ExactArchitecture { sm: u16 },
+    FamilyTarget { sm: u16 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogBackend {
+    pub profile: String,
+    pub version: String,
+    pub sha256: String,
+    pub status: String,
+    pub target_triple: String,
+    pub gpu_target: String,
+    pub ptx_feature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogBackendLowering {
+    pub backend: IntrinsicBackend,
+    pub mechanism: BackendLoweringMechanism,
+    pub evidence_profile: String,
+    pub target: CatalogTargetRequirement,
+    pub version: String,
+    pub sha256: String,
+    pub artifact_path: Option<String>,
+    pub build_id_prefix: Option<String>,
+    pub status: String,
+    pub stages: Vec<EvidenceStage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogTargetRequirement {
+    pub minimum_ptx: PtxVersion,
+    pub hardware: CatalogHardwareTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogLdmatrix {
+    pub variant: LdmatrixVariant,
+    pub safety: LdmatrixSafety,
+    pub adapter: LdmatrixAdapter,
+    pub selected_address_space: ImportedAddressSpace,
+}
+
+impl CatalogIntrinsic {
+    pub fn scalar_width(&self) -> Option<u32> {
+        match self.rust.result.as_str() {
+            "u32" => Some(32),
+            "u64" => Some(64),
+            _ => None,
+        }
+    }
+
+    pub fn llvm_identifier(&self) -> String {
+        self.llvm
+            .as_ref()
+            .expect("LLVM-backed intrinsic")
+            .symbol
+            .replace('.', "_")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locked_tool_rejects_misspelled_security_field() {
+        let input = r#"
+name = "llvm-tblgen"
+version_line = "LLVM version test"
+sha256 = "abc"
+enforce_sha25 = true
+provenance = "test"
+"#;
+        let error = toml::from_str::<LockedTool>(input).unwrap_err();
+        assert!(error.to_string().contains("enforce_sha25"));
+    }
+
+    #[test]
+    fn imported_selection_rejects_misspelled_constraint() {
+        let input = r#"{
+            "source_record": "selection",
+            "asm": "op;",
+            "predicates": [],
+            "constraints": { "adress_space": "shared" }
+        }"#;
+        let error = serde_json::from_str::<ImportedSelection>(input).unwrap_err();
+        assert!(error.to_string().contains("adress_space"));
+    }
+}

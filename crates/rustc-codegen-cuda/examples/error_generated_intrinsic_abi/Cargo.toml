@@ -1,0 +1,14 @@
+[package]
+name = "error_generated_intrinsic_abi"
+version = "0.1.0"
+edition = "2024"
+authors = ["Nihal Pasham <nihalp@nvidia.com>"]
+license = "Apache-2.0"
+
+[workspace]
+members = ["fake_cuda_intrinsics"]
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-intrinsics = { path = "fake_cuda_intrinsics" }

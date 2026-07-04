@@ -30,7 +30,7 @@
 //! - `index_2d::<S>() = if col < S { Some(row * S + col) } else { None }`
 //! - `index_2d_runtime(s) = if col < s { Some(row * s + col) } else { None }`
 
-use super::super::helpers::emit_store_result_and_goto;
+use super::super::helpers::{emit_store_result_and_goto, set_generated_intrinsic_marker};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
@@ -50,6 +50,22 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::r#type::Typed;
 use rustc_public::mir;
+
+fn generated_sreg_op(
+    ctx: &mut Context,
+    opid: (fn(Ptr<Operation>) -> pliron::op::OpObj, std::any::TypeId),
+    result_type: pliron::r#type::TypeHandle,
+    loc: Location,
+) -> Ptr<Operation> {
+    let op = Operation::new(ctx, opid, vec![result_type], vec![], vec![], 0);
+    op.deref_mut(ctx).set_loc(loc);
+    let op_name = Operation::get_opid(op, ctx).to_string();
+    let marker = cuda_oxide_codegen::__private::generated_intrinsic_marker_by_op_name(&op_name)
+        .unwrap_or_else(|| panic!("generated sreg op `{op_name}` has no generated target record"));
+    set_generated_intrinsic_marker(ctx, op, marker);
+    op
+}
+
 /// Emits the expansion of `index_1d()`: `(blockIdx.x * blockDim.x + threadIdx.x) as usize`
 ///
 /// `index_1d()` is marked `#[inline(always)]` but rustc doesn't always inline it,
@@ -69,15 +85,12 @@ pub fn emit_index_1d_expansion(
     let usize_type = types::get_usize_type(ctx);
 
     // Emit threadIdx.x
-    let tid_op = Operation::new(
+    let tid_op = generated_sreg_op(
         ctx,
         ReadPtxSregTidXOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    tid_op.deref_mut(ctx).set_loc(loc.clone());
     let tid_op = match prev_op {
         Some(prev) => {
             tid_op.insert_after(ctx, prev);
@@ -91,28 +104,22 @@ pub fn emit_index_1d_expansion(
     let tid_val = tid_op.deref(ctx).get_result(0);
 
     // Emit blockIdx.x
-    let bid_op = Operation::new(
+    let bid_op = generated_sreg_op(
         ctx,
         ReadPtxSregCtaidXOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bid_op.deref_mut(ctx).set_loc(loc.clone());
     bid_op.insert_after(ctx, tid_op);
     let bid_val = bid_op.deref(ctx).get_result(0);
 
     // Emit blockDim.x
-    let bdim_op = Operation::new(
+    let bdim_op = generated_sreg_op(
         ctx,
         ReadPtxSregNtidXOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bdim_op.deref_mut(ctx).set_loc(loc.clone());
     bdim_op.insert_after(ctx, bid_op);
     let bdim_val = bdim_op.deref(ctx).get_result(0);
 
@@ -186,15 +193,12 @@ pub fn emit_index_2d_row(
     let usize_type = types::get_usize_type(ctx);
 
     // Emit threadIdx.y
-    let tid_op = Operation::new(
+    let tid_op = generated_sreg_op(
         ctx,
         ReadPtxSregTidYOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    tid_op.deref_mut(ctx).set_loc(loc.clone());
     let tid_op = match prev_op {
         Some(prev) => {
             tid_op.insert_after(ctx, prev);
@@ -208,28 +212,22 @@ pub fn emit_index_2d_row(
     let tid_val = tid_op.deref(ctx).get_result(0);
 
     // Emit blockIdx.y
-    let bid_op = Operation::new(
+    let bid_op = generated_sreg_op(
         ctx,
         ReadPtxSregCtaidYOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bid_op.deref_mut(ctx).set_loc(loc.clone());
     bid_op.insert_after(ctx, tid_op);
     let bid_val = bid_op.deref(ctx).get_result(0);
 
     // Emit blockDim.y
-    let bdim_op = Operation::new(
+    let bdim_op = generated_sreg_op(
         ctx,
         ReadPtxSregNtidYOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bdim_op.deref_mut(ctx).set_loc(loc.clone());
     bdim_op.insert_after(ctx, bid_op);
     let bdim_val = bdim_op.deref(ctx).get_result(0);
 
@@ -350,15 +348,12 @@ pub fn emit_index_2d(
     };
 
     // Emit row = blockIdx.y * blockDim.y + threadIdx.y
-    let tid_y_op = Operation::new(
+    let tid_y_op = generated_sreg_op(
         ctx,
         ReadPtxSregTidYOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    tid_y_op.deref_mut(ctx).set_loc(loc.clone());
     match last_op {
         Some(prev) => tid_y_op.insert_after(ctx, prev),
         None => tid_y_op.insert_at_front(block_ptr, ctx),
@@ -366,28 +361,22 @@ pub fn emit_index_2d(
     let tid_y_val = tid_y_op.deref(ctx).get_result(0);
     last_op = Some(tid_y_op);
 
-    let bid_y_op = Operation::new(
+    let bid_y_op = generated_sreg_op(
         ctx,
         ReadPtxSregCtaidYOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bid_y_op.deref_mut(ctx).set_loc(loc.clone());
     bid_y_op.insert_after(ctx, last_op.unwrap());
     let bid_y_val = bid_y_op.deref(ctx).get_result(0);
     last_op = Some(bid_y_op);
 
-    let bdim_y_op = Operation::new(
+    let bdim_y_op = generated_sreg_op(
         ctx,
         ReadPtxSregNtidYOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bdim_y_op.deref_mut(ctx).set_loc(loc.clone());
     bdim_y_op.insert_after(ctx, last_op.unwrap());
     let bdim_y_val = bdim_y_op.deref(ctx).get_result(0);
     last_op = Some(bdim_y_op);
@@ -434,41 +423,32 @@ pub fn emit_index_2d(
     last_op = Some(row_op);
 
     // Emit col = blockIdx.x * blockDim.x + threadIdx.x
-    let tid_x_op = Operation::new(
+    let tid_x_op = generated_sreg_op(
         ctx,
         ReadPtxSregTidXOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    tid_x_op.deref_mut(ctx).set_loc(loc.clone());
     tid_x_op.insert_after(ctx, last_op.unwrap());
     let tid_x_val = tid_x_op.deref(ctx).get_result(0);
     last_op = Some(tid_x_op);
 
-    let bid_x_op = Operation::new(
+    let bid_x_op = generated_sreg_op(
         ctx,
         ReadPtxSregCtaidXOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bid_x_op.deref_mut(ctx).set_loc(loc.clone());
     bid_x_op.insert_after(ctx, last_op.unwrap());
     let bid_x_val = bid_x_op.deref(ctx).get_result(0);
     last_op = Some(bid_x_op);
 
-    let bdim_x_op = Operation::new(
+    let bdim_x_op = generated_sreg_op(
         ctx,
         ReadPtxSregNtidXOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
+        u32_type.to_handle(),
+        loc.clone(),
     );
-    bdim_x_op.deref_mut(ctx).set_loc(loc.clone());
     bdim_x_op.insert_after(ctx, last_op.unwrap());
     let bdim_x_val = bdim_x_op.deref(ctx).get_result(0);
     last_op = Some(bdim_x_op);
@@ -856,4 +836,56 @@ pub fn emit_len(
         loc,
         "len call without target block",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pliron::builtin::attributes::StringAttr;
+    use pliron::identifier::Identifier;
+
+    #[test]
+    fn index_1d_sreg_ops_carry_their_exact_generated_markers() {
+        let mut ctx = Context::new();
+        dialect_nvvm::register(&mut ctx);
+        let result_type = IntegerType::get(&ctx, 32, Signedness::Unsigned).to_handle();
+        let ops = [
+            (
+                generated_sreg_op(
+                    &mut ctx,
+                    ReadPtxSregTidXOp::get_concrete_op_info(),
+                    result_type,
+                    Location::Unknown,
+                ),
+                "v1:i0001",
+            ),
+            (
+                generated_sreg_op(
+                    &mut ctx,
+                    ReadPtxSregCtaidXOp::get_concrete_op_info(),
+                    result_type,
+                    Location::Unknown,
+                ),
+                "v1:i0002",
+            ),
+            (
+                generated_sreg_op(
+                    &mut ctx,
+                    ReadPtxSregNtidXOp::get_concrete_op_info(),
+                    result_type,
+                    Location::Unknown,
+                ),
+                "v1:i0003",
+            ),
+        ];
+        let key =
+            Identifier::try_from(cuda_oxide_codegen::__private::GENERATED_INTRINSIC_MARKER_ATTR)
+                .unwrap();
+
+        for (op, expected) in ops {
+            let op_ref = op.deref(&ctx);
+            let marker: &StringAttr = op_ref.attributes.get(&key).unwrap();
+            assert_eq!(String::from(marker.clone()), expected);
+        }
+    }
 }

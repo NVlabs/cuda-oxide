@@ -285,7 +285,7 @@ pub(crate) fn convert_atomic_cmpxchg(
 ///
 /// Uses `SideEffect` (not convergent): atomics are per-thread, not
 /// warp-synchronous.
-fn convert_packed_atom_add(
+pub(crate) fn convert_packed_atom_add(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,

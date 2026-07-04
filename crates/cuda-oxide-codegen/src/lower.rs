@@ -34,6 +34,7 @@ pub fn lower_to_llvm(
     ctx: &mut Context,
     module_op_ptr: Ptr<Operation>,
     allow_fma_contraction: bool,
+    intrinsic_backend: mir_lower::IntrinsicBackend,
 ) -> Result<(), PipelineError> {
     mir_lower::register(ctx);
 
@@ -42,6 +43,7 @@ pub fn lower_to_llvm(
         module_op_ptr,
         mir_lower::LoweringOptions {
             allow_fma_contraction,
+            intrinsic_backend,
         },
     ) {
         Ok(()) => Ok(()),

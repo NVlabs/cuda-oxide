@@ -4,7 +4,11 @@
  */
 
 use crate::error::PipelineError;
-use crate::target::{DetectedFeatures, arch_satisfies, select_target, validate_target_features};
+use crate::generated::GeneratedModuleRequirements;
+use crate::target::{
+    DetectedFeatures, arch_satisfies, generated_ptx_isa_requirement, generated_target_satisfied,
+    select_target_with_generated, validate_generated_target, validate_target_features,
+};
 use libnvvm_sys::CudaArch;
 use llvm_export::export::{DebugKind, DeviceExternType, ExportBackendConfig, NvvmIrDialect};
 use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
@@ -77,10 +81,25 @@ impl llvm_export::export::AsDeviceExtern for DeviceExternDecl {
 
 // mir-importer pipeline plumbing; not part of the frontend contract.
 #[doc(hidden)]
+#[cfg(test)]
 pub fn resolve_nvvm_target(
     explicit_target: Option<&str>,
     device_arch_hint: Option<&str>,
     automatic_features: Option<DetectedFeatures>,
+) -> Result<CudaArch, PipelineError> {
+    resolve_nvvm_target_with_generated(
+        explicit_target,
+        device_arch_hint,
+        automatic_features,
+        &GeneratedModuleRequirements::default(),
+    )
+}
+
+pub(crate) fn resolve_nvvm_target_with_generated(
+    explicit_target: Option<&str>,
+    device_arch_hint: Option<&str>,
+    automatic_features: Option<DetectedFeatures>,
+    generated: &GeneratedModuleRequirements,
 ) -> Result<CudaArch, PipelineError> {
     let parse = |target: &str, source: &str| {
         target.parse::<CudaArch>().map_err(|error| {
@@ -90,27 +109,45 @@ pub fn resolve_nvvm_target(
         })
     };
 
+    // libNVVM chooses the final PTX version itself, but still reject a future
+    // catalog floor that this compiler does not know how to represent. This
+    // keeps NVVM IR and ordinary PTX builds equally fail closed.
+    generated_ptx_isa_requirement(generated).map_err(PipelineError::Export)?;
+
     if let Some(target) = explicit_target {
         let parsed = parse(target, "explicit CUDA target")?;
         if let Some(features) = automatic_features {
             validate_target_features(&parsed, features).map_err(PipelineError::Export)?;
         }
+        validate_generated_target(&parsed.sm(), generated).map_err(PipelineError::Export)?;
         return Ok(parsed);
     }
 
     if let Some(features) = automatic_features {
         if let Some(target) = device_arch_hint {
             let parsed = parse(target, "detected GPU architecture")?;
-            if arch_satisfies(&parsed.sm(), features) {
+            if arch_satisfies(&parsed.sm(), features)
+                && generated_target_satisfied(&parsed.sm(), generated)
+            {
                 return Ok(parsed);
             }
         }
-        let target = select_target(features).map_err(PipelineError::Export)?;
-        return parse(target, "feature-based compiler default");
+        let target =
+            select_target_with_generated(features, generated).map_err(PipelineError::Export)?;
+        return parse(&target, "feature-based compiler default");
     }
 
     if let Some(target) = device_arch_hint {
-        return parse(target, "detected GPU architecture");
+        let parsed = parse(target, "detected GPU architecture")?;
+        if generated_target_satisfied(&parsed.sm(), generated) {
+            return Ok(parsed);
+        }
+    }
+
+    if !generated.is_empty() {
+        let target = select_target_with_generated(DetectedFeatures::Basic, generated)
+            .map_err(PipelineError::Export)?;
+        return parse(&target, "generated-intrinsic requirement");
     }
 
     Err(PipelineError::Export(
@@ -336,8 +373,30 @@ fn op_uses_libdevice(ctx: &Context, op_ptr: Ptr<Operation>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generated_intrinsic_targets::{
+        GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,
+    };
     use llvm_export::export::AsDeviceExtern;
     use pliron::op::Op;
+
+    #[test]
+    fn nvvm_target_resolution_applies_generated_backend_floors() {
+        let f16 = generated_intrinsic_target_by_marker("v1:i0014").unwrap();
+        let requirements = GeneratedModuleRequirements::from_targets(vec![f16])
+            .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+
+        let error = resolve_nvvm_target_with_generated(Some("sm_70"), None, None, &requirements)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("packed_atomic_add_f16x2"), "{error}");
+        assert!(error.contains("sm_75 or newer"), "{error}");
+        assert_eq!(
+            resolve_nvvm_target_with_generated(Some("sm_75"), None, None, &requirements)
+                .unwrap()
+                .sm(),
+            "sm_75"
+        );
+    }
 
     #[test]
     fn nvvm_target_resolution_is_concrete_and_strict() {

@@ -25,7 +25,7 @@
 //! instruction, but does not order earlier or later memory accesses. Callers
 //! need an appropriate barrier or fence before a dependent access.
 
-use dialect_mir::types::MirPtrType;
+use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
     builtin::types::IntegerType,
@@ -53,8 +53,36 @@ fn verify_ldmatrix(
     }
 
     let pointer_ty = operands[0].get_type(ctx);
-    if pointer_ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+    let pointer_ty = pointer_ty.deref(ctx);
+    let Some(pointer_ty) = pointer_ty.downcast_ref::<MirPtrType>() else {
         return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    };
+    if !matches!(
+        pointer_ty.address_space,
+        address_space::GENERIC | address_space::SHARED
+    ) {
+        return verify_err!(
+            op.loc(),
+            "{} operand 0 must be a generic or shared-memory pointer, not address space {}",
+            op_name,
+            pointer_ty.address_space
+        );
+    }
+
+    let pointee = pointer_ty.pointee.deref(ctx);
+    let Some(pointee) = pointee.downcast_ref::<IntegerType>() else {
+        return verify_err!(
+            op.loc(),
+            "{} operand 0 must point to a 32-bit integer carrier",
+            op_name
+        );
+    };
+    if pointee.width() != 32 {
+        return verify_err!(
+            op.loc(),
+            "{} operand 0 must point to a 32-bit integer carrier",
+            op_name
+        );
     }
 
     if op.get_num_results() != result_count {

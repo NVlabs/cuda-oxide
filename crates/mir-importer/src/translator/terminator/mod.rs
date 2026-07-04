@@ -68,11 +68,10 @@ use dialect_mir::ops::{
     MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
-    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNtidXOp,
-    ReadPtxSregNtidYOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp,
-    ReadPtxSregTidYOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLanemaskEqOp,
+    ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
+    ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp,
+    ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
@@ -887,7 +886,7 @@ fn translate_call(
     let target_usize = target.map(|t| t);
 
     // Extract function info
-    let (pattern_name, call_name, substs_str) = extract_func_info(func);
+    let (pattern_name, call_name, substs_str) = extract_func_info(func, &loc)?;
 
     // Helper to check if substitutions contain a type
     let substs_contains =
@@ -959,7 +958,7 @@ fn translate_call(
                 legaliser,
             );
         }
-        if let Some(function_item) = extract_function_item_target(&args[0], body) {
+        if let Some(function_item) = extract_function_item_target(&args[0], body, &loc)? {
             return translate_function_item_call(
                 ctx,
                 body,
@@ -1720,8 +1719,11 @@ struct FunctionItemTarget {
 fn extract_function_item_target(
     receiver: &mir::Operand,
     body: &mir::Body,
-) -> Option<FunctionItemTarget> {
-    let ty = operand_type(receiver, body)?;
+    loc: &Location,
+) -> TranslationResult<Option<FunctionItemTarget>> {
+    let Some(ty) = operand_type(receiver, body) else {
+        return Ok(None);
+    };
     let inner = match ty.kind() {
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, inner, _)) => inner,
         _ => ty,
@@ -1730,18 +1732,23 @@ fn extract_function_item_target(
     let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, substs)) =
         inner.kind()
     else {
-        return None;
+        return Ok(None);
     };
 
-    let instance = rustc_public::mir::mono::Instance::resolve(fn_def, &substs).ok()?;
+    let Some(instance) = rustc_public::mir::mono::Instance::resolve(fn_def, &substs).ok() else {
+        return Ok(None);
+    };
     let crate_name = fn_def.krate().name;
-    Some(FunctionItemTarget {
+    let generated_direct_call_only =
+        intrinsics::generated::require_supported_raw_intrinsic(fn_def, loc)?.is_some();
+    Ok(Some(FunctionItemTarget {
         name: function_item_call_name(instance),
         requires_direct_dispatch: fn_def.is_intrinsic()
             || instance.is_foreign_item()
             || !instance.has_body()
-            || matches!(crate_name.as_str(), "cuda_device" | "cuda-device" | "libm"),
-    })
+            || matches!(crate_name.as_str(), "cuda_device" | "cuda-device" | "libm")
+            || generated_direct_call_only,
+    }))
 }
 
 fn function_item_call_name(instance: rustc_public::mir::mono::Instance) -> String {
@@ -1924,8 +1931,11 @@ fn extract_unroll_factor(func: &mir::Operand) -> Option<u32> {
 /// FQDN and the device linker (libdevice, external LTOIR) only knows the
 /// link symbol. `call_name` for those is `Instance::mangled_name`, which is
 /// the link symbol (it honours `#[link_name]`).
-fn extract_func_info(func: &mir::Operand) -> (Option<String>, Option<String>, Option<String>) {
-    match func {
+fn extract_func_info(
+    func: &mir::Operand,
+    loc: &Location,
+) -> TranslationResult<(Option<String>, Option<String>, Option<String>)> {
+    Ok(match func {
         mir::Operand::Constant(const_op) => match const_op.const_.kind() {
             ConstantKind::ZeroSized => {
                 let ty_kind = const_op.const_.ty().kind();
@@ -1936,7 +1946,9 @@ fn extract_func_info(func: &mir::Operand) -> (Option<String>, Option<String>, Op
                     )) => {
                         use rustc_public::mir::mono::Instance;
 
-                        let pattern_name = fn_def.name().as_str().to_string();
+                        let pattern_name =
+                            intrinsics::generated::require_supported_raw_intrinsic(*fn_def, loc)?
+                                .unwrap_or_else(|| fn_def.name().as_str().to_string());
 
                         let resolved = Instance::resolve(*fn_def, substs).ok();
                         let call_name = if let Some(instance) = resolved {
@@ -1965,7 +1977,7 @@ fn extract_func_info(func: &mir::Operand) -> (Option<String>, Option<String>, Op
             _ => (None, None, None),
         },
         _ => (None, None, None),
-    }
+    })
 }
 
 /// Lower `core::intrinsics::typed_swap_nonoverlapping::<T>(x, y)`, the
@@ -2147,6 +2159,22 @@ fn try_dispatch_intrinsic(
     loc: Location,
     substs_contains: &impl Fn(&str) -> bool,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
+    if let Some(operation) = intrinsics::generated::try_dispatch_generated_intrinsic(
+        ctx,
+        body,
+        name,
+        args,
+        destination,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc.clone(),
+    )? {
+        return Ok(Some(operation));
+    }
+
     if let Some(kind) = intrinsics::asm::InlinePtxCallKind::from_path(name) {
         return Ok(Some(intrinsics::asm::emit_inline_ptx(
             ctx,
@@ -2333,166 +2361,6 @@ fn try_dispatch_intrinsic(
             )?))
         }
 
-        // =================================================================
-        // Thread/Block Position Intrinsics
-        // Support both re-exported (cuda_device::) and full paths (cuda_device::thread::)
-        // =================================================================
-        "cuda_device::threadIdx_x" | "cuda_device::thread::threadIdx_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregTidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::threadIdx_y" | "cuda_device::thread::threadIdx_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregTidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockIdx_x" | "cuda_device::thread::blockIdx_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregCtaidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockIdx_y" | "cuda_device::thread::blockIdx_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregCtaidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockDim_x" | "cuda_device::thread::blockDim_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregNtidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockDim_y" | "cuda_device::thread::blockDim_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregNtidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::threadIdx_z" | "cuda_device::thread::threadIdx_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregTidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockIdx_z" | "cuda_device::thread::blockIdx_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregCtaidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockDim_z" | "cuda_device::thread::blockDim_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNtidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridDim_x" | "cuda_device::thread::gridDim_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNctaidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridDim_y" | "cuda_device::thread::gridDim_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNctaidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridDim_z" | "cuda_device::thread::gridDim_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNctaidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
         // SM and grid identification
         "cuda_device::smid" | "cuda_device::thread::smid" => {
             Ok(Some(helpers::emit_nvvm_intrinsic(

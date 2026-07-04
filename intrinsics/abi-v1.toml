@@ -1,0 +1,114 @@
+# cuda-intrinsics ABI v1 ledger.
+#
+# This file is append-only. Never remove or repurpose an ABI ID. When an
+# intrinsic is retired, keep its semantic identity and raw Rust signature and
+# change only its status from "active" to "tombstone". Public re-exports and
+# backend/dialect/lowering details deliberately do not belong in this ledger.
+
+schema = 1
+intrinsic_abi = 1
+
+[[entry]]
+abi_id = "i0001"
+status = "active"
+catalog_id = "thread_idx_x"
+operation_key = "launch.thread_index.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0002"
+status = "active"
+catalog_id = "block_idx_x"
+operation_key = "launch.block_index.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0003"
+status = "active"
+catalog_id = "block_dim_x"
+operation_key = "launch.block_dimension.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0004"
+status = "active"
+catalog_id = "grid_dim_x"
+operation_key = "launch.grid_dimension.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0005"
+status = "active"
+catalog_id = "thread_idx_y"
+operation_key = "launch.thread_index.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0006"
+status = "active"
+catalog_id = "block_idx_y"
+operation_key = "launch.block_index.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0007"
+status = "active"
+catalog_id = "block_dim_y"
+operation_key = "launch.block_dimension.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0008"
+status = "active"
+catalog_id = "grid_dim_y"
+operation_key = "launch.grid_dimension.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0009"
+status = "active"
+catalog_id = "thread_idx_z"
+operation_key = "launch.thread_index.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0010"
+status = "active"
+catalog_id = "block_idx_z"
+operation_key = "launch.block_index.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0011"
+status = "active"
+catalog_id = "block_dim_z"
+operation_key = "launch.block_dimension.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0012"
+status = "active"
+catalog_id = "grid_dim_z"
+operation_key = "launch.grid_dimension.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0013"
+status = "active"
+catalog_id = "ldmatrix_m8n8_x4_b16"
+operation_key = "matrix.ldmatrix.m8n8.x4.normal.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "[u32; 4]" }
+
+[[entry]]
+abi_id = "i0014"
+status = "active"
+catalog_id = "packed_atomic_add_f16x2"
+operation_key = "atomic.add.f16x2.global.relaxed.gpu.nearest_even.preserve.per_element"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0015"
+status = "active"
+catalog_id = "packed_atomic_add_bf16x2"
+operation_key = "atomic.add.bf16x2.global.relaxed.gpu.nearest_even.preserve.per_element"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "u32"], result = "u32" }

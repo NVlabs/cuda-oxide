@@ -44,8 +44,8 @@ TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
-NVVM_VERIFY_EXAMPLES=(device_global libdevice_math legacy_nvvm_pointer_shapes primitive_stress)
-ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr)
+NVVM_VERIFY_EXAMPLES=(device_global generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress)
+ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 classify() {
     local ex="$1" cat
@@ -63,6 +63,25 @@ verify_nvvm_in_compile_only() {
         [[ "$ex" == "$candidate" ]] && return 0
     done
     return 1
+}
+
+# Return a concrete libNVVM target that satisfies both the detected/default
+# target and an example's generated-intrinsic floor. Compile-only mode never
+# executes the artifact, so raising an older host target here is intentional:
+# this lane proves that libNVVM accepts the selected lowering.
+nvvm_verify_arch() {
+    local ex="$1" arch="${LTOIR_ARCH}" floor=0 number
+    case "${ex}" in
+        generated_ldmatrix) floor=75 ;;
+        packed_atomic_add) floor=90 ;;
+    esac
+    if [[ ${floor} -ne 0 && "${arch}" =~ ^sm_([0-9]+)[af]?$ ]]; then
+        number=$((10#${BASH_REMATCH[1]}))
+        if [[ ${number} -lt ${floor} ]]; then
+            arch="sm_${floor}"
+        fi
+    fi
+    printf '%s\n' "${arch}"
 }
 
 # ---- CLI -----------------------------------------------------------------
@@ -297,8 +316,40 @@ grep_failure_markers() {
 }
 
 verdict_error() {
-    local log="$1" ec="$2"
+    local log="$1" ec="$2" ex="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+
+    # The generated-intrinsic fixtures protect fail-closed compiler contracts,
+    # so merely observing an unrelated compile error is not enough.
+    case "${ex}" in
+        error_generated_intrinsic_abi)
+            if ! grep -Fq 'cuda-intrinsics ABI mismatch' "${log}" \
+                || ! grep -Fq '__cuda_oxide_intrinsic_abi_v2::i0001' "${log}"; then
+                echo "FAIL (missing intrinsic ABI-v2 diagnostic)"
+                return 1
+            fi
+            ;;
+        error_generated_intrinsic_unknown_id)
+            if ! grep -Fq 'cuda-intrinsics ABI mismatch' "${log}" \
+                || ! grep -Fq '__cuda_oxide_intrinsic_abi_v1::i9999' "${log}"; then
+                echo "FAIL (missing unknown intrinsic-ID diagnostic)"
+                return 1
+            fi
+            ;;
+        error_generated_intrinsic_fn_pointer)
+            if ! grep -Fq 'must be called directly and cannot be converted to a function pointer' "${log}"; then
+                echo "FAIL (missing function-pointer intrinsic diagnostic)"
+                return 1
+            fi
+            ;;
+        error_generated_intrinsic_callable)
+            if ! grep -Fq 'generated CUDA intrinsics require direct call-site lowering' "${log}"; then
+                echo "FAIL (missing direct-call-only intrinsic diagnostic)"
+                return 1
+            fi
+            ;;
+    esac
+
     if grep -qE 'Device codegen failed|Translation failed|Compilation error|Unsupported construct' "${log}"; then
         echo "PASS (expected compile failure)"
         return 0
@@ -467,7 +518,9 @@ run_cargo() {
     # checks both textual export and real libNVVM compilation. Other examples
     # use `build`.
     if [[ ${COMPILE_ONLY} -eq 1 ]] && verify_nvvm_in_compile_only "${ex}"; then
-        local -a args=("emit-ltoir" "${ex}" "--arch=${LTOIR_ARCH}")
+        local nvvm_arch
+        nvvm_arch="$(nvvm_verify_arch "${ex}")"
+        local -a args=("emit-ltoir" "${ex}" "--arch=${nvvm_arch}")
         if [[ ${VERBOSE} -eq 1 ]]; then
             cargo oxide "${args[@]}" 2>&1 | tee "${log}"
             CARGO_EC=${PIPESTATUS[0]}
@@ -559,7 +612,7 @@ for ex in "${selected[@]}"; do
         verdict="$(verdict_compile "${ex}" "${log}" "${ec}")" && status=0 || status=$?
     else
         case "${cat}" in
-            error)       verdict="$(verdict_error       "${log}" "${ec}")"        && status=0 || status=$? ;;
+            error)       verdict="$(verdict_error       "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
             tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
             wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;

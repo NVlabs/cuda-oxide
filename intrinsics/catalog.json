@@ -1,0 +1,2024 @@
+{
+  "schema": 4,
+  "catalog_version": "0.1.0",
+  "intrinsic_abi": 1,
+  "generator_version": "0.1.0",
+  "source": {
+    "llvm_repository": "https://github.com/rust-lang/llvm-project.git",
+    "llvm_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
+    "llvm_tblgen_version": "LLVM version 22.1.2",
+    "llvm_tblgen_source_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e"
+  },
+  "inputs": {
+    "imported_sha256": "af01e769cd916c902bf6b26b1fb723516b58c5a842fe482142402fdeda9ab487",
+    "overlay_sha256": "f804ae5ca55bd49947d35f605b14ef87793dd19e052f9d4cd4be4b054076276e",
+    "abi_ledger_sha256": "89063067d4d07be615cecc852d5f6ec84ffed8ef1279e67ab23bd7ed6730585d",
+    "evidence_sha256": [
+      "cuda-13.3-libnvvm-13.3.33.json:41138415f91fdcde3be04d417f38d3f0609754533e700dcaa9d460afb4c1ffeb",
+      "rust-llvm-22.1.2-1cb4e383.json:29ac7f6146433daf5148babc8b7ef53c5a413bc0fbae8e0a00c298e8dbd54e7e"
+    ]
+  },
+  "intrinsics": [
+    {
+      "id": "block_dim_x",
+      "operation_key": "launch.block_dimension.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_ntid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NTID_x",
+          "asm": "mov.u32 \t$d, %ntid.x;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0003",
+        "module": "sreg",
+        "name": "block_dim_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only CTA X dimension has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0003",
+        "public_path": "cuda_intrinsics::sreg::block_dim_x",
+        "compatibility_paths": [
+          "cuda_device::thread::blockDim_x",
+          "cuda_device::blockDim_x"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNtidXOp",
+        "op_name": "nvvm.read_ptx_sreg_ntid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.ntid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,1025>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "1025"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.2 Special Registers: %ntid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ntid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ntid.x"
+          }
+        ]
+      },
+      "summary": "Returns the X dimension of the current cooperative thread array (CTA)."
+    },
+    {
+      "id": "block_dim_y",
+      "operation_key": "launch.block_dimension.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_ntid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NTID_y",
+          "asm": "mov.u32 \t$d, %ntid.y;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0007",
+        "module": "sreg",
+        "name": "block_dim_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only CTA Y dimension has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0007",
+        "public_path": "cuda_intrinsics::sreg::block_dim_y",
+        "compatibility_paths": [
+          "cuda_device::thread::blockDim_y",
+          "cuda_device::blockDim_y"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNtidYOp",
+        "op_name": "nvvm.read_ptx_sreg_ntid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.ntid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,1025>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "1025"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.2 Special Registers: %ntid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ntid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ntid.y"
+          }
+        ]
+      },
+      "summary": "Returns the Y dimension of the current cooperative thread array (CTA)."
+    },
+    {
+      "id": "block_dim_z",
+      "operation_key": "launch.block_dimension.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_ntid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NTID_z",
+          "asm": "mov.u32 \t$d, %ntid.z;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0011",
+        "module": "sreg",
+        "name": "block_dim_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only CTA Z dimension has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0011",
+        "public_path": "cuda_intrinsics::sreg::block_dim_z",
+        "compatibility_paths": [
+          "cuda_device::thread::blockDim_z",
+          "cuda_device::blockDim_z"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNtidZOp",
+        "op_name": "nvvm.read_ptx_sreg_ntid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.ntid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.2 Special Registers: %ntid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ntid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ntid.z"
+          }
+        ]
+      },
+      "summary": "Returns the Z dimension of the current cooperative thread array (CTA)."
+    },
+    {
+      "id": "block_idx_x",
+      "operation_key": "launch.block_index.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_ctaid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CTAID_x",
+          "asm": "mov.u32 \t$d, %ctaid.x;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0002",
+        "module": "sreg",
+        "name": "block_idx_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only CTA X index has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0002",
+        "public_path": "cuda_intrinsics::sreg::block_idx_x",
+        "compatibility_paths": [
+          "cuda_device::thread::blockIdx_x",
+          "cuda_device::blockIdx_x"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregCtaidXOp",
+        "op_name": "nvvm.read_ptx_sreg_ctaid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.ctaid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,2147483647>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "2147483647"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.6 Special Registers: %ctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ctaid.x"
+          }
+        ]
+      },
+      "summary": "Returns the X index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "block_idx_y",
+      "operation_key": "launch.block_index.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_ctaid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CTAID_y",
+          "asm": "mov.u32 \t$d, %ctaid.y;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0006",
+        "module": "sreg",
+        "name": "block_idx_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only CTA Y index has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0006",
+        "public_path": "cuda_intrinsics::sreg::block_idx_y",
+        "compatibility_paths": [
+          "cuda_device::thread::blockIdx_y",
+          "cuda_device::blockIdx_y"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregCtaidYOp",
+        "op_name": "nvvm.read_ptx_sreg_ctaid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.ctaid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,65535>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "65535"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.6 Special Registers: %ctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ctaid.y"
+          }
+        ]
+      },
+      "summary": "Returns the Y index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "block_idx_z",
+      "operation_key": "launch.block_index.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_ctaid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CTAID_z",
+          "asm": "mov.u32 \t$d, %ctaid.z;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0010",
+        "module": "sreg",
+        "name": "block_idx_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only CTA Z index has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0010",
+        "public_path": "cuda_intrinsics::sreg::block_idx_z",
+        "compatibility_paths": [
+          "cuda_device::thread::blockIdx_z",
+          "cuda_device::blockIdx_z"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregCtaidZOp",
+        "op_name": "nvvm.read_ptx_sreg_ctaid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.ctaid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,65535>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "65535"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.6 Special Registers: %ctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-ctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ctaid.z"
+          }
+        ]
+      },
+      "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "grid_dim_x",
+      "operation_key": "launch.grid_dimension.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nctaid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NCTAID_x",
+          "asm": "mov.u32 \t$d, %nctaid.x;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0004",
+        "module": "sreg",
+        "name": "grid_dim_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only grid X dimension has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0004",
+        "public_path": "cuda_intrinsics::sreg::grid_dim_x",
+        "compatibility_paths": [
+          "cuda_device::thread::gridDim_x",
+          "cuda_device::gridDim_x"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNctaidXOp",
+        "op_name": "nvvm.read_ptx_sreg_nctaid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nctaid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,2147483648>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "2147483648"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.7 Special Registers: %nctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nctaid.x"
+          }
+        ]
+      },
+      "summary": "Returns the number of cooperative thread arrays (CTAs) in the grid's X dimension."
+    },
+    {
+      "id": "grid_dim_y",
+      "operation_key": "launch.grid_dimension.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nctaid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NCTAID_y",
+          "asm": "mov.u32 \t$d, %nctaid.y;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0008",
+        "module": "sreg",
+        "name": "grid_dim_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only grid Y dimension has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0008",
+        "public_path": "cuda_intrinsics::sreg::grid_dim_y",
+        "compatibility_paths": [
+          "cuda_device::thread::gridDim_y",
+          "cuda_device::gridDim_y"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNctaidYOp",
+        "op_name": "nvvm.read_ptx_sreg_nctaid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nctaid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65536>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65536"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.7 Special Registers: %nctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nctaid.y"
+          }
+        ]
+      },
+      "summary": "Returns the number of cooperative thread arrays (CTAs) in the grid's Y dimension."
+    },
+    {
+      "id": "grid_dim_z",
+      "operation_key": "launch.grid_dimension.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nctaid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NCTAID_z",
+          "asm": "mov.u32 \t$d, %nctaid.z;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0012",
+        "module": "sreg",
+        "name": "grid_dim_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only grid Z dimension has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0012",
+        "public_path": "cuda_intrinsics::sreg::grid_dim_z",
+        "compatibility_paths": [
+          "cuda_device::thread::gridDim_z",
+          "cuda_device::gridDim_z"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNctaidZOp",
+        "op_name": "nvvm.read_ptx_sreg_nctaid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nctaid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65536>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65536"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.7 Special Registers: %nctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nctaid.z"
+          }
+        ]
+      },
+      "summary": "Returns the number of cooperative thread arrays (CTAs) in the grid's Z dimension."
+    },
+    {
+      "id": "ldmatrix_m8n8_x4_b16",
+      "operation_key": "matrix.ldmatrix.m8n8.x4.normal.b16.shared",
+      "family": "ldmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x4_b16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_20697",
+          "asm": "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75"
+          ],
+          "constraints": {
+            "address_space": "shared"
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0013",
+        "module": "matrix",
+        "name": "ldmatrix_m8n8_x4_b16",
+        "arguments": [
+          "*const u32"
+        ],
+        "result": "[u32; 4]",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0013",
+        "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x4_b16",
+        "compatibility_paths": []
+      },
+      "dialect": {
+        "op_type": "LdmatrixOp",
+        "op_name": "nvvm.ldmatrix",
+        "operands": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16",
+        "resolved_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3",
+        "arguments": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrReadMem",
+          "NoCapture<arg0>",
+          "ReadOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[u32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.15 Warp-level matrix load instruction: ldmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-ldmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3(ptr addrspace(3))",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The recognized bare declaration materializes convergent, nocallback, memory(argmem: read), readonly, and captures(none) attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Emitted ldmatrix.sync.aligned.m8n8.x4.shared.b16 with a four-register result struct.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted x4 PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "compute_80",
+                "compute_86",
+                "compute_89",
+                "compute_90",
+                "compute_90a"
+              ],
+              "representation": "legacy typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3i8(i8 addrspace(3)*)",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepts the declaration and produces LTOIR.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "compute_75",
+                "compute_80",
+                "compute_86",
+                "compute_89",
+                "compute_90",
+                "compute_90a"
+              ],
+              "representation": "legacy typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3i8(i8 addrspace(3)*)",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "NVVM_ERROR_COMPILATION(9): unsupported operation.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "compute_100",
+                "compute_120"
+              ],
+              "representation": "modern opaque-pointer intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepts the modern typed intrinsic for these targets.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR inline PTX ldmatrix.sync.aligned.m8n8.x4.shared.b16",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "This is the selected libNVVM lowering until typed-intrinsic support is uniform across supported targets.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR inline PTX ldmatrix.sync.aligned.m8n8.x4.shared.b16",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink completed the selected inline-PTX route to a device binary.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "ldmatrix": {
+        "variant": {
+          "shape": "m8n8",
+          "multiplicity": "x4",
+          "layout": "normal",
+          "element": "b16",
+          "state_space": "shared"
+        },
+        "safety": {
+          "participation": "all_warp_lanes_same_instruction",
+          "address_contract": "warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable_with_sm75_replication",
+          "memory_order": "weak",
+          "runtime_validation": "unexecuted"
+        },
+        "adapter": "multiple_results_to_array",
+        "selected_address_space": "shared"
+      },
+      "lowering": "generated_ldmatrix",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x4",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Loads four 8×8 b16 matrices cooperatively from shared memory and returns this lane's four packed register fragments."
+    },
+    {
+      "id": "packed_atomic_add_bf16x2",
+      "operation_key": "atomic.add.bf16x2.global.relaxed.gpu.nearest_even.preserve.per_element",
+      "family": "packed_atomic",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "atom.global.add.noftz.bf16x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0015",
+        "module": "atomic",
+        "name": "atom_add_bf16x2",
+        "arguments": [
+          "*mut u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0015",
+        "public_path": "cuda_intrinsics::atomic::atom_add_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::atomic::atom_add_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "PackedAtomicAddOp",
+        "op_name": "nvvm.packed_atomic_add",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.13.1.1 Atomic reduction and atomic operations: atom",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-atom"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "side-effecting inline PTX atom.global.add.noftz.bf16x2 with =r,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted the exact native packed bf16x2 global atomic-add instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM packed-atomic probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact bf16x2 inline-PTX instruction for sm_90.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX atom.global.add.noftz.bf16x2 with =r,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact native bf16x2 inline-PTX route at compute_90.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "retained cuda-oxide packed_atomic_add kernel containing side-effecting inline PTX atom.global.add.noftz.bf16x2",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "cargo oxide emit-ltoir produced 2,760-byte compute_90 LTOIR; link_ltoir -arch=sm_90 produced a 3,968-byte cubin; cuobjdump -sass showed ATOMG.E.ADD.BF16x2.RN.STRONG.GPU (and the sibling F16x2 instruction).",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_atomic": {
+        "format": "bf16x2",
+        "native_minimum_sm": 90,
+        "operation": "add",
+        "state_space": "global",
+        "ordering": "relaxed",
+        "scope": "gpu",
+        "rounding": "nearest_even",
+        "subnormal": "preserve",
+        "atomicity": "per_element",
+        "pointer_contract": "mutable_global_u32_aligned4",
+        "access_contract": "no_mixed_whole_word_or_non_atomic_access",
+        "scope_contract": "racing_atomics_mutually_inclusive",
+        "codegen_contract": "exact_native_instruction",
+        "return_contract": "old_values_per_element_may_be_noncoherent",
+        "adapter": "old_packed_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_packed_atomic_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "atom",
+        "modifiers": [
+          "global",
+          "add",
+          "noftz",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Atomically adds two packed bf16 lanes in global memory and returns the two independently observed old lane values."
+    },
+    {
+      "id": "packed_atomic_add_f16x2",
+      "operation_key": "atomic.add.f16x2.global.relaxed.gpu.nearest_even.preserve.per_element",
+      "family": "packed_atomic",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "atom.global.add.noftz.f16x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0014",
+        "module": "atomic",
+        "name": "atom_add_f16x2",
+        "arguments": [
+          "*mut u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0014",
+        "public_path": "cuda_intrinsics::atomic::atom_add_f16x2",
+        "compatibility_paths": [
+          "cuda_device::atomic::atom_add_f16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "PackedAtomicAddOp",
+        "op_name": "nvvm.packed_atomic_add",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "6.2",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 70
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.13.1.1 Atomic reduction and atomic operations: atom",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-atom"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx62"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 70
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_70",
+                "ptx62"
+              ],
+              "representation": "side-effecting inline PTX atom.global.add.noftz.f16x2 with =r,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted the exact native packed f16x2 global atomic-add instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx62"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM packed-atomic probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas (whose supported floor is sm_75) accepted the sm_70/PTX-6.2 backend output when assembled forward for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx62"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX atom.global.add.noftz.f16x2 with =r,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact native f16x2 inline-PTX route at its supported compute_75 profile floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx62"
+              ],
+              "representation": "retained legacy-NVVM kernel containing side-effecting inline PTX atom.global.add.noftz.f16x2",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "compile_ltoir produced 1,920-byte compute_75 LTOIR; link_ltoir -arch=sm_75 produced a 2,984-byte cubin; cuobjdump -sass showed probe with ATOMG.E.ADD.F16x2.RN.STRONG.GPU.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_atomic": {
+        "format": "f16x2",
+        "native_minimum_sm": 60,
+        "operation": "add",
+        "state_space": "global",
+        "ordering": "relaxed",
+        "scope": "gpu",
+        "rounding": "nearest_even",
+        "subnormal": "preserve",
+        "atomicity": "per_element",
+        "pointer_contract": "mutable_global_u32_aligned4",
+        "access_contract": "no_mixed_whole_word_or_non_atomic_access",
+        "scope_contract": "racing_atomics_mutually_inclusive",
+        "codegen_contract": "exact_native_instruction",
+        "return_contract": "old_values_per_element_may_be_noncoherent",
+        "adapter": "old_packed_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_packed_atomic_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "atom",
+        "modifiers": [
+          "global",
+          "add",
+          "noftz",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Atomically adds two packed f16 lanes in global memory and returns the two independently observed old lane values."
+    },
+    {
+      "id": "thread_idx_x",
+      "operation_key": "launch.thread_index.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_tid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_TID_x",
+          "asm": "mov.u32 \t$d, %tid.x;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0001",
+        "module": "sreg",
+        "name": "thread_idx_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only thread-index register has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0001",
+        "public_path": "cuda_intrinsics::sreg::thread_idx_x",
+        "compatibility_paths": [
+          "cuda_device::thread::threadIdx_x",
+          "cuda_device::threadIdx_x"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregTidXOp",
+        "op_name": "nvvm.read_ptx_sreg_tid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.tid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,1024>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "1024"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.1 Special Registers: %tid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-tid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%tid.x"
+          }
+        ]
+      },
+      "summary": "Returns the X thread index within the current cooperative thread array (CTA)."
+    },
+    {
+      "id": "thread_idx_y",
+      "operation_key": "launch.thread_index.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_tid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_TID_y",
+          "asm": "mov.u32 \t$d, %tid.y;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0005",
+        "module": "sreg",
+        "name": "thread_idx_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only thread Y index has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0005",
+        "public_path": "cuda_intrinsics::sreg::thread_idx_y",
+        "compatibility_paths": [
+          "cuda_device::thread::threadIdx_y",
+          "cuda_device::threadIdx_y"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregTidYOp",
+        "op_name": "nvvm.read_ptx_sreg_tid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.tid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,1024>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "1024"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.1 Special Registers: %tid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-tid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%tid.y"
+          }
+        ]
+      },
+      "summary": "Returns the Y thread index within the current cooperative thread array (CTA)."
+    },
+    {
+      "id": "thread_idx_z",
+      "operation_key": "launch.thread_index.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_tid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_TID_z",
+          "asm": "mov.u32 \t$d, %tid.z;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0009",
+        "module": "sreg",
+        "name": "thread_idx_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only thread Z index has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0009",
+        "public_path": "cuda_intrinsics::sreg::thread_idx_z",
+        "compatibility_paths": [
+          "cuda_device::thread::threadIdx_z",
+          "cuda_device::threadIdx_z"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregTidZOp",
+        "op_name": "nvvm.read_ptx_sreg_tid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.tid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,64>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "64"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.1 Special Registers: %tid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-tid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%tid.z"
+          }
+        ]
+      },
+      "summary": "Returns the Z thread index within the current cooperative thread array (CTA)."
+    }
+  ]
+}

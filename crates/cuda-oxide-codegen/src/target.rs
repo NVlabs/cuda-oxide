@@ -11,6 +11,8 @@
 //! in `mir-importer`.
 
 use crate::error::PipelineError;
+use crate::generated::GeneratedModuleRequirements;
+use crate::generated_intrinsic_targets::{GeneratedHardwareAlternative, GeneratedHardwareTarget};
 use libnvvm_sys::CudaArch;
 use std::path::Path;
 
@@ -638,6 +640,48 @@ pub struct ModuleRequirements {
     pub ptx_isa: PtxIsaRequirement,
 }
 
+/// Convert catalog PTX floors to the discrete `llc` feature spellings this
+/// compiler supports. A floor between two spellings rounds upward; a future
+/// floor beyond the newest supported spelling is rejected instead of ignored.
+pub(crate) fn generated_ptx_isa_requirement(
+    generated: &GeneratedModuleRequirements,
+) -> Result<PtxIsaRequirement, String> {
+    let mut requirement = PtxIsaRequirement::Default;
+    for target in &generated.targets {
+        let target_requirement = generated.requirement(target);
+        let encoded = target_requirement.minimum_ptx.encoded();
+        let target_requirement = match encoded {
+            0..=60 => PtxIsaRequirement::Default,
+            61..=62 => PtxIsaRequirement::Ptx62,
+            63..=65 => PtxIsaRequirement::Ptx65,
+            66..=70 => PtxIsaRequirement::Ptx70,
+            71 => PtxIsaRequirement::Ptx71,
+            72..=78 => PtxIsaRequirement::Ptx78,
+            79..=80 => PtxIsaRequirement::Ptx80,
+            81..=86 => PtxIsaRequirement::Ptx86,
+            _ => {
+                return Err(format!(
+                    "generated intrinsic `{}` (`{}`) requires PTX {}.{}, newer than cuda-oxide's supported PTX 8.6 floor",
+                    target.id,
+                    target.marker,
+                    target_requirement.minimum_ptx.major(),
+                    target_requirement.minimum_ptx.minor(),
+                ));
+            }
+        };
+        requirement = requirement.max(target_requirement);
+    }
+    Ok(requirement)
+}
+
+pub(crate) fn merge_generated_module_requirements(
+    mut text: ModuleRequirements,
+    generated: &GeneratedModuleRequirements,
+) -> Result<ModuleRequirements, String> {
+    text.ptx_isa = text.ptx_isa.max(generated_ptx_isa_requirement(generated)?);
+    Ok(text)
+}
+
 /// Detect every architecture requirement in exported LLVM text.
 ///
 /// Both the ordinary PTX path and automatic libdevice mode use this exact
@@ -832,6 +876,158 @@ pub fn select_target(features: DetectedFeatures) -> Result<&'static str, String>
     ))
 }
 
+/// Select one concrete target satisfying both text-detected features and every
+/// generated intrinsic used by the module.
+///
+/// Generated hardware requirements are a module-wide AND. Each intrinsic's
+/// `AnyOf` list remains an OR, so the search finds one architecture in the
+/// intersection rather than selecting a separate target per call.
+pub(crate) fn select_target_with_generated(
+    features: DetectedFeatures,
+    generated: &GeneratedModuleRequirements,
+) -> Result<String, String> {
+    let preferred = select_target(features)?;
+    if generated.is_empty() {
+        return Ok(preferred.to_string());
+    }
+
+    let mut candidates = vec![preferred.to_string()];
+    let mut push_candidate = |candidate: String| {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    };
+
+    // Try each catalog spelling before the exhaustive known-target list. This
+    // preserves catalog alternative order while still finding intersections
+    // such as `minimum sm_80` AND `sm_90a exactly`.
+    for target in &generated.targets {
+        if let GeneratedHardwareTarget::AnyOf(alternatives) = generated.requirement(target).hardware
+        {
+            for alternative in alternatives {
+                let candidate = match alternative {
+                    GeneratedHardwareAlternative::MinimumSm(capability) => {
+                        format!("sm_{capability}")
+                    }
+                    GeneratedHardwareAlternative::ExactArchitecture(capability) => {
+                        format!("sm_{capability}a")
+                    }
+                    GeneratedHardwareAlternative::FamilyTarget(capability) => {
+                        format!("sm_{capability}f")
+                    }
+                };
+                push_candidate(candidate);
+            }
+        }
+    }
+
+    // This is the reviewed set accepted by `is_known_cuda_target`. Family and
+    // architecture spellings are included because a generated requirement may
+    // need to intersect with an existing text-detected feature.
+    for candidate in [
+        "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_88", "sm_89", "sm_90", "sm_100",
+        "sm_101", "sm_103", "sm_110", "sm_120", "sm_121", "sm_90a", "sm_100a", "sm_101a",
+        "sm_103a", "sm_110a", "sm_120a", "sm_121a", "sm_100f", "sm_101f", "sm_103f", "sm_110f",
+        "sm_120f", "sm_121f",
+    ] {
+        push_candidate(candidate.to_string());
+    }
+
+    if let Some(candidate) = candidates.into_iter().find(|candidate| {
+        arch_satisfies(candidate, features) && generated_target_satisfied(candidate, generated)
+    }) {
+        return Ok(candidate);
+    }
+
+    let generated_ids = generated
+        .targets
+        .iter()
+        .map(|target| format!("{} ({})", target.id, target.marker))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "detected CUDA features {features:?} and generated intrinsics [{generated_ids}] do not share a compatible GPU architecture"
+    ))
+}
+
+pub(crate) fn generated_target_satisfied(
+    arch: &str,
+    generated: &GeneratedModuleRequirements,
+) -> bool {
+    generated
+        .targets
+        .iter()
+        .all(|target| generated_hardware_satisfied(arch, generated.requirement(target).hardware))
+}
+
+fn generated_hardware_satisfied(arch: &str, hardware: GeneratedHardwareTarget) -> bool {
+    let Some((capability, suffix)) = arch_compute_capability_and_suffix(arch) else {
+        return false;
+    };
+    if !is_known_cuda_target(capability, suffix) {
+        return false;
+    }
+
+    match hardware {
+        GeneratedHardwareTarget::All => true,
+        GeneratedHardwareTarget::AnyOf(alternatives) => alternatives.iter().any(|alternative| {
+            match alternative {
+                GeneratedHardwareAlternative::MinimumSm(minimum) => {
+                    capability >= u32::from(*minimum)
+                }
+                GeneratedHardwareAlternative::ExactArchitecture(exact) => {
+                    capability == u32::from(*exact) && suffix == Some('a')
+                }
+                // Family compatibility is not numerically monotonic. Until the
+                // catalog has a reviewed compatibility table, accept only the
+                // exact `sm_Nf` spelling named by the requirement.
+                GeneratedHardwareAlternative::FamilyTarget(family) => {
+                    capability == u32::from(*family) && suffix == Some('f')
+                }
+            }
+        }),
+    }
+}
+
+pub(crate) fn validate_generated_target(
+    arch: &str,
+    generated: &GeneratedModuleRequirements,
+) -> Result<(), String> {
+    for target in &generated.targets {
+        let requirement = generated.requirement(target);
+        if !generated_hardware_satisfied(arch, requirement.hardware) {
+            return Err(format!(
+                "CUDA target {arch} cannot lower generated intrinsic `{}` (`{}`); requires {}",
+                target.id,
+                target.marker,
+                describe_generated_hardware(requirement.hardware)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn describe_generated_hardware(hardware: GeneratedHardwareTarget) -> String {
+    match hardware {
+        GeneratedHardwareTarget::All => "any supported CUDA target".to_string(),
+        GeneratedHardwareTarget::AnyOf(alternatives) => alternatives
+            .iter()
+            .map(|alternative| match alternative {
+                GeneratedHardwareAlternative::MinimumSm(capability) => {
+                    format!("sm_{capability} or newer")
+                }
+                GeneratedHardwareAlternative::ExactArchitecture(capability) => {
+                    format!("sm_{capability}a exactly")
+                }
+                GeneratedHardwareAlternative::FamilyTarget(capability) => {
+                    format!("sm_{capability}f exactly")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" or "),
+    }
+}
+
 /// Does `arch` (e.g. `"sm_120a"`, `"sm_90"`) support the kernel's detected
 /// features?
 ///
@@ -972,25 +1168,44 @@ pub fn validate_target_features(
     ))
 }
 
+#[cfg(test)]
 pub fn resolve_ptx_target(
     explicit_override: Option<&str>,
     device_hint: Option<&str>,
     detected: DetectedFeatures,
+) -> Result<(String, &'static str), PipelineError> {
+    resolve_ptx_target_with_generated(
+        explicit_override,
+        device_hint,
+        detected,
+        &GeneratedModuleRequirements::default(),
+    )
+}
+
+pub(crate) fn resolve_ptx_target_with_generated(
+    explicit_override: Option<&str>,
+    device_hint: Option<&str>,
+    detected: DetectedFeatures,
+    generated: &GeneratedModuleRequirements,
 ) -> Result<(String, &'static str), PipelineError> {
     if let Some(target) = explicit_override {
         let parsed = target.parse::<CudaArch>().map_err(|error| {
             PipelineError::PtxGeneration(format!("invalid CUDA_OXIDE_TARGET `{target}`: {error}"))
         })?;
         validate_target_features(&parsed, detected).map_err(PipelineError::PtxGeneration)?;
+        validate_generated_target(&parsed.sm(), generated).map_err(PipelineError::PtxGeneration)?;
         return Ok((parsed.sm(), "CUDA_OXIDE_TARGET"));
     }
 
-    if let Some(device) = device_hint.filter(|target| arch_satisfies(target, detected)) {
+    if let Some(device) = device_hint.filter(|target| {
+        arch_satisfies(target, detected) && generated_target_satisfied(target, generated)
+    }) {
         return Ok((device.to_string(), "detected GPU"));
     }
 
-    let target = select_target(detected).map_err(PipelineError::PtxGeneration)?;
-    Ok((target.to_string(), "feature requirement"))
+    let target =
+        select_target_with_generated(detected, generated).map_err(PipelineError::PtxGeneration)?;
+    Ok((target, "feature requirement"))
 }
 
 /// Select the PTX ISA independently from the GPU architecture.
@@ -1095,6 +1310,38 @@ fn arch_compute_capability_and_suffix(arch: &str) -> Option<(u32, Option<char>)>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_packed_atomic_floors_are_backend_specific() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,
+        };
+
+        let f16 = generated_intrinsic_target_by_marker("v1:i0014").unwrap();
+        let llvm = GeneratedModuleRequirements::from_targets(vec![f16])
+            .for_backend(GeneratedIntrinsicBackend::LlvmNvptx);
+        assert!(generated_target_satisfied("sm_70", &llvm));
+        assert_eq!(
+            generated_ptx_isa_requirement(&llvm).unwrap(),
+            PtxIsaRequirement::Ptx62
+        );
+
+        let libnvvm = GeneratedModuleRequirements::from_targets(vec![f16])
+            .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+        assert!(!generated_target_satisfied("sm_70", &libnvvm));
+        assert!(generated_target_satisfied("sm_75", &libnvvm));
+
+        let bf16 = generated_intrinsic_target_by_marker("v1:i0015").unwrap();
+        let bf16 = GeneratedModuleRequirements::from_targets(vec![bf16]);
+        assert!(!generated_target_satisfied("sm_89", &bf16));
+        assert!(generated_target_satisfied("sm_90", &bf16));
+        let error =
+            resolve_ptx_target_with_generated(Some("sm_89"), None, DetectedFeatures::Basic, &bf16)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("packed_atomic_add_bf16x2"), "{error}");
+        assert!(error.contains("sm_90 or newer"), "{error}");
+    }
 
     #[test]
     fn test_feature_detection_reads_llvm_ir_snippets() {
