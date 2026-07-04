@@ -115,9 +115,7 @@ pub fn find_or_build_backend(workspace_root: &Path, configured_backend: Option<&
     // 3. Local repo
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
-        let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
-        build_backend_from_source(&codegen_crate);
-        return so_path;
+        return build_backend_from_source(&codegen_crate);
     }
 
     // 4. Cached .so. Only honored when it isn't older than the running
@@ -166,7 +164,8 @@ pub fn find_or_build_backend(workspace_root: &Path, configured_backend: Option<&
 ///    so the caller can report the configured-but-absent path.
 /// 2. Project config (`.cargo/cuda-oxide.toml`), returned even when missing
 ///    so the caller can report the configured-but-absent path.
-/// 3. Local repo build path (`crates/rustc-codegen-cuda/target/debug/...`).
+/// 3. Local repo host build path
+///    (`crates/rustc-codegen-cuda/target/<host>/debug/...`).
 /// 4. Cache path at `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`.
 ///
 /// `cargo oxide doctor` uses this so that a diagnostic run never triggers a
@@ -182,7 +181,7 @@ pub fn backend_so_candidate(workspace_root: &Path, configured_backend: Option<&P
 
     let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
     if codegen_crate.is_dir() {
-        return codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+        return backend_so_path_candidate(&codegen_crate);
     }
 
     cache_directory()
@@ -275,6 +274,13 @@ fn current_toolchain_fingerprint() -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Host target triple of the active rustc, as reported by `rustc -vV`.
+fn active_host_triple() -> Option<String> {
+    current_toolchain_fingerprint()?
+        .lines()
+        .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+}
+
 /// True when the cached backend records a toolchain fingerprint that differs
 /// from the active toolchain. Conservative: if the active fingerprint cannot be
 /// read, or no fingerprint was recorded (a cache predating this check), returns
@@ -357,32 +363,181 @@ fn invalidate_cache(cache_dir: &Path) {
 }
 
 /// Builds the backend from a local source tree.
-pub fn build_backend_from_source(codegen_crate: &Path) {
+pub fn build_backend_from_source(codegen_crate: &Path) -> PathBuf {
     println!("Building rustc-codegen-cuda backend...");
 
     let rustc_sysroot = get_rustc_sysroot();
     let lib_path = rustc_sysroot.as_ref().map(|s| format!("{}/lib", s));
 
-    let mut cmd = Command::new("cargo");
-    cmd.args(["build"]).current_dir(codegen_crate);
+    let mut cmd = backend_build_command(codegen_crate, lib_path.as_deref());
+    let output = cmd.output().unwrap_or_else(|error| {
+        eprintln!("Failed to run cargo build for rustc-codegen-cuda: {error}");
+        std::process::exit(1);
+    });
 
-    if let Some(ref path) = lib_path {
+    render_cargo_diagnostics(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+    }
+
+    if !output.status.success() {
+        eprintln!("Failed to build rustc-codegen-cuda");
+        std::process::exit(output.status.code().unwrap_or(1));
+    }
+
+    let so_path =
+        backend_artifact_from_cargo_output(codegen_crate, &output.stdout).unwrap_or_else(|error| {
+            eprintln!("Backend build succeeded, but {error}");
+            std::process::exit(1);
+        });
+    if !so_path.is_file() {
+        eprintln!(
+            "Backend build reported {}, but that file does not exist",
+            so_path.display()
+        );
+        std::process::exit(1);
+    }
+    println!("✓ Backend built: {}", so_path.display());
+    so_path
+}
+
+fn backend_build_command(codegen_crate: &Path, rustc_lib_path: Option<&str>) -> Command {
+    let codegen_crate = absolute_path(codegen_crate);
+    let target_dir = codegen_crate.join("target");
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "build",
+        "--lib",
+        "--target",
+        "host-tuple",
+        "--message-format=json-render-diagnostics",
+        "--target-dir",
+    ])
+    .arg(&target_dir)
+    .current_dir(&codegen_crate);
+
+    // The backend is a host rustc plugin, not an application artifact. Keep it
+    // out of an application's target directory and override both
+    // CARGO_BUILD_TARGET and `[build] target`: an explicit `--target
+    // host-tuple` makes Cargo compile the dylib for the running toolchain.
+    cmd.env("CARGO_TARGET_DIR", &target_dir);
+    cmd.env_remove("CARGO_BUILD_TARGET");
+
+    if let Some(path) = rustc_lib_path {
         cmd.env("LIBRARY_PATH", build_library_path(path));
         cmd.env("LD_LIBRARY_PATH", build_ld_library_path(path));
     }
 
-    let status = cmd.status().expect("Failed to run cargo build");
+    cmd
+}
 
-    if !status.success() {
-        eprintln!("Failed to build rustc-codegen-cuda");
-        std::process::exit(status.code().unwrap_or(1));
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+fn backend_dylib_filename() -> String {
+    format!(
+        "{}rustc_codegen_cuda{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    )
+}
+
+fn backend_so_path_candidate(codegen_crate: &Path) -> PathBuf {
+    let target_dir = codegen_crate.join("target");
+    let profile_dir = active_host_triple()
+        .map(|host| target_dir.join(host).join("debug"))
+        .unwrap_or_else(|| target_dir.join("debug"));
+    profile_dir.join(backend_dylib_filename())
+}
+
+fn render_cargo_diagnostics(stdout: &[u8]) {
+    for line in String::from_utf8_lossy(stdout).lines() {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+            if !line.is_empty() {
+                println!("{line}");
+            }
+            continue;
+        };
+        if let Some(rendered) = message
+            .get("message")
+            .and_then(|message| message.get("rendered"))
+            .and_then(|rendered| rendered.as_str())
+        {
+            eprint!("{rendered}");
+        }
+    }
+}
+
+/// Select the backend path Cargo reported for this exact manifest and dylib
+/// target. There is deliberately no guessed-path fallback: a successful Cargo
+/// exit without this artifact must fail instead of loading an older file left
+/// in `target/debug` by a previous host build.
+fn backend_artifact_from_cargo_output(
+    codegen_crate: &Path,
+    stdout: &[u8],
+) -> Result<PathBuf, String> {
+    let expected_manifest = codegen_crate
+        .join("Cargo.toml")
+        .canonicalize()
+        .map_err(|error| format!("could not resolve backend manifest: {error}"))?;
+    let expected_filename = backend_dylib_filename();
+    let mut artifacts = Vec::new();
+
+    for line in String::from_utf8_lossy(stdout).lines() {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if message.get("reason").and_then(|reason| reason.as_str()) != Some("compiler-artifact") {
+            continue;
+        }
+        let manifest_matches = message
+            .get("manifest_path")
+            .and_then(|path| path.as_str())
+            .and_then(|path| Path::new(path).canonicalize().ok())
+            .is_some_and(|path| path == expected_manifest);
+        let target_matches = message
+            .get("target")
+            .and_then(|target| target.get("name"))
+            .and_then(|name| name.as_str())
+            == Some("rustc_codegen_cuda")
+            && message
+                .get("target")
+                .and_then(|target| target.get("kind"))
+                .and_then(|kind| kind.as_array())
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("dylib")));
+        if !manifest_matches || !target_matches {
+            continue;
+        }
+
+        let Some(filenames) = message.get("filenames").and_then(|files| files.as_array()) else {
+            continue;
+        };
+        for filename in filenames.iter().filter_map(|file| file.as_str()) {
+            let path = PathBuf::from(filename);
+            if path.file_name() == Some(std::ffi::OsStr::new(&expected_filename))
+                && !artifacts.contains(&path)
+            {
+                artifacts.push(path);
+            }
+        }
     }
 
-    let so_path = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
-    if so_path.exists() {
-        println!("✓ Backend built: {}", so_path.display());
-    } else {
-        eprintln!("Warning: Expected .so not found at {}", so_path.display());
+    match artifacts.as_slice() {
+        [artifact] => Ok(artifact.clone()),
+        [] => Err(format!(
+            "Cargo reported no `{expected_filename}` artifact for rustc_codegen_cuda"
+        )),
+        _ => Err(format!(
+            "Cargo reported multiple `{expected_filename}` artifacts for rustc_codegen_cuda"
+        )),
     }
 }
 
@@ -442,9 +597,7 @@ fn auto_fetch_and_build() -> PathBuf {
     }
 
     let codegen_crate = src_dir.join("crates/rustc-codegen-cuda");
-    build_backend_from_source(&codegen_crate);
-
-    let built_so = codegen_crate.join("target/debug/librustc_codegen_cuda.so");
+    let built_so = build_backend_from_source(&codegen_crate);
     if built_so.exists() {
         std::fs::copy(&built_so, &so_path).expect("Failed to copy backend to cache");
         write_toolchain_fingerprint(&cache_dir);
@@ -492,9 +645,92 @@ pub fn build_ld_library_path(sysroot_lib: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::time::{Duration, SystemTime};
+
+    /// The codegen backend is part of the cuda-oxide toolchain, not the
+    /// application being debugged/sanitized. A user-supplied
+    /// `CARGO_TARGET_DIR` for the application must therefore not change where
+    /// cargo-oxide builds or looks for `librustc_codegen_cuda.so`.
+    #[test]
+    fn backend_build_command_isolates_target_dir_and_forces_the_host() {
+        let command = backend_build_command(Path::new("/tmp/codegen"), Some("/tmp/rustc/lib"));
+
+        let cargo_target_dir = command
+            .get_envs()
+            .find_map(|(key, value)| (key == OsStr::new("CARGO_TARGET_DIR")).then_some(value));
+        let cargo_build_target = command
+            .get_envs()
+            .find_map(|(key, value)| (key == OsStr::new("CARGO_BUILD_TARGET")).then_some(value));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            cargo_target_dir.flatten(),
+            Some(OsStr::new("/tmp/codegen/target"))
+        );
+        assert_eq!(cargo_build_target, Some(None));
+        assert_eq!(command.get_current_dir(), Some(Path::new("/tmp/codegen")));
+        assert!(
+            args.windows(2)
+                .any(|args| args == ["--target", "host-tuple"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|args| args == ["--target-dir", "/tmp/codegen/target"])
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == "--message-format=json-render-diagnostics")
+        );
+    }
+
+    #[test]
+    fn backend_artifact_uses_cargos_host_path_not_a_stale_legacy_path() {
+        let root = tempdir();
+        let codegen = root.join("crates/rustc-codegen-cuda");
+        std::fs::create_dir_all(&codegen).unwrap();
+        std::fs::write(
+            codegen.join("Cargo.toml"),
+            "[package]\nname='rustc_codegen_cuda'\n",
+        )
+        .unwrap();
+
+        let stale = codegen.join("target/debug").join(backend_dylib_filename());
+        let fresh = codegen
+            .join("target/x86_64-unknown-linux-gnu/debug")
+            .join(backend_dylib_filename());
+        std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(fresh.parent().unwrap()).unwrap();
+        std::fs::write(&stale, b"stale backend").unwrap();
+        std::fs::write(&fresh, b"fresh host backend").unwrap();
+
+        let message = serde_json::json!({
+            "reason": "compiler-artifact",
+            "manifest_path": codegen.join("Cargo.toml"),
+            "target": {
+                "kind": ["dylib"],
+                "name": "rustc_codegen_cuda"
+            },
+            "filenames": [fresh]
+        });
+        let output = format!("{message}\n");
+
+        assert_eq!(
+            backend_artifact_from_cargo_output(&codegen, output.as_bytes()).unwrap(),
+            fresh
+        );
+
+        let no_artifact = b"{\"reason\":\"build-finished\",\"success\":true}\n";
+        assert!(
+            backend_artifact_from_cargo_output(&codegen, no_artifact).is_err(),
+            "a stale target/debug dylib must never be used when Cargo did not report it"
+        );
+    }
 
     /// A cached `.so` whose mtime predates the running test binary should
     /// be reported stale. The test binary is `current_exe()`, which was
