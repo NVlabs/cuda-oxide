@@ -8,7 +8,7 @@
 //!
 //! This builds the irreducible `out[i] = a[i] + b[i]` kernel directly in
 //! `dialect-mir` + `dialect-nvvm` (no rustc, no CubeCL), drives it through
-//! Task 2's `compile_to_ptx`, and asserts the emitted PTX carries a
+//! the experimental `Compiler`, and asserts the emitted PTX carries a
 //! `.visible .entry` for `sm_120` that `ptxas` compiles to a cubin. The kernel
 //! constructed here is the recipe a later CubeCL-walk task mirrors.
 //!
@@ -29,11 +29,9 @@
 //!      so a func carrying `gpu_kernel` is emitted with the `ptx_kernel`
 //!      calling convention, which `llc` renders as `.visible .entry`.
 //!
-//! Task 2's empty-function test produced no `.entry` precisely because it set
-//! no `gpu_kernel` attribute. Setting it is the missing piece; no new helper is
-//! needed because the public `Operation::attributes` map is the knob.
+//! The owned module's `mark_kernel_entry` method owns this internal marker spelling.
 
-use cuda_oxide_codegen::{PtxConfig, compile_to_ptx};
+use cuda_oxide_codegen::experimental::{CodegenModule, CompileOptions, Compiler, Target};
 
 use dialect_mir::ops::{
     MirAddOp, MirFuncOp, MirLoadOp, MirMulOp, MirPtrOffsetOp, MirReturnOp, MirStoreOp,
@@ -43,9 +41,8 @@ use dialect_nvvm::ops::{ReadPtxSregCtaidXOp, ReadPtxSregNtidXOp, ReadPtxSregTidX
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
-        attributes::{StringAttr, TypeAttr},
+        attributes::TypeAttr,
         op_interfaces::SymbolOpInterface,
-        ops::ModuleOp,
         types::{FP32Type, FunctionType, IntegerType, Signedness},
     },
     context::Context,
@@ -54,216 +51,210 @@ use pliron::{
     operation::Operation,
 };
 
-/// Build the elementwise-add spine kernel as a `ModuleOp` and return its
-/// operation pointer.
+/// Build the elementwise-add spine kernel in an owned codegen module.
 ///
 /// Signature (all pointers in the GLOBAL address space):
 ///   `add_kernel(a: *const f32, b: *const f32, out: *mut f32)`
 /// Body: `let i = ctaid.x * ntid.x + tid.x; out[i] = a[i] + b[i];`
-fn build_add_kernel(ctx: &mut Context) -> pliron::context::Ptr<Operation> {
-    let module = ModuleOp::new(ctx, "spine_module".try_into().unwrap());
-    let module_op = module.get_operation();
-    let module_region = module_op.deref(ctx).get_region(0);
-    let module_block = {
-        let existing = {
-            let region = module_region.deref(ctx);
-            region.iter(ctx).next()
+fn build_add_kernel(module: &mut CodegenModule) {
+    module.edit(|ctx, module| {
+        let module_op = module.get_operation();
+        let module_region = module_op.deref(ctx).get_region(0);
+        let module_block = {
+            let existing = {
+                let region = module_region.deref(ctx);
+                region.iter(ctx).next()
+            };
+            if let Some(block) = existing {
+                block
+            } else {
+                let block = BasicBlock::new(ctx, None, vec![]);
+                block.insert_at_back(module_region, ctx);
+                block
+            }
         };
-        if let Some(block) = existing {
-            block
-        } else {
-            let block = BasicBlock::new(ctx, None, vec![]);
-            block.insert_at_back(module_region, ctx);
-            block
-        }
-    };
 
-    // Scalar + pointer types. Index math is 32-bit to match the i32 special
-    // registers; `mir.ptr_offset` accepts any integer index (lowered to a GEP).
-    let f32_ty = FP32Type::get(ctx);
-    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-    // a, b are read-only (`is_mutable = false`); out is writable (`true`).
-    let in_ptr_ty = MirPtrType::get_global(ctx, f32_ty.into(), false);
-    let out_ptr_ty = MirPtrType::get_global(ctx, f32_ty.into(), true);
+        // Scalar + pointer types. Index math is 32-bit to match the i32 special
+        // registers; `mir.ptr_offset` accepts any integer index (lowered to a GEP).
+        let f32_ty = FP32Type::get(ctx);
+        let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+        // a, b are read-only (`is_mutable = false`); out is writable (`true`).
+        let in_ptr_ty = MirPtrType::get_global(ctx, f32_ty.into(), false);
+        let out_ptr_ty = MirPtrType::get_global(ctx, f32_ty.into(), true);
 
-    // Function type: (a, b, out) -> void.
-    let func_type = FunctionType::get(
-        ctx,
-        vec![in_ptr_ty.into(), in_ptr_ty.into(), out_ptr_ty.into()],
-        vec![],
-    );
-    let func = {
-        let op = Operation::new(
+        // Function type: (a, b, out) -> void.
+        let func_type = FunctionType::get(
             ctx,
-            MirFuncOp::get_concrete_op_info(),
+            vec![in_ptr_ty.into(), in_ptr_ty.into(), out_ptr_ty.into()],
             vec![],
-            vec![],
-            vec![],
-            1,
         );
-        let func = MirFuncOp::new(ctx, op, TypeAttr::new(func_type.into()));
-        func.set_symbol_name(ctx, "add_kernel".try_into().unwrap());
-        func
-    };
+        let func = {
+            let op = Operation::new(
+                ctx,
+                MirFuncOp::get_concrete_op_info(),
+                vec![],
+                vec![],
+                vec![],
+                1,
+            );
+            let func = MirFuncOp::new(ctx, op, TypeAttr::new(func_type.into()));
+            func.set_symbol_name(ctx, "add_kernel".try_into().unwrap());
+            func
+        };
 
-    // Mark the func as a kernel entry: a `gpu_kernel` StringAttr is all
-    // `is_kernel_func` checks (see module-level docs).
-    {
-        let key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
-        func.get_operation()
-            .deref_mut(ctx)
-            .attributes
-            .set(key, StringAttr::new("true".to_string()));
-    }
+        // Entry block: three pointer arguments matching the function signature.
+        let entry = BasicBlock::new(
+            ctx,
+            None,
+            vec![in_ptr_ty.into(), in_ptr_ty.into(), out_ptr_ty.into()],
+        );
+        let func_region = func.get_operation().deref(ctx).get_region(0);
+        entry.insert_at_front(func_region, ctx);
 
-    // Entry block: three pointer arguments matching the function signature.
-    let entry = BasicBlock::new(
-        ctx,
-        None,
-        vec![in_ptr_ty.into(), in_ptr_ty.into(), out_ptr_ty.into()],
-    );
-    let func_region = func.get_operation().deref(ctx).get_region(0);
-    entry.insert_at_front(func_region, ctx);
+        let a = entry.deref(ctx).get_argument(0);
+        let b = entry.deref(ctx).get_argument(1);
+        let out = entry.deref(ctx).get_argument(2);
 
-    let a = entry.deref(ctx).get_argument(0);
-    let b = entry.deref(ctx).get_argument(1);
-    let out = entry.deref(ctx).get_argument(2);
-
-    // Helper to append a 0-region op and hand back its single result value.
-    let emit = |ctx: &mut Context,
+        // Helper to append a 0-region op and hand back its single result value.
+        let emit = |ctx: &mut Context,
                     info: (
-        fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
-        std::any::TypeId,
-    ),
+            fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+            std::any::TypeId,
+        ),
                     results: Vec<pliron::r#type::TypeHandle>,
                     operands: Vec<pliron::value::Value>|
-     -> Option<pliron::value::Value> {
-        let op = Operation::new(ctx, info, results.clone(), operands, vec![], 0);
-        let res = if results.is_empty() {
-            None
-        } else {
-            Some(op.deref(ctx).get_result(0))
+         -> Option<pliron::value::Value> {
+            let op = Operation::new(ctx, info, results.clone(), operands, vec![], 0);
+            let res = if results.is_empty() {
+                None
+            } else {
+                Some(op.deref(ctx).get_result(0))
+            };
+            op.insert_at_back(entry, ctx);
+            res
         };
-        op.insert_at_back(entry, ctx);
-        res
-    };
 
-    // i = ctaid.x * ntid.x + tid.x
-    let tid = emit(
-        ctx,
-        ReadPtxSregTidXOp::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![],
-    )
-    .unwrap();
-    let ctaid = emit(
-        ctx,
-        ReadPtxSregCtaidXOp::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![],
-    )
-    .unwrap();
-    let ntid = emit(
-        ctx,
-        ReadPtxSregNtidXOp::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![],
-    )
-    .unwrap();
-    let block_base = emit(
-        ctx,
-        MirMulOp::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![ctaid, ntid],
-    )
-    .unwrap();
-    let i = emit(
-        ctx,
-        MirAddOp::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![block_base, tid],
-    )
-    .unwrap();
+        // i = ctaid.x * ntid.x + tid.x
+        let tid = emit(
+            ctx,
+            ReadPtxSregTidXOp::get_concrete_op_info(),
+            vec![i32_ty.into()],
+            vec![],
+        )
+        .unwrap();
+        let ctaid = emit(
+            ctx,
+            ReadPtxSregCtaidXOp::get_concrete_op_info(),
+            vec![i32_ty.into()],
+            vec![],
+        )
+        .unwrap();
+        let ntid = emit(
+            ctx,
+            ReadPtxSregNtidXOp::get_concrete_op_info(),
+            vec![i32_ty.into()],
+            vec![],
+        )
+        .unwrap();
+        let block_base = emit(
+            ctx,
+            MirMulOp::get_concrete_op_info(),
+            vec![i32_ty.into()],
+            vec![ctaid, ntid],
+        )
+        .unwrap();
+        let i = emit(
+            ctx,
+            MirAddOp::get_concrete_op_info(),
+            vec![i32_ty.into()],
+            vec![block_base, tid],
+        )
+        .unwrap();
 
-    // a_i = a[i]
-    let a_ptr = emit(
-        ctx,
-        MirPtrOffsetOp::get_concrete_op_info(),
-        vec![in_ptr_ty.into()],
-        vec![a, i],
-    )
-    .unwrap();
-    let a_val = emit(
-        ctx,
-        MirLoadOp::get_concrete_op_info(),
-        vec![f32_ty.into()],
-        vec![a_ptr],
-    )
-    .unwrap();
+        // a_i = a[i]
+        let a_ptr = emit(
+            ctx,
+            MirPtrOffsetOp::get_concrete_op_info(),
+            vec![in_ptr_ty.into()],
+            vec![a, i],
+        )
+        .unwrap();
+        let a_val = emit(
+            ctx,
+            MirLoadOp::get_concrete_op_info(),
+            vec![f32_ty.into()],
+            vec![a_ptr],
+        )
+        .unwrap();
 
-    // b_i = b[i]
-    let b_ptr = emit(
-        ctx,
-        MirPtrOffsetOp::get_concrete_op_info(),
-        vec![in_ptr_ty.into()],
-        vec![b, i],
-    )
-    .unwrap();
-    let b_val = emit(
-        ctx,
-        MirLoadOp::get_concrete_op_info(),
-        vec![f32_ty.into()],
-        vec![b_ptr],
-    )
-    .unwrap();
+        // b_i = b[i]
+        let b_ptr = emit(
+            ctx,
+            MirPtrOffsetOp::get_concrete_op_info(),
+            vec![in_ptr_ty.into()],
+            vec![b, i],
+        )
+        .unwrap();
+        let b_val = emit(
+            ctx,
+            MirLoadOp::get_concrete_op_info(),
+            vec![f32_ty.into()],
+            vec![b_ptr],
+        )
+        .unwrap();
 
-    // sum = a_i + b_i
-    let sum = emit(
-        ctx,
-        MirAddOp::get_concrete_op_info(),
-        vec![f32_ty.into()],
-        vec![a_val, b_val],
-    )
-    .unwrap();
+        // sum = a_i + b_i
+        let sum = emit(
+            ctx,
+            MirAddOp::get_concrete_op_info(),
+            vec![f32_ty.into()],
+            vec![a_val, b_val],
+        )
+        .unwrap();
 
-    // out[i] = sum  (MirStoreOp operands are [dest_ptr, value], no result)
-    let out_ptr = emit(
-        ctx,
-        MirPtrOffsetOp::get_concrete_op_info(),
-        vec![out_ptr_ty.into()],
-        vec![out, i],
-    )
-    .unwrap();
-    emit(
-        ctx,
-        MirStoreOp::get_concrete_op_info(),
-        vec![],
-        vec![out_ptr, sum],
-    );
+        // out[i] = sum  (MirStoreOp operands are [dest_ptr, value], no result)
+        let out_ptr = emit(
+            ctx,
+            MirPtrOffsetOp::get_concrete_op_info(),
+            vec![out_ptr_ty.into()],
+            vec![out, i],
+        )
+        .unwrap();
+        emit(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![out_ptr, sum],
+        );
 
-    // return (void)
-    emit(ctx, MirReturnOp::get_concrete_op_info(), vec![], vec![]);
+        // return (void)
+        emit(ctx, MirReturnOp::get_concrete_op_info(), vec![], vec![]);
 
-    func.get_operation().insert_at_back(module_block, ctx);
-    module_op
+        func.get_operation().insert_at_back(module_block, ctx);
+    });
+    module.mark_kernel_entry("add_kernel").unwrap();
 }
 
 #[test]
 fn spine_add_kernel_emits_entry_and_validates() {
-    let mut ctx = Context::new();
-    cuda_oxide_codegen::register_backend_dialects(&mut ctx);
-
-    let module_op = build_add_kernel(&mut ctx);
-
-    let cfg = PtxConfig::new("sm_120");
-    let ptx = compile_to_ptx(&mut ctx, module_op, &cfg).expect("compiles to PTX");
+    let mut module = CodegenModule::new("spine_module").unwrap();
+    build_add_kernel(&mut module);
+    let compiler = Compiler::discover().expect("LLVM 21+ llc/opt are installed");
+    let options = CompileOptions::new(Target::parse("sm_120").unwrap());
+    let ptx = compiler
+        .compile(&mut module, &options)
+        .expect("compiles to PTX")
+        .into_ptx();
     let text = String::from_utf8(ptx.clone()).expect("PTX is utf-8");
 
     assert!(
         text.contains(".visible .entry"),
         "kernel entry present:\n{text}"
     );
-    assert!(text.contains(".target sm_120"), "PTX targets sm_120:\n{text}");
+    assert!(
+        text.contains(".target sm_120"),
+        "PTX targets sm_120:\n{text}"
+    );
 
     // ptxas must accept it for the real target.
     let unique = std::time::SystemTime::now()

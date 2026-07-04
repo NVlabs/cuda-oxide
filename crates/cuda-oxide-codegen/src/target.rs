@@ -6,9 +6,9 @@
 //! Architecture feature detection and PTX target selection.
 //!
 //! Detects the architecture and PTX-ISA requirements of exported LLVM IR and
-//! selects the minimum `sm_XX` that can lower them. The backend owns this so a
-//! frontend calling [`crate::compile_to_ptx`] gets the same target selection as
-//! the Rust MIR path in `mir-importer`.
+//! selects the minimum `sm_XX` that can lower them. The backend owns this so an
+//! experimental frontend gets the same target selection as the Rust MIR path
+//! in `mir-importer`.
 
 use crate::error::PipelineError;
 use libnvvm_sys::CudaArch;
@@ -955,7 +955,10 @@ fn is_known_cuda_target(capability: u32, suffix: Option<char>) -> bool {
         }
 }
 
-pub fn validate_target_features(target: &CudaArch, features: DetectedFeatures) -> Result<(), String> {
+pub fn validate_target_features(
+    target: &CudaArch,
+    features: DetectedFeatures,
+) -> Result<(), String> {
     let compatible_default = select_target(features)?;
     if arch_satisfies(&target.sm(), features) {
         return Ok(());

@@ -10,6 +10,7 @@ use llvm_export::export::{DebugKind, DeviceExternType, ExportBackendConfig, Nvvm
 use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
 use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
+use pliron::op::Op;
 use pliron::operation::Operation;
 use std::path::Path;
 
@@ -258,6 +259,47 @@ impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
 #[doc(hidden)]
 pub fn module_uses_libdevice(ctx: &Context, module_op_ptr: Ptr<Operation>) -> bool {
     op_uses_libdevice(ctx, module_op_ptr)
+}
+
+/// Return unresolved non-intrinsic LLVM function declarations.
+///
+/// Standalone PTX has no link step. LLVM intrinsics are resolved by `llc`, but
+/// declarations such as `__nv_sinf`, `vprintf`, or user device externs would
+/// leave an artifact that the CUDA driver cannot load by itself.
+pub(crate) fn unresolved_external_symbols(
+    ctx: &Context,
+    module_op_ptr: Ptr<Operation>,
+) -> Vec<String> {
+    let mut symbols = Vec::new();
+    collect_unresolved_external_symbols(ctx, module_op_ptr, &mut symbols);
+    symbols.sort();
+    symbols.dedup();
+    symbols
+}
+
+fn collect_unresolved_external_symbols(
+    ctx: &Context,
+    op_ptr: Ptr<Operation>,
+    symbols: &mut Vec<String>,
+) {
+    if let Some(func) = Operation::get_op::<llvm_export::ops::FuncOp>(op_ptr, ctx) {
+        let op = func.get_operation().deref(ctx);
+        let name = func.get_symbol_name(ctx).to_string();
+        if op.regions().count() == 0 && !name.starts_with("llvm_") {
+            symbols.push(name);
+        }
+    }
+
+    let op_ref = op_ptr.deref(ctx);
+    for region in op_ref.regions() {
+        let region_ref = region.deref(ctx);
+        for block in region_ref.iter(ctx) {
+            let block_ref = block.deref(ctx);
+            for child_op in block_ref.iter(ctx) {
+                collect_unresolved_external_symbols(ctx, child_op, symbols);
+            }
+        }
+    }
 }
 
 /// Recursively scan for declared or called CUDA libdevice functions.

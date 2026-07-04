@@ -4,117 +4,14 @@
  */
 
 use crate::error::PipelineError;
-use crate::export::render_llvm_ir;
 use crate::llvm_tools::LlvmToolchain;
-use crate::lower::lower_to_llvm;
-use crate::options::{BackendOptions, PtxConfig};
+use crate::options::BackendOptions;
 use crate::target::{
     detect_module_requirements_in_llvm_file, required_ptx_feature, resolve_ptx_target,
     validate_target_for_llvm_major,
 };
-use crate::verify::verify_operation;
 use llvm_export::export::DebugKind;
-use pliron::context::{Context, Ptr};
-use pliron::operation::Operation;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Per-process call counter appended to the scratch directory name so two
-/// calls landing in the same nanosecond still get distinct directories.
-static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Compiles a `dialect-mir` module to PTX bytes without rustc.
-///
-/// This is the front-end-agnostic hook into cuda-oxide's back end: it
-/// replicates the post-translation tail of `run_pipeline` (verify the
-/// module, lower MIR to the LLVM dialect, render `.ll`, run `opt`/`llc`,
-/// return the PTX bytes) on a module the caller assembled by any means, so it
-/// depends on neither CubeCL nor rustc. The `module_op` must be a
-/// `pliron::builtin::ops::ModuleOp` built against a [`Context`] whose dialects
-/// were registered via [`crate::register_backend_dialects`].
-///
-/// # Thread safety
-///
-/// This function reads no process-global state other than a private atomic
-/// call counter used only to name its own scratch directory: it derives a
-/// [`BackendOptions`] from `cfg` (see [`BackendOptions::from_ptx_config`]) and
-/// threads it explicitly through every helper, and it stages its `.ll`/`.ptx`
-/// files in a per-call temp directory named from the process id, a nanosecond
-/// timestamp, and that call counter, so the directory name is unique per call
-/// even for two calls landing in the same nanosecond. It is therefore safe to
-/// call concurrently from multiple threads of the same process.
-///
-/// # Linking
-///
-/// Unlike functions in mir-importer which require `#![feature(rustc_private)]`
-/// and `extern crate rustc_driver;`, this function requires neither.
-/// cuda-oxide-codegen does not depend on rustc or any compiler internals, so a
-/// consumer needs no `rustc_private` feature gate and no toolchain matched to
-/// a specific nightly's `rustc_driver`; the only toolchain requirement is
-/// whatever this crate's ordinary dependencies need.
-pub fn compile_to_ptx(
-    ctx: &mut Context,
-    module_op: Ptr<Operation>,
-    cfg: &PtxConfig,
-) -> Result<Vec<u8>, crate::PtxError> {
-    use crate::PtxError;
-
-    if cfg.target_arch.trim().is_empty() {
-        return Err(PtxError::InvalidConfig("empty target_arch".into()));
-    }
-
-    // Build the options this call uses; trims whitespace from target_arch so
-    // " sm_120 " cannot reach llc -mcpu. No process-global state is touched.
-    let opts = BackendOptions::from_ptx_config(cfg);
-
-    let debug_kind = if cfg.debug {
-        DebugKind::Full
-    } else {
-        DebugKind::Off
-    };
-
-    // 1. Verify the module before lowering.
-    verify_operation(ctx, module_op, "module")?;
-
-    // 2. Lower dialect-mir -> LLVM dialect (registers mir-lower, runs
-    //    `lower_mir_to_llvm_with_options`). `cfg.fma` allows fmul+fadd
-    //    contraction at the IR level, matching the llc `-fp-contract` gate.
-    lower_to_llvm(ctx, module_op, cfg.fma)?;
-
-    // 3. Render the standard PTX `.ll` (no device externs, no NVVM dialect).
-    let llvm_ir = render_llvm_ir(ctx, module_op, &[], false, None, debug_kind)?;
-
-    // 4. Stage the `.ll` in a unique temp dir and run opt (gated on
-    //    `opts.no_opt`, derived above) + llc via the existing helper, which
-    //    resolves the matched opt/llc toolchain itself.
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let call = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "cuda_oxide_ptx_{}_{}_{}",
-        std::process::id(),
-        unique,
-        call
-    ));
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| PtxError::Codegen(format!("create temp dir: {e}")))?;
-    let ll_path = dir.join("module.ll");
-    let ptx_path = dir.join("module.ptx");
-    std::fs::write(&ll_path, &llvm_ir).map_err(|e| PtxError::Codegen(format!("write .ll: {e}")))?;
-
-    let result = generate_ptx(&ll_path, &ptx_path, debug_kind, &opts)
-        .map_err(PtxError::from)
-        .and_then(|_target| {
-            std::fs::read(&ptx_path).map_err(|e| PtxError::Codegen(format!("read .ptx: {e}")))
-        });
-
-    // Best-effort cleanup of the scratch dir regardless of outcome.
-    let _ = std::fs::remove_dir_all(&dir);
-
-    result
-}
 
 /// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
 ///
@@ -129,16 +26,27 @@ pub fn compile_to_ptx(
 /// output (issue #150: an LLVM 22 `opt` emits sizeless
 /// `llvm.lifetime.start/end` intrinsics that an LLVM 21 `llc` rejects).
 ///
-/// Returns the optimised `.ll` path, or `None` when the middle-end is off
-/// (`opts.no_opt`, historically `CUDA_OXIDE_NO_OPT=1`), no same-major `opt`
-/// exists, or the chosen `opt` fails at runtime; the caller then feeds the
-/// unoptimised `ll_path` to `llc`, which is always safe.
+/// Returns the optimized path plus caller-owned diagnostics. Experimental v1
+/// is strict; the legacy rustc path retains its warn-and-continue behavior.
 fn optimize_ll(
     ll_path: &Path,
     toolchain: &LlvmToolchain,
     opts: &BackendOptions,
-) -> Option<PathBuf> {
-    let opt = toolchain.opt.as_ref()?;
+    strict: bool,
+) -> Result<(Option<PathBuf>, Vec<String>), PipelineError> {
+    if opts.no_opt {
+        return Ok((None, Vec::new()));
+    }
+    let Some(opt) = toolchain.opt.as_ref() else {
+        if strict {
+            return Err(PipelineError::Optimization(
+            "optimization was requested, but no `opt` matching the selected `llc` is available; \
+             install the matching LLVM tools or explicitly disable optimization"
+                .to_string(),
+            ));
+        }
+        return Ok((None, Vec::new()));
+    };
 
     let opt_ll = ll_path.with_extension("opt.ll");
     match std::process::Command::new(&opt.path)
@@ -149,31 +57,55 @@ fn optimize_ll(
         .arg(&opt_ll)
         .output()
     {
-        Ok(o) if o.status.success() => {
-            if opts.verbose {
-                eprintln!("opt -O2 via {}: {}", opt.path, opt_ll.display());
-            }
-            Some(opt_ll)
+        Ok(output) if output.status.success() => {
+            let diagnostics = opts
+                .verbose
+                .then(|| format!("opt -O2 via {}: {}", opt.path, opt_ll.display()))
+                .into_iter()
+                .collect();
+            Ok((Some(opt_ll), diagnostics))
         }
-        Ok(o) => {
-            // The matched opt exists but rejected the input. Warn loudly
-            // (there is no second candidate any more) and fall back to
-            // unoptimised IR rather than to a different LLVM major.
-            eprintln!(
-                "warning: opt ({}) failed; continuing with unoptimised IR:\n{}",
+        Ok(output) => {
+            let message = format!(
+                "opt ({}) failed with status {}:\n{}",
                 opt.path,
-                String::from_utf8_lossy(&o.stderr).trim()
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
             );
-            None
+            if strict {
+                Err(PipelineError::Optimization(message))
+            } else {
+                Ok((
+                    None,
+                    vec![format!(
+                        "warning: {message}\nwarning: continuing with unoptimized IR"
+                    )],
+                ))
+            }
         }
-        Err(e) => {
-            eprintln!(
-                "warning: opt ({}): {e}; continuing with unoptimised IR",
-                opt.path
-            );
-            None
+        Err(error) => {
+            let message = format!("failed to run opt ({}): {error}", opt.path);
+            if strict {
+                Err(PipelineError::Optimization(message))
+            } else {
+                Ok((
+                    None,
+                    vec![format!(
+                        "warning: {message}; continuing with unoptimized IR"
+                    )],
+                ))
+            }
         }
     }
+}
+
+/// Legacy rustc-pipeline result, including messages the CLI should print.
+#[doc(hidden)]
+#[allow(missing_docs)]
+#[derive(Debug)]
+pub struct GeneratedPtx {
+    pub target: String,
+    pub diagnostics: Vec<String>,
 }
 
 /// Generates PTX from LLVM IR using `llc`.
@@ -200,7 +132,76 @@ pub fn generate_ptx(
     ptx_path: &Path,
     debug_kind: DebugKind,
     opts: &BackendOptions,
+    diagnostic_sink: Option<fn(&str)>,
+) -> Result<GeneratedPtx, PipelineError> {
+    let Some(toolchain) = LlvmToolchain::resolve(opts) else {
+        return Err(PipelineError::PtxGeneration(
+            "No working llc found.\n\
+             cuda-oxide tries (in order): opts.llc_override (CUDA_OXIDE_LLC), the \
+             Rust toolchain's llvm-tools llc, then llc-22 / llc-21 on PATH. \
+             LLVM 21+ is required (earlier versions reject the TMA / tcgen05 / \
+             WGMMA intrinsic signatures we emit).\n\
+             Easiest fix: `rustup component add llvm-tools` (auto-picked up).\n\
+             Alternative: `sudo apt install llvm-21` (or `llvm-22`).\n\
+             Or set opts.llc_override (CUDA_OXIDE_LLC) to a specific binary."
+                .to_string(),
+        ));
+    };
+    let mut diagnostics = toolchain.diagnostics.clone();
+    if !opts.no_opt && toolchain.opt.is_none() {
+        diagnostics.push(
+            "warning: continuing with unoptimized IR (as with CUDA_OXIDE_NO_OPT=1)".to_string(),
+        );
+    }
+    if opts.verbose {
+        diagnostics.push(format!(
+            "LLVM toolchain: llc = {}, opt = {}",
+            crate::llvm_tools::describe_tool(&toolchain.llc_path, toolchain.llc_major),
+            match &toolchain.opt {
+                Some(tool) => crate::llvm_tools::describe_tool(&tool.path, tool.major),
+                None => "(skipped)".to_string(),
+            }
+        ));
+    }
+    emit_diagnostics(diagnostic_sink, &diagnostics);
+    let mut generated = generate_ptx_impl(
+        ll_path,
+        ptx_path,
+        debug_kind,
+        opts,
+        &toolchain,
+        false,
+        diagnostic_sink,
+    )?;
+    diagnostics.append(&mut generated.diagnostics);
+    generated.diagnostics = diagnostics;
+    Ok(generated)
+}
+
+/// Generate PTX with an already-resolved toolchain.
+///
+/// The experimental compiler uses this entry point so discovery is explicit
+/// and one [`LlvmToolchain`] can be reused across compilations.
+pub(crate) fn generate_ptx_with_toolchain(
+    ll_path: &Path,
+    ptx_path: &Path,
+    debug_kind: DebugKind,
+    opts: &BackendOptions,
+    toolchain: &LlvmToolchain,
 ) -> Result<String, PipelineError> {
+    generate_ptx_impl(ll_path, ptx_path, debug_kind, opts, toolchain, true, None)
+        .map(|generated| generated.target)
+}
+
+fn generate_ptx_impl(
+    ll_path: &Path,
+    ptx_path: &Path,
+    debug_kind: DebugKind,
+    opts: &BackendOptions,
+    toolchain: &LlvmToolchain,
+    strict_optimization: bool,
+    diagnostic_sink: Option<fn(&str)>,
+) -> Result<GeneratedPtx, PipelineError> {
     // Explicit, hard override: `--arch` or a caller-set `opts.target_arch`.
     let explicit_override = opts.target_arch.clone();
     // Advisory hint: the arch of the GPU in this machine, forwarded by
@@ -218,32 +219,21 @@ pub fn generate_ptx(
     //      load on this GPU, but feature-gated examples handle that at load time
     //      (cuModuleLoad reports INVALID_PTX and they skip execution).
     //   3. neither set -- the feature floor.
-    let (target, target_source) =
-        resolve_ptx_target(explicit_override.as_deref(), device_hint.as_deref(), detected)?;
+    let (target, target_source) = resolve_ptx_target(
+        explicit_override.as_deref(),
+        device_hint.as_deref(),
+        detected,
+    )?;
 
-    let verbose = opts.verbose;
-    if verbose {
-        eprintln!("Target: {target} (from {target_source}; detected {detected:?})");
+    let mut diagnostics = Vec::new();
+    if opts.verbose {
+        record_diagnostic(
+            &mut diagnostics,
+            diagnostic_sink,
+            format!("Target: {target} (from {target_source}; detected {detected:?})"),
+        );
     }
 
-    // Resolve `opt` and `llc` as a matched pair (issue #150): llc first
-    // (opts.llc_override, historically CUDA_OXIDE_LLC, then the Rust toolchain's
-    // llvm-tools llc, then llc-22 / llc-21 on PATH -- newest first), then an opt
-    // of the same LLVM major. LLVM 21 is the floor: older releases reject the
-    // modern TMA / tcgen05 / WGMMA intrinsic signatures cuda-oxide emits.
-    let Some(toolchain) = LlvmToolchain::resolve(opts) else {
-        return Err(PipelineError::PtxGeneration(
-            "No working llc found.\n\
-             cuda-oxide tries (in order): opts.llc_override (CUDA_OXIDE_LLC), the \
-             Rust toolchain's llvm-tools llc, then llc-22 / llc-21 on PATH. \
-             LLVM 21+ is required (earlier versions reject the TMA / tcgen05 / \
-             WGMMA intrinsic signatures we emit).\n\
-             Easiest fix: `rustup component add llvm-tools` (auto-picked up).\n\
-             Alternative: `sudo apt install llvm-21` (or `llvm-22`).\n\
-             Or set opts.llc_override (CUDA_OXIDE_LLC) to a specific binary."
-                .to_string(),
-        ));
-    };
     validate_target_for_llvm_major(&target, toolchain.llc_major)
         .map_err(PipelineError::PtxGeneration)?;
 
@@ -258,31 +248,49 @@ pub fn generate_ptx(
     // unoptimized IR straight to llc when variable info is requested, matching
     // nvcc `-G`. (llc itself is invoked at `-O0` for the same builds below.)
     let optimized = if debug_kind.variables_enabled() {
-        if verbose {
-            eprintln!("Skipping opt -O2 (full debug keeps locals inspectable)");
+        if opts.verbose {
+            record_diagnostic(
+                &mut diagnostics,
+                diagnostic_sink,
+                "Skipping opt -O2 (full debug keeps locals inspectable)".to_string(),
+            );
         }
         None
     } else {
-        optimize_ll(ll_path, &toolchain, opts)
+        let (optimized, mut opt_diagnostics) =
+            optimize_ll(ll_path, toolchain, opts, strict_optimization)?;
+        for diagnostic in opt_diagnostics.drain(..) {
+            record_diagnostic(&mut diagnostics, diagnostic_sink, diagnostic);
+        }
+        optimized
     };
     let llc_input: &Path = optimized.as_deref().unwrap_or(ll_path);
 
-    if verbose {
-        let source = if toolchain.llc_from_env {
-            "from opts.llc_override"
-        } else {
-            "auto-detected"
-        };
-        eprintln!("Using llc: {} ({source})", toolchain.llc_description());
-    }
     let llc_desc = if toolchain.llc_from_env {
         format!("llc_override ({})", toolchain.llc_path)
     } else {
         format!("llc ({})", toolchain.llc_path)
     };
+    if opts.verbose {
+        let source = if toolchain.llc_from_env {
+            "from opts.llc_override"
+        } else {
+            "auto-detected"
+        };
+        record_diagnostic(
+            &mut diagnostics,
+            diagnostic_sink,
+            format!(
+                "Using llc: {} ({source})",
+                crate::llvm_tools::describe_tool(&toolchain.llc_path, toolchain.llc_major)
+            ),
+        );
+    }
 
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
-    llc_cmd.arg("-march=nvptx64").arg(format!("-mcpu={}", target));
+    llc_cmd
+        .arg("-march=nvptx64")
+        .arg(format!("-mcpu={}", target));
     if let Some(feature) = required_ptx_feature(&target, requirements.ptx_isa) {
         llc_cmd.arg(format!("-mattr={feature}"));
     }
@@ -306,13 +314,19 @@ pub fn generate_ptx(
         Ok(output) if output.status.success() => {
             if matches!(debug_kind, DebugKind::LineTables) {
                 strip_target_debug_from_ptx(ptx_path)?;
-                if verbose {
-                    eprintln!(
+                if opts.verbose {
+                    record_diagnostic(
+                        &mut diagnostics,
+                        diagnostic_sink,
                         "line-table debug: stripped PTX target debug flag; source line tables remain"
+                            .to_string(),
                     );
                 }
             }
-            Ok(target.to_string())
+            Ok(GeneratedPtx {
+                target: target.to_string(),
+                diagnostics,
+            })
         }
         Ok(output) => Err(PipelineError::PtxGeneration(format!(
             "{} failed:\n{}",
@@ -321,6 +335,21 @@ pub fn generate_ptx(
         ))),
         Err(e) => Err(PipelineError::PtxGeneration(format!("{llc_desc}: {e}"))),
     }
+}
+
+fn emit_diagnostics(sink: Option<fn(&str)>, diagnostics: &[String]) {
+    if let Some(sink) = sink {
+        for diagnostic in diagnostics {
+            sink(diagnostic);
+        }
+    }
+}
+
+fn record_diagnostic(diagnostics: &mut Vec<String>, sink: Option<fn(&str)>, diagnostic: String) {
+    if let Some(sink) = sink {
+        sink(&diagnostic);
+    }
+    diagnostics.push(diagnostic);
 }
 
 fn strip_target_debug_from_ptx(ptx_path: &Path) -> Result<(), PipelineError> {
@@ -391,6 +420,103 @@ fn strip_target_debug_from_ptx_line(line: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    static LEGACY_DIAGNOSTICS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    #[cfg(unix)]
+    fn collect_legacy_diagnostic(message: &str) {
+        LEGACY_DIAGNOSTICS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(message.to_string());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn legacy_opt_failure_warns_but_experimental_mode_fails() {
+        let toolchain = LlvmToolchain {
+            llc_path: "/bin/true".to_string(),
+            llc_major: Some(21),
+            llc_from_env: false,
+            opt: Some(crate::llvm_tools::OptTool {
+                path: "/bin/false".to_string(),
+                major: Some(21),
+            }),
+            diagnostics: Vec::new(),
+        };
+        let opts = BackendOptions::default();
+        let input = Path::new("unused.ll");
+
+        let (optimized, diagnostics) = optimize_ll(input, &toolchain, &opts, false).unwrap();
+        assert!(optimized.is_none());
+        assert!(diagnostics[0].contains("continuing with unoptimized IR"));
+
+        let error = optimize_ll(input, &toolchain, &opts, true).unwrap_err();
+        assert!(matches!(&error, PipelineError::Optimization(_)));
+        assert!(error.to_string().contains("opt (/bin/false) failed"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn legacy_tool_warnings_survive_a_later_llc_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_legacy_diagnostics_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let ll_path = root.join("module.ll");
+        let ptx_path = root.join("module.ptx");
+        let llc_path = root.join("llc-999");
+        std::fs::write(&ll_path, "define void @kernel() { ret void }\n").unwrap();
+        std::fs::write(
+            &llc_path,
+            "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then echo 'LLVM version 999.0.0'; exit 0; fi\necho 'deliberate llc failure' >&2\nexit 1\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&llc_path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&llc_path, permissions).unwrap();
+
+        LEGACY_DIAGNOSTICS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            no_opt: false,
+            llc_override: Some(llc_path),
+            ..BackendOptions::default()
+        };
+        let error = generate_ptx(
+            &ll_path,
+            &ptx_path,
+            DebugKind::Off,
+            &opts,
+            Some(collect_legacy_diagnostic),
+        )
+        .unwrap_err();
+        assert!(matches!(error, PipelineError::PtxGeneration(_)));
+
+        let diagnostics = LEGACY_DIAGNOSTICS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            diagnostics
+                .iter()
+                .any(|message| message.contains("LLVM optimization is unavailable")),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|message| message.contains("continuing with unoptimized IR")),
+            "{diagnostics:?}"
+        );
+        drop(diagnostics);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn line_table_ptx_cleanup_strips_only_target_debug_flag() {
         let ptx = "\
@@ -421,33 +547,5 @@ mod tests {
         let stripped = strip_target_debug_from_ptx_text(ptx);
 
         assert_eq!(stripped, ".target sm_90a, texmode_independent\n");
-    }
-}
-
-#[cfg(test)]
-mod env_independence {
-    use super::*;
-    use crate::options::PtxConfig;
-    use crate::register_backend_dialects;
-    use pliron::context::Context;
-    use pliron::op::Op;
-
-    /// The backend must neither read nor mutate CUDA_OXIDE_* process env.
-    #[test]
-    fn compile_to_ptx_ignores_and_preserves_env() {
-        // SAFETY: single-threaded test binary section; set_var is process-global.
-        unsafe { std::env::set_var("CUDA_OXIDE_TARGET", "sm_80") };
-        let mut ctx = Context::new();
-        register_backend_dialects(&mut ctx);
-        let module = pliron::builtin::ops::ModuleOp::new(&mut ctx, "env_probe".try_into().unwrap());
-        let cfg = PtxConfig::new("sm_120");
-        let ptx = compile_to_ptx(&mut ctx, module.get_operation(), &cfg).unwrap();
-        let text = String::from_utf8_lossy(&ptx);
-        assert!(text.contains(".target sm_120"), "config must win: {text}");
-        assert_eq!(
-            std::env::var("CUDA_OXIDE_TARGET").as_deref(),
-            Ok("sm_80"),
-            "backend must not mutate process env"
-        );
     }
 }

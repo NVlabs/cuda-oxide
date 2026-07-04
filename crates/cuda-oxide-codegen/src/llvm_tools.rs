@@ -22,17 +22,17 @@
 //! major:
 //!
 //! 1. An explicit `opt_override` (historically `CUDA_OXIDE_OPT`) is always
-//!    respected, but a major mismatch against the chosen `llc` prints a
-//!    prominent warning naming both binaries.
+//!    respected, but a major mismatch against the chosen `llc` records a
+//!    prominent diagnostic naming both binaries.
 //! 2. Otherwise the `opt` sitting next to the chosen `llc` (LLVM installs
 //!    keep tools side by side) is preferred, provided its major matches.
 //! 3. Otherwise the remaining candidates (sysroot llvm-tools `opt`,
 //!    `opt-22` / `opt-21` / `opt` on `PATH`) are considered, filtered to
 //!    the same major as `llc`.
-//! 4. If no same-major `opt` exists, the middle-end is skipped entirely
-//!    (the `no_opt` option, historically `CUDA_OXIDE_NO_OPT=1`) with a
-//!    warning naming every rejected candidate and its major. Unoptimised IR
-//!    into the right `llc` always beats optimised IR into the wrong one.
+//! 4. If no same-major `opt` exists, resolution records a diagnostic naming
+//!    every rejected candidate. The experimental API treats requested
+//!    optimization as strict; the legacy rustc path retains its unoptimized
+//!    fallback.
 
 use crate::options::BackendOptions;
 use std::path::Path;
@@ -52,7 +52,7 @@ pub struct OptTool {
 /// rather than re-probing binaries.
 // mir-importer pipeline plumbing; not part of the frontend contract.
 #[doc(hidden)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LlvmToolchain {
     /// The `llc` binary that will produce PTX.
     pub llc_path: String,
@@ -64,6 +64,8 @@ pub struct LlvmToolchain {
     /// The matched `opt` for the middle-end; `None` skips `opt -O2`
     /// (either `opts.no_opt` or no same-major `opt` exists).
     pub opt: Option<OptTool>,
+    /// Tool-selection diagnostics for the caller to report or retain.
+    pub diagnostics: Vec<String>,
 }
 
 impl LlvmToolchain {
@@ -71,15 +73,14 @@ impl LlvmToolchain {
     /// candidate is runnable at all (the caller reports the existing
     /// "No working llc found" error).
     ///
-    /// Prints matched-pair warnings (mismatched `opt_override`, or
-    /// middle-end skipped for lack of a same-major `opt`) unconditionally;
-    /// the chosen binaries are echoed only when `opts.verbose`.
+    /// Selection warnings are returned in [`LlvmToolchain::diagnostics`].
+    /// Library code never writes them directly to stdout or stderr.
     pub fn resolve(opts: &BackendOptions) -> Option<Self> {
         let (llc_path, llc_major, llc_from_env) = resolve_llc(opts)?;
 
-        let opt = if opts.no_opt {
+        let (opt, diagnostics) = if opts.no_opt {
             // Explicit user intent: skip the middle-end, no warning needed.
-            None
+            (None, Vec::new())
         } else {
             let explicit = opts.opt_override.as_ref().map(|path| {
                 let path = path.to_string_lossy().into_owned();
@@ -101,35 +102,17 @@ impl LlvmToolchain {
                 }
             }
 
-            let (choice, warnings) = choose_opt(&llc_path, llc_major, explicit, sibling, others);
-            for w in &warnings {
-                eprintln!("{w}");
-            }
-            choice.into_opt()
+            let (choice, diagnostics) = choose_opt(&llc_path, llc_major, explicit, sibling, others);
+            (choice.into_opt(), diagnostics)
         };
-
-        if opts.verbose {
-            eprintln!(
-                "LLVM toolchain: llc = {}, opt = {}",
-                describe_tool(&llc_path, llc_major),
-                match &opt {
-                    Some(t) => describe_tool(&t.path, t.major),
-                    None => "(skipped)".to_string(),
-                }
-            );
-        }
 
         Some(LlvmToolchain {
             llc_path,
             llc_major,
             llc_from_env,
             opt,
+            diagnostics,
         })
-    }
-
-    /// `"path (LLVM 21)"` (or `"path (unknown LLVM version)"`) for messages.
-    pub fn llc_description(&self) -> String {
-        describe_tool(&self.llc_path, self.llc_major)
     }
 }
 
@@ -239,7 +222,7 @@ pub(crate) fn choose_opt(
     }
 
     let mut msg = format!(
-        "warning: skipping the LLVM middle-end (opt -O2): no opt matching the chosen llc.\n\
+        "LLVM optimization is unavailable: no opt matching the chosen llc.\n\
          warning:   llc: {}",
         describe_tool(llc_path, llc_major)
     );
@@ -255,8 +238,8 @@ pub(crate) fn choose_opt(
         }
     }
     msg.push_str(
-        "\nwarning:   unoptimised IR will be fed straight to llc (as with CUDA_OXIDE_NO_OPT=1).\n\
-         warning:   install an opt of the same LLVM major as llc, or set CUDA_OXIDE_OPT.",
+        "\nwarning:   install an opt of the same LLVM major as llc, explicitly disable \
+         optimization, or set CUDA_OXIDE_OPT.",
     );
     warnings.push(msg);
 
@@ -264,7 +247,7 @@ pub(crate) fn choose_opt(
 }
 
 /// `"path (LLVM 21)"` or `"path (unknown LLVM version)"` for messages.
-fn describe_tool(path: &str, major: Option<u32>) -> String {
+pub(crate) fn describe_tool(path: &str, major: Option<u32>) -> String {
     match major {
         Some(m) => format!("{path} (LLVM {m})"),
         None => format!("{path} (unknown LLVM version)"),
@@ -312,7 +295,7 @@ pub(crate) fn sibling_opt_candidates(llc_path: &str) -> Vec<String> {
 
 /// Runs `cmd --version` and, on success, returns the tool with its parsed
 /// major. `None` means the binary does not exist or is not runnable.
-fn probe_runnable(cmd: &str) -> Option<OptTool> {
+pub(crate) fn probe_runnable(cmd: &str) -> Option<OptTool> {
     let out = std::process::Command::new(cmd)
         .arg("--version")
         .output()
@@ -461,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn no_matching_opt_skips_middle_end_and_names_all_rejects() {
+    fn no_matching_opt_reports_every_rejected_candidate() {
         let (choice, warnings) = choose_opt(
             "/usr/bin/llc-21",
             Some(21),
@@ -472,12 +455,12 @@ mod tests {
         assert_eq!(choice, OptChoice::Skip);
         assert_eq!(warnings.len(), 1);
         let w = &warnings[0];
-        assert!(w.contains("skipping the LLVM middle-end"), "{w}");
+        assert!(w.contains("LLVM optimization is unavailable"), "{w}");
         assert!(w.contains("/usr/bin/llc-21 (LLVM 21)"), "{w}");
         assert!(w.contains("/usr/bin/opt (LLVM 22)"), "{w}");
         assert!(w.contains("/sysroot/bin/opt (LLVM 22)"), "{w}");
         assert!(w.contains("opt-22 (LLVM 22)"), "{w}");
-        assert!(w.contains("CUDA_OXIDE_NO_OPT=1"), "{w}");
+        assert!(w.contains("explicitly disable optimization"), "{w}");
     }
 
     #[test]

@@ -1,29 +1,24 @@
 # mir-importer
 
-Rust MIR to `dialect-mir` translator and compilation pipeline for cuda-oxide.
+Rust MIR to `dialect-mir` translator for cuda-oxide.
 
 Translates rustc's Stable MIR into [`dialect-mir`](../dialect-mir/) (a pliron
-dialect, MLIR-like) using the alloca + load/store model, then orchestrates the
-rest of the pipeline through `mem2reg`, annotated loop unrolling, lowering to
-the LLVM dialect (provided by `pliron-llvm`), LLVM IR export, and PTX generation
-via `llc`.
+dialect, MLIR-like) using the alloca + load/store model, then calls the shared
+`cuda-oxide-codegen` backend for preparation, lowering, export, and PTX or NVVM
+IR generation.
 
 ## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           mir-importer                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────────┐    ┌─────────────────────┐    ┌─────────────────┐  │
-│  │   translator    │───▶│       pipeline      │───▶│    export +     │  │
-│  │                 │    │                     │    │      llc        │  │
-│  │  MIR →          │    │  mem2reg + unroll   │    │  LLVM IR → PTX  │  │
-│  │  dialect-mir    │    │   + LLVM lowering   │    │                 │  │
-│  │     (alloca)    │    │   (via mir-lower)   │    │                 │  │
-│  └─────────────────┘    └─────────────────────┘    └─────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+┌────────────── mir-importer ──────────────┐
+│ Stable MIR ──▶ dialect-mir translation  │
+└────────────────────┬─────────────────────┘
+                     │ translated module
+                     ▼
+┌────────── cuda-oxide-codegen ────────────┐
+│ verify ─▶ mem2reg/unroll ─▶ lower       │
+│        ─▶ LLVM export ─▶ PTX/NVVM IR    │
+└──────────────────────────────────────────┘
 ```
 
 ## Pipeline Steps
@@ -102,10 +97,10 @@ artifact; a missing required sidecar is an error rather than a silent fallback.
 
 ### `pipeline.rs` — Compilation Orchestration
 
-Drives the end-to-end flow: register dialects → translate functions →
-verify `dialect-mir` → run `mem2reg` → unroll annotated loops → lower to the
-LLVM dialect → add device extern declarations → verify the LLVM dialect →
-export LLVM IR → run `llc` for PTX.
+Registers dialects and translates functions, then calls the single
+`cuda-oxide-codegen` backend orchestrator. That backend owns verification,
+`mem2reg`, unrolling, device extern insertion, lowering, LLVM IR export, and
+optional `llc` PTX generation.
 
 ## Alloca + load/store model
 
@@ -171,6 +166,7 @@ let result = run_pipeline(&functions, &device_externs, &config)?;
 | `Translation`    | MIR → `dialect-mir` conversion failed            |
 | `Verification`   | IR invariant violated (includes op context)      |
 | `Lowering`       | `dialect-mir` → LLVM dialect pass failed         |
+| `LoweredVerification` | Lowered LLVM-dialect invariant failed       |
 | `Export`         | LLVM IR export failed                            |
 | `PtxGeneration`  | `llc` invocation failed                          |
 
@@ -187,16 +183,13 @@ run_pipeline()
   │                       ├─▶ statement::translate_statement()
   │                       │     └─▶ rvalue::translate_rvalue()
   │                       └─▶ terminator::translate_terminator()
-  ├─▶ verify dialect-mir module
-  ├─▶ run pliron::opts::mem2reg (alloca slots → SSA)
-  ├─▶ lower_mir_to_llvm (mir-lower, DialectConversion)
-  ├─▶ add DeviceExternDecl functions
-  ├─▶ verify LLVM dialect module
-  └─▶ export LLVM IR → generate PTX via llc
+  └─▶ cuda-oxide-codegen shared backend
+        └─▶ verify → prepare → externs → lower → export → PTX/NVVM IR
 ```
 
 ## Dependencies
 
+- [cuda-oxide-codegen](../cuda-oxide-codegen/) — shared post-translation backend
 - [pliron](https://github.com/vaivaswatha/pliron) — Pliron IR (MLIR-like) framework
 - [dialect-mir](../dialect-mir/) — pliron dialect modelling Rust MIR
 - [llvm-export](../llvm-export/) — pliron-llvm shim + textual `.ll` exporter

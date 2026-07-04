@@ -15,9 +15,6 @@ llvm-export = { workspace = true }
 dialect-mir = { workspace = true }
 dialect-nvvm = { workspace = true }
 mir-lower = { workspace = true }
-mir-transforms = { workspace = true }
-nvvm-transforms = { workspace = true }
-libnvvm-sys = { workspace = true }
 oxide-artifacts = { workspace = true }
 cuda-oxide-codegen = { workspace = true }
 thiserror = { workspace = true }

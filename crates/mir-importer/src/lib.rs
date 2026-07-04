@@ -8,12 +8,12 @@
 // Complex types are unavoidable when working with rustc internals
 #![allow(clippy::type_complexity)]
 
-//! Rust MIR to `dialect-mir` translator and compilation pipeline for cuda-oxide.
+//! Rust MIR to `dialect-mir` translator for cuda-oxide.
 //!
 //! This crate translates Rust's Mid-level Intermediate Representation (MIR)
 //! into [`dialect-mir`][dialect_mir] — a pliron dialect (MLIR-like) that
-//! preserves Rust semantics — then drives the rest of the compilation pipeline
-//! down to PTX.
+//! preserves Rust semantics — then hands that module to the shared
+//! `cuda-oxide-codegen` backend.
 //!
 //! # Architecture
 //!
@@ -21,7 +21,7 @@
 //! ┌─────────────────────── mir-importer ──────────────────────────────────┐
 //! │                                                                       │
 //! │  ┌──────────────┐   ┌─────────────────────────────────────────────┐   │
-//! │  │  translator  │──▶│                  pipeline                   │   │
+//! │  │  translator  │──▶│          cuda-oxide-codegen               │   │
 //! │  │              │   │                                             │   │
 //! │  │     MIR      │   │  dialect-mir (alloca)                       │   │
 //! │  │      ──▶     │   │    ──▶ mem2reg                              │   │
@@ -39,7 +39,7 @@
 //! | Module         | Purpose                                                     |
 //! |----------------|-------------------------------------------------------------|
 //! | [`translator`] | MIR → `dialect-mir` (alloca + load/store)                   |
-//! | [`pipeline`]   | `mem2reg`, unroll, lower, export LLVM IR, run llc           |
+//! | [`pipeline`]   | Translate a module, then call the shared codegen backend    |
 //! | [`error`]      | Error types integrated with pliron's error system           |
 //!
 //! Note: Function collection is handled by `rustc-codegen-cuda/src/collector.rs`
@@ -85,7 +85,5 @@ pub mod translator;
 pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DeviceExternAttrs,
-    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, PtxConfig,
-    compile_to_ptx, run_pipeline,
+    DeviceExternDecl, DeviceExternType, PipelineConfig, PipelineError, run_pipeline,
 };
-pub use cuda_oxide_codegen::PtxError;

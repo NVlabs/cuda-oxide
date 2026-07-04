@@ -37,25 +37,23 @@
 //!
 //! Override with `CUDA_OXIDE_TARGET=<target>` environment variable.
 
-pub use cuda_oxide_codegen::{
-    DeviceExternAttrs, DeviceExternDecl, PipelineError, PtxConfig, compile_to_ptx,
+use cuda_oxide_codegen::__private::{
+    BackendOptions, ModuleArtifactKind, ModulePipelineRequest, OutputFiles, PipelineTrace,
+    append_to_module, compile_translated_module, verify_operation,
 };
+pub use cuda_oxide_codegen::__private::{DeviceExternAttrs, DeviceExternDecl, PipelineError};
+use llvm_export::export::DebugKind;
 pub use llvm_export::export::DeviceExternType;
-use llvm_export::export::{DebugKind, NvvmIrDialect};
-use cuda_oxide_codegen::export::{
-    export_llvm_ir, module_uses_libdevice, render_llvm_ir, resolve_nvvm_target,
-    validate_nvvm_debug_support,
-};
-use cuda_oxide_codegen::lower::{add_device_extern_declarations, append_to_module, lower_to_llvm};
-use cuda_oxide_codegen::ptx::generate_ptx;
-use cuda_oxide_codegen::target::detect_features_in_llvm_text;
-use cuda_oxide_codegen::verify::verify_operation;
 use pliron::context::Context;
 use pliron::identifier::Legaliser;
 use pliron::op::Op;
 use pliron::printable::Printable;
 use rustc_public::mir::mono::Instance;
 use std::path::Path;
+
+fn stderr_pipeline_trace(message: &str) {
+    eprintln!("{message}");
+}
 
 /// A function collected for GPU compilation.
 ///
@@ -286,299 +284,70 @@ pub fn run_pipeline(
         append_to_module(&ctx, module_op_ptr, func_op_ptr);
     }
 
-    // Step 4: Verify module. Dump BEFORE verify so module-level verification
-    // failures still surface the consolidated IR to the user.
-    if config.show_mir_dialect {
-        eprintln!("\n=== dialect-mir module (pre-verify) ===");
-        eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
-    }
-    if config.verbose {
-        eprintln!("\n=== Verifying dialect-mir module ===");
-    }
-    verify_operation(&ctx, module_op_ptr, "module")?;
-    if config.verbose {
-        eprintln!("dialect-mir verification successful ✓");
-    }
-
-    // Step 4.5: Run mem2reg (promote `mir.alloca` + `mir.load`/`mir.store`
-    // chains back to SSA values).
-    //
-    // Full-debug is a `-G`-style build: we keep every source local in its stack
-    // slot so cuda-gdb can read it from a stable memory location for the whole
-    // scope (via `llvm.dbg.declare`). Promoting locals to SSA would narrow each
-    // variable's inspectable range to its register's liveness, which is why an
-    // optimized `dbg.value` build shows `<optimized out>` for in-scope locals.
-    // We therefore skip mem2reg whenever variable info is requested. The
-    // promotion-aware `mir.dbg_value` salvage (see `dialect-mir::ops::debug`)
-    // remains the mechanism for any future optimized-debug tier that *does*
-    // promote.
-    if config.debug_kind.variables_enabled() {
-        if config.verbose {
-            eprintln!("\n=== Skipping mem2reg (full debug keeps locals in memory) ===");
-        }
-    } else {
-        if config.verbose {
-            eprintln!("\n=== Running mem2reg ===");
-        }
-        // pliron's pass infra now threads an AnalysisManager through mem2reg
-        // (caches dominator trees etc.); we run it standalone, so a fresh empty
-        // manager suffices. The returned IRStatus (Changed/Unchanged) is discarded.
-        let mut analyses = pliron::pass_manager::AnalysisManager::default();
-        pliron::opts::mem2reg::mem2reg(module_op_ptr, &mut ctx, &mut analyses).map_err(|e| {
-            PipelineError::Verification {
-                name: "mem2reg".to_string(),
-                message: e.disp(&ctx).to_string(),
-                operation: None,
-            }
-        })?;
-        if config.verbose {
-            eprintln!("mem2reg successful ✓");
-        }
-        if config.show_mir_dialect {
-            eprintln!("\n=== dialect-mir module (after mem2reg) ===");
-            eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
-        }
-        verify_operation(&ctx, module_op_ptr, "module post-mem2reg")?;
-
-        // Step 4.6: annotation-driven loop unrolling (#[unroll] / #[unroll(N)]).
-        // Runs on the SSA form mem2reg just produced; a no-op unless a loop
-        // contains a `mir.unroll_hint` operation. The pass receives mem2reg's
-        // AnalysisManager for the standard pass shape, but recomputes dominance
-        // after each CFG rewrite.
-        if config.verbose {
-            eprintln!("\n=== Running loop-unroll ===");
-        }
-        mir_transforms::unroll::unroll_annotated_loops(module_op_ptr, &mut ctx, &mut analyses)
-            .map_err(|e| PipelineError::Verification {
-                name: "loop-unroll".to_string(),
-                message: e.disp(&ctx).to_string(),
-                operation: None,
-            })?;
-        verify_operation(&ctx, module_op_ptr, "module post-unroll")?;
-        // Constant folding (sccp -> simplify_cfg -> dce) runs inside the unroll
-        // pass, scoped to functions it actually unrolled; see
-        // `mir_transforms::unroll`. Non-unrolled kernels are left for `opt`/NVVM.
-    }
-
-    // Step 4.9: Add structured device-extern declarations before call
-    // lowering. The call converter consults these declarations to preserve
-    // pointer address spaces and insert an explicit addrspacecast when the
-    // caller and external ABI differ. Adding declarations only after lowering
-    // is too late: every unknown pointer argument has already fallen back to
-    // generic addrspace(0) by then.
-    if !device_externs.is_empty() {
-        if config.verbose {
-            eprintln!(
-                "\n=== Adding {} device extern declarations ===",
-                device_externs.len()
-            );
-        }
-        add_device_extern_declarations(&mut ctx, module_op_ptr, device_externs)?;
-    }
-
-    // Step 5: Lower dialect-mir → LLVM dialect.
-    if config.verbose {
-        eprintln!("\n=== Lowering dialect-mir → LLVM dialect ===");
-    }
-    lower_to_llvm(&mut ctx, module_op_ptr, config.allow_fma_contraction)?;
-
-    // Detect CUDA libdevice usage.
-    //
-    // Lowering the rustc float-math intrinsics emits `__nv_*` libdevice
-    // calls (e.g. `__nv_sinf`, `__nv_pow`). `llc` cannot resolve those — they
-    // need libNVVM + nvJitLink + `libdevice.10.bc`, which the example owns
-    // (see `examples/device_ffi_test/tools/`). When we see them we:
-    //   1. Force NVVM IR mode so the `.ll` is suitable for libNVVM input.
-    //   2. Skip the `llc → .ptx` step, because the resulting PTX would have
-    //      unresolved `__nv_*` extern calls and `cuModuleLoad` would reject
-    //      it.
-    // The example is then expected to feed the `.ll` through the LTOIR
-    // pipeline (compile_ltoir + link_ltoir) and load the resulting cubin.
-    let needs_libdevice = module_uses_libdevice(&ctx, module_op_ptr);
-    let emit_nvvm_ir = config.emit_nvvm_ir || needs_libdevice;
-    if needs_libdevice && !config.emit_nvvm_ir && config.verbose {
-        eprintln!(
-            "\n=== Detected CUDA libdevice (`__nv_*`) calls; \
-             auto-emitting NVVM IR (skip llc) ==="
-        );
-    }
-
-    // An ordinary zero-flag build may discover only now that libdevice makes
-    // NVVM IR necessary. Preserve the normal target policy in that case:
-    // explicit target, then a compatible local-GPU hint, then the compiler's
-    // feature-based target. Feature detection uses the
-    // same LLVM text that the ordinary PTX path would inspect, but keeps this
-    // preview in memory because the final pointer dialect is not known yet.
-    let automatic_features =
-        if needs_libdevice && !config.emit_nvvm_ir && config.target_arch.is_none() {
-            let preview = render_llvm_ir(
-                &ctx,
-                module_op_ptr,
-                device_externs,
-                false,
-                None,
-                config.debug_kind,
-            )?;
-            Some(detect_features_in_llvm_text(&preview))
-        } else {
-            None
-        };
-
-    // Pre-Blackwell and Blackwell GPUs use different NVVM IR pointer syntax.
-    // Resolve one concrete target before export and record it with the
-    // artifact.
-    let (nvvm_target, nvvm_dialect) = if emit_nvvm_ir {
-        let target = resolve_nvvm_target(
-            config.target_arch.as_deref(),
-            config.device_arch_hint.as_deref(),
-            automatic_features,
-        )?;
-        let dialect = if target.uses_legacy_llvm() {
-            NvvmIrDialect::LegacyLlvm7
-        } else {
-            NvvmIrDialect::Modern
-        };
-        validate_nvvm_debug_support(&target, dialect, config.debug_kind)?;
-        (Some(target), Some(dialect))
-    } else {
-        (None, None)
-    };
-
-    // Step 5.5: Convert LLVM operations to the forms supported by the selected
-    // NVVM dialect, then verify the changed module before text export.
-    if let Some(dialect) = nvvm_dialect {
-        if config.verbose {
-            if dialect == NvvmIrDialect::LegacyLlvm7 {
-                eprintln!("\n=== Legalizing LLVM dialect for legacy NVVM ===");
-            } else {
-                eprintln!("\n=== Legalizing NVVM bit-intrinsic widths ===");
-            }
-        }
-        nvvm_transforms::legalize_for_nvvm(&mut ctx, module_op_ptr, dialect)
-            .map_err(|error| PipelineError::Lowering(error.disp(&ctx).to_string()))?;
-    }
-
-    // Step 6: Verify the final LLVM dialect module. Dump BEFORE verify so
-    // verification failures still surface the exact post-legalization IR.
-    if config.show_llvm_dialect {
-        eprintln!("\n=== LLVM dialect (pre-verify) ===");
-        eprintln!("{}", module_op_ptr.deref(&ctx).disp(&ctx));
-    }
-    if config.verbose {
-        eprintln!("=== Verifying LLVM dialect module ===");
-    }
-    verify_operation(&ctx, module_op_ptr, "llvm module")?;
-    if config.verbose {
-        eprintln!("LLVM dialect verification successful ✓");
-    }
-
-    // Step 7: Export to LLVM IR
-    if config.verbose {
-        let mode = if emit_nvvm_ir { "NVVM IR" } else { "PTX" };
-        eprintln!("\n=== Exporting to LLVM IR ({} mode) ===", mode);
-    }
     let ll_path = config.output_dir.join(format!("{}.ll", config.output_name));
-    // Remove artifacts from earlier builds so changing output mode cannot
-    // leave older PTX, LTOIR, or cubin selected by the loader.
-    clear_stale_compilation_artifacts(&config.output_dir, &config.output_name)?;
-    let _llvm_ir = export_llvm_ir(
-        &ctx,
-        module_op_ptr,
-        device_externs,
-        &ll_path,
-        emit_nvvm_ir,
-        nvvm_dialect,
-        config.debug_kind,
-    )?;
-    if config.verbose {
-        eprintln!("LLVM IR written to {}", ll_path.display());
+    let ptx_path = config
+        .output_dir
+        .join(format!("{}.ptx", config.output_name));
+    let stale_artifacts = stale_compilation_artifact_paths(&config.output_dir, &config.output_name);
+
+    // Environment-derived compatibility options are read once at the rustc
+    // frontend boundary. Explicit pipeline configuration retains precedence.
+    let mut backend_options = BackendOptions::from_env();
+    if config.target_arch.is_some() {
+        backend_options.target_arch = config.target_arch.clone();
     }
+    if config.device_arch_hint.is_some() {
+        backend_options.device_arch_hint = config.device_arch_hint.clone();
+    }
+    backend_options.verbose = backend_options.verbose || config.verbose;
+    backend_options.no_fma = !config.allow_fma_contraction;
 
-    // Step 8: Generate PTX or stop at NVVM IR for libNVVM-owned paths.
-    if emit_nvvm_ir {
-        // Skip llc. Return a would-be ptx_path so callers see a stable shape;
-        // the file does not exist and the consumer must build its own cubin
-        // from `ll_path` via libNVVM + nvJitLink.
-        let ptx_path = config
-            .output_dir
-            .join(format!("{}.ptx", config.output_name));
-        if config.verbose {
-            let reason = if needs_libdevice {
-                "libdevice present"
-            } else {
-                "NVVM IR requested"
-            };
-            eprintln!("\n=== Skipping llc ({reason}); consumer owns libNVVM/nvJitLink build ===");
-        }
-        let target = nvvm_target
-            .as_ref()
-            .expect("NVVM target was resolved before export")
-            .sm();
-        write_nvvm_compile_options_sidecar(
-            &config.output_dir,
-            &config.output_name,
-            config.allow_fma_contraction,
-        )?;
-        // Publish the target last: its version marker is the completion record
-        // that says the sibling options file is required.
-        write_nvvm_target_sidecar(&config.output_dir, &config.output_name, &target)?;
-        Ok(CompilationResult {
-            artifact_path: ll_path.clone(),
-            artifact_kind: CompilationArtifactKind::NvvmIr,
-            ll_path,
-            ptx_path,
-            target,
-            allow_fma_contraction: config.allow_fma_contraction,
-        })
-    } else {
-        if config.verbose {
-            eprintln!("\n=== Generating PTX ===");
-        }
-        let ptx_path = config
-            .output_dir
-            .join(format!("{}.ptx", config.output_name));
+    let request = ModulePipelineRequest::for_rust_pipeline(
+        device_externs,
+        config.emit_nvvm_ir,
+        &backend_options,
+        config.debug_kind,
+        OutputFiles {
+            llvm_ir: &ll_path,
+            ptx: &ptx_path,
+            stale_before_export: &stale_artifacts,
+        },
+        PipelineTrace {
+            verbose: config.verbose,
+            dump_mir: config.show_mir_dialect,
+            dump_llvm: config.show_llvm_dialect,
+            sink: Some(stderr_pipeline_trace),
+        },
+    );
+    let generated = compile_translated_module(&mut ctx, module_op_ptr, &request)?;
 
-        // Build the backend options at this process's own boundary: start
-        // from the CUDA_OXIDE_* env vars (the same ones rustc-codegen-cuda
-        // already read to populate `config.target_arch`/`device_arch_hint`
-        // below, so this is not a second, independent env read), then let an
-        // explicit `config` value win when present. This reproduces today's
-        // effective precedence exactly, because `config.target_arch` and
-        // `config.device_arch_hint` were themselves populated from
-        // CUDA_OXIDE_TARGET/CUDA_OXIDE_DEVICE_ARCH by the sole caller
-        // (`device_codegen.rs`) before `generate_ptx` used to re-read the
-        // same variables directly.
-        let mut backend_opts = cuda_oxide_codegen::options::BackendOptions::from_env();
-        if config.target_arch.is_some() {
-            backend_opts.target_arch = config.target_arch.clone();
+    match generated.artifact_kind {
+        ModuleArtifactKind::NvvmIr => {
+            write_nvvm_compile_options_sidecar(
+                &config.output_dir,
+                &config.output_name,
+                config.allow_fma_contraction,
+            )?;
+            // Publish the target last: its version marker is the completion record
+            // that says the sibling options file is required.
+            write_nvvm_target_sidecar(&config.output_dir, &config.output_name, &generated.target)?;
+            Ok(CompilationResult {
+                artifact_path: ll_path.clone(),
+                artifact_kind: CompilationArtifactKind::NvvmIr,
+                ll_path,
+                ptx_path,
+                target: generated.target,
+                allow_fma_contraction: config.allow_fma_contraction,
+            })
         }
-        if config.device_arch_hint.is_some() {
-            backend_opts.device_arch_hint = config.device_arch_hint.clone();
-        }
-        backend_opts.verbose = backend_opts.verbose || config.verbose;
-        // #326: the fma-contraction policy is a compile-wide decision threaded
-        // from cargo-oxide's `--no-fmad`. It drives both the IR-level contract
-        // flag (via `lower_to_llvm` above) and the llc `-fp-contract` gate
-        // inside `generate_ptx`, so the two stages cannot disagree.
-        backend_opts.no_fma = !config.allow_fma_contraction;
-
-        let target = generate_ptx(&ll_path, &ptx_path, config.debug_kind, &backend_opts)?;
-        if config.verbose {
-            eprintln!(
-                "✓ PTX written to {} (target: {})",
-                ptx_path.display(),
-                target
-            );
-        }
-
-        Ok(CompilationResult {
+        ModuleArtifactKind::Ptx => Ok(CompilationResult {
             artifact_path: ptx_path.clone(),
             artifact_kind: CompilationArtifactKind::Ptx,
             ll_path,
             ptx_path,
-            target,
+            target: generated.target,
             allow_fma_contraction: config.allow_fma_contraction,
-        })
+        }),
     }
 }
 
@@ -611,7 +380,10 @@ fn write_nvvm_target_sidecar(
     let path = output_dir.join(format!("{output_name}.target"));
     std::fs::write(
         &path,
-        format!("{target}\n{}\n", oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER),
+        format!(
+            "{target}\n{}\n",
+            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+        ),
     )
     .map_err(|error| {
         PipelineError::Export(format!(
@@ -639,24 +411,22 @@ fn write_nvvm_compile_options_sidecar(
     })
 }
 
-fn clear_stale_compilation_artifacts(
+fn stale_compilation_artifact_paths(
     output_dir: &Path,
     output_name: &str,
-) -> Result<(), PipelineError> {
-    for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
-        let path = output_dir.join(format!("{output_name}.{suffix}"));
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(PipelineError::Export(format!(
-                    "failed to invalidate stale CUDA artifact {}: {error}",
-                    path.display()
-                )));
-            }
-        }
-    }
-    Ok(())
+) -> Vec<std::path::PathBuf> {
+    [
+        "ll",
+        "ptx",
+        "target",
+        "options",
+        "ltoir",
+        "cubin",
+        "cubin.target",
+    ]
+    .into_iter()
+    .map(|suffix| output_dir.join(format!("{output_name}.{suffix}")))
+    .collect()
 }
 
 #[cfg(test)]
@@ -690,7 +460,15 @@ mod tests {
             unique
         ));
         fs::create_dir_all(&root).unwrap();
-        for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+        for suffix in [
+            "ll",
+            "ptx",
+            "target",
+            "options",
+            "ltoir",
+            "cubin",
+            "cubin.target",
+        ] {
             fs::write(root.join(format!("kernel.{suffix}")), b"stale").unwrap();
         }
         let cached_cubin =
@@ -698,11 +476,27 @@ mod tests {
         fs::create_dir_all(cached_cubin.parent().unwrap()).unwrap();
         fs::write(&cached_cubin, b"persistent cache entry").unwrap();
 
-        clear_stale_compilation_artifacts(&root, "kernel").unwrap();
+        let config = PipelineConfig {
+            output_dir: root.clone(),
+            output_name: "kernel".to_string(),
+            verbose: false,
+            show_mir_dialect: false,
+            show_llvm_dialect: false,
+            emit_nvvm_ir: true,
+            target_arch: Some("sm_86".to_string()),
+            device_arch_hint: None,
+            debug_kind: DebugKind::Off,
+            allow_fma_contraction: true,
+        };
+        let result = run_pipeline(&[], &[], &config).expect("pipeline run");
 
-        for suffix in ["ll", "ptx", "target", "ltoir", "cubin", "cubin.target"] {
+        assert_eq!(result.artifact_kind, CompilationArtifactKind::NvvmIr);
+        assert_ne!(fs::read(&result.ll_path).unwrap(), b"stale");
+        for suffix in ["ptx", "ltoir", "cubin", "cubin.target"] {
             assert!(!root.join(format!("kernel.{suffix}")).exists(), "{suffix}");
         }
+        assert_ne!(fs::read(root.join("kernel.target")).unwrap(), b"stale");
+        assert_ne!(fs::read(root.join("kernel.options")).unwrap(), b"stale");
         assert_eq!(
             fs::read(&cached_cubin).unwrap(),
             b"persistent cache entry",
@@ -748,7 +542,10 @@ mod tests {
         assert_eq!(result.target, "sm_86");
         assert_eq!(
             fs::read_to_string(output_dir.join("empty.target")).unwrap(),
-            format!("sm_86\n{}\n", oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER)
+            format!(
+                "sm_86\n{}\n",
+                oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+            )
         );
         assert_eq!(
             fs::read_to_string(output_dir.join("empty.options")).unwrap(),
