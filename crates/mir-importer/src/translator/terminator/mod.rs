@@ -2884,6 +2884,20 @@ fn try_dispatch_intrinsic(
                 loc,
             )?))
         }
+        "cuda_device::convert::cvt_rn_satfinite_e4m3x2_f32" => {
+            Ok(Some(intrinsics::convert::emit_cvt_rn_satfinite_e4m3x2_f32(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+            )?))
+        }
 
         // =================================================================
         // Debug & Profiling (from intrinsics::debug)

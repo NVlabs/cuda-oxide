@@ -12,6 +12,7 @@
 //! | `CvtRnReluF16x2F32`   | `cvt.rn.relu.f16x2.f32 d, hi, lo;`    |
 //! | `CvtRnReluBf16x2F32`  | `cvt.rn.relu.bf16x2.f32 d, hi, lo;`   |
 //! | `CvtRzBf16x2F32`      | `cvt.rz.bf16x2.f32 d, hi, lo;`        |
+//! | `CvtRnSatfiniteE4m3x2F32` | `cvt.rn.satfinite.e4m3x2.f32 d, hi, lo;` |
 
 use llvm_export::ops::{self as llvm, InlineAsmOpExt};
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -182,6 +183,38 @@ pub(crate) fn convert_cvt_rz_bf16x2_f32(
         vec![lo_val, hi_val],
         "cvt.rz.bf16x2.f32 $0, $2, $1;",
         "=r,f,f",
+        llvm_export::ops::AsmKind::Pure,
+    );
+
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
+/// Convert `cvt.rn.satfinite.e4m3x2.f32`: pack two f32 values into e4m3x2
+/// (u16) with round-to-nearest and saturate-to-finite.
+pub(crate) fn convert_cvt_rn_satfinite_e4m3x2_f32(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() < 2 {
+        return pliron::input_err_noloc!("cvt_rn_satfinite_e4m3x2_f32 requires 2 operands");
+    }
+
+    let lo_val = operands[0];
+    let hi_val = operands[1];
+    let i16_ty = IntegerType::get(ctx, 16, Signedness::Signless);
+
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        i16_ty.into(),
+        vec![lo_val, hi_val],
+        "cvt.rn.satfinite.e4m3x2.f32 $0, $2, $1;",
+        "=h,f,f",
         llvm_export::ops::AsmKind::Pure,
     );
 

@@ -111,3 +111,34 @@ pub fn cvt_rz_bf16x2_f32(lo: f32, hi: f32) -> u32 {
     let _ = (lo, hi);
     unreachable!("cvt_rz_bf16x2_f32 called outside CUDA kernel context")
 }
+
+/// Convert two f32 values to a packed e4m3x2 (u16) FP8 pair.
+///
+/// Each f32 is converted to an `e4m3` FP8 value (1 sign / 4 exponent /
+/// 3 mantissa bits) using round-to-nearest-even, with `satfinite`
+/// saturation: inputs whose magnitude exceeds the largest finite e4m3
+/// value (±448) are clamped to that maximum instead of overflowing to
+/// infinity or NaN. The two 8-bit results are packed into a 16-bit
+/// register.
+///
+/// Requires `sm_89`+ (Ada Lovelace) and PTX ISA 8.1+.
+///
+/// Maps to PTX: `cvt.rn.satfinite.e4m3x2.f32 d, hi, lo;`
+///
+/// Lane placement: the first argument (`lo`) fills bits `[7:0]` and the
+/// second argument (`hi`) fills bits `[15:8]`, even though the PTX
+/// operand list prints `hi` first. This is the same first-arg-low
+/// convention as [`cvt_f16x2_f32`], differing only in the destination
+/// element type (8-bit e4m3 instead of 16-bit f16).
+///
+/// # Arguments
+/// - `lo`: f32 value for the low 8 bits (bits `[7:0]`)
+/// - `hi`: f32 value for the high 8 bits (bits `[15:8]`)
+///
+/// # Returns
+/// A u16 containing two packed e4m3 FP8 values.
+#[inline(never)]
+pub fn cvt_rn_satfinite_e4m3x2_f32(lo: f32, hi: f32) -> u16 {
+    let _ = (lo, hi);
+    unreachable!("cvt_rn_satfinite_e4m3x2_f32 called outside CUDA kernel context")
+}

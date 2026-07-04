@@ -1986,6 +1986,33 @@ fn test_cvt_rz_bf16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 }
 
 #[test]
+fn test_cvt_rn_satfinite_e4m3x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let i16_ty = IntegerType::get(&mut ctx, 16, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
+
+    let lo_val = entry.deref(&ctx).get_argument(0);
+    let hi_val = entry.deref(&ctx).get_argument(1);
+
+    // CvtRnSatfiniteE4m3x2F32Op: 2 f32 operands, 1 i16 result (packed e4m3x2)
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CvtRnSatfiniteE4m3x2F32Op::get_concrete_op_info(),
+        vec![i16_ty.into()],
+        vec![lo_val, hi_val],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rn.satfinite.e4m3x2.f32")
+}
+
+#[test]
 fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 

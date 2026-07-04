@@ -144,6 +144,34 @@ impl CvtRzBf16x2F32Op {
     }
 }
 
+/// Convert two f32 values to packed e4m3x2 (u16) with round-to-nearest and
+/// saturate-to-finite.
+///
+/// Maps to PTX: `cvt.rn.satfinite.e4m3x2.f32 d, hi, lo;`
+///
+/// # Operands
+///
+/// - `lo` (f32): value for bits `[7:0]`
+/// - `hi` (f32): value for bits `[15:8]`
+///
+/// # Results
+///
+/// - packed e4m3x2 as u16 (NaN maps to e4m3 NaN, out-of-range values
+///   saturate to the largest finite e4m3 value)
+#[pliron_op(
+    name = "nvvm.cvt_rn_satfinite_e4m3x2_f32",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct CvtRnSatfiniteE4m3x2F32Op;
+
+impl CvtRnSatfiniteE4m3x2F32Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        CvtRnSatfiniteE4m3x2F32Op { op }
+    }
+}
+
 /// Register convert operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     CvtF16x2F32Op::register(ctx);
@@ -151,4 +179,5 @@ pub(super) fn register(ctx: &mut Context) {
     CvtRnReluF16x2F32Op::register(ctx);
     CvtRnReluBf16x2F32Op::register(ctx);
     CvtRzBf16x2F32Op::register(ctx);
+    CvtRnSatfiniteE4m3x2F32Op::register(ctx);
 }
