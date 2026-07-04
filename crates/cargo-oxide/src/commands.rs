@@ -801,9 +801,15 @@ fn run_cargo_build_for_executable(
 
 #[derive(Debug, PartialEq, Eq)]
 struct CargoExecutableSelection {
+    packages: Vec<CargoSelectedPackage>,
+    explicit_bin: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CargoSelectedPackage {
     package_id: String,
     package_name: String,
-    target_name: String,
+    default_run: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -828,32 +834,86 @@ fn cargo_executable_selection(
         .and_then(|packages| packages.as_array())
         .ok_or_else(|| "Cargo metadata did not include packages".to_string())?;
 
-    let selected_package = packages
-        .iter()
-        .find(|package| {
-            package
-                .get("manifest_path")
-                .and_then(|path| path.as_str())
-                .and_then(|path| PathBuf::from(path).canonicalize().ok())
-                .is_some_and(|path| path == manifest_path)
-        })
-        .or_else(|| {
-            let default_members = metadata
-                .get("workspace_default_members")
-                .and_then(|members| members.as_array())?;
-            if default_members.len() != 1 {
-                return None;
-            }
-            let default_package_id = default_members.first()?.as_str()?;
-            packages.iter().find(|package| {
-                package.get("id").and_then(|id| id.as_str()) == Some(default_package_id)
-            })
-        })
-        .ok_or_else(|| {
-            "could not determine the Cargo package to debug; pass --bin in a package directory or configure a single workspace default member".to_string()
-        })?;
+    let selected_packages = cargo_selected_packages(&metadata, packages, &manifest_path)?;
+    let packages = selected_packages
+        .into_iter()
+        .map(cargo_selected_package)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CargoExecutableSelection {
+        packages,
+        explicit_bin: explicit_bin.map(str::to_owned),
+    })
+}
 
-    cargo_executable_selection_from_package(selected_package, explicit_bin)
+/// Return the packages Cargo selects for a command launched from
+/// `manifest_path`.
+///
+/// At a workspace root, Cargo uses `workspace.default-members` even when the
+/// root manifest also contains a `[package]`. Inside a member directory, Cargo
+/// instead selects that member. `cargo metadata` has already resolved the
+/// workspace defaults for us, so mirror that distinction here.
+fn cargo_selected_packages<'a>(
+    metadata: &serde_json::Value,
+    packages: &'a [serde_json::Value],
+    manifest_path: &Path,
+) -> Result<Vec<&'a serde_json::Value>, String> {
+    let workspace_root = metadata
+        .get("workspace_root")
+        .and_then(|path| path.as_str())
+        .ok_or_else(|| "Cargo metadata did not include workspace_root".to_string())?;
+    let workspace_manifest = PathBuf::from(workspace_root).join("Cargo.toml");
+    let workspace_manifest = workspace_manifest.canonicalize().map_err(|error| {
+        format!(
+            "could not resolve workspace manifest {}: {error}",
+            workspace_manifest.display()
+        )
+    })?;
+
+    if manifest_path != workspace_manifest {
+        let package = packages
+            .iter()
+            .find(|package| cargo_package_manifest_matches(package, manifest_path))
+            .ok_or_else(|| {
+                format!(
+                    "could not determine the Cargo package for {}",
+                    manifest_path.display()
+                )
+            })?;
+        return Ok(vec![package]);
+    }
+
+    let default_members = metadata
+        .get("workspace_default_members")
+        .and_then(|members| members.as_array())
+        .ok_or_else(|| "Cargo metadata did not include workspace_default_members".to_string())?;
+    if default_members.is_empty() {
+        return Err("Cargo selected no workspace default members".to_string());
+    }
+
+    default_members
+        .iter()
+        .map(|member| {
+            let package_id = member.as_str().ok_or_else(|| {
+                "Cargo metadata contained a non-string workspace default member".to_string()
+            })?;
+            packages
+                .iter()
+                .find(|package| cargo_package_id(package).ok() == Some(package_id))
+                .ok_or_else(|| {
+                    format!(
+                        "Cargo workspace default member `{package_id}` was missing from metadata packages"
+                    )
+                })
+        })
+        .collect()
+}
+
+fn cargo_package_manifest_matches(package: &serde_json::Value, manifest_path: &Path) -> bool {
+    package
+        .get("manifest_path")
+        .and_then(|path| path.as_str())
+        .and_then(|path| PathBuf::from(path).canonicalize().ok())
+        .is_some_and(|path| path == manifest_path)
 }
 
 fn cargo_metadata(manifest_dir: &Path) -> Result<serde_json::Value, String> {
@@ -877,69 +937,28 @@ fn cargo_metadata(manifest_dir: &Path) -> Result<serde_json::Value, String> {
         .map_err(|error| format!("could not parse cargo metadata JSON: {error}"))
 }
 
-fn cargo_executable_selection_from_package(
-    package: &serde_json::Value,
-    explicit_bin: Option<&str>,
-) -> Result<CargoExecutableSelection, String> {
-    let package_id = package
+fn cargo_package_id(package: &serde_json::Value) -> Result<&str, String> {
+    package
         .get("id")
         .and_then(|id| id.as_str())
-        .ok_or_else(|| "Cargo metadata package is missing id".to_string())?;
-    let package_name = package
+        .ok_or_else(|| "Cargo metadata package is missing id".to_string())
+}
+
+fn cargo_package_name(package: &serde_json::Value) -> Result<&str, String> {
+    package
         .get("name")
         .and_then(|name| name.as_str())
-        .ok_or_else(|| "Cargo metadata package is missing name".to_string())?;
-    let bin_targets = package
-        .get("targets")
-        .and_then(|targets| targets.as_array())
-        .ok_or_else(|| format!("Cargo metadata for package `{package_name}` is missing targets"))?
-        .iter()
-        .filter_map(|target| {
-            let is_binary = target
-                .get("kind")
-                .and_then(|kind| kind.as_array())
-                .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")));
-            is_binary
-                .then(|| target.get("name").and_then(|name| name.as_str()))
-                .flatten()
-        })
-        .collect::<Vec<_>>();
+        .ok_or_else(|| "Cargo metadata package is missing name".to_string())
+}
 
-    let target_name = if let Some(explicit_bin) = explicit_bin {
-        if !bin_targets.contains(&explicit_bin) {
-            return Err(format!(
-                "package `{package_name}` has no binary target named `{explicit_bin}`"
-            ));
-        }
-        explicit_bin
-    } else if let Some(default_run) = package.get("default_run").and_then(|name| name.as_str()) {
-        if !bin_targets.contains(&default_run) {
-            return Err(format!(
-                "package `{package_name}` default-run `{default_run}` is not a binary target"
-            ));
-        }
-        default_run
-    } else {
-        match bin_targets.as_slice() {
-            [target] => target,
-            [] => {
-                return Err(format!(
-                    "package `{package_name}` has no executable binary target"
-                ));
-            }
-            _ => {
-                let choices = bin_targets.join(", ");
-                return Err(format!(
-                    "package `{package_name}` has multiple binary targets: {choices}; pass --bin <name>"
-                ));
-            }
-        }
-    };
-
-    Ok(CargoExecutableSelection {
-        package_id: package_id.to_string(),
-        package_name: package_name.to_string(),
-        target_name: target_name.to_string(),
+fn cargo_selected_package(package: &serde_json::Value) -> Result<CargoSelectedPackage, String> {
+    Ok(CargoSelectedPackage {
+        package_id: cargo_package_id(package)?.to_string(),
+        package_name: cargo_package_name(package)?.to_string(),
+        default_run: package
+            .get("default_run")
+            .and_then(|name| name.as_str())
+            .map(str::to_owned),
     })
 }
 
@@ -947,25 +966,116 @@ fn select_cargo_executable_artifact(
     selection: &CargoExecutableSelection,
     executables: &[CargoExecutableArtifact],
 ) -> Result<PathBuf, String> {
-    let matches = executables
-        .iter()
-        .filter(|artifact| {
-            artifact.package_id == selection.package_id
-                && artifact.target_name == selection.target_name
-        })
-        .collect::<Vec<_>>();
+    if let Some(explicit_bin) = selection.explicit_bin.as_deref() {
+        let matches = selection
+            .packages
+            .iter()
+            .flat_map(|package| {
+                executables
+                    .iter()
+                    .filter(move |artifact| {
+                        artifact.package_id == package.package_id
+                            && artifact.target_name == explicit_bin
+                    })
+                    .map(move |artifact| (package, artifact))
+            })
+            .collect::<Vec<_>>();
+        return match matches.as_slice() {
+            [(_, artifact)] => Ok(artifact.path.clone()),
+            [] => Err(format!(
+                "Cargo produced no executable artifact for target `{explicit_bin}` in selected packages {}",
+                selected_package_names(selection)
+            )),
+            matches => Err(format!(
+                "Cargo produced executable target `{explicit_bin}` for multiple selected packages: {}; run from a package directory",
+                matches
+                    .iter()
+                    .map(|(package, _)| package.package_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        };
+    }
 
-    match matches.as_slice() {
-        [artifact] => Ok(artifact.path.clone()),
+    let mut candidates = Vec::new();
+    for package in &selection.packages {
+        let artifacts = executables
+            .iter()
+            .filter(|artifact| artifact.package_id == package.package_id)
+            .collect::<Vec<_>>();
+
+        if let Some(default_run) = package.default_run.as_deref() {
+            let matches = artifacts
+                .iter()
+                .copied()
+                .filter(|artifact| artifact.target_name == default_run)
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [artifact] => candidates.push((package, *artifact)),
+                [] => {
+                    return Err(format!(
+                        "Cargo produced no executable artifact for package `{}` default-run target `{default_run}`",
+                        package.package_name
+                    ));
+                }
+                _ => {
+                    return Err(format!(
+                        "Cargo produced multiple executable artifacts for package `{}` default-run `{default_run}`",
+                        package.package_name
+                    ));
+                }
+            }
+            continue;
+        }
+
+        // A selected package without an emitted binary may simply be a
+        // library-only workspace member. A package with `default-run` is
+        // handled above: silently skipping its missing target could launch a
+        // different default member's program instead.
+        if artifacts.is_empty() {
+            continue;
+        }
+
+        match artifacts.as_slice() {
+            [artifact] => candidates.push((package, *artifact)),
+            artifacts => {
+                let choices = artifacts
+                    .iter()
+                    .map(|artifact| artifact.target_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(format!(
+                    "Cargo produced multiple executable targets for package `{}`: {choices}; pass --bin <name>",
+                    package.package_name
+                ));
+            }
+        }
+    }
+
+    match candidates.as_slice() {
+        [(_, artifact)] => Ok(artifact.path.clone()),
         [] => Err(format!(
-            "Cargo produced no executable artifact for package `{}` target `{}`",
-            selection.package_name, selection.target_name
+            "Cargo produced no executable artifact for selected packages {}",
+            selected_package_names(selection)
         )),
-        _ => Err(format!(
-            "Cargo produced multiple executable artifacts for package `{}` target `{}`",
-            selection.package_name, selection.target_name
+        candidates => Err(format!(
+            "Cargo produced executables for multiple selected packages: {}; pass --bin <name> that is unique among them",
+            candidates
+                .iter()
+                .map(|(package, _)| package.package_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
+}
+
+fn selected_package_names(selection: &CargoExecutableSelection) -> String {
+    selection
+        .packages
+        .iter()
+        .map(|package| package.package_name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 const DEFAULT_SANITIZER_ERROR_EXITCODE: &str = "86";
@@ -3580,10 +3690,54 @@ path = "src/other.rs"
         std::fs::write(root.join("src/other.rs"), "fn main() {}\n").unwrap();
 
         let selection = cargo_executable_selection(&root, None).unwrap();
-        assert!(selection.package_id.starts_with("path+file://"));
-        assert!(selection.package_id.contains("multi-bin-package@0.1.0"));
-        assert_eq!(selection.package_name, "multi-bin-package");
-        assert_eq!(selection.target_name, "main_bin");
+        assert_eq!(selection.packages.len(), 1);
+        let package = &selection.packages[0];
+        assert!(package.package_id.starts_with("path+file://"));
+        assert!(package.package_id.contains("multi-bin-package@0.1.0"));
+        assert_eq!(package.package_name, "multi-bin-package");
+        assert_eq!(package.default_run.as_deref(), Some("main_bin"));
+        assert_eq!(selection.explicit_bin, None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cargo_json_ignores_bins_disabled_by_required_features() {
+        let root = unique_temp_dir("cargo_oxide_artifact_required_features");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "feature-gated-bins"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+extra = []
+
+[[bin]]
+name = "always"
+path = "src/always.rs"
+
+[[bin]]
+name = "gated"
+path = "src/gated.rs"
+required-features = ["extra"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/always.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("src/gated.rs"), "fn main() {}\n").unwrap();
+
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--release"]).current_dir(&root);
+        let binary = run_cargo_build_for_executable(&mut cmd, &root, None).unwrap();
+
+        let expected_name = format!("always{}", std::env::consts::EXE_SUFFIX);
+        assert_eq!(
+            binary.file_name().and_then(OsStr::to_str),
+            Some(expected_name.as_str())
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -3728,6 +3882,213 @@ edition = "2024"
     }
 
     #[test]
+    fn cargo_json_honors_nonvirtual_workspace_default_member() {
+        let root = unique_temp_dir("cargo_oxide_artifact_nonvirtual_default_member");
+        let member = root.join("member");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(member.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "workspace-root-package"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["member"]
+default-members = ["member"]
+resolver = "2"
+
+[[bin]]
+name = "root-bin"
+path = "src/main.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(
+            member.join("Cargo.toml"),
+            r#"
+[package]
+name = "selected-member"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "member-bin"
+path = "src/main.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(member.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--release"]).current_dir(&root);
+        let binary = run_cargo_build_for_executable(&mut cmd, &root, None).unwrap();
+
+        let expected_name = format!("member-bin{}", std::env::consts::EXE_SUFFIX);
+        assert_eq!(
+            binary.file_name().and_then(OsStr::to_str),
+            Some(expected_name.as_str())
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cargo_json_explicit_bin_selects_one_of_multiple_default_members() {
+        let root = unique_temp_dir("cargo_oxide_artifact_multiple_default_members");
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(first.join("src")).unwrap();
+        std::fs::create_dir_all(second.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"first\", \"second\"]\ndefault-members = [\"first\", \"second\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            first.join("Cargo.toml"),
+            r#"
+[package]
+name = "first-package"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "first-bin"
+path = "src/main.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(first.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(
+            second.join("Cargo.toml"),
+            r#"
+[package]
+name = "second-package"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "chosen-bin"
+path = "src/main.rs"
+"#,
+        )
+        .unwrap();
+        std::fs::write(second.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let mut cmd = Command::new("cargo");
+        cmd.args(["build", "--release", "--bin", "chosen-bin"])
+            .current_dir(&root);
+        let binary = run_cargo_build_for_executable(&mut cmd, &root, Some("chosen-bin")).unwrap();
+
+        let expected_name = format!("chosen-bin{}", std::env::consts::EXE_SUFFIX);
+        assert_eq!(
+            binary.file_name().and_then(OsStr::to_str),
+            Some(expected_name.as_str())
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_bin_must_be_unique_across_selected_packages() {
+        let selection = CargoExecutableSelection {
+            packages: vec![
+                CargoSelectedPackage {
+                    package_id: "first-package 0.1.0".to_string(),
+                    package_name: "first-package".to_string(),
+                    default_run: None,
+                },
+                CargoSelectedPackage {
+                    package_id: "second-package 0.1.0".to_string(),
+                    package_name: "second-package".to_string(),
+                    default_run: None,
+                },
+            ],
+            explicit_bin: Some("shared-bin".to_string()),
+        };
+        let artifacts = vec![
+            CargoExecutableArtifact {
+                package_id: "first-package 0.1.0".to_string(),
+                target_name: "shared-bin".to_string(),
+                path: PathBuf::from("/tmp/first/shared-bin"),
+            },
+            CargoExecutableArtifact {
+                package_id: "second-package 0.1.0".to_string(),
+                target_name: "shared-bin".to_string(),
+                path: PathBuf::from("/tmp/second/shared-bin"),
+            },
+        ];
+
+        let error = select_cargo_executable_artifact(&selection, &artifacts)
+            .expect_err("the binary name does not uniquely identify an artifact");
+
+        assert!(error.contains("multiple selected packages"), "{error}");
+        assert!(error.contains("first-package"), "{error}");
+        assert!(error.contains("second-package"), "{error}");
+    }
+
+    #[test]
+    fn one_executable_package_is_selected_alongside_library_only_defaults() {
+        let selection = CargoExecutableSelection {
+            packages: vec![
+                CargoSelectedPackage {
+                    package_id: "library-package 0.1.0".to_string(),
+                    package_name: "library-package".to_string(),
+                    default_run: None,
+                },
+                CargoSelectedPackage {
+                    package_id: "application-package 0.1.0".to_string(),
+                    package_name: "application-package".to_string(),
+                    default_run: None,
+                },
+            ],
+            explicit_bin: None,
+        };
+        let artifact = CargoExecutableArtifact {
+            package_id: "application-package 0.1.0".to_string(),
+            target_name: "application-bin".to_string(),
+            path: PathBuf::from("/tmp/application/application-bin"),
+        };
+
+        assert_eq!(
+            select_cargo_executable_artifact(&selection, &[artifact]).unwrap(),
+            PathBuf::from("/tmp/application/application-bin")
+        );
+    }
+
+    #[test]
+    fn unbuilt_default_run_is_not_skipped_for_another_selected_package() {
+        let selection = CargoExecutableSelection {
+            packages: vec![
+                CargoSelectedPackage {
+                    package_id: "first-package 0.1.0".to_string(),
+                    package_name: "first-package".to_string(),
+                    default_run: Some("gated-bin".to_string()),
+                },
+                CargoSelectedPackage {
+                    package_id: "second-package 0.1.0".to_string(),
+                    package_name: "second-package".to_string(),
+                    default_run: None,
+                },
+            ],
+            explicit_bin: None,
+        };
+        let artifacts = [CargoExecutableArtifact {
+            package_id: "second-package 0.1.0".to_string(),
+            target_name: "other-bin".to_string(),
+            path: PathBuf::from("/tmp/second/other-bin"),
+        }];
+
+        let error = select_cargo_executable_artifact(&selection, &artifacts)
+            .expect_err("a missing default-run must not fall back to another package");
+
+        assert!(error.contains("first-package"), "{error}");
+        assert!(error.contains("target `gated-bin`"), "{error}");
+    }
+
+    #[test]
     fn cargo_json_errors_when_requested_bin_was_not_built() {
         let root = unique_temp_dir("cargo_oxide_artifact_missing_bin");
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -3801,9 +4162,12 @@ path = "src/other.rs"
     #[test]
     fn artifact_selection_ignores_executable_artifacts_from_other_packages() {
         let selection = CargoExecutableSelection {
-            package_id: "app 0.1.0".to_string(),
-            package_name: "app".to_string(),
-            target_name: "app-bin".to_string(),
+            packages: vec![CargoSelectedPackage {
+                package_id: "app 0.1.0".to_string(),
+                package_name: "app".to_string(),
+                default_run: None,
+            }],
+            explicit_bin: Some("app-bin".to_string()),
         };
         let artifacts = vec![
             CargoExecutableArtifact {
@@ -3820,7 +4184,8 @@ path = "src/other.rs"
 
         let error = select_cargo_executable_artifact(&selection, &artifacts)
             .expect_err("foreign package artifacts must not be selected");
-        assert!(error.contains("package `app` target `app-bin`"), "{error}");
+        assert!(error.contains("target `app-bin`"), "{error}");
+        assert!(error.contains("selected packages app"), "{error}");
     }
 
     #[test]
