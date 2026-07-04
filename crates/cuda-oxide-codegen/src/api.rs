@@ -28,9 +28,6 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static COMPILATION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A validated CUDA GPU target such as `sm_80`, `sm_90a`, or `sm_120`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -107,6 +104,7 @@ pub struct CompileOptions {
     optimization: Optimization,
     fma_contraction: bool,
     debug_info: DebugInfo,
+    verbose: bool,
 }
 
 impl CompileOptions {
@@ -117,6 +115,7 @@ impl CompileOptions {
             optimization: Optimization::O2,
             fma_contraction: true,
             debug_info: DebugInfo::None,
+            verbose: false,
         }
     }
 
@@ -140,6 +139,17 @@ impl CompileOptions {
         self
     }
 
+    /// Request progress and tool-selection diagnostics.
+    ///
+    /// Without this, [`Compilation::diagnostics`] still reports the
+    /// toolchain's own selection diagnostics and a final success note, but
+    /// omits per-compilation detail such as which target-selection source won
+    /// or why `opt -O2` was skipped.
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
+    }
+
     /// Requested CUDA target.
     pub fn target(&self) -> &Target {
         &self.target
@@ -158,6 +168,11 @@ impl CompileOptions {
     /// Requested device debug-information tier.
     pub fn debug_info(&self) -> DebugInfo {
         self.debug_info
+    }
+
+    /// Whether progress and tool-selection diagnostics were requested.
+    pub fn verbose(&self) -> bool {
+        self.verbose
     }
 }
 
@@ -274,17 +289,7 @@ impl CodegenModule {
     /// lowered LLVM function and exports it as a PTX `.entry`.
     pub fn mark_kernel_entry(&mut self, symbol: &str) -> Result<(), CompileError> {
         let module = self.module.get_operation();
-        module
-            .try_deref(&self.context)
-            .map_err(|error| CompileError::InvalidModule {
-                message: format!("the owned module operation is no longer valid: {error:?}"),
-            })?;
-        if Operation::get_op::<ModuleOp>(module, &self.context).is_none() {
-            return Err(CompileError::InvalidModule {
-                message: "the owned module pointer no longer refers to a builtin.module"
-                    .to_string(),
-            });
-        }
+        validate_live_module_op(module, &self.context)?;
         let function = {
             let region_count = module.deref(&self.context).regions().count();
             if region_count != 1 {
@@ -353,6 +358,28 @@ impl CodegenModule {
     }
 }
 
+/// Confirms `module` still refers to a live `builtin.module` operation in `ctx`.
+///
+/// `CodegenModule::edit`/`inspect` let a caller copy the raw Pliron pointer out
+/// and erase or replace it later; both entry points that resume from a stored
+/// pointer re-check this before touching the operation.
+fn validate_live_module_op(
+    module: pliron::context::Ptr<Operation>,
+    ctx: &Context,
+) -> Result<(), CompileError> {
+    module
+        .try_deref(ctx)
+        .map_err(|error| CompileError::InvalidModule {
+            message: format!("the owned module operation is no longer valid: {error:?}"),
+        })?;
+    if Operation::get_op::<ModuleOp>(module, ctx).is_none() {
+        return Err(CompileError::InvalidModule {
+            message: "the owned module pointer no longer refers to a builtin.module".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Explicit, reusable pair of LLVM tools.
 #[derive(Clone, Debug)]
 pub struct Toolchain {
@@ -412,6 +439,18 @@ impl Toolchain {
             }
         }
 
+        let selection = Diagnostic::note(
+            CompilationStage::Toolchain,
+            format!(
+                "explicit toolchain: llc = {}, opt = {}",
+                crate::llvm_tools::describe_tool(&llc_tool.path, llc_tool.major),
+                match &opt {
+                    Some(tool) => crate::llvm_tools::describe_tool(&tool.path, tool.major),
+                    None => "(none)".to_string(),
+                }
+            ),
+        );
+
         Ok(Self {
             inner: LlvmToolchain {
                 llc_path: llc_tool.path,
@@ -423,7 +462,7 @@ impl Toolchain {
                 }),
                 diagnostics: Vec::new(),
             },
-            diagnostics: Vec::new(),
+            diagnostics: vec![selection],
         })
     }
 
@@ -478,43 +517,67 @@ impl Compiler {
     }
 
     /// Compile a module without modifying its caller-visible IR.
+    ///
+    /// Compiling clones the input first, so `module` is unchanged and may be
+    /// compiled again. Callers with no further use for `module` can skip that
+    /// clone with [`compile_owned`](Self::compile_owned) instead.
     pub fn compile(
         &self,
         module: &mut CodegenModule,
         options: &CompileOptions,
     ) -> Result<Compilation, CompileError> {
+        Self::check_compile_options(options, &self.toolchain)?;
+
+        let ctx = &mut module.context;
+        let source_module = module.module.get_operation();
+        validate_live_module_op(source_module, ctx)?;
+        let mut mapper = IrMapping::new();
+        let mut rewriter = IRRewriter::<DummyListener>::default();
+        let cloned = clone_operation(source_module, ctx, &mut rewriter, &mut mapper);
+        let guard = EraseGuard {
+            operation: cloned,
+            context: ctx,
+        };
+        self.compile_clone(&mut *guard.context, cloned, options)
+    }
+
+    /// Compile `module`, consuming it.
+    ///
+    /// Skips the clone [`compile`](Self::compile) makes to keep `module`
+    /// usable afterward: destructive compiler passes run directly on the
+    /// owned IR, which is then dropped with `module`. Prefer this for
+    /// single-use modules, especially large ones, where the clone in
+    /// [`compile`](Self::compile) is pure overhead.
+    pub fn compile_owned(
+        &self,
+        mut module: CodegenModule,
+        options: &CompileOptions,
+    ) -> Result<Compilation, CompileError> {
+        Self::check_compile_options(options, &self.toolchain)?;
+
+        let ctx = &mut module.context;
+        let source_module = module.module.get_operation();
+        validate_live_module_op(source_module, ctx)?;
+        self.compile_clone(ctx, source_module, options)
+    }
+
+    fn check_compile_options(
+        options: &CompileOptions,
+        toolchain: &Toolchain,
+    ) -> Result<(), CompileError> {
         if options.debug_info == DebugInfo::Full && options.optimization != Optimization::None {
             return Err(CompileError::InvalidOptions {
                 message: "full variable debug information requires Optimization::None".to_string(),
             });
         }
-        if options.optimization == Optimization::O2 && self.toolchain.inner.opt.is_none() {
+        if options.optimization == Optimization::O2 && toolchain.inner.opt.is_none() {
             return Err(CompileError::OptimizationUnavailable {
                 message:
                     "Optimization::O2 requires an `opt` binary with the same LLVM major as llc"
                         .to_string(),
             });
         }
-
-        let ctx = &mut module.context;
-        let source_module = module.module.get_operation();
-        source_module
-            .try_deref(ctx)
-            .map_err(|error| CompileError::InvalidModule {
-                message: format!("the owned module operation is no longer valid: {error:?}"),
-            })?;
-        if Operation::get_op::<ModuleOp>(source_module, ctx).is_none() {
-            return Err(CompileError::InvalidModule {
-                message: "the owned module pointer no longer refers to a builtin.module"
-                    .to_string(),
-            });
-        }
-        let mut mapper = IrMapping::new();
-        let mut rewriter = IRRewriter::<DummyListener>::default();
-        let cloned = clone_operation(source_module, ctx, &mut rewriter, &mut mapper);
-        let result = self.compile_clone(ctx, cloned, options);
-        Operation::erase(cloned, ctx);
-        result
+        Ok(())
     }
 
     fn compile_clone(
@@ -532,10 +595,11 @@ impl Compiler {
         let ptx_path = scratch.path().join("module.ptx");
         let backend_options = BackendOptions {
             target_arch: Some(options.target.sm()),
+            target_arch_source: "the requested Target",
             device_arch_hint: None,
             no_opt: options.optimization == Optimization::None,
             no_fma: !options.fma_contraction,
-            verbose: false,
+            verbose: options.verbose,
             llc_override: None,
             opt_override: None,
         };
@@ -561,6 +625,12 @@ impl Compiler {
             })?;
             let target = Target::parse(&generated.target)?;
             let mut diagnostics = self.toolchain.diagnostics.clone();
+            diagnostics.extend(
+                generated
+                    .diagnostics
+                    .into_iter()
+                    .map(|message| Diagnostic::note(CompilationStage::Codegen, message)),
+            );
             diagnostics.push(Diagnostic::note(
                 CompilationStage::Codegen,
                 format!("generated PTX for {target}"),
@@ -574,61 +644,46 @@ impl Compiler {
     }
 }
 
+/// Erases a cloned operation on every exit path, including an unwinding panic.
+///
+/// `Compiler::compile` clones the caller's module before running the
+/// destructive pipeline on the clone. A plain "compile, then erase" sequence
+/// skips the erase if `compile_clone` panics, permanently leaking the clone in
+/// the shared `Context` arena.
+struct EraseGuard<'ctx> {
+    operation: pliron::context::Ptr<Operation>,
+    context: &'ctx mut Context,
+}
+
+impl Drop for EraseGuard<'_> {
+    fn drop(&mut self) {
+        Operation::erase(self.operation, self.context);
+    }
+}
+
 struct ScratchDirectory {
-    path: PathBuf,
+    dir: tempfile::TempDir,
 }
 
 impl ScratchDirectory {
     fn new() -> Result<Self, CompileError> {
-        let root = std::env::temp_dir();
-        for _ in 0..32 {
-            let unique = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0);
-            let call = COMPILATION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = root.join(format!(
-                "cuda_oxide_codegen_{}_{}_{}",
-                std::process::id(),
-                unique,
-                call
-            ));
-            let mut builder = std::fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            match builder.create(&path) {
-                Ok(()) => return Ok(Self { path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(source) => {
-                    return Err(CompileError::Io {
-                        action: "create compilation scratch directory",
-                        path,
-                        source,
-                    });
-                }
-            }
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("cuda_oxide_codegen_");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
         }
-        Err(CompileError::Io {
-            action: "create a unique compilation scratch directory",
-            path: root,
-            source: std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "32 atomically-created names already existed",
-            ),
-        })
+        let dir = builder.tempdir().map_err(|source| CompileError::Io {
+            action: "create compilation scratch directory",
+            path: std::env::temp_dir(),
+            source,
+        })?;
+        Ok(Self { dir })
     }
 
     fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for ScratchDirectory {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        self.dir.path()
     }
 }
 
@@ -805,6 +860,9 @@ impl From<PipelineError> for CompileError {
             }
             PipelineError::UnsupportedLinking { symbols } => Self::UnsupportedLinking { symbols },
             PipelineError::Export(message) => Self::Export { message },
+            PipelineError::TargetSelection { target, reason } => {
+                Self::InvalidTarget { target, reason }
+            }
             PipelineError::PtxGeneration(message) => Self::Codegen { message },
             PipelineError::Optimization(message) => Self::OptimizationFailed { message },
             PipelineError::NoBody(message) | PipelineError::Translation(message) => {
@@ -814,5 +872,35 @@ impl From<PipelineError> for CompileError {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn erase_guard_runs_even_when_the_guarded_closure_panics() {
+        let mut module = CodegenModule::new("guarded").unwrap();
+        let ctx = &mut module.context;
+        let source_module = module.module.get_operation();
+        let mut mapper = IrMapping::new();
+        let mut rewriter = IRRewriter::<DummyListener>::default();
+        let cloned = clone_operation(source_module, ctx, &mut rewriter, &mut mapper);
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = EraseGuard {
+                operation: cloned,
+                context: ctx,
+            };
+            panic!("simulated failure inside compile_clone");
+        }))
+        .is_err();
+        assert!(panicked, "the closure should have panicked");
+
+        assert!(
+            cloned.try_deref(&module.context).is_err(),
+            "the cloned operation should be erased even though the guarded closure panicked"
+        );
     }
 }

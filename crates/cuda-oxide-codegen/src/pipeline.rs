@@ -22,7 +22,7 @@ use crate::llvm_tools::LlvmToolchain;
 use crate::lower::{add_device_extern_declarations, lower_to_llvm};
 use crate::options::BackendOptions;
 use crate::prep::{MirPreparation, prepare_mir_module};
-use crate::ptx::{GeneratedPtx, generate_ptx, generate_ptx_with_toolchain};
+use crate::ptx::{generate_ptx, generate_ptx_with_toolchain};
 use crate::target::detect_features_in_llvm_text;
 use crate::verify::verify_operation;
 use llvm_export::export::{DebugKind, NvvmIrDialect};
@@ -261,6 +261,13 @@ pub fn compile_translated_module(
 
     // NVVM pointer syntax depends on the target. Detect the feature floor from
     // the same pre-legalization text the ordinary PTX path would inspect.
+    //
+    // Two full-text renders happen here (`export_llvm_ir` below does its own
+    // render for the real artifact): deliberate, not an oversight. This
+    // preview runs pre-legalization; the real export runs post-legalization
+    // (which mutates the module for the chosen NVVM dialect) through a
+    // different export config. Caching one render for the other would be
+    // unsound.
     let automatic_features = if emit_nvvm_ir {
         let preview = render_llvm_ir(
             ctx,
@@ -385,17 +392,14 @@ pub fn compile_translated_module(
             request.trace.sink,
             &generated_requirements,
         )?,
-        ToolchainPolicy::Explicit(toolchain) => GeneratedPtx {
-            target: generate_ptx_with_toolchain(
-                request.files.llvm_ir,
-                request.files.ptx,
-                request.debug_kind,
-                request.backend,
-                toolchain,
-                &generated_requirements,
-            )?,
-            diagnostics: Vec::new(),
-        },
+        ToolchainPolicy::Explicit(toolchain) => generate_ptx_with_toolchain(
+            request.files.llvm_ir,
+            request.files.ptx,
+            request.debug_kind,
+            request.backend,
+            toolchain,
+            &generated_requirements,
+        )?,
     };
     if request.trace.verbose {
         request.trace.emit(format!(

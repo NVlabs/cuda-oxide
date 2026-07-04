@@ -9,11 +9,16 @@ use std::path::PathBuf;
 /// backend. `run_pipeline` (mir-importer) builds one from the environment at
 /// its own boundary. The experimental API builds one from typed compile
 /// options without reading the environment.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BackendOptions {
     /// Hard target override (`llc -mcpu=`), e.g. `"sm_120"`.
     pub target_arch: Option<String>,
+    /// Human-readable name for whatever set `target_arch`, used only to
+    /// describe target provenance in diagnostics and errors (e.g.
+    /// `"CUDA_OXIDE_TARGET"` for the env-driven rustc pipeline, or a
+    /// caller-facing description for the standalone experimental API).
+    pub target_arch_source: &'static str,
     /// Advisory local-GPU arch; used only when it satisfies detected features.
     pub device_arch_hint: Option<String>,
     /// Skip the `opt -O2` middle-end.
@@ -28,6 +33,21 @@ pub struct BackendOptions {
     pub opt_override: Option<PathBuf>,
 }
 
+impl Default for BackendOptions {
+    fn default() -> Self {
+        Self {
+            target_arch: None,
+            target_arch_source: "CUDA_OXIDE_TARGET",
+            device_arch_hint: None,
+            no_opt: false,
+            no_fma: false,
+            verbose: false,
+            llc_override: None,
+            opt_override: None,
+        }
+    }
+}
+
 impl BackendOptions {
     /// Reads the historical `CUDA_OXIDE_*` variables. The ONLY env access in
     /// this crate outside this crate's own tests; called by rustc-pipeline
@@ -35,6 +55,7 @@ impl BackendOptions {
     pub fn from_env() -> Self {
         Self {
             target_arch: std::env::var("CUDA_OXIDE_TARGET").ok(),
+            target_arch_source: "CUDA_OXIDE_TARGET",
             device_arch_hint: std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok(),
             no_opt: std::env::var("CUDA_OXIDE_NO_OPT").is_ok(),
             no_fma: std::env::var("CUDA_OXIDE_NO_FMA").is_ok(),

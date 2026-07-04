@@ -248,6 +248,55 @@ fn compilation_preserves_input_and_is_repeatable() {
 }
 
 #[test]
+fn verbose_option_surfaces_pipeline_diagnostics() {
+    let tools = FakeTools::successful(false);
+    let compiler = tools.compiler();
+    let mut module = CodegenModule::new("verbose").unwrap();
+    add_empty_function(&mut module, true);
+    let options = CompileOptions::new(Target::parse("sm_80").unwrap())
+        .with_optimization(Optimization::None)
+        .with_verbose(true);
+
+    let compilation = compiler.compile(&mut module, &options).unwrap();
+    assert!(
+        compilation
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Target:")),
+        "expected a verbose target-selection diagnostic, got {:?}",
+        compilation.diagnostics()
+    );
+}
+
+#[test]
+fn from_paths_records_a_toolchain_diagnostic_on_success() {
+    let tools = FakeTools::successful(true);
+    let toolchain = Toolchain::from_paths(tools.llc.clone(), tools.opt.clone()).unwrap();
+    assert!(
+        !toolchain.diagnostics().is_empty(),
+        "explicit toolchain construction should still report what it selected"
+    );
+}
+
+#[test]
+fn compile_owned_matches_compile_and_skips_the_clone() {
+    let tools = FakeTools::successful(true);
+    let compiler = tools.compiler();
+    let options = CompileOptions::new(Target::parse("sm_80").unwrap());
+
+    let mut borrowed_module = CodegenModule::new("borrowed").unwrap();
+    add_empty_function(&mut borrowed_module, true);
+    let borrowed = compiler.compile(&mut borrowed_module, &options).unwrap();
+
+    let mut owned_module = CodegenModule::new("owned").unwrap();
+    add_empty_function(&mut owned_module, true);
+    let owned = compiler.compile_owned(owned_module, &options).unwrap();
+
+    assert_eq!(borrowed.ptx(), owned.ptx());
+    assert_eq!(borrowed.target(), owned.target());
+}
+
+#[test]
 fn erased_owned_root_is_a_structured_error_not_a_panic() {
     let tools = FakeTools::successful(false);
     let compiler = tools.compiler();

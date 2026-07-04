@@ -28,6 +28,10 @@ pub enum PipelineError {
     UnsupportedLinking { symbols: Vec<String> },
     /// LLVM IR export failed.
     Export(String),
+    /// The requested CUDA target could not be parsed, or cannot lower a
+    /// detected feature. Distinct from `PtxGeneration`: this is a problem
+    /// with the requested target itself, not with running `llc`.
+    TargetSelection { target: String, reason: String },
     /// PTX generation via `llc` failed.
     PtxGeneration(String),
     /// The requested LLVM middle-end optimization failed.
@@ -65,6 +69,7 @@ impl std::fmt::Display for PipelineError {
                 "standalone PTX cannot resolve external symbols: {symbols:?}"
             ),
             Self::Export(msg) => write!(f, "Export failed: {}", msg),
+            Self::TargetSelection { reason, .. } => write!(f, "{reason}"),
             Self::PtxGeneration(msg) => write!(f, "PTX generation failed: {}", msg),
             Self::Optimization(msg) => write!(f, "LLVM optimization failed: {msg}"),
         }
