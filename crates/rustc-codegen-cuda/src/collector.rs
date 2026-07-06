@@ -1427,8 +1427,12 @@ impl<'tcx> DeviceCollector<'tcx> {
         // Check if this is a kernel entry point. Kernels can come from ANY
         // crate — this enables library crates to export generic kernels that
         // get monomorphized when used in an application.
-        let fn_name = self.tcx.item_name(def_id);
-        if is_kernel_symbol(fn_name.as_str()) {
+        // Unnamed items (closures) have no item name — `item_name` ICEs on
+        // them — and can never be kernel entry points, so fall through to
+        // the crate-based decision for them.
+        if let Some(fn_name) = self.tcx.opt_item_name(def_id)
+            && is_kernel_symbol(fn_name.as_str())
+        {
             return CollectDecision::Collect;
         }
 
