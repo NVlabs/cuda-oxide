@@ -76,8 +76,8 @@ pub use embedded::{EmbeddedModule, EmbeddedModuleError};
 pub use error::{DriverError, IntoResult};
 pub use event::CudaEvent;
 pub use graph::{
-    CaptureMode, CaptureModeGuard, CudaGraph, CudaGraphExec, CudaGraphNode, CudaStreamCaptureExt,
-    GraphUpdateResult, KernelNodeParams,
+    CachedGraphExec, CaptureMode, CaptureModeGuard, CudaGraph, CudaGraphExec, CudaGraphNode,
+    CudaStreamCaptureExt, GraphStrategy, GraphUpdateResult, KernelNodeParams,
 };
 pub use launch::{
     BlockRequirement, DeviceLaunchLimits, DynamicSharedMemoryRequirement, KernelLaunchConfig,

@@ -503,3 +503,159 @@ impl Drop for CaptureModeGuard {
         let _ = thread_exchange_capture_mode(self.prev);
     }
 }
+
+// ---------------------------------------------------------------------------
+// CachedGraphExec — auto-warmup graph execution
+// ---------------------------------------------------------------------------
+
+/// Strategy for how a repeated GPU workload should be executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphStrategy {
+    /// Always execute directly (no graph capture).
+    Direct,
+    /// Auto-detect: first run is direct, second run with no change triggers
+    /// capture. Subsequent runs use the cached graph.
+    AutoCapture,
+    /// Use a pre-built graph from the start.
+    Prebuilt,
+}
+
+/// A lazily-captured CUDA graph with automatic warmup and change detection.
+///
+/// Inspired by llama.cpp's CUDA graph pattern:
+/// 1. First execution always runs directly (warmup).
+/// 2. If the workload is stable (no property changes), the second execution
+///    triggers graph capture.
+/// 3. Subsequent executions launch the captured graph.
+/// 4. If properties change (data pointers, shapes, etc.), the graph is
+///    invalidated and re-captured.
+pub struct CachedGraphExec {
+    strategy: GraphStrategy,
+    #[allow(dead_code)]
+    ctx: Arc<CudaContext>,
+    /// The captured graph (if any).
+    graph: Option<CudaGraph>,
+    /// The instantiated executable (if captured).
+    exec: Option<CudaGraphExec>,
+    /// Hash of the last stable property set.
+    property_hash: u64,
+    /// How many times we've seen the current property hash.
+    stable_count: u32,
+}
+
+impl CachedGraphExec {
+    /// Creates a new cached graph executor.
+    pub fn new(ctx: &Arc<CudaContext>, strategy: GraphStrategy) -> Self {
+        Self {
+            strategy,
+            ctx: ctx.clone(),
+            graph: None,
+            exec: None,
+            property_hash: 0,
+            stable_count: 0,
+        }
+    }
+
+    /// Records property information that determines graph identity.
+    /// Changing any of these values invalidates a captured graph.
+    pub fn set_properties(&mut self, data_ptrs: &[*const std::ffi::c_void], shapes: &[u64]) {
+        let mut hash: u64 = 0x9ae16a3b2f90404f; // FNV offset basis (64-bit)
+        for &ptr in data_ptrs {
+            hash = hash.wrapping_mul(0x100000001b3).wrapping_add(ptr as u64);
+        }
+        for &shape in shapes {
+            hash = hash.wrapping_mul(0x100000001b3).wrapping_add(shape);
+        }
+        if hash != self.property_hash {
+            self.property_hash = hash;
+            self.stable_count = 0;
+            self.invalidate();
+        }
+    }
+
+    /// Returns the strategy in use.
+    pub fn strategy(&self) -> GraphStrategy {
+        self.strategy
+    }
+
+    /// Returns true if a captured graph is ready for launch.
+    pub fn has_cached_graph(&self) -> bool {
+        self.exec.is_some()
+    }
+
+    /// Invalidates any captured graph, forcing re-capture on the next launch.
+    pub fn invalidate(&mut self) {
+        self.exec = None;
+        self.graph = None;
+    }
+
+    /// Executes a workload using the configured strategy.
+    ///
+    /// - `capture_fn`: Called with the stream in capture mode to record
+    ///   operations. Must NOT synchronize the stream.
+    /// - `execute_fn`: Called with the stream to directly execute operations.
+    ///   Used during warmup and when graphs are disabled.
+    pub fn launch_or_capture<F, E>(
+        &mut self,
+        stream: &CudaStream,
+        capture_fn: F,
+        execute_fn: E,
+    ) -> Result<(), DriverError>
+    where
+        F: FnOnce(&CudaStream) -> Result<(), DriverError>,
+        E: FnOnce(&CudaStream) -> Result<(), DriverError>,
+    {
+        match self.strategy {
+            GraphStrategy::Direct => execute_fn(stream),
+            GraphStrategy::Prebuilt => {
+                if let Some(ref exec) = self.exec {
+                    exec.launch(stream)
+                } else {
+                    // No prebuilt graph provided; fall back to direct.
+                    execute_fn(stream)
+                }
+            }
+            GraphStrategy::AutoCapture => {
+                if let Some(ref exec) = self.exec {
+                    if self.stable_count >= 2 {
+                        // Update the executable if the graph was re-captured.
+                        return exec.launch(stream);
+                    }
+                }
+
+                self.stable_count += 1;
+
+                if self.stable_count < 2 {
+                    // Warmup: execute directly.
+                    return execute_fn(stream);
+                }
+
+                // Second stable run: capture the graph.
+                self.graph = None;
+                self.exec = None;
+
+                stream.begin_capture(CaptureMode::Relaxed)?;
+                capture_fn(stream)?;
+                let graph = stream.end_capture()?;
+                let exec = graph.instantiate()?;
+                self.graph = Some(graph);
+                self.exec = Some(exec);
+
+                // Launch the freshly instantiated graph.
+                if let Some(ref exec) = self.exec {
+                    exec.launch(stream)
+                } else {
+                    Err(DriverError(
+                        cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_VALUE,
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Manually sets a prebuilt graph executable (for [`GraphStrategy::Prebuilt`]).
+    pub fn set_prebuilt(&mut self, graph: CudaGraph, exec: CudaGraphExec) {
+        self.graph = Some(graph);
+        self.exec = Some(exec);
+    }
+}
