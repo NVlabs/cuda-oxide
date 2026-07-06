@@ -595,9 +595,7 @@ intrinsic emitters per LLVM version, we set 21 as the minimum.
 
 ### External Post-IR Hooks
 
-`CUDA_OXIDE_POST_IR` — the IR-stage analogue of the `CUDA_OXIDE_LLC`
-override — lets external tools rewrite the exported `.ll` before code
-generation, without forking the compiler. It names one or more executables (a
+`CUDA_OXIDE_POST_IR` names one or more executables (a
 PATH-style list, `:`-separated on Unix) that the pipeline runs in order
 between IR export and PTX generation (in `--emit-nvvm-ir` mode: before the
 `.ll` is handed to the consumer). Each hook is invoked as
@@ -607,13 +605,9 @@ between IR export and PTX generation (in `--emit-nvvm-ir` mode: before the
 ```
 
 (`<target>` is the explicit target arch, possibly empty) and may rewrite
-`<ll_path>` in place; the next hook — and ultimately code generation — sees
-the edits. Hooks are transform-only: stdout is ignored, and the pipeline
+`<ll_path>` in place. Hooks are transform-only: stdout is ignored, and the pipeline
 always finishes code generation itself. Exit 0 continues the build; a
 non-zero exit aborts it, surfacing the hook's stderr in the compile error.
-Like every `CUDA_OXIDE_*` variable, the environment is read at the rustc
-frontend boundary (`BackendOptions::from_env`); the backend itself sees an
-explicit `post_ir_hooks` list.
 
 Typical uses are custom LLVM passes/plugins, instrumentation, linking
 external bitcode, and automatic differentiation. The `post_ir_hook` example
