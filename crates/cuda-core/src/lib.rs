@@ -48,6 +48,8 @@ pub mod embedded;
 pub mod error;
 /// CUDA event management (timing, synchronization).
 pub mod event;
+/// CUDA graph management (capture, instantiation, launch).
+pub mod graph;
 /// Kernel launch configuration helpers.
 pub mod launch;
 /// Device memory allocation and transfer operations.
@@ -73,6 +75,7 @@ pub use device_buffer::{DeviceBuffer, DeviceCopy};
 pub use embedded::{EmbeddedModule, EmbeddedModuleError};
 pub use error::{DriverError, IntoResult};
 pub use event::CudaEvent;
+pub use graph::{CaptureMode, CaptureModeGuard, CudaGraph, CudaGraphExec, CudaStreamCaptureExt};
 pub use launch::{
     BlockRequirement, DeviceLaunchLimits, DynamicSharedMemoryRequirement, KernelLaunchConfig,
     KernelLaunchContract, LaunchAxis, LaunchConfig, LaunchConfig1D, LaunchConfig2D, LaunchConfig3D,
