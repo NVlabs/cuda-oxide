@@ -1,0 +1,8 @@
+# Engage this example's Enzyme post-IR hook automatically: the device build's
+# rustc is spawned by cargo from this directory, so `[env]` reaches the codegen
+# pipeline. `relative = true` resolves the value against the example root, and
+# `force = true` keeps the example deterministic even if the caller exported
+# their own CUDA_OXIDE_POST_IR. The hook itself is configured through the
+# LLVMENZYME / ENZYME_OPT variables, which pass through normally (see enzyme.sh).
+[env]
+CUDA_OXIDE_POST_IR = { value = "enzyme.sh", relative = true, force = true }

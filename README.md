@@ -255,6 +255,7 @@ compiles a Rust kernel to PTX, launches it on the GPU, and prints
 | `async_mlp`          | Async MLP pipeline: GEMM → MatVec → ReLU across concurrent streams       |
 | `mathdx_ffi_test`    | cuFFTDx thread-level FFT + cuBLASDx block-level GEMM                     |
 | `device_ffi_test`    | Device FFI: Rust kernels calling C++ CCCL warp-level reductions via LTOIR|
+| `enzyme_autodiff`    | Enzyme autodiff of a `#[device]` fn via the `CUDA_OXIDE_POST_IR` IR hook |
 | `async_vecadd`       | Async GPU execution with `cuda-async` and `DeviceOperation`              |
 | `cross_crate_kernel` | Library crates defining kernels, bundled into binaries                   |
 | `cuda_module_in_lib` | `#[cuda_module]` in a library crate, loaded by embedded bundle name      |

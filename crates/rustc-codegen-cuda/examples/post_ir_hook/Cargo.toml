@@ -1,0 +1,19 @@
+[package]
+name = "post_ir_hook"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# Mark as standalone crate (not part of parent workspace)
+[workspace]
+
+# Smoke test for the `CUDA_OXIDE_POST_IR` hook: an external program rewrites
+# the exported LLVM IR in place and the pipeline still produces working PTX.
+# The hook is wired up hermetically via this example's `.cargo/config.toml`.
+# Build with:
+#   cargo oxide run post_ir_hook
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }

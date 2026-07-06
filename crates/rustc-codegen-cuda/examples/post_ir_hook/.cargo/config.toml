@@ -1,0 +1,7 @@
+# Engage this example's post-IR hook automatically: the device build's rustc
+# is spawned by cargo from this directory, so `[env]` reaches the codegen
+# pipeline. `relative = true` resolves the value against the example root, and
+# `force = true` keeps the example deterministic even if the caller exported
+# their own CUDA_OXIDE_POST_IR.
+[env]
+CUDA_OXIDE_POST_IR = { value = "hook.sh", relative = true, force = true }

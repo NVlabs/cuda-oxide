@@ -1,0 +1,20 @@
+[package]
+name = "enzyme_autodiff"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# Mark as standalone crate (not part of parent workspace)
+[workspace]
+
+# Automatic differentiation of a device function with Enzyme, driven through
+# the `CUDA_OXIDE_POST_IR` hook (see `.cargo/config.toml` and `enzyme.sh`).
+# Build with:
+#   cargo oxide run enzyme_autodiff
+# Requires an LLVMEnzyme plugin built against LLVM 21 (see README.md); without
+# one the hook leaves the IR untouched and the example prints `skipping: ...`.
+
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
+cuda-host = { path = "../../../cuda-host" }
+cuda-core = { path = "../../../cuda-core" }
