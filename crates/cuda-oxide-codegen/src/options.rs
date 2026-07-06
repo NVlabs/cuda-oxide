@@ -26,6 +26,12 @@ pub struct BackendOptions {
     pub llc_override: Option<PathBuf>,
     /// Explicit `opt` binary (was `CUDA_OXIDE_OPT`).
     pub opt_override: Option<PathBuf>,
+    /// External post-IR hook programs (was `CUDA_OXIDE_POST_IR`), run in
+    /// order on the exported `.ll` before it is consumed by PTX generation
+    /// (or returned as the NVVM-IR artifact). Transform-only: each hook may
+    /// rewrite the file in place; exit 0 continues the build, non-zero aborts
+    /// it with the hook's stderr.
+    pub post_ir_hooks: Vec<PathBuf>,
 }
 
 impl BackendOptions {
@@ -41,6 +47,15 @@ impl BackendOptions {
             verbose: std::env::var("CUDA_OXIDE_VERBOSE").is_ok(),
             llc_override: std::env::var("CUDA_OXIDE_LLC").ok().map(PathBuf::from),
             opt_override: std::env::var("CUDA_OXIDE_OPT").ok().map(PathBuf::from),
+            // PATH semantics (`:` on Unix, `;` on Windows) so a Windows drive
+            // letter cannot clash with the separator.
+            post_ir_hooks: std::env::var("CUDA_OXIDE_POST_IR")
+                .map(|hooks| {
+                    std::env::split_paths(&hooks)
+                        .filter(|hook| !hook.as_os_str().is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }

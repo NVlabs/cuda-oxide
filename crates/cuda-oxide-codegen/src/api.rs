@@ -538,6 +538,9 @@ impl Compiler {
             verbose: false,
             llc_override: None,
             opt_override: None,
+            // Not exposed through the experimental options: external post-IR
+            // hooks stay a rustc-frontend (`CUDA_OXIDE_POST_IR`) feature.
+            post_ir_hooks: Vec::new(),
         };
         let request = ModulePipelineRequest::for_standalone_ptx(
             &backend_options,
@@ -806,6 +809,7 @@ impl From<PipelineError> for CompileError {
             PipelineError::UnsupportedLinking { symbols } => Self::UnsupportedLinking { symbols },
             PipelineError::Export(message) => Self::Export { message },
             PipelineError::PtxGeneration(message) => Self::Codegen { message },
+            PipelineError::PostIr(message) => Self::Codegen { message },
             PipelineError::Optimization(message) => Self::OptimizationFailed { message },
             PipelineError::NoBody(message) | PipelineError::Translation(message) => {
                 Self::Verification {

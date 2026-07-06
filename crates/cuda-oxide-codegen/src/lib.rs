@@ -18,6 +18,7 @@
 mod api;
 mod error;
 mod export;
+mod hooks;
 mod llvm_tools;
 mod lower;
 mod options;

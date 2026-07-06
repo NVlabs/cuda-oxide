@@ -54,7 +54,7 @@ pub struct PipelineTrace {
 }
 
 impl PipelineTrace {
-    fn emit(&self, message: impl AsRef<str>) {
+    pub(crate) fn emit(&self, message: impl AsRef<str>) {
         if let Some(sink) = self.sink {
             sink(message.as_ref());
         }
@@ -317,6 +317,15 @@ pub fn compile_translated_module(
             request.files.llvm_ir.display()
         ));
     }
+
+    // Optional external post-IR rewrites: both consumers below (the NVVM-IR
+    // artifact and PTX generation) see the possibly rewritten `.ll`.
+    crate::hooks::run_post_ir_hooks(
+        &request.backend.post_ir_hooks,
+        request.files.llvm_ir,
+        request.backend.target_arch.as_deref().unwrap_or(""),
+        &request.trace,
+    )?;
 
     if emit_nvvm_ir {
         if request.trace.verbose {

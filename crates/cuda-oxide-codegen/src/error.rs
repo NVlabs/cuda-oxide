@@ -32,6 +32,10 @@ pub enum PipelineError {
     PtxGeneration(String),
     /// The requested LLVM middle-end optimization failed.
     Optimization(String),
+    /// An external post-IR hook ([`BackendOptions::post_ir_hooks`]) failed.
+    ///
+    /// [`BackendOptions::post_ir_hooks`]: crate::options::BackendOptions::post_ir_hooks
+    PostIr(String),
 }
 
 impl std::fmt::Display for PipelineError {
@@ -67,6 +71,7 @@ impl std::fmt::Display for PipelineError {
             Self::Export(msg) => write!(f, "Export failed: {}", msg),
             Self::PtxGeneration(msg) => write!(f, "PTX generation failed: {}", msg),
             Self::Optimization(msg) => write!(f, "LLVM optimization failed: {msg}"),
+            Self::PostIr(msg) => write!(f, "post-IR hook failed: {}", msg),
         }
     }
 }
