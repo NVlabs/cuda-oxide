@@ -19,9 +19,10 @@ use dialect_nvvm::ops::{
     Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
     Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
     Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
-    Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
-    Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
-    Tcgen05StoreWaitOp,
+    Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsE2M1Op,
+    Tcgen05MmaWsE2M3Op, Tcgen05MmaWsE3M2Op, Tcgen05MmaWsE4M3Op, Tcgen05MmaWsE5M2Op,
+    Tcgen05MmaWsF16Op, Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op,
+    Tcgen05RelinquishAllocPermitOp, Tcgen05StoreWaitOp,
 };
 // NOTE: Removed imports for deprecated ops (now in cuda-core as builders):
 // Tcgen05MakeSmemDescOp, Tcgen05MakeSmemDescStridedOp, Tcgen05StTmemToSmemOp,
@@ -1023,6 +1024,616 @@ pub fn emit_tcgen05_mma_ws_tf32(
             loc.clone(),
             TranslationErr::unsupported(
                 "tcgen05_mma_ws_tf32 call without target block".to_string()
+            )
+        )
+    }
+}
+
+/// Emit tcgen05_mma_ws_e4m3: Matrix multiply-accumulate with FP8 E4M3 inputs.
+///
+/// The element type (E4M3) is encoded in the instruction descriptor (idesc),
+/// not in the PTX mnemonic kind.
+pub fn emit_tcgen05_mma_ws_e4m3(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 6 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "tcgen05_mma_ws_e4m3 expects 6 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (d_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (b_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[3],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (idesc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[4],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (enable_d, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[5],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let mma_op = Operation::new(
+        ctx,
+        Tcgen05MmaWsE4M3Op::get_concrete_op_info(),
+        vec![],
+        vec![d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, mma_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "tcgen05_mma_ws_e4m3 call without target block".to_string()
+            )
+        )
+    }
+}
+
+/// Emit tcgen05_mma_ws_e5m2: Matrix multiply-accumulate with FP8 E5M2 inputs.
+///
+/// The element type (E5M2) is encoded in the instruction descriptor (idesc),
+/// not in the PTX mnemonic kind.
+pub fn emit_tcgen05_mma_ws_e5m2(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 6 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "tcgen05_mma_ws_e5m2 expects 6 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (d_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (b_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[3],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (idesc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[4],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (enable_d, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[5],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let mma_op = Operation::new(
+        ctx,
+        Tcgen05MmaWsE5M2Op::get_concrete_op_info(),
+        vec![],
+        vec![d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, mma_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "tcgen05_mma_ws_e5m2 call without target block".to_string()
+            )
+        )
+    }
+}
+
+/// Emit tcgen05_mma_ws_e2m3: Matrix multiply-accumulate with FP6 E2M3 inputs.
+///
+/// The element type (E2M3) is encoded in the instruction descriptor (idesc),
+/// not in the PTX mnemonic kind.
+pub fn emit_tcgen05_mma_ws_e2m3(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 6 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "tcgen05_mma_ws_e2m3 expects 6 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (d_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (b_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[3],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (idesc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[4],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (enable_d, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[5],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let mma_op = Operation::new(
+        ctx,
+        Tcgen05MmaWsE2M3Op::get_concrete_op_info(),
+        vec![],
+        vec![d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, mma_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "tcgen05_mma_ws_e2m3 call without target block".to_string()
+            )
+        )
+    }
+}
+
+/// Emit tcgen05_mma_ws_e3m2: Matrix multiply-accumulate with FP6 E3M2 inputs.
+///
+/// The element type (E3M2) is encoded in the instruction descriptor (idesc),
+/// not in the PTX mnemonic kind.
+pub fn emit_tcgen05_mma_ws_e3m2(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 6 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "tcgen05_mma_ws_e3m2 expects 6 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (d_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (b_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[3],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (idesc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[4],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (enable_d, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[5],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let mma_op = Operation::new(
+        ctx,
+        Tcgen05MmaWsE3M2Op::get_concrete_op_info(),
+        vec![],
+        vec![d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, mma_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "tcgen05_mma_ws_e3m2 call without target block".to_string()
+            )
+        )
+    }
+}
+
+/// Emit tcgen05_mma_ws_e2m1: Matrix multiply-accumulate with FP4 E2M1 inputs.
+///
+/// The element type (E2M1) is encoded in the instruction descriptor (idesc),
+/// not in the PTX mnemonic kind.
+pub fn emit_tcgen05_mma_ws_e2m1(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 6 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "tcgen05_mma_ws_e2m1 expects 6 arguments, got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+
+    let (d_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_tmem, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (a_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (b_desc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[3],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (idesc, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[4],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let (enable_d, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[5],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = last_op_after;
+
+    let mma_op = Operation::new(
+        ctx,
+        Tcgen05MmaWsE2M1Op::get_concrete_op_info(),
+        vec![],
+        vec![d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        let goto_op = emit_goto(ctx, *target_idx, mma_op, block_map, loc);
+        Ok(goto_op)
+    } else {
+        input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "tcgen05_mma_ws_e2m1 call without target block".to_string()
             )
         )
     }

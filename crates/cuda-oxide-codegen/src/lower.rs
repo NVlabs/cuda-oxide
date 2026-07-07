@@ -169,6 +169,12 @@ fn device_extern_type_to_pliron(
         DeviceExternType::Float16 => HalfType::get(ctx).into(),
         DeviceExternType::Float32 => FP32Type::get(ctx).into(),
         DeviceExternType::Float64 => FP64Type::get(ctx).into(),
+        DeviceExternType::BFloat16 => IntegerType::get(ctx, 16, Signedness::Signless).into(),
+        DeviceExternType::Float8E4M3
+        | DeviceExternType::Float8E5M2
+        | DeviceExternType::Float4E2M1
+        | DeviceExternType::Float6E3M2
+        | DeviceExternType::Float6E2M3 => IntegerType::get(ctx, 8, Signedness::Signless).into(),
         DeviceExternType::Pointer {
             pointee,
             address_space,

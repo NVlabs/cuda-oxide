@@ -21,6 +21,24 @@ pub enum DeviceExternType {
     Float16,
     Float32,
     Float64,
+    /// Brain floating-point (bfloat16). Blackwell tensor cores consume this
+    /// natively; LLVM has supported `bfloat` since LLVM 14, but the pliron
+    /// LLVM dialect does not yet expose a dedicated type, so we lower to
+    /// `i16` at the declaration boundary.
+    BFloat16,
+    /// FP8 with 4 exponent + 3 mantissa bits (E4M3). Blackwell tensor cores
+    /// support this format natively; LLVM lacks a dedicated type, so we
+    /// lower to `i8`.
+    Float8E4M3,
+    /// FP8 with 5 exponent + 2 mantissa bits (E5M2). Same lowering as above.
+    Float8E5M2,
+    /// FP4 with 2 exponent + 1 mantissa bits (E2M1). Blackwell-native;
+    /// LLVM lacks a dedicated type, so we lower to `i8`.
+    Float4E2M1,
+    /// FP6 with 3 exponent + 2 mantissa bits (E3M2). Same lowering as above.
+    Float6E3M2,
+    /// FP6 with 2 exponent + 3 mantissa bits (E2M3). Same lowering as above.
+    Float6E2M3,
     /// A pointer with an exact pointee and NVVM address space.
     Pointer {
         pointee: Box<DeviceExternType>,
@@ -88,6 +106,12 @@ impl DeviceExternType {
             Self::Float16 => write!(output, "half").unwrap(),
             Self::Float32 => write!(output, "float").unwrap(),
             Self::Float64 => write!(output, "double").unwrap(),
+            Self::BFloat16 => write!(output, "i16").unwrap(),
+            Self::Float8E4M3
+            | Self::Float8E5M2
+            | Self::Float4E2M1
+            | Self::Float6E3M2
+            | Self::Float6E2M3 => write!(output, "i8").unwrap(),
             Self::Pointer {
                 pointee,
                 address_space,
@@ -122,7 +146,8 @@ impl DeviceExternType {
         Ok(())
     }
 
-    pub(crate) fn llvm_string(&self, legacy_typed_pointers: bool) -> Result<String, String> {
+    /// Render this type as an LLVM IR type string.
+    pub fn llvm_string(&self, legacy_typed_pointers: bool) -> Result<String, String> {
         let mut output = String::new();
         self.write_llvm(&mut output, legacy_typed_pointers)?;
         Ok(output)

@@ -103,6 +103,12 @@ fn device_extern_type_matches_erased(
         DeviceExternType::Float16 => actual.is::<HalfType>(),
         DeviceExternType::Float32 => actual.is::<FP32Type>(),
         DeviceExternType::Float64 => actual.is::<FP64Type>(),
+        DeviceExternType::BFloat16 => actual
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|ty| ty.width() == 16),
+        DeviceExternType::Float8E4M3 | DeviceExternType::Float8E5M2 | DeviceExternType::Float4E2M1 | DeviceExternType::Float6E3M2 | DeviceExternType::Float6E2M3 => actual
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|ty| ty.width() == 8),
         DeviceExternType::Pointer { address_space, .. } => actual
             .downcast_ref::<PointerType>()
             .is_some_and(|ty| ty.address_space() == *address_space),

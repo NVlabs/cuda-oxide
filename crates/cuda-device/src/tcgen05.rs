@@ -649,6 +649,41 @@ pub enum Tcgen05ElementType {
     BF16 = 1,
     /// TF32 (TensorFloat-32) - only valid for .kind::tf32
     TF32 = 2,
+    /// FP8 E4M3 (4 exponent + 3 mantissa bits). Blackwell-native.
+    E4M3 = 3,
+    /// FP8 E5M2 (5 exponent + 2 mantissa bits). Blackwell-native.
+    E5M2 = 4,
+    /// FP6 E2M3 (2 exponent + 3 mantissa bits). Blackwell-native.
+    E2M3 = 5,
+    /// FP6 E3M2 (3 exponent + 2 mantissa bits). Blackwell-native.
+    E3M2 = 6,
+    /// FP4 E2M1 (2 exponent + 1 mantissa bit). Blackwell-native.
+    E2M1 = 7,
+}
+
+impl Tcgen05ElementType {
+    /// Returns the idesc atype/btype encoding value for this element type.
+    ///
+    /// The idesc encoding is kind-dependent per the PTX ISA:
+    /// - `kind::f16`: F16=0, BF16=1
+    /// - `kind::tf32`: TF32=2
+    /// - `kind::f8f6f4`: E4M3=0, E5M2=1, E2M3=3, E3M2=4, E2M1=5
+    ///
+    /// The enum discriminants are only used for identification; this method
+    /// performs the correct mapping so that `build()` always emits the right
+    /// bit pattern regardless of the kind family.
+    pub const fn idesc_value(self) -> u32 {
+        match self {
+            Self::F16 => 0,
+            Self::BF16 => 1,
+            Self::TF32 => 2,
+            Self::E4M3 => 0,
+            Self::E5M2 => 1,
+            Self::E2M3 => 3,
+            Self::E3M2 => 4,
+            Self::E2M1 => 5,
+        }
+    }
 }
 
 /// Accumulator (output D) data type for tcgen05 MMA operations.
@@ -716,8 +751,8 @@ impl Tcgen05MmaShape {
 /// 3     | Reserved           | 0
 /// 4-5   | dtype              | D type: F16=0, F32=1
 /// 6     | Reserved           | 0
-/// 7-9   | atype              | A type: F16=0, BF16=1, TF32=2
-/// 10-12 | btype              | B type: F16=0, BF16=1, TF32=2
+/// 7-9   | atype              | A type (kind-dependent, see [`Tcgen05ElementType::idesc_value`])
+/// 10-12 | btype              | B type (kind-dependent, see [`Tcgen05ElementType::idesc_value`])
 /// 13    | Negate A           | 0 = No, 1 = Yes
 /// 14    | Negate B           | 0 = No, 1 = Yes
 /// 15    | Transpose A        | 0 = No, 1 = Yes
@@ -784,6 +819,66 @@ impl Tcgen05InstructionDescriptor {
         Self::builder()
             .shape(Tcgen05MmaShape::M128_N256)
             .element_type(Tcgen05ElementType::TF32)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build()
+    }
+
+    /// Create descriptor for FP8 E4M3 MMA with default settings.
+    ///
+    /// Default: 128×256 shape, E4M3 inputs, F32 accumulator.
+    #[inline(always)]
+    pub const fn new_e4m3() -> Self {
+        Self::builder()
+            .shape(Tcgen05MmaShape::M128_N256)
+            .element_type(Tcgen05ElementType::E4M3)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build()
+    }
+
+    /// Create descriptor for FP8 E5M2 MMA with default settings.
+    ///
+    /// Default: 128×256 shape, E5M2 inputs, F32 accumulator.
+    #[inline(always)]
+    pub const fn new_e5m2() -> Self {
+        Self::builder()
+            .shape(Tcgen05MmaShape::M128_N256)
+            .element_type(Tcgen05ElementType::E5M2)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build()
+    }
+
+    /// Create descriptor for FP6 E2M3 MMA with default settings.
+    ///
+    /// Default: 128×256 shape, E2M3 inputs, F32 accumulator.
+    #[inline(always)]
+    pub const fn new_e2m3() -> Self {
+        Self::builder()
+            .shape(Tcgen05MmaShape::M128_N256)
+            .element_type(Tcgen05ElementType::E2M3)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build()
+    }
+
+    /// Create descriptor for FP6 E3M2 MMA with default settings.
+    ///
+    /// Default: 128×256 shape, E3M2 inputs, F32 accumulator.
+    #[inline(always)]
+    pub const fn new_e3m2() -> Self {
+        Self::builder()
+            .shape(Tcgen05MmaShape::M128_N256)
+            .element_type(Tcgen05ElementType::E3M2)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build()
+    }
+
+    /// Create descriptor for FP4 E2M1 MMA with default settings.
+    ///
+    /// Default: 128×256 shape, E2M1 inputs, F32 accumulator.
+    #[inline(always)]
+    pub const fn new_e2m1() -> Self {
+        Self::builder()
+            .shape(Tcgen05MmaShape::M128_N256)
+            .element_type(Tcgen05ElementType::E2M1)
             .accumulator_type(Tcgen05AccumulatorType::F32)
             .build()
     }
@@ -987,11 +1082,11 @@ impl Tcgen05InstructionDescriptorBuilder {
 
         // Bit 6: Reserved (0)
 
-        // Bits 7-9: atype (3 bits)
-        raw |= (self.atype as u32) << 7;
+        // Bits 7-9: atype (3 bits) — encoding is kind-dependent
+        raw |= self.atype.idesc_value() << 7;
 
-        // Bits 10-12: btype (3 bits)
-        raw |= (self.btype as u32) << 10;
+        // Bits 10-12: btype (3 bits) — encoding is kind-dependent
+        raw |= self.btype.idesc_value() << 10;
 
         // Bit 13: Negate A
         if self.negate_a {
@@ -1460,6 +1555,73 @@ pub unsafe fn tcgen05_mma_ws_f16(
 }
 
 /// tcgen05 Matrix Multiply-Accumulate with f16 inputs (non-warp-specialized form).
+/// tcgen05 MMA with FP6 E2M3 inputs.
+///
+/// FP6 E2M3 (2-bit exponent, 3-bit mantissa) offers higher precision than
+/// E3M2 at the cost of reduced dynamic range.
+///
+/// # Safety
+///
+/// - All descriptors must be valid and properly initialized
+/// - Must be called from within a CUDA kernel context on sm_100a+
+#[inline(never)]
+pub unsafe fn tcgen05_mma_ws_e2m3(
+    d_tmem: u32,
+    a_tmem: u32,
+    a_desc: u64,
+    b_desc: u64,
+    idesc: u32,
+    enable_d: bool,
+) {
+    let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d);
+    unreachable!("tcgen05_mma_ws_e2m3 called outside CUDA kernel context")
+}
+
+/// tcgen05 MMA with FP6 E3M2 inputs.
+///
+/// FP6 E3M2 (3-bit exponent, 2-bit mantissa) offers wider dynamic range
+/// than E2M3 at the cost of reduced precision.
+///
+/// # Safety
+///
+/// - All descriptors must be valid and properly initialized
+/// - Must be called from within a CUDA kernel context on sm_100a+
+#[inline(never)]
+pub unsafe fn tcgen05_mma_ws_e3m2(
+    d_tmem: u32,
+    a_tmem: u32,
+    a_desc: u64,
+    b_desc: u64,
+    idesc: u32,
+    enable_d: bool,
+) {
+    let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d);
+    unreachable!("tcgen05_mma_ws_e3m2 called outside CUDA kernel context")
+}
+
+/// tcgen05 MMA with FP4 E2M1 inputs.
+///
+/// FP4 E2M1 (2-bit exponent, 1-bit mantissa) is the lowest precision
+/// Blackwell-native floating-point format, offering the highest throughput.
+///
+/// # Safety
+///
+/// - All descriptors must be valid and properly initialized
+/// - Must be called from within a CUDA kernel context on sm_100a+
+#[inline(never)]
+pub unsafe fn tcgen05_mma_ws_e2m1(
+    d_tmem: u32,
+    a_tmem: u32,
+    a_desc: u64,
+    b_desc: u64,
+    idesc: u32,
+    enable_d: bool,
+) {
+    let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d);
+    unreachable!("tcgen05_mma_ws_e2m1 called outside CUDA kernel context")
+}
+
+/// tcgen05 MMA with f16 inputs (non-warp-specialized form).
 ///
 /// Performs D = A × B + D (or D = A × B if `enable_d` is false).
 ///
@@ -1475,8 +1637,6 @@ pub unsafe fn tcgen05_mma_ws_f16(
 /// - `b_desc`: SMEM descriptor for B (from `Tcgen05SmemDescriptor::builder()`)
 /// - `idesc`: Instruction descriptor
 /// - `enable_d`: true = D += A×B, false = D = A×B
-///
-/// # PTX (expected)
 ///
 /// # Safety
 ///
@@ -1533,6 +1693,56 @@ pub unsafe fn tcgen05_mma_ws_tf32(
 ) {
     let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d);
     unreachable!("tcgen05_mma_ws_tf32 called outside CUDA kernel context")
+}
+
+/// tcgen05 MMA with FP8 E4M3 inputs.
+///
+/// FP8 E4M3 (4-bit exponent, 3-bit mantissa) is a Blackwell-native format
+/// offering higher throughput than FP16 at reduced precision.
+///
+/// # PTX
+///
+/// ```ptx
+/// tcgen05.mma.ws.cta_group::1.kind::f16 [d-tmem], [a-tmem], a-desc, b-desc, idesc, enable-d;
+/// ```
+///
+/// # Safety
+///
+/// - All descriptors must be valid and properly initialized
+/// - Must be called from within a CUDA kernel context on sm_100a+
+#[inline(never)]
+pub unsafe fn tcgen05_mma_ws_e4m3(
+    d_tmem: u32,
+    a_tmem: u32,
+    a_desc: u64,
+    b_desc: u64,
+    idesc: u32,
+    enable_d: bool,
+) {
+    let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d);
+    unreachable!("tcgen05_mma_ws_e4m3 called outside CUDA kernel context")
+}
+
+/// tcgen05 MMA with FP8 E5M2 inputs.
+///
+/// FP8 E5M2 (5-bit exponent, 2-bit mantissa) offers a wider dynamic range
+/// than E4M3 at the cost of reduced precision.
+///
+/// # Safety
+///
+/// - All descriptors must be valid and properly initialized
+/// - Must be called from within a CUDA kernel context on sm_100a+
+#[inline(never)]
+pub unsafe fn tcgen05_mma_ws_e5m2(
+    d_tmem: u32,
+    a_tmem: u32,
+    a_desc: u64,
+    b_desc: u64,
+    idesc: u32,
+    enable_d: bool,
+) {
+    let _ = (d_tmem, a_tmem, a_desc, b_desc, idesc, enable_d);
+    unreachable!("tcgen05_mma_ws_e5m2 called outside CUDA kernel context")
 }
 
 /// tcgen05 MMA with f16 inputs and collector buffer hint.
@@ -2308,4 +2518,168 @@ pub unsafe fn tcgen05_commit_multicast_cg2(mbar: *mut u64, cta_mask: u16) {
 pub unsafe fn tcgen05_cp_smem_to_tmem_cg2(tmem_addr: u32, smem_desc: u64) {
     let _ = (tmem_addr, smem_desc);
     unreachable!("tcgen05_cp_smem_to_tmem_cg2 called outside CUDA kernel context")
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that `idesc_value()` returns the correct PTX ISA encoding
+    /// for each element type under its corresponding kind.
+    ///
+    /// Reference: PTX ISA Table 45 (Instruction descriptor for
+    /// .kind::tf32, .kind::f16, .kind::f8f6f4 and .kind::i8)
+    #[test]
+    fn idesc_value_matches_ptx_isa_encoding() {
+        // kind::f16 family
+        assert_eq!(Tcgen05ElementType::F16.idesc_value(), 0);
+        assert_eq!(Tcgen05ElementType::BF16.idesc_value(), 1);
+
+        // kind::tf32
+        assert_eq!(Tcgen05ElementType::TF32.idesc_value(), 2);
+
+        // kind::f8f6f4 family — note: encoding differs from enum discriminant!
+        assert_eq!(Tcgen05ElementType::E4M3.idesc_value(), 0);
+        assert_eq!(Tcgen05ElementType::E5M2.idesc_value(), 1);
+        assert_eq!(Tcgen05ElementType::E2M3.idesc_value(), 3);
+        assert_eq!(Tcgen05ElementType::E3M2.idesc_value(), 4);
+        assert_eq!(Tcgen05ElementType::E2M1.idesc_value(), 5);
+    }
+
+    /// The enum discriminants must NOT equal the idesc encoding for
+    /// f8f6f4 types. This is the core invariant of approach B: the
+    /// discriminant is an identifier, `idesc_value()` is the encoding.
+    #[test]
+    fn f8f6f4_discriminants_differ_from_idesc_encoding() {
+        // E4M3: discriminant=3, but idesc_value=0
+        assert_ne!(
+            Tcgen05ElementType::E4M3 as u8,
+            Tcgen05ElementType::E4M3.idesc_value() as u8
+        );
+        // E5M2: discriminant=4, but idesc_value=1
+        assert_ne!(
+            Tcgen05ElementType::E5M2 as u8,
+            Tcgen05ElementType::E5M2.idesc_value() as u8
+        );
+        // E2M3: discriminant=5, but idesc_value=3
+        assert_ne!(
+            Tcgen05ElementType::E2M3 as u8,
+            Tcgen05ElementType::E2M3.idesc_value() as u8
+        );
+    }
+
+    /// Verify that `build()` correctly encodes atype/btype bits (7–12)
+    /// using `idesc_value()` rather than the raw enum discriminant.
+    #[test]
+    fn build_encodes_atype_btype_via_idesc_value() {
+        // E4M3: idesc_value=0 → bits 7-9 should be 0
+        let idesc_e4m3 = Tcgen05InstructionDescriptor::builder()
+            .element_type(Tcgen05ElementType::E4M3)
+            .build();
+        let atype_bits = (idesc_e4m3.raw() >> 7) & 0x7;
+        let btype_bits = (idesc_e4m3.raw() >> 10) & 0x7;
+        assert_eq!(atype_bits, 0, "E4M3 atype must be 0 (f8f6f4 encoding)");
+        assert_eq!(btype_bits, 0, "E4M3 btype must be 0 (f8f6f4 encoding)");
+
+        // E5M2: idesc_value=1 → bits 7-9 should be 1
+        let idesc_e5m2 = Tcgen05InstructionDescriptor::builder()
+            .element_type(Tcgen05ElementType::E5M2)
+            .build();
+        let atype_bits = (idesc_e5m2.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 1, "E5M2 atype must be 1 (f8f6f4 encoding)");
+
+        // E2M1: idesc_value=5 → bits 7-9 should be 5
+        let idesc_e2m1 = Tcgen05InstructionDescriptor::builder()
+            .element_type(Tcgen05ElementType::E2M1)
+            .build();
+        let atype_bits = (idesc_e2m1.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 5, "E2M1 atype must be 5 (f8f6f4 encoding)");
+
+        // E3M2: idesc_value=4
+        let idesc_e3m2 = Tcgen05InstructionDescriptor::builder()
+            .element_type(Tcgen05ElementType::E3M2)
+            .build();
+        let atype_bits = (idesc_e3m2.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 4, "E3M2 atype must be 4 (f8f6f4 encoding)");
+
+        // E2M3: idesc_value=3
+        let idesc_e2m3 = Tcgen05InstructionDescriptor::builder()
+            .element_type(Tcgen05ElementType::E2M3)
+            .build();
+        let atype_bits = (idesc_e2m3.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 3, "E2M3 atype must be 3 (f8f6f4 encoding)");
+    }
+
+    /// Verify that f16/bf16/tf32 still use their correct idesc encodings.
+    #[test]
+    fn build_preserves_f16_bf16_tf32_encoding() {
+        // F16: idesc_value=0
+        let idesc_f16 = Tcgen05InstructionDescriptor::new_f16();
+        let atype_bits = (idesc_f16.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 0, "F16 atype must be 0");
+
+        // BF16: idesc_value=1
+        let idesc_bf16 = Tcgen05InstructionDescriptor::new_bf16();
+        let atype_bits = (idesc_bf16.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 1, "BF16 atype must be 1");
+
+        // TF32: idesc_value=2
+        let idesc_tf32 = Tcgen05InstructionDescriptor::new_tf32();
+        let atype_bits = (idesc_tf32.raw() >> 7) & 0x7;
+        assert_eq!(atype_bits, 2, "TF32 atype must be 2");
+    }
+
+    /// Verify that `a_type()` and `b_type()` can set independent types
+    /// and the idesc encodes them separately.
+    #[test]
+    fn build_supports_mixed_atype_btype() {
+        // E4M3 A × E5M2 B (common mixed-precision pattern)
+        let idesc = Tcgen05InstructionDescriptor::builder()
+            .a_type(Tcgen05ElementType::E4M3)
+            .b_type(Tcgen05ElementType::E5M2)
+            .build();
+        let atype_bits = (idesc.raw() >> 7) & 0x7;
+        let btype_bits = (idesc.raw() >> 10) & 0x7;
+        assert_eq!(atype_bits, 0, "E4M3 atype must be 0");
+        assert_eq!(btype_bits, 1, "E5M2 btype must be 1");
+    }
+
+    /// Verify default constructors for new FP4/FP6 types produce valid
+    /// descriptors with correct element type encoding.
+    #[test]
+    fn default_constructors_for_fp4_fp6() {
+        let idesc_e2m1 = Tcgen05InstructionDescriptor::new_e2m1();
+        assert_eq!((idesc_e2m1.raw() >> 7) & 0x7, 5, "E2M1");
+
+        let idesc_e3m2 = Tcgen05InstructionDescriptor::new_e3m2();
+        assert_eq!((idesc_e3m2.raw() >> 7) & 0x7, 4, "E3M2");
+
+        let idesc_e2m3 = Tcgen05InstructionDescriptor::new_e2m3();
+        assert_eq!((idesc_e2m3.raw() >> 7) & 0x7, 3, "E2M3");
+    }
+
+    /// Verify that the old FP8 constructors (new_e4m3, new_e5m2) now
+    /// produce correct f8f6f4-encoded descriptors (Bug 3 regression test).
+    #[test]
+    fn fp8_constructors_use_f8f6f4_encoding() {
+        // Before the fix, E4M3 used discriminant=3 as the idesc value,
+        // which in f8f6f4 kind means E2M3. After the fix, it should use 0.
+        let idesc_e4m3 = Tcgen05InstructionDescriptor::new_e4m3();
+        let atype = (idesc_e4m3.raw() >> 7) & 0x7;
+        assert_eq!(
+            atype, 0,
+            "E4M3 must encode as 0 in f8f6f4, not 3 (old discriminant)"
+        );
+
+        let idesc_e5m2 = Tcgen05InstructionDescriptor::new_e5m2();
+        let atype = (idesc_e5m2.raw() >> 7) & 0x7;
+        assert_eq!(
+            atype, 1,
+            "E5M2 must encode as 1 in f8f6f4, not 4 (old discriminant)"
+        );
+    }
 }

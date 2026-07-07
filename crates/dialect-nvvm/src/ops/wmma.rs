@@ -6,6 +6,7 @@
 //! Warp-level matrix dialect operations.
 
 use pliron::{
+    builtin::attributes::StringAttr,
     builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
     builtin::types::{FP32Type, FP64Type, IntegerType},
     common_traits::Verify,
@@ -482,6 +483,92 @@ impl MmaM8N8K4F64Op {
     }
 }
 
+// =============================================================================
+// FP8/FP6/FP4 mma.sync (sm_120a consumer Blackwell)
+//
+// One op per kind, with atype/btype as StringAttr attributes.
+// The lowering reads the attributes and generates the correct PTX mnemonic.
+// This avoids creating 25+ ops for all atype×btype combinations.
+// =============================================================================
+
+/// Warp MMA: m16n8k32 with f32 accumulator and f8f6f4 inputs (sm_120a+).
+///
+/// # Operands
+///
+/// - operands 0-3: four f32 C accumulator registers
+/// - operands 4-7: four i32 A fragment registers (packed sub-byte values)
+/// - operands 8-9: two i32 B fragment registers (packed sub-byte values)
+///
+/// # Results
+///
+/// - results 0-3: four f32 D accumulator registers
+///
+/// # Attributes
+///
+/// - `mma_atype`: one of "e4m3", "e5m2", "e2m3", "e3m2", "e2m1"
+/// - `mma_btype`: same set
+#[pliron_op(
+    name = "nvvm.mma_m16n8k32_f8f6f4",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+    attributes = (mma_atype: StringAttr, mma_btype: StringAttr)
+)]
+pub struct MmaM16N8K32F8F6F4Op;
+
+impl MmaM16N8K32F8F6F4Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MmaM16N8K32F8F6F4Op { op }
+    }
+}
+
+/// Warp MMA: m16n8k64 with f32 accumulator and microscaled FP4 (mxf4)
+/// inputs (sm_120a/sm_121a+).
+///
+/// Performs D = A * B + C with E8M0 block scaling.
+///
+/// # Operands (12)
+///
+/// - operands 0-3: four i32 A fragment registers (packed e2m1, 8 per reg)
+/// - operands 4-5: two i32 B fragment registers (packed e2m1, 8 per reg)
+/// - operands 6-9: four f32 C accumulator registers
+/// - operand 10: i32 scale-a-data
+/// - operand 11: i32 scale-b-data
+///
+/// # Results (4)
+///
+/// - results 0-3: four f32 D accumulator registers
+///
+/// # Attributes
+///
+/// The scale-factor selectors are compile-time constants embedded in the
+/// PTX mnemonic, not runtime register operands. They are stored as
+/// StringAttr and formatted into the inline-asm template at lowering time.
+///
+/// - `mma_byte_id_a`: "0" or "2" (for scale_vec::2X)
+/// - `mma_thread_id_a`: "0" or "2"
+/// - `mma_byte_id_b`: "0" or "2"
+/// - `mma_thread_id_b`: "0" or "2"
+#[pliron_op(
+    name = "nvvm.mma_m16n8k64_mxf4",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<12>, NResultsInterface<4>],
+    attributes = (
+        mma_byte_id_a: StringAttr,
+        mma_thread_id_a: StringAttr,
+        mma_byte_id_b: StringAttr,
+        mma_thread_id_b: StringAttr
+    )
+)]
+pub struct MmaM16N8K64Mxf4Op;
+
+impl MmaM16N8K64Mxf4Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        MmaM16N8K64Mxf4Op { op }
+    }
+}
+
 /// Register WMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     MovmatrixTransB16Op::register(ctx);
@@ -490,4 +577,6 @@ pub(super) fn register(ctx: &mut Context) {
     MmaM16N8K8F32Tf32Op::register(ctx);
     MmaM16N8K32S32S8Op::register(ctx);
     MmaM8N8K4F64Op::register(ctx);
+    MmaM16N8K32F8F6F4Op::register(ctx);
+    MmaM16N8K64Mxf4Op::register(ctx);
 }

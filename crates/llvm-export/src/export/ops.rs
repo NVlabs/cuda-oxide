@@ -468,6 +468,16 @@ impl<'a> ModuleExportState<'a> {
             DeviceExternType::Float16 => actual_ref.is::<HalfType>(),
             DeviceExternType::Float32 => actual_ref.is::<FP32Type>(),
             DeviceExternType::Float64 => actual_ref.is::<FP64Type>(),
+            DeviceExternType::BFloat16 => actual_ref
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|ty| ty.width() == 16),
+            DeviceExternType::Float8E4M3
+            | DeviceExternType::Float8E5M2
+            | DeviceExternType::Float4E2M1
+            | DeviceExternType::Float6E3M2
+            | DeviceExternType::Float6E2M3 => actual_ref
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|ty| ty.width() == 8),
             DeviceExternType::Pointer { address_space, .. } => actual_ref
                 .downcast_ref::<PointerType>()
                 .is_some_and(|ty| ty.address_space() == *address_space),

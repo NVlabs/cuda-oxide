@@ -24,11 +24,13 @@ use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-/// Owns a reference to a CUDA device's primary context.
+/// Owns a CUDA device context (primary or dedicated).
 ///
-/// Created via [`CudaContext::new`] and typically held in an `Arc` so streams,
-/// events, and modules can share the same context. Dropping the last reference
-/// releases the primary context (`cuDevicePrimaryCtxRelease`).
+/// Created via [`CudaContext::new`] (primary context, shared across the
+/// process) or [`CudaContext::new_dedicated`] (independent context via
+/// `cuCtxCreate`, isolated from other contexts). Typically held in an `Arc`
+/// so streams, events, and modules can share the same context. Dropping the
+/// last reference releases/destroys the context.
 ///
 /// Tracks live stream count and accumulated error state atomically for
 /// cross-thread diagnostics.
@@ -40,6 +42,9 @@ pub struct CudaContext {
     pub(crate) cu_ctx: cuda_bindings::CUcontext,
     /// Zero-based device ordinal passed to [`CudaContext::new`].
     pub(crate) ordinal: usize,
+    /// Whether this is a primary context (retain/release) or a dedicated
+    /// context (create/destroy).
+    pub(crate) is_primary: bool,
     /// Number of live [`CudaStream`] instances sharing this context.
     pub(crate) num_streams: AtomicUsize,
     /// When `true`, the first [`new_stream`](CudaContext::new_stream) call
@@ -61,10 +66,12 @@ unsafe impl Send for CudaContext {}
 /// See [`Send`] impl.
 unsafe impl Sync for CudaContext {}
 
-/// Releases the primary context on drop.
+/// Releases or destroys the context on drop.
 ///
-/// Binds the context to the current thread first (required by
-/// `cuDevicePrimaryCtxRelease`). Errors during teardown are recorded via
+/// For primary contexts: calls `cuDevicePrimaryCtxRelease`.
+/// For dedicated contexts: calls `cuCtxDestroy`.
+///
+/// Errors during teardown are recorded via
 /// [`record_err`](CudaContext::record_err) rather than panicking.
 impl Drop for CudaContext {
     fn drop(&mut self) {
@@ -72,7 +79,11 @@ impl Drop for CudaContext {
         let ctx = std::mem::replace(&mut self.cu_ctx, std::ptr::null_mut());
         if !ctx.is_null() {
             self.record_err(unsafe {
-                cuda_bindings::cuDevicePrimaryCtxRelease_v2(self.cu_device).result()
+                if self.is_primary {
+                    cuda_bindings::cuDevicePrimaryCtxRelease_v2(self.cu_device).result()
+                } else {
+                    cuda_bindings::cuCtxDestroy_v2(ctx).result()
+                }
             });
         }
     }
@@ -128,10 +139,61 @@ impl CudaContext {
             cu_device,
             cu_ctx,
             ordinal,
+            is_primary: true,
             num_streams: AtomicUsize::new(0),
             event_tracking: AtomicBool::new(true),
             error_state: AtomicU32::new(0),
         });
+        ctx.bind_to_thread()?;
+        Ok(ctx)
+    }
+
+    /// Creates a **dedicated** (non-primary) context for the device at `ordinal`.
+    ///
+    /// Unlike [`new`](Self::new), which retains the shared primary context,
+    /// this calls `cuCtxCreate` to create an independent context. Multiple
+    /// dedicated contexts on the same device are fully isolated: stream
+    /// capture, graph operations, error state, and memory pools do not
+    /// interfere across contexts.
+    ///
+    /// Use this when you need concurrent capture or graph operations without
+    /// serialization (e.g., parallel tests).
+    ///
+    /// The context is created with `CU_CTX_SCHED_AUTO | CU_CTX_MAP_HOST`,
+    /// matching the default primary context flags.
+    pub fn new_dedicated(ordinal: usize) -> Result<Arc<Self>, DriverError> {
+        unsafe { crate::init(0)? };
+
+        let cu_device = unsafe {
+            let mut cu_device = MaybeUninit::uninit();
+            cuda_bindings::cuDeviceGet(cu_device.as_mut_ptr(), ordinal as c_int).result()?;
+            cu_device.assume_init()
+        };
+
+        let cu_ctx = unsafe {
+            let mut cu_ctx = MaybeUninit::uninit();
+            let flags = cuda_bindings::CUctx_flags_enum_CU_CTX_SCHED_AUTO as c_int
+                | cuda_bindings::CUctx_flags_enum_CU_CTX_MAP_HOST as c_int;
+            cuda_bindings::cuCtxCreate_v4(
+                cu_ctx.as_mut_ptr(),
+                std::ptr::null_mut(), // ctxCreateParams (none)
+                flags as u32,
+                cu_device,
+            )
+            .result()?;
+            cu_ctx.assume_init()
+        };
+
+        let ctx = Arc::new(CudaContext {
+            cu_device,
+            cu_ctx,
+            ordinal,
+            is_primary: false,
+            num_streams: AtomicUsize::new(0),
+            event_tracking: AtomicBool::new(true),
+            error_state: AtomicU32::new(0),
+        });
+        // cuCtxCreate already sets the context current, but bind for consistency.
         ctx.bind_to_thread()?;
         Ok(ctx)
     }

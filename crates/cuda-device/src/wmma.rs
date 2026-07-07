@@ -443,3 +443,240 @@ pub unsafe fn mma_m16n8k32_s32_s8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32
     let _ = (c, a, b);
     unreachable!("mma_m16n8k32_s32_s8 called outside CUDA kernel context")
 }
+
+/// FP8 E4M3 × E4M3 warp MMA (sm_120a+).
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call with the same
+///   qualifiers. Calling from divergent control flow, or after any lane has
+///   exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the
+///   `mma.sync.aligned.m16n8k32` layout. A different layout computes a
+///   different matrix operation.
+/// - Requires `sm_120a+` (consumer Blackwell). cuda-oxide selects the target
+///   floor automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k32_f32_e4m3_e4m3(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_f32_e4m3_e4m3 called outside CUDA kernel context")
+}
+
+/// FP8 E5M2 × E5M2 warp MMA (sm_120a+).
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call with the same
+///   qualifiers. Calling from divergent control flow, or after any lane has
+///   exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the
+///   `mma.sync.aligned.m16n8k32` layout. A different layout computes a
+///   different matrix operation.
+/// - Requires `sm_120a+` (consumer Blackwell). cuda-oxide selects the target
+///   floor automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k32_f32_e5m2_e5m2(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_f32_e5m2_e5m2 called outside CUDA kernel context")
+}
+
+/// FP8 E4M3 × E5M2 warp MMA (sm_120a+).
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call with the same
+///   qualifiers. Calling from divergent control flow, or after any lane has
+///   exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the
+///   `mma.sync.aligned.m16n8k32` layout. A different layout computes a
+///   different matrix operation.
+/// - Requires `sm_120a+` (consumer Blackwell). cuda-oxide selects the target
+///   floor automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k32_f32_e4m3_e5m2(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_f32_e4m3_e5m2 called outside CUDA kernel context")
+}
+
+/// FP6 E3M2 × E3M2 warp MMA (sm_120a+).
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call with the same
+///   qualifiers. Calling from divergent control flow, or after any lane has
+///   exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the
+///   `mma.sync.aligned.m16n8k32` layout. A different layout computes a
+///   different matrix operation.
+/// - Requires `sm_120a+` (consumer Blackwell). cuda-oxide selects the target
+///   floor automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k32_f32_e3m2_e3m2(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_f32_e3m2_e3m2 called outside CUDA kernel context")
+}
+
+/// FP6 E2M3 × E2M3 warp MMA (sm_120a+).
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call with the same
+///   qualifiers. Calling from divergent control flow, or after any lane has
+///   exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the
+///   `mma.sync.aligned.m16n8k32` layout. A different layout computes a
+///   different matrix operation.
+/// - Requires `sm_120a+` (consumer Blackwell). cuda-oxide selects the target
+///   floor automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k32_f32_e2m3_e2m3(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_f32_e2m3_e2m3 called outside CUDA kernel context")
+}
+
+/// FP4 E2M1 × E2M1 warp MMA (sm_120a+).
+///
+/// # Safety
+///
+/// - All 32 lanes in the warp must execute the same call with the same
+///   qualifiers. Calling from divergent control flow, or after any lane has
+///   exited, is undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the
+///   `mma.sync.aligned.m16n8k32` layout. A different layout computes a
+///   different matrix operation.
+/// - Requires `sm_120a+` (consumer Blackwell). cuda-oxide selects the target
+///   floor automatically.
+#[inline(never)]
+pub unsafe fn mma_m16n8k32_f32_e2m1_e2m1(c: [f32; 4], a: [u32; 4], b: [u32; 2]) -> [f32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_f32_e2m1_e2m1 called outside CUDA kernel context")
+}
+
+/// Microscaled FP4 (mxf4) warp MMA with E8M0 block scaling (sm_120a/sm_121a+).
+///
+/// Performs D = A × B + C where A and B are packed E2M1 fragments with
+/// E8M0 block scale factors. The scale-factor selectors (byte-id, thread-id)
+/// are compile-time constants encoded in the function name suffix.
+///
+/// # Safety
+///
+/// - Must be called from within a CUDA kernel context on sm_120a+
+/// - Scale data must be valid for the current warp's data layout
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t0_b0_t0(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t0_b0_t0 called outside CUDA kernel context")
+}
+
+// =============================================================================
+// mxf4 selector variants for full 16×8 tile coverage
+//
+// The scale-factor selectors (byte_id, thread_id) are PTX compile-time
+// literals that control which lane's scale register and which byte within
+// it the tensor core reads. With scale_vec::2X:
+//
+//   byte_id ∈ {0, 2}    — selects K-block 0 (byte 0) or K-block 1 (byte 2)
+//   thread_id ∈ {0, 2}   — selects lower thread pair (rows 0-7) or upper (rows 8-15)
+//
+// A full 16×8×64 tile requires 8 MMA calls (2 K-blocks × 2 row-halves × 2 col-halves):
+//
+//   K-block 0:  b0_t0_b0_t0  b0_t0_b0_t2  b0_t2_b0_t0  b0_t2_b0_t2
+//   K-block 1:  b2_t0_b2_t0  b2_t0_b2_t2  b2_t2_b2_t0  b2_t2_b2_t2
+// =============================================================================
+
+/// mxf4 MMA — A: rows 8-15 K-blk0, B: cols 0-3 K-blk0.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t2_b0_t0(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
+
+/// mxf4 MMA — A: rows 0-7 K-blk0, B: cols 4-7 K-blk0.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t0_b0_t2(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
+
+/// mxf4 MMA — A: rows 8-15 K-blk0, B: cols 4-7 K-blk0.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t2_b0_t2(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
+
+/// mxf4 MMA — A: rows 0-7 K-blk1, B: cols 0-3 K-blk1.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b2_t0_b2_t0(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
+
+/// mxf4 MMA — A: rows 8-15 K-blk1, B: cols 0-3 K-blk1.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b2_t2_b2_t0(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
+
+/// mxf4 MMA — A: rows 0-7 K-blk1, B: cols 4-7 K-blk1.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b2_t0_b2_t2(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
+
+/// mxf4 MMA — A: rows 8-15 K-blk1, B: cols 4-7 K-blk1.
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b2_t2_b2_t2(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("called outside CUDA kernel context")
+}
