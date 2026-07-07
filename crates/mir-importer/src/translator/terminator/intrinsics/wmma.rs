@@ -16,7 +16,7 @@ use dialect_mir::{
 };
 use dialect_nvvm::ops::{
     MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32F8F6F4Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
+    MmaM16N8K32F8F6F4Op, MmaM16N8K32S32S8Op, MmaM16N8K64Mxf4Op, MovmatrixTransB16Op,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::StringAttr;
@@ -1027,6 +1027,193 @@ pub fn emit_mma_m16n8k32_f8f6f4(
         block_map,
         loc,
         "mma_m16n8k32_f8f6f4 call without target block",
+    )
+}
+
+/// Emit `mma_m16n8k64_mxf4` as a register-producing dialect operation.
+///
+/// The scale-factor selectors are compile-time constants stored as StringAttr
+/// on the op. This variant uses selectors (0, 0, 0, 0) matching the device
+/// function `mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t0_b0_t0`.
+///
+/// Args:
+/// - `args[0]`: `[f32; 4]` C accumulator registers
+/// - `args[1]`: `[u32; 4]` packed A fragment registers (e2m1, 8 per reg)
+/// - `args[2]`: `[u32; 2]` packed B fragment registers (e2m1, 8 per reg)
+/// - `args[3]`: `u32` scale-a-data
+/// - `args[4]`: `u32` scale-b-data
+///
+/// Returns: `[f32; 4]` D accumulator registers.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_mma_m16n8k64_mxf4(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    destination: &mir::Place,
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+    byte_id_a: &str,
+    thread_id_a: &str,
+    byte_id_b: &str,
+    thread_id_b: &str,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 5 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "mma_m16n8k64_mxf4 expects 5 arguments (c, a, b, scale_a, scale_b), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let f32_ty = FP32Type::get(ctx);
+    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+
+    // Translate C array → 4 f32 registers
+    let (c_array, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (c_registers, last_op) = extract_array_registers(
+        ctx,
+        c_array,
+        f32_ty.into(),
+        4,
+        block_ptr,
+        last_op,
+        loc.clone(),
+        "C",
+    )?;
+
+    // Translate A array → 4 u32 registers
+    let (a_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (a_registers, last_op) = extract_array_registers(
+        ctx,
+        a_array,
+        u32_ty.into(),
+        4,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "A",
+    )?;
+
+    // Translate B array → 2 u32 registers
+    let (b_array, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (b_registers, last_op) = extract_array_registers(
+        ctx,
+        b_array,
+        u32_ty.into(),
+        2,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+        "B",
+    )?;
+
+    // Translate scale_a and scale_b as individual u32 operands
+    let (scale_a_val, last_op_after) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[3],
+        value_map,
+        block_ptr,
+        Some(last_op),
+        loc.clone(),
+    )?;
+    let (scale_b_val, last_op) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[4],
+        value_map,
+        block_ptr,
+        last_op_after,
+        loc.clone(),
+    )?;
+
+    // Build operand list: A[0..4], B[0..2], C[0..4], scale_a, scale_b
+    let mut operands = a_registers;
+    operands.extend(b_registers);
+    operands.extend(c_registers);
+    operands.push(scale_a_val);
+    operands.push(scale_b_val);
+
+    let mma_op = Operation::new(
+        ctx,
+        MmaM16N8K64Mxf4Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        operands,
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    // Set selector attributes as string values.
+    let typed = MmaM16N8K64Mxf4Op::new(mma_op);
+    typed.set_attr_mma_byte_id_a(ctx, StringAttr::new(byte_id_a.to_string()));
+    typed.set_attr_mma_thread_id_a(ctx, StringAttr::new(thread_id_a.to_string()));
+    typed.set_attr_mma_byte_id_b(ctx, StringAttr::new(byte_id_b.to_string()));
+    typed.set_attr_mma_thread_id_b(ctx, StringAttr::new(thread_id_b.to_string()));
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    let d_registers = (0..4)
+        .map(|index| mma_op.deref(ctx).get_result(index))
+        .collect();
+    let array_ty = MirArrayType::get(ctx, f32_ty.into(), 4);
+    let d_array = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty.into()],
+        d_registers,
+        vec![],
+        0,
+    );
+    d_array.deref_mut(ctx).set_loc(loc.clone());
+    d_array.insert_after(ctx, mma_op);
+    let result = d_array.deref(ctx).get_result(0);
+
+    emit_store_result_and_goto(
+        ctx,
+        destination,
+        result,
+        target,
+        block_ptr,
+        d_array,
+        value_map,
+        block_map,
+        loc,
+        "mma_m16n8k64_mxf4 call without target block",
     )
 }
 

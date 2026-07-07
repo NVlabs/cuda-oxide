@@ -551,3 +551,25 @@ pub unsafe fn mma_m16n8k32_f32_e2m1_e2m1(c: [f32; 4], a: [u32; 4], b: [u32; 2]) 
     let _ = (c, a, b);
     unreachable!("mma_m16n8k32_f32_e2m1_e2m1 called outside CUDA kernel context")
 }
+
+/// Microscaled FP4 (mxf4) warp MMA with E8M0 block scaling (sm_120a/sm_121a+).
+///
+/// Performs D = A × B + C where A and B are packed E2M1 fragments with
+/// E8M0 block scale factors. The scale-factor selectors (byte-id, thread-id)
+/// are compile-time constants encoded in the function name suffix.
+///
+/// # Safety
+///
+/// - Must be called from within a CUDA kernel context on sm_120a+
+/// - Scale data must be valid for the current warp's data layout
+#[inline(never)]
+pub unsafe fn mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t0_b0_t0(
+    c: [f32; 4],
+    a: [u32; 4],
+    b: [u32; 2],
+    scale_a: u32,
+    scale_b: u32,
+) -> [f32; 4] {
+    let _ = (c, a, b, scale_a, scale_b);
+    unreachable!("mma_m16n8k64_mxf4_f32_e2m1_e2m1_b0_t0_b0_t0 called outside CUDA kernel context")
+}

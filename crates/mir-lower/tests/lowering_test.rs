@@ -4302,3 +4302,107 @@ fn test_all_f8f6f4_mma_types_share_same_instruction_prefix() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// mma.sync kind::mxf4.block_scale lowering test (sm_120a/sm_121a)
+//
+// Verifies that MmaM16N8K64Mxf4Op correctly lowers to inline PTX with
+// kind::mxf4.block_scale and the selector values embedded in the template.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mma_mxf4_e2m1_lowers_to_mxf4_block_scale() {
+    use pliron::builtin::attributes::StringAttr;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = pliron::builtin::types::FP32Type::get(&ctx);
+    let i32_ty = pliron::builtin::types::IntegerType::get(
+        &ctx, 32, pliron::builtin::types::Signedness::Signless,
+    );
+    // 12 operands: 4 A (i32) + 2 B (i32) + 4 C (f32) + 1 scale_a (i32) + 1 scale_b (i32)
+    let arg_tys = vec![
+        i32_ty.into(), i32_ty.into(), i32_ty.into(), i32_ty.into(), // A
+        i32_ty.into(), i32_ty.into(),                                 // B
+        f32_ty.into(), f32_ty.into(), f32_ty.into(), f32_ty.into(),   // C
+        i32_ty.into(), i32_ty.into(),                                 // scale_a, scale_b
+    ];
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, arg_tys);
+    let operands: Vec<_> = (0..12)
+        .map(|i| entry.deref(&ctx).get_argument(i))
+        .collect();
+
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::MmaM16N8K64Mxf4Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        operands,
+        vec![],
+        0,
+    );
+    // Set selector attributes.
+    let typed = nvvm::MmaM16N8K64Mxf4Op::new(op);
+    typed.set_attr_mma_byte_id_a(&mut ctx, StringAttr::new("0".to_string()));
+    typed.set_attr_mma_thread_id_a(&mut ctx, StringAttr::new("0".to_string()));
+    typed.set_attr_mma_byte_id_b(&mut ctx, StringAttr::new("0".to_string()));
+    typed.set_attr_mma_thread_id_b(&mut ctx, StringAttr::new("0".to_string()));
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .expect("lowering must succeed");
+
+    // Find the inline asm in the lowered module.
+    let module_op = module_ptr.deref(&ctx);
+    let region = module_op.get_region(0);
+    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
+    let mut found = false;
+    for op in block.deref(&ctx).iter(&ctx) {
+        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
+        for func_block in func_region.deref(&ctx).iter(&ctx) {
+            for body_op in func_block.deref(&ctx).iter(&ctx) {
+                if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
+                    if let Some(tpl) = asm
+                        .get_attr_inline_asm_template(&ctx)
+                        .map(|s| String::from((*s).clone()))
+                    {
+                        if tpl.contains("mma.sync") {
+                            found = true;
+                            // Verify kind::mxf4.block_scale
+                            assert!(
+                                tpl.contains("kind::mxf4.block_scale"),
+                                "expected kind::mxf4.block_scale, got:\n{tpl}"
+                            );
+                            // Verify m16n8k64 shape
+                            assert!(
+                                tpl.contains("m16n8k64"),
+                                "expected m16n8k64, got:\n{tpl}"
+                            );
+                            // Verify e2m1 types
+                            assert!(
+                                tpl.contains("e2m1.e2m1"),
+                                "expected e2m1.e2m1, got:\n{tpl}"
+                            );
+                            // Verify ue8m0 scale type
+                            assert!(
+                                tpl.contains("ue8m0"),
+                                "expected ue8m0, got:\n{tpl}"
+                            );
+                            // Verify selectors embedded as literals
+                            assert!(
+                                tpl.contains("{0, 0}"),
+                                "expected selectors {{0, 0}}, got:\n{tpl}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(found, "no mma.sync inline asm found");
+}
