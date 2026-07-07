@@ -1015,12 +1015,12 @@ mod tests {
     use dialect_mir::types::MirPtrType;
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
     use pliron::context::{Context, Ptr};
     use pliron::linked_list::ContainsLinkedList;
     use pliron::op::Op;
     use pliron::operation::Operation;
-    use pliron::r#type::TypeHandle;
+    use pliron::r#type::{TypeHandle, Typed};
 
     fn int_ty(ctx: &mut Context, width: u32, signedness: Signedness) -> TypeHandle {
         IntegerType::get(ctx, width, signedness).into()
@@ -1073,6 +1073,37 @@ mod tests {
             .iter(ctx)
             .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, ctx))
             .any(|func| func.get_symbol_name(ctx).to_string() == symbol)
+    }
+
+    fn assert_single_direct_intrinsic_call(
+        ctx: &Context,
+        module_ptr: Ptr<Operation>,
+        symbol: &str,
+        description: &str,
+    ) {
+        let calls = find_all::<llvm::CallOp>(ctx, &kernel_blocks(ctx, module_ptr));
+        let [call] = calls.as_slice() else {
+            panic!("{description} must lower to exactly one llvm.call");
+        };
+        let CallOpCallable::Direct(callee) = call.callee(ctx) else {
+            panic!("{description} must use a direct intrinsic call");
+        };
+        assert_eq!(
+            callee.to_string(),
+            symbol,
+            "{description} must call {symbol}"
+        );
+        assert!(
+            module_has_llvm_func(ctx, module_ptr, symbol),
+            "{description} must declare {symbol}"
+        );
+    }
+
+    fn pointer_addrspace(ctx: &Context, ty: TypeHandle) -> u32 {
+        ty.deref(ctx)
+            .downcast_ref::<llvm_export::types::PointerType>()
+            .expect("expected LLVM pointer type")
+            .address_space()
     }
 
     #[test]
@@ -1128,21 +1159,11 @@ mod tests {
         let module_ptr = lower_single_cast(&mut ctx, f32_ty, i32_ty, MirCastKindAttr::FloatToInt);
 
         assert_cast_lowered_to::<llvm::CallOp>(&ctx, module_ptr, "llvm.call");
-        let calls = find_all::<llvm::CallOp>(&ctx, &kernel_blocks(&ctx, module_ptr));
-        let [call] = calls.as_slice() else {
-            panic!("f32 -> i32 signed cast must lower to exactly one llvm.call");
-        };
-        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
-            panic!("f32 -> i32 signed cast must use a direct intrinsic call");
-        };
-        assert_eq!(
-            callee.to_string(),
+        assert_single_direct_intrinsic_call(
+            &ctx,
+            module_ptr,
             "llvm_fptosi_sat_i32_f32",
-            "f32 -> i32 signed cast must call llvm_fptosi_sat_i32_f32"
-        );
-        assert!(
-            module_has_llvm_func(&ctx, module_ptr, "llvm_fptosi_sat_i32_f32"),
-            "f32 -> i32 signed cast must declare llvm_fptosi_sat_i32_f32"
+            "f32 -> i32 signed cast",
         );
     }
 
@@ -1161,5 +1182,115 @@ mod tests {
         );
 
         assert_cast_lowered_to::<llvm::PtrToIntOp>(&ctx, module_ptr, "llvm.ptrtoint");
+    }
+
+    #[test]
+    fn int_to_int_same_width_lowers_to_bitcast() {
+        let mut ctx = make_ctx();
+        let i32_ty = int_ty(&mut ctx, 32, Signedness::Signed);
+        let u32_ty = int_ty(&mut ctx, 32, Signedness::Unsigned);
+
+        let module_ptr = lower_single_cast(&mut ctx, i32_ty, u32_ty, MirCastKindAttr::IntToInt);
+
+        assert_cast_lowered_to::<llvm::BitcastOp>(&ctx, module_ptr, "llvm.bitcast");
+    }
+
+    #[test]
+    fn int_to_float_signed_lowers_to_si_to_fp() {
+        let mut ctx = make_ctx();
+        let i32_ty = int_ty(&mut ctx, 32, Signedness::Signed);
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+
+        let module_ptr = lower_single_cast(&mut ctx, i32_ty, f32_ty, MirCastKindAttr::IntToFloat);
+
+        assert_cast_lowered_to::<llvm::SIToFPOp>(&ctx, module_ptr, "llvm.sitofp");
+    }
+
+    #[test]
+    fn float_to_int_unsigned_lowers_to_unsigned_saturating_intrinsic_call() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let u32_ty = int_ty(&mut ctx, 32, Signedness::Unsigned);
+
+        let module_ptr = lower_single_cast(&mut ctx, f32_ty, u32_ty, MirCastKindAttr::FloatToInt);
+
+        assert_cast_lowered_to::<llvm::CallOp>(&ctx, module_ptr, "llvm.call");
+        assert_single_direct_intrinsic_call(
+            &ctx,
+            module_ptr,
+            "llvm_fptoui_sat_i32_f32",
+            "f32 -> u32 unsigned cast",
+        );
+    }
+
+    #[test]
+    fn float_to_float_widen_lowers_to_fp_ext() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+
+        let module_ptr = lower_single_cast(&mut ctx, f32_ty, f64_ty, MirCastKindAttr::FloatToFloat);
+
+        assert_cast_lowered_to::<llvm::FPExtOp>(&ctx, module_ptr, "llvm.fpext");
+    }
+
+    #[test]
+    fn float_to_float_narrow_lowers_to_fp_trunc() {
+        let mut ctx = make_ctx();
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+
+        let module_ptr = lower_single_cast(&mut ctx, f64_ty, f32_ty, MirCastKindAttr::FloatToFloat);
+
+        assert_cast_lowered_to::<llvm::FPTruncOp>(&ctx, module_ptr, "llvm.fptrunc");
+    }
+
+    #[test]
+    fn pointer_with_exposed_provenance_lowers_to_int_to_ptr() {
+        let mut ctx = make_ctx();
+        let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
+        let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
+        let ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 0).into();
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            usize_ty,
+            ptr_ty,
+            MirCastKindAttr::PointerWithExposedProvenance,
+        );
+
+        assert_cast_lowered_to::<llvm::IntToPtrOp>(&ctx, module_ptr, "llvm.inttoptr");
+    }
+
+    #[test]
+    fn ptr_to_ptr_different_addrspace_lowers_to_addrspace_cast() {
+        let mut ctx = make_ctx();
+        let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
+        let generic_ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 0).into();
+        let shared_ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 3).into();
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            generic_ptr_ty,
+            shared_ptr_ty,
+            MirCastKindAttr::PtrToPtr,
+        );
+
+        assert_cast_lowered_to::<llvm::AddrSpaceCastOp>(&ctx, module_ptr, "llvm.addrspacecast");
+
+        let casts = find_all::<llvm::AddrSpaceCastOp>(&ctx, &kernel_blocks(&ctx, module_ptr));
+        let [cast] = casts.as_slice() else {
+            panic!("ptr -> ptr addrspace cast must lower to exactly one llvm.addrspacecast");
+        };
+        let result_ty = cast
+            .get_operation()
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx);
+        assert_eq!(
+            pointer_addrspace(&ctx, result_ty),
+            3,
+            "ptr -> ptr addrspace cast must produce an addrspace(3) pointer"
+        );
     }
 }
