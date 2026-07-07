@@ -1,5 +1,5 @@
 [package]
-name = "error_set_discriminant_niche"
+name = "set_discriminant_niche_multifield"
 version = "0.1.0"
 edition = "2024"
 authors = ["Nihal Pasham <nihalp@nvidia.com>"]

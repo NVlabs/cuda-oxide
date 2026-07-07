@@ -54,7 +54,7 @@
 //! regardless of whether the scalar source happens to be a pointer (e.g.
 //! `Option<&T>`) or an integer (e.g. `Option<NonZeroUsize>`).
 
-use crate::convert::types::convert_type;
+use crate::convert::types::{convert_type, scalar_path_at_offset};
 use crate::helpers;
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::MirCastOp;
@@ -590,51 +590,35 @@ fn const_int_of(
     Ok(c.get_operation().deref(ctx).get_result(0))
 }
 
+/// Build a scalar constant of `target_ty` from a raw `u64` bit pattern.
+///
+/// This is the canonical way to materialise a niche value in both
+/// `SetDiscriminant` and `Cast(Transmute) -> niche-encoded enum` lowering:
+/// - integer targets -> integer constant truncated to the target width;
+/// - pointer targets -> `inttoptr i64 <value>`.
+pub(crate) fn const_scalar_from_u64(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    target_ty: pliron::r#type::TypeHandle,
+    value: u64,
+) -> Result<pliron::value::Value> {
+    if target_ty.deref(ctx).is::<llvm_export::types::PointerType>() {
+        let i64_ty: pliron::r#type::TypeHandle =
+            IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let i64_const = const_int_of(ctx, rewriter, i64_ty, value as i64)?;
+        let i2p = llvm::IntToPtrOp::new(ctx, i64_const, target_ty);
+        rewriter.insert_operation(ctx, i2p.get_operation());
+        Ok(i2p.get_operation().deref(ctx).get_result(0))
+    } else {
+        const_int_of(ctx, rewriter, target_ty, value as i64)
+    }
+}
+
 /// Maximum newtype-wrapper depth we will descend through when locating a
 /// scalar slot inside an aggregate (`NonZero<T>` -> `Pat<T, _>` -> `T`
 /// is three layers; eight gives generous headroom for hand-rolled chains
 /// without risking pathological infinite loops on cyclic-looking types).
 const MAX_NEWTYPE_DEPTH: usize = 8;
-
-/// Find the `insertvalue` index path that lands `scalar_ty` at the deepest
-/// scalar slot of `aggregate_ty`, descending through single-field struct
-/// wrappers (the `NonZero<T>` -> `Pat<T, _>` -> `T` chain, or
-/// `{ ptr }` for `Option<&T>`). Returns `None` when no compatible scalar
-/// slot exists within `MAX_NEWTYPE_DEPTH` layers.
-fn deep_scalar_index_path(
-    ctx: &Context,
-    aggregate_ty: pliron::r#type::TypeHandle,
-    scalar_ty: pliron::r#type::TypeHandle,
-) -> Option<Vec<u32>> {
-    let mut path = Vec::new();
-    let mut current = aggregate_ty;
-    for _ in 0..MAX_NEWTYPE_DEPTH {
-        if current == scalar_ty {
-            return Some(path);
-        }
-        // Same-width integers are interchangeable even if not pointer-equal
-        // because LLVM integer types are signless while MIR carries
-        // signedness.
-        if let (Some(c), Some(t)) = (
-            current.deref(ctx).downcast_ref::<IntegerType>(),
-            scalar_ty.deref(ctx).downcast_ref::<IntegerType>(),
-        ) && c.width() == t.width()
-        {
-            return Some(path);
-        }
-        let next = {
-            let r = current.deref(ctx);
-            let s = r.downcast_ref::<llvm_export::types::StructType>()?;
-            if s.num_fields() != 1 {
-                return None;
-            }
-            s.field_type(0)
-        };
-        path.push(0);
-        current = next;
-    }
-    None
-}
 
 /// Read the niche encoding off a `MirCastOp` via its typed accessor.
 /// Returns `None` when the importer did not attach one (i.e. the cast is
@@ -685,7 +669,7 @@ fn emit_scalar_to_niched_enum(
     // storing. For Option-likes (discriminants [0, 1]) this is the
     // identity, but enums with explicit discriminants must not see a raw
     // index in the tag slot (issue #132 groundwork).
-    let (niche_disc_value, untagged_disc_value) = {
+    let (niche_disc_values, untagged_disc_value) = {
         let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
         let mir_result_ty_obj = mir_result_ty.deref(ctx);
         let enum_ty = mir_result_ty_obj
@@ -708,57 +692,67 @@ fn emit_scalar_to_niched_enum(
                     )
                 })
         };
-        (
-            discr_of(niche.niche_variant_idx)?,
-            discr_of(niche.untagged_variant_idx)?,
-        )
+        let niche_start_idx = niche.niche_variant_idx as usize;
+        let niche_end_idx = niche.niche_variant_end_idx as usize;
+        let mut niche_disc_values = Vec::with_capacity(niche_end_idx - niche_start_idx + 1);
+        for idx in niche_start_idx..=niche_end_idx {
+            niche_disc_values.push(discr_of(idx as u32)?);
+        }
+        (niche_disc_values, discr_of(niche.untagged_variant_idx)?)
     };
 
-    // Build a comparison constant in the source's own type. For integer
-    // sources that's just the niche bit pattern; for pointer sources we
-    // construct it as `inttoptr i64 <niche_start>` (which folds to `null`
-    // when niche_start is 0, the case rustc actually emits).
-    let src_is_ptr = val_ty.deref(ctx).is::<llvm_export::types::PointerType>();
-    let cmp_const = if src_is_ptr {
-        let i64_ty: pliron::r#type::TypeHandle =
-            IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let i64_const = const_int_of(ctx, rewriter, i64_ty, niche.niche_start as i64)?;
-        let i2p = llvm::IntToPtrOp::new(ctx, i64_const, val_ty);
-        rewriter.insert_operation(ctx, i2p.get_operation());
-        i2p.get_operation().deref(ctx).get_result(0)
-    } else {
-        const_int_of(ctx, rewriter, val_ty, niche.niche_start as i64)?
-    };
+    // A niche may encode a contiguous range of variants (e.g. `enum E {
+    // A, B, C, D(bool) }`). Walk every niche value and build a select
+    // chain: if the scalar equals a niche value, use that variant's
+    // declared discriminant; otherwise fall back to the untagged variant.
+    // This handles arbitrary explicit discriminants without requiring a
+    // linear mapping from payload value to tag.
+    let mut disc_val = const_int_of(ctx, rewriter, disc_ty, untagged_disc_value as i64)?;
 
-    let icmp = llvm::ICmpOp::new(
-        ctx,
-        llvm_export::attributes::ICmpPredicateAttr::EQ,
-        val,
-        cmp_const,
-    );
-    rewriter.insert_operation(ctx, icmp.get_operation());
-    let is_niche = icmp.get_operation().deref(ctx).get_result(0);
+    let niche_start_idx = niche.niche_variant_idx as usize;
+    let niche_end_idx = niche.niche_variant_end_idx as usize;
+    for offset in 0..=(niche_end_idx - niche_start_idx) {
+        let niche_value = niche.niche_start + offset as u64;
+        let niche_disc_value = niche_disc_values[offset];
 
-    let niche_disc = const_int_of(ctx, rewriter, disc_ty, niche_disc_value as i64)?;
-    let untagged_disc = const_int_of(ctx, rewriter, disc_ty, untagged_disc_value as i64)?;
-    let disc_select = llvm::SelectOp::new(ctx, is_niche, niche_disc, untagged_disc);
-    rewriter.insert_operation(ctx, disc_select.get_operation());
-    let disc = disc_select.get_operation().deref(ctx).get_result(0);
+        let cmp_const = const_scalar_from_u64(ctx, rewriter, val_ty, niche_value)?;
+
+        let icmp = llvm::ICmpOp::new(
+            ctx,
+            llvm_export::attributes::ICmpPredicateAttr::EQ,
+            val,
+            cmp_const,
+        );
+        rewriter.insert_operation(ctx, icmp.get_operation());
+        let is_this_niche = icmp.get_operation().deref(ctx).get_result(0);
+
+        let niche_disc = const_int_of(ctx, rewriter, disc_ty, niche_disc_value as i64)?;
+        let disc_select = llvm::SelectOp::new(ctx, is_this_niche, niche_disc, disc_val);
+        rewriter.insert_operation(ctx, disc_select.get_operation());
+        disc_val = disc_select.get_operation().deref(ctx).get_result(0);
+    }
 
     let undef = llvm::UndefOp::new(ctx, llvm_ty);
     rewriter.insert_operation(ctx, undef.get_operation());
     let undef_val = undef.get_operation().deref(ctx).get_result(0);
 
-    let with_disc = llvm::InsertValueOp::new(ctx, undef_val, disc, vec![0]);
+    let with_disc = llvm::InsertValueOp::new(ctx, undef_val, disc_val, vec![0]);
     rewriter.insert_operation(ctx, with_disc.get_operation());
     let with_disc_val = with_disc.get_operation().deref(ctx).get_result(0);
 
+    // The payload is field 1 of the `{ discriminant, payload }` aggregate; the
+    // importer records where the niche scalar sits inside it. For a scalar
+    // Transmute the payload is a single (possibly wrapped) scalar, so the
+    // offset is 0, but going through the shared offset-based locator keeps the
+    // read side symmetric with the SetDiscriminant write side.
     let mut deep_path = vec![1u32];
-    let rest = deep_scalar_index_path(ctx, payload_ty, val_ty).ok_or_else(|| {
-        pliron::input_error_noloc!(
-            "niched-enum payload field has no scalar slot matching the source type"
-        )
-    })?;
+    let (_scalar_ty, rest) =
+        scalar_path_at_offset(ctx, payload_ty, niche.niche_field_offset).ok_or_else(|| {
+            pliron::input_error_noloc!(
+                "niched-enum payload field has no scalar slot at offset {} for the source value",
+                niche.niche_field_offset
+            )
+        })?;
     deep_path.extend(rest);
 
     let final_insert = llvm::InsertValueOp::new(ctx, with_disc_val, val, deep_path);

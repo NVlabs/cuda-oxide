@@ -39,13 +39,19 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
-use dialect_mir::ops::{
-    MirConstantOp, MirMemcpyOp, MirSetDiscriminantOp, MirStorageDeadOp, MirStorageLiveOp,
-    MirStoreOp,
-};
 use dialect_mir::types::MirEnumType;
+use dialect_mir::{
+    attributes::NicheEncodingAttr,
+    ops::{
+        MirConstantOp, MirMemcpyOp, MirSetDiscriminantOp, MirStorageDeadOp, MirStorageLiveOp,
+        MirStoreOp,
+    },
+};
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::types::{IntegerType, Signedness};
+use pliron::builtin::{
+    attributes::{BoolAttr, IntegerAttr},
+    types::{IntegerType, Signedness},
+};
 use pliron::context::{Context, Ptr};
 use pliron::location::{Located, Location};
 use pliron::op::Op;
@@ -70,12 +76,12 @@ enum SetDiscriminantLayout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetDiscriminantAction {
     WriteDirectTag,
+    WriteNichePayload,
     NoOp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SetDiscriminantLayoutError {
-    NicheEncoding,
     UninhabitedVariant,
 }
 
@@ -94,7 +100,7 @@ fn classify_set_discriminant(
         SetDiscriminantLayout::Direct | SetDiscriminantLayout::Empty => {
             Err(SetDiscriminantLayoutError::UninhabitedVariant)
         }
-        SetDiscriminantLayout::Niche => Err(SetDiscriminantLayoutError::NicheEncoding),
+        SetDiscriminantLayout::Niche => Ok(SetDiscriminantAction::WriteNichePayload),
         SetDiscriminantLayout::Single { inhabited_variant }
             if inhabited_variant == target_variant =>
         {
@@ -153,6 +159,56 @@ fn adt_variant_is_inhabited(
     }
 
     Ok(true)
+}
+
+/// Locate the niche scalar inside a niche-encoded enum's payload.
+///
+/// Niche encoding stores all data in the single `untagged_variant`, so the
+/// enum's flattened `all_field_types` are exactly that variant's fields (every
+/// other variant is dataless). Returns `(niche_field_index, niche_field_offset)`
+/// where the index selects the payload field (in that same source order) that
+/// contains the niche scalar and the offset is the scalar's byte position
+/// *within* that field.
+///
+/// The niche scalar sits at byte `shape.fields.offsets[tag_field]` of the enum
+/// (rustc's `TagEncoding::Niche` doc). The containing untagged field is the one
+/// with the greatest start offset not past the niche, since a variant's fields
+/// never overlap. mir-lower then walks that field's LLVM type by the returned
+/// offset, so multi-field payloads and nested aggregates are handled without a
+/// single-field-chain assumption.
+pub(crate) fn niche_field_location(
+    shape: &rustc_public::abi::LayoutShape,
+    tag_field: usize,
+    untagged_variant_idx: usize,
+) -> (u32, u64) {
+    let niche_offset = match &shape.fields {
+        rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
+            offsets.get(tag_field).map(|s| s.bytes() as u64).unwrap_or(0)
+        }
+        _ => 0,
+    };
+
+    let untagged_offsets: Vec<u64> = match &shape.variants {
+        rustc_public::abi::VariantsShape::Multiple { variants, .. } => variants
+            .get(untagged_variant_idx)
+            .map(|vf| vf.offsets.iter().map(|s| s.bytes() as u64).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    // Pick the untagged field whose start offset is the greatest not exceeding
+    // the niche offset (fields do not overlap, so that field contains it).
+    let mut best: Option<(usize, u64)> = None;
+    for (i, &off) in untagged_offsets.iter().enumerate() {
+        if off <= niche_offset && best.map(|(_, b)| off > b).unwrap_or(true) {
+            best = Some((i, off));
+        }
+    }
+
+    match best {
+        Some((i, off)) => (i as u32, niche_offset - off),
+        None => (0, niche_offset),
+    }
 }
 
 /// Translates a MIR statement to one or more `dialect-mir` operations.
@@ -1016,18 +1072,9 @@ pub fn translate_statement(
             };
 
             match classify_set_discriminant(layout, variant_idx, target_is_inhabited) {
-                Ok(SetDiscriminantAction::WriteDirectTag) => {}
+                Ok(SetDiscriminantAction::WriteDirectTag)
+                | Ok(SetDiscriminantAction::WriteNichePayload) => {}
                 Ok(SetDiscriminantAction::NoOp) => return Ok(prev_op),
-                Err(SetDiscriminantLayoutError::NicheEncoding) => {
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(
-                            "SetDiscriminant for niche-encoded enums is not yet supported; \
-                             changing variants requires writing the niche payload value"
-                                .to_string()
-                        )
-                    );
-                }
                 Err(SetDiscriminantLayoutError::UninhabitedVariant) => {
                     return input_err!(
                         loc,
@@ -1042,7 +1089,15 @@ pub fn translate_statement(
             // Resolve the enum type of the place being mutated and extract
             // everything we need from it inside a scoped block so the deref
             // guard is dropped before we mutably borrow `ctx` again.
-            let (discr_ty_handle, discr_width, discr_signedness, discr_value) =
+            let (
+                discr_ty_handle,
+                discr_width,
+                discr_signedness,
+                discr_value,
+                niche_encoding_opt,
+                is_niche_variant,
+                niche_value_opt,
+            ) =
                 {
                     let enum_mir_ty = types::translate_type(ctx, &place_ty)?;
                     let enum_ty_obj = enum_mir_ty.deref(ctx);
@@ -1088,7 +1143,84 @@ pub fn translate_statement(
                         }
                     };
 
-                    (discr_ty_handle, discr_width, discr_signedness, discr_value)
+                    // Niche-encoded enums (e.g. `Option<&T>`) store the variant in
+                    // the payload scalar itself. Record the niche layout so
+                    // lowering can write the niche bit pattern when the target
+                    // variant is a niche variant. A single niche can encode a
+                    // contiguous range of variants (e.g. `enum E { A, B, C, D(bool) }`),
+                    // so compute the exact payload value for this variant.
+                    let (niche_encoding_opt, is_niche_variant, niche_value_opt) =
+                        match place_ty.layout() {
+                            Ok(layout) => {
+                                let shape = layout.shape();
+                                match &shape.variants {
+                                rustc_public::abi::VariantsShape::Multiple {
+                                    tag_encoding:
+                                        rustc_public::abi::TagEncoding::Niche {
+                                            untagged_variant,
+                                            niche_variants,
+                                            niche_start,
+                                        },
+                                    tag_field,
+                                    ..
+                                } => {
+                                    let niche_start_u64 =
+                                        u64::try_from(*niche_start).map_err(|_| {
+                                            input_error!(
+                                                loc.clone(),
+                                                TranslationErr::unsupported(format!(
+                                                    "SetDiscriminant niche start {} exceeds u64",
+                                                    niche_start
+                                                ))
+                                            )
+                                        })?;
+                                    let niche_start_idx = niche_variants.start().to_index();
+                                    let niche_end_idx = niche_variants.end().to_index();
+                                    let niche_variant_idx = niche_start_idx as u32;
+                                    let niche_variant_end_idx = niche_end_idx as u32;
+                                    let untagged_variant_idx = untagged_variant.to_index() as u32;
+                                    let (niche_field_index, niche_field_offset) =
+                                        niche_field_location(
+                                            &shape,
+                                            *tag_field,
+                                            untagged_variant.to_index(),
+                                        );
+                                    let is_niche = variant_idx >= niche_start_idx
+                                        && variant_idx <= niche_end_idx;
+                                    let niche_value = if is_niche {
+                                        let offset = (variant_idx - niche_start_idx) as u64;
+                                        Some(niche_start_u64 + offset)
+                                    } else {
+                                        None
+                                    };
+                                    (
+                                        Some(NicheEncodingAttr {
+                                            niche_start: niche_start_u64,
+                                            niche_variant_idx,
+                                            niche_variant_end_idx,
+                                            untagged_variant_idx,
+                                            niche_field_index,
+                                            niche_field_offset,
+                                        }),
+                                        is_niche,
+                                        niche_value,
+                                    )
+                                }
+                                _ => (None, false, None),
+                                }
+                            }
+                            Err(_) => (None, false, None),
+                        };
+
+                    (
+                        discr_ty_handle,
+                        discr_width,
+                        discr_signedness,
+                        discr_value,
+                        niche_encoding_opt,
+                        is_niche_variant,
+                        niche_value_opt,
+                    )
                 };
 
             // Build the constant discriminant value.
@@ -1151,6 +1283,20 @@ pub fn translate_statement(
                 0,
             );
             set_op.deref_mut(ctx).set_loc(loc.clone());
+
+            let set_op_wrapped = MirSetDiscriminantOp::new(set_op);
+            if let Some(niche) = niche_encoding_opt {
+                set_op_wrapped.set_attr_set_niche_encoding(ctx, niche);
+                set_op_wrapped.set_attr_is_niche_variant(ctx, BoolAttr::new(is_niche_variant));
+                if let Some(niche_value) = niche_value_opt {
+                    let niche_value_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+                    let niche_value_attr = IntegerAttr::new(
+                        niche_value_ty,
+                        APInt::from_u64(niche_value, NonZeroUsize::new(64).unwrap()),
+                    );
+                    set_op_wrapped.set_attr_set_niche_value(ctx, niche_value_attr);
+                }
+            }
 
             let insert_after = addr_prev.or(const_prev);
             if let Some(prev) = insert_after {
@@ -1497,7 +1643,7 @@ mod tests {
         );
         assert_eq!(
             classify_set_discriminant(SetDiscriminantLayout::Niche, 0, true),
-            Err(SetDiscriminantLayoutError::NicheEncoding)
+            Ok(SetDiscriminantAction::WriteNichePayload)
         );
         assert_eq!(
             classify_set_discriminant(

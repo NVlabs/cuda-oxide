@@ -600,36 +600,50 @@ pub fn translate_rvalue(
             // than by a hand-rolled string key.
             if matches!(kind, mir::CastKind::Transmute)
                 && let Ok(layout) = ty.layout()
-                && let rustc_public::abi::VariantsShape::Multiple {
+            {
+                let shape = layout.shape();
+                if let rustc_public::abi::VariantsShape::Multiple {
                     tag_encoding:
                         rustc_public::abi::TagEncoding::Niche {
                             untagged_variant,
                             niche_variants,
                             niche_start,
                         },
+                    tag_field,
                     ..
-                } = &layout.shape().variants
-            {
-                // Niched scalars are at most 64 bits wide. If rustc ever
-                // hands us something wider, fail loudly instead of
-                // truncating: the wrong bit pattern would silently match a
-                // different enum variant at runtime.
-                let niche_start_u64 = u64::try_from(*niche_start).map_err(|_| {
-                    input_error_noloc!(TranslationErr::unsupported(format!(
-                        "Niche start {} exceeds u64; niched-enum Transmute with > 64-bit scalar is not supported",
-                        niche_start
-                    )))
-                })?;
-                let niche_variant_idx = niche_variants.start().to_index() as u32;
-                let untagged_variant_idx = untagged_variant.to_index() as u32;
-                cast_op.set_attr_niche_encoding(
-                    ctx,
-                    dialect_mir::attributes::NicheEncodingAttr {
-                        niche_start: niche_start_u64,
-                        niche_variant_idx,
-                        untagged_variant_idx,
-                    },
-                );
+                } = &shape.variants
+                {
+                    // Niched scalars are at most 64 bits wide. If rustc ever
+                    // hands us something wider, fail loudly instead of
+                    // truncating: the wrong bit pattern would silently match a
+                    // different enum variant at runtime.
+                    let niche_start_u64 = u64::try_from(*niche_start).map_err(|_| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "Niche start {} exceeds u64; niched-enum Transmute with > 64-bit scalar is not supported",
+                            niche_start
+                        )))
+                    })?;
+                    let niche_variant_idx = niche_variants.start().to_index() as u32;
+                    let niche_variant_end_idx = niche_variants.end().to_index() as u32;
+                    let untagged_variant_idx = untagged_variant.to_index() as u32;
+                    let (niche_field_index, niche_field_offset) =
+                        crate::translator::statement::niche_field_location(
+                            &shape,
+                            *tag_field,
+                            untagged_variant.to_index(),
+                        );
+                    cast_op.set_attr_niche_encoding(
+                        ctx,
+                        dialect_mir::attributes::NicheEncodingAttr {
+                            niche_start: niche_start_u64,
+                            niche_variant_idx,
+                            niche_variant_end_idx,
+                            untagged_variant_idx,
+                            niche_field_index,
+                            niche_field_offset,
+                        },
+                    );
+                }
             }
 
             let result = op.deref(ctx).get_result(0);
@@ -6113,6 +6127,182 @@ fn translate_enum_constant_from_bytes(
     Ok((val, Some(enum_op.get_operation())))
 }
 
+/// Translate a struct value from raw bytes plus the Rust type/layout metadata.
+///
+/// This is the byte-slice counterpart to [`translate_struct_constant`] and is
+/// used whenever a constant field has a struct type (e.g. `NonZero<T>` wrappers
+/// inside enum payloads). Each field is parsed recursively so nested newtypes
+/// are handled automatically.
+fn translate_struct_constant_from_bytes(
+    ctx: &mut Context,
+    rust_ty: &rustc_public::ty::Ty,
+    const_ty_ptr: TypeHandle,
+    struct_bytes: &[u8],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let field_types: Vec<TypeHandle> = {
+        let ty_obj = const_ty_ptr.deref(ctx);
+        let struct_ty = ty_obj
+            .downcast_ref::<dialect_mir::types::MirStructType>()
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(
+                    "translate_struct_constant_from_bytes called on non-struct type"
+                ))
+            })?;
+        struct_ty.field_types().to_vec()
+    };
+
+    let layout = rust_ty.layout().map_err(|e| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "Failed to query layout for struct constant: {:?}",
+            e
+        )))
+    })?;
+    let shape = layout.shape();
+
+    let field_offsets: Vec<usize> = match &shape.fields {
+        rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
+            offsets.iter().map(|offset| offset.bytes()).collect()
+        }
+        rustc_public::abi::FieldsShape::Primitive => vec![0; field_types.len()],
+        rustc_public::abi::FieldsShape::Union { .. } => vec![0; field_types.len()],
+        other => {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Struct constant fields use unsupported shape {:?}",
+                    other
+                ))
+            );
+        }
+    };
+
+    let (adt_def, substs) = match rust_ty.kind() {
+        TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) => (adt_def, substs),
+        other => {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Expected ADT Rust type for struct constant, got {:?}",
+                    other
+                ))
+            );
+        }
+    };
+
+    // Structs have a single variant in the ADT metadata.
+    let variants = adt_def.variants();
+    let struct_variant = variants.get(0).ok_or_else(|| {
+        input_error_noloc!(TranslationErr::unsupported(
+            "Struct ADT has no variants in metadata"
+        ))
+    })?;
+
+    let mut field_values = Vec::with_capacity(field_types.len());
+    let mut current_prev_op = prev_op;
+
+    for (field_idx, field_ty_ptr) in field_types.iter().copied().enumerate() {
+        let fields = struct_variant.fields();
+        let rust_field = fields.get(field_idx).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Struct constant field {} is missing in rustc ADT metadata ({} field(s) recorded)",
+                field_idx,
+                fields.len()
+            )))
+        })?;
+        let rust_field_ty = rust_field.ty_with_args(&substs);
+        let field_layout = rust_field_ty.layout().map_err(|e| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to query layout for struct field {}: {:?}",
+                field_idx, e
+            )))
+        })?;
+        let field_size = field_layout.shape().size.bytes() as usize;
+        let field_offset = *field_offsets.get(field_idx).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Missing layout offset for struct field {}",
+                field_idx
+            )))
+        })?;
+
+        if field_size == 0 {
+            let (zst_val, new_prev_op) = translate_zero_sized_constant_value(
+                ctx,
+                field_ty_ptr,
+                block_ptr,
+                current_prev_op,
+                loc.clone(),
+            )?;
+            field_values.push(zst_val);
+            current_prev_op = new_prev_op;
+            continue;
+        }
+
+        let field_end = field_offset.checked_add(field_size).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Struct field {} offset {} + size {} overflowed",
+                field_idx, field_offset, field_size
+            )))
+        })?;
+        if field_end > struct_bytes.len() {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "Struct constant has {} bytes, but field {} needs [{}..{})",
+                    struct_bytes.len(),
+                    field_idx,
+                    field_offset,
+                    field_end
+                ))
+            );
+        }
+
+        let field_bytes = &struct_bytes[field_offset..field_end];
+        let (field_val, new_prev_op) = translate_constant_value_from_bytes(
+            ctx,
+            &rust_field_ty,
+            field_ty_ptr,
+            field_bytes,
+            block_ptr,
+            current_prev_op,
+            loc.clone(),
+        )?;
+        field_values.push(field_val);
+        current_prev_op = new_prev_op;
+    }
+
+    let (casted_field_values, prev_after_casts) = cast_struct_fields_to_expected_types(
+        ctx,
+        field_values,
+        const_ty_ptr,
+        block_ptr,
+        current_prev_op,
+        loc.clone(),
+    );
+
+    let op = Operation::new(
+        ctx,
+        MirConstructStructOp::get_concrete_op_info(),
+        vec![const_ty_ptr],
+        casted_field_values,
+        vec![],
+        0,
+    );
+    op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = prev_after_casts {
+        op.insert_after(ctx, prev);
+    } else {
+        op.insert_at_front(block_ptr, ctx);
+    }
+
+    Ok((op.deref(ctx).get_result(0), Some(op)))
+}
+
 /// Translate one field-sized byte slice into a constant value.
 fn translate_constant_value_from_bytes(
     ctx: &mut Context,
@@ -6139,6 +6329,18 @@ fn translate_constant_value_from_bytes(
         .unwrap_or(false);
     if is_zst || types::is_zst_type(ctx, ty_ptr) {
         return translate_zero_sized_constant_value(ctx, ty_ptr, block_ptr, prev_op, loc);
+    }
+
+    // Struct-typed constants (e.g. `NonZero<T>` wrappers inside enum payloads)
+    // need per-field construction rather than a single scalar constant.
+    let is_struct = {
+        let ty_ref = ty_ptr.deref(ctx);
+        ty_ref.is::<dialect_mir::types::MirStructType>()
+    };
+    if is_struct {
+        return translate_struct_constant_from_bytes(
+            ctx, rust_ty, ty_ptr, bytes, block_ptr, prev_op, loc,
+        );
     }
 
     enum ValueKind {

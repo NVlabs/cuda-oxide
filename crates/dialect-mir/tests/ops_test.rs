@@ -4,7 +4,7 @@
  */
 
 use dialect_mir::{
-    attributes::MirCastKindAttr,
+    attributes::{MirCastKindAttr, NicheEncodingAttr},
     ops::{
         MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
         MirCondBranchOp, MirConstantOp, MirConstructSliceOp, MirDivOp, MirEqOp, MirExtractFieldOp,
@@ -17,7 +17,7 @@ use dialect_mir::{
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
-        attributes::{IntegerAttr, StringAttr, TypeAttr},
+        attributes::{BoolAttr, IntegerAttr, StringAttr, TypeAttr},
         op_interfaces::OperandSegmentInterface,
         types::{FP32Type, FunctionType, IntegerType, Signedness},
     },
@@ -1126,5 +1126,81 @@ fn test_mir_set_discriminant_verify() {
             .verify(&ctx)
             .is_err(),
         "Discriminant type mismatch rejected"
+    );
+
+    // Valid niche-encoded variant: attributes are consistent.
+    let op_niche = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![enum_ptr, discr_val],
+        vec![],
+        0,
+    );
+    let niche_wrapped = MirSetDiscriminantOp::new(op_niche);
+    niche_wrapped.set_attr_set_niche_encoding(
+        &ctx,
+        NicheEncodingAttr {
+            niche_start: 0,
+            niche_variant_idx: 1,
+            niche_variant_end_idx: 1,
+            untagged_variant_idx: 0,
+            niche_field_index: 0,
+            niche_field_offset: 0,
+        },
+    );
+    niche_wrapped.set_attr_is_niche_variant(&ctx, BoolAttr::new(true));
+    let niche_value_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let niche_value_attr = IntegerAttr::new(
+        niche_value_ty,
+        APInt::from_u64(0, NonZeroUsize::new(64).unwrap()),
+    );
+    niche_wrapped.set_attr_set_niche_value(&ctx, niche_value_attr.clone());
+    assert!(
+        niche_wrapped.verify(&ctx).is_ok(),
+        "Valid niche set_discriminant"
+    );
+
+    // Invalid: is_niche_variant without set_niche_encoding or set_niche_value.
+    let op_niche_missing = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![enum_ptr, discr_val],
+        vec![],
+        0,
+    );
+    let niche_missing_wrapped = MirSetDiscriminantOp::new(op_niche_missing);
+    niche_missing_wrapped.set_attr_is_niche_variant(&ctx, BoolAttr::new(true));
+    assert!(
+        niche_missing_wrapped.verify(&ctx).is_err(),
+        "is_niche_variant without set_niche_encoding/set_niche_value rejected"
+    );
+
+    // Invalid: set_niche_value present but is_niche_variant false.
+    let op_value_no_flag = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![enum_ptr, discr_val],
+        vec![],
+        0,
+    );
+    let value_no_flag_wrapped = MirSetDiscriminantOp::new(op_value_no_flag);
+    value_no_flag_wrapped.set_attr_set_niche_encoding(
+        &ctx,
+        NicheEncodingAttr {
+            niche_start: 0,
+            niche_variant_idx: 1,
+            niche_variant_end_idx: 1,
+            untagged_variant_idx: 0,
+            niche_field_index: 0,
+            niche_field_offset: 0,
+        },
+    );
+    value_no_flag_wrapped.set_attr_set_niche_value(&ctx, niche_value_attr);
+    assert!(
+        value_no_flag_wrapped.verify(&ctx).is_err(),
+        "set_niche_value without is_niche_variant rejected"
     );
 }

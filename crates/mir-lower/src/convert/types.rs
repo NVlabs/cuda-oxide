@@ -1099,6 +1099,62 @@ pub(crate) fn convert_enum_to_llvm(
     Ok(build_enum_slot_map(ctx, ty)?.llvm_struct_ty)
 }
 
+/// Locate the scalar (integer or pointer) at byte `offset` inside an LLVM
+/// aggregate, returning that scalar's type plus the `insertvalue` /
+/// `getelementptr` index path (LLVM struct field indices, explicit padding
+/// fillers included) that reaches it.
+///
+/// This is the shared niche-scalar locator for both the store side
+/// ([`crate::convert::ops::aggregate::convert_set_discriminant`]) and the load
+/// side ([`crate::convert::ops::cast::emit_scalar_to_niched_enum`]). Unlike a
+/// single-field-chain descent it follows the field whose byte range contains
+/// `offset`, so a niche in a later field of a multi-field payload
+/// (`enum E { A, B(u32, NonZeroU32) }`) and niches nested at any depth
+/// (`Option<Wrapper { pad: u32, nz: NonZeroU32 }>`) both resolve correctly.
+/// The importer supplies `offset` via `NicheEncodingAttr::niche_field_offset`.
+///
+/// Returns `None` when no scalar sits exactly at `offset` (e.g. the offset
+/// lands in padding, or in an array/vector we do not descend), so callers turn
+/// an unresolvable niche into an explicit diagnostic rather than a miscompile.
+pub(crate) fn scalar_path_at_offset(
+    ctx: &Context,
+    mut ty: TypeHandle,
+    mut offset: u64,
+) -> Option<(TypeHandle, Vec<u32>)> {
+    let mut path = Vec::new();
+    loop {
+        let is_scalar = {
+            let r = ty.deref(ctx);
+            r.downcast_ref::<IntegerType>().is_some() || r.is::<llvm_types::PointerType>()
+        };
+        if is_scalar {
+            return if offset == 0 { Some((ty, path)) } else { None };
+        }
+
+        let field_tys: Vec<TypeHandle> = {
+            let r = ty.deref(ctx);
+            let s = r.downcast_ref::<llvm_types::StructType>()?;
+            s.fields().collect()
+        };
+
+        // Descend into the field whose [start, start + size) contains `offset`.
+        let mut start = 0u64;
+        let mut chosen: Option<(u32, TypeHandle, u64)> = None;
+        for (i, field_ty) in field_tys.into_iter().enumerate() {
+            let size = get_type_size(ctx, field_ty);
+            if offset >= start && offset < start + size {
+                chosen = Some((i as u32, field_ty, start));
+                break;
+            }
+            start += size;
+        }
+        let (idx, field_ty, field_start) = chosen?;
+        path.push(idx);
+        offset -= field_start;
+        ty = field_ty;
+    }
+}
+
 /// Is this an enum whose device bytes do NOT match the host's?
 ///
 /// Most enums now lower byte-identically to rustc's layout and pass any

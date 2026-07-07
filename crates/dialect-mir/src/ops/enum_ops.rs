@@ -8,8 +8,9 @@
 //! This module defines enum construction and inspection operations for the MIR dialect.
 
 use pliron::{
-    builtin::op_interfaces::{
-        NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface,
+    builtin::{
+        attributes::{BoolAttr, IntegerAttr},
+        op_interfaces::{NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface},
     },
     common_traits::Verify,
     context::{Context, Ptr},
@@ -23,7 +24,7 @@ use pliron::{
 };
 use pliron_derive::pliron_op;
 
-use crate::attributes::{FieldIndexAttr, VariantIndexAttr};
+use crate::attributes::{FieldIndexAttr, NicheEncodingAttr, VariantIndexAttr};
 use crate::types::MirEnumType;
 
 // ============================================================================
@@ -238,6 +239,11 @@ impl Verify for MirGetDiscriminantOp {
 /// the first operand. This is the device-side lowering of MIR's
 /// `StatementKind::SetDiscriminant`.
 ///
+/// For niche-encoded enums (e.g. `Option<&T>`), the importer also attaches
+/// `niche_encoding` and `is_niche_variant`. When `is_niche_variant` is true,
+/// lowering writes the niche bit pattern into the payload scalar in addition
+/// to storing the synthetic discriminant.
+///
 /// # Operands
 ///
 /// ```text
@@ -245,6 +251,16 @@ impl Verify for MirGetDiscriminantOp {
 /// |-----------------|-----------------------------------|
 /// | `enum_ptr`      | Pointer to MirEnumType            |
 /// | `discriminant`  | IntegerType (enum's discriminant) |
+/// ```
+///
+/// # Attributes
+///
+/// ```text
+/// | Name                | Type                | Optional | Description                                               |
+/// |---------------------|---------------------|----------|-----------------------------------------------------------|
+/// | `set_niche_encoding`| `NicheEncodingAttr` | yes      | Niche layout when the enum is niche-encoded.              |
+/// | `is_niche_variant`  | `BoolAttr`          | yes      | True if the variant being set uses the niche value.       |
+/// | `set_niche_value`   | `IntegerAttr`       | yes      | Exact payload bit pattern to write for this niche variant.|
 /// ```
 ///
 /// # Results
@@ -255,10 +271,13 @@ impl Verify for MirGetDiscriminantOp {
 ///
 /// - First operand must be a `MirPtrType` pointing to a `MirEnumType`.
 /// - Second operand type must match the enum's discriminant type.
+/// - `is_niche_variant` may only be true when `set_niche_encoding` is present.
+/// - `set_niche_value` must be present exactly when `is_niche_variant` is true.
 #[pliron_op(
     name = "mir.set_discriminant",
     format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>]
+    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
+    attributes = (set_niche_encoding: NicheEncodingAttr, is_niche_variant: BoolAttr, set_niche_value: IntegerAttr)
 )]
 pub struct MirSetDiscriminantOp;
 
@@ -310,7 +329,29 @@ impl Verify for MirSetDiscriminantOp {
                 op.loc(),
                 "MirSetDiscriminantOp first operand must be a pointer type"
             ),
+        }?;
+
+        // `is_niche_variant` implies a niche encoding is recorded so lowering
+        // knows which payload value to write.
+        let is_niche_variant = self.get_attr_is_niche_variant(ctx).is_some();
+        let has_niche_encoding = self.get_attr_set_niche_encoding(ctx).is_some();
+        let has_niche_value = self.get_attr_set_niche_value(ctx).is_some();
+
+        if is_niche_variant && !has_niche_encoding {
+            return verify_err!(
+                op.loc(),
+                "MirSetDiscriminantOp is_niche_variant requires set_niche_encoding"
+            );
         }
+
+        if is_niche_variant != has_niche_value {
+            return verify_err!(
+                op.loc(),
+                "MirSetDiscriminantOp set_niche_value must be present exactly when is_niche_variant is true"
+            );
+        }
+
+        Ok(())
     }
 }
 

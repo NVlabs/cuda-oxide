@@ -90,21 +90,39 @@ pub struct UnrollAttr(pub u32);
 /// When mir-lower has to rebuild the un-niched `{ discriminant, payload }`
 /// aggregate from such a scalar it needs:
 ///
-/// * `niche_start` -- the bit pattern that signals the niche variant.
-/// * `niche_variant_idx` -- the discriminant value for the niche variant.
-/// * `untagged_variant_idx` -- the discriminant value for the active variant.
+/// * `niche_start` -- the bit pattern that signals the first niche variant.
+/// * `niche_variant_idx` -- the variant index of the first niche variant.
+/// * `niche_variant_end_idx` -- the variant index of the last niche variant
+///   (inclusive). For the common single-niche case this equals
+///   `niche_variant_idx`.
+/// * `untagged_variant_idx` -- the variant index of the active (untagged) variant.
+/// * `niche_field_index` -- which flattened payload field (in
+///   `MirEnumType::all_field_types` order) contains the niche scalar. Niche
+///   encoding places all data in the single untagged variant, so this indexes
+///   that variant's fields. Usually `0` (`Option<T>`), but a data variant with
+///   several fields (`enum E { A, B(u32, NonZeroU32) }`) puts the niche in a
+///   later field.
+/// * `niche_field_offset` -- byte offset of the niche scalar *within* that
+///   payload field. `0` when the field is itself the scalar; non-zero when the
+///   niche sits inside a nested aggregate (`Option<Wrapper { pad: u32, nz:
+///   NonZeroU32 }>`).
 ///
-/// All three come from `ty.layout().shape().variants` when the tag
-/// encoding is `TagEncoding::Niche`. `niche_start` is stored as `u64`
-/// rather than the `u128` rustc-public exposes: niched scalars are at
-/// most 64 bits wide, so the bit pattern always fits. The importer
-/// rejects wider niches up front rather than truncating silently.
+/// The first four come from `ty.layout().shape().variants` when the tag
+/// encoding is `TagEncoding::Niche`; `niche_field_index`/`niche_field_offset`
+/// are derived from the enum's `FieldsShape` offsets and the `tag_field`
+/// index. `niche_start` is stored as `u64` rather than the `u128`
+/// rustc-public exposes: niched scalars are at most 64 bits wide, so the bit
+/// pattern always fits. The importer rejects wider niches up front rather
+/// than truncating silently.
 #[pliron_attr(name = "mir.niche_encoding", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct NicheEncodingAttr {
     pub niche_start: u64,
     pub niche_variant_idx: u32,
+    pub niche_variant_end_idx: u32,
     pub untagged_variant_idx: u32,
+    pub niche_field_index: u32,
+    pub niche_field_offset: u64,
 }
 
 /// IEEE 754 binary16 floating-point attribute for Rust MIR `f16` constants.
