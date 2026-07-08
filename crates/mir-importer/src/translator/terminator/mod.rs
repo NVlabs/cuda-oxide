@@ -1189,8 +1189,17 @@ fn translate_call(
         );
     }
 
-    // Try to dispatch as intrinsic
-    if let Some(ref name) = pattern_name
+    // Try to dispatch as intrinsic. Foreign `extern "C"` items declared with
+    // `#[link_name = "llvm.*"]` (the `link_llvm_intrinsics` pattern for sreg
+    // reads and barriers) dispatch on the link symbol, which is what the
+    // `llvm.*` match arms in `try_dispatch_intrinsic` expect; the Rust path
+    // (`pattern_name`) of such wrappers is an arbitrary user-crate path. All
+    // other calls dispatch on the Rust path as before.
+    let dispatch_name = match &call_name {
+        Some(link) if link.starts_with("llvm.") => Some(link.clone()),
+        _ => pattern_name.clone(),
+    };
+    if let Some(ref name) = dispatch_name
         && let Some(result) = try_dispatch_intrinsic(
             ctx,
             body,
@@ -2337,162 +2346,162 @@ fn try_dispatch_intrinsic(
         // Thread/Block Position Intrinsics
         // Support both re-exported (cuda_device::) and full paths (cuda_device::thread::)
         // =================================================================
-        "cuda_device::threadIdx_x" | "cuda_device::thread::threadIdx_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregTidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::threadIdx_y" | "cuda_device::thread::threadIdx_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregTidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockIdx_x" | "cuda_device::thread::blockIdx_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregCtaidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockIdx_y" | "cuda_device::thread::blockIdx_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregCtaidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockDim_x" | "cuda_device::thread::blockDim_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregNtidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockDim_y" | "cuda_device::thread::blockDim_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                ReadPtxSregNtidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::threadIdx_z" | "cuda_device::thread::threadIdx_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregTidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockIdx_z" | "cuda_device::thread::blockIdx_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregCtaidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::blockDim_z" | "cuda_device::thread::blockDim_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNtidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridDim_x" | "cuda_device::thread::gridDim_x" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNctaidXOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridDim_y" | "cuda_device::thread::gridDim_y" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNctaidYOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::gridDim_z" | "cuda_device::thread::gridDim_z" => {
-            Ok(Some(helpers::emit_nvvm_intrinsic(
-                ctx,
-                dialect_nvvm::ops::ReadPtxSregNctaidZOp::get_concrete_op_info(),
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
+        "cuda_device::threadIdx_x"
+        | "cuda_device::thread::threadIdx_x"
+        | "llvm.nvvm.read.ptx.sreg.tid.x" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregTidXOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::threadIdx_y"
+        | "cuda_device::thread::threadIdx_y"
+        | "llvm.nvvm.read.ptx.sreg.tid.y" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregTidYOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::blockIdx_x"
+        | "cuda_device::thread::blockIdx_x"
+        | "llvm.nvvm.read.ptx.sreg.ctaid.x" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregCtaidXOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::blockIdx_y"
+        | "cuda_device::thread::blockIdx_y"
+        | "llvm.nvvm.read.ptx.sreg.ctaid.y" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregCtaidYOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::blockDim_x"
+        | "cuda_device::thread::blockDim_x"
+        | "llvm.nvvm.read.ptx.sreg.ntid.x" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregNtidXOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::blockDim_y"
+        | "cuda_device::thread::blockDim_y"
+        | "llvm.nvvm.read.ptx.sreg.ntid.y" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            ReadPtxSregNtidYOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::threadIdx_z"
+        | "cuda_device::thread::threadIdx_z"
+        | "llvm.nvvm.read.ptx.sreg.tid.z" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            dialect_nvvm::ops::ReadPtxSregTidZOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::blockIdx_z"
+        | "cuda_device::thread::blockIdx_z"
+        | "llvm.nvvm.read.ptx.sreg.ctaid.z" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            dialect_nvvm::ops::ReadPtxSregCtaidZOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::blockDim_z"
+        | "cuda_device::thread::blockDim_z"
+        | "llvm.nvvm.read.ptx.sreg.ntid.z" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            dialect_nvvm::ops::ReadPtxSregNtidZOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::gridDim_x"
+        | "cuda_device::thread::gridDim_x"
+        | "llvm.nvvm.read.ptx.sreg.nctaid.x" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            dialect_nvvm::ops::ReadPtxSregNctaidXOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::gridDim_y"
+        | "cuda_device::thread::gridDim_y"
+        | "llvm.nvvm.read.ptx.sreg.nctaid.y" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            dialect_nvvm::ops::ReadPtxSregNctaidYOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
+        "cuda_device::gridDim_z"
+        | "cuda_device::thread::gridDim_z"
+        | "llvm.nvvm.read.ptx.sreg.nctaid.z" => Ok(Some(helpers::emit_nvvm_intrinsic(
+            ctx,
+            dialect_nvvm::ops::ReadPtxSregNctaidZOp::get_concrete_op_info(),
+            destination,
+            target,
+            block_ptr,
+            prev_op,
+            value_map,
+            block_map,
+            loc,
+        )?)),
         // SM and grid identification
         "cuda_device::smid" | "cuda_device::thread::smid" => {
             Ok(Some(helpers::emit_nvvm_intrinsic(
@@ -2644,9 +2653,13 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Synchronization (from intrinsics::sync)
         // =================================================================
-        "cuda_device::sync_threads" => Ok(Some(intrinsics::sync::emit_sync_threads(
-            ctx, target, block_ptr, prev_op, block_map, loc,
-        )?)),
+        // A `#[link_name = "llvm.nvvm.barrier0"]` extern (the
+        // `link_llvm_intrinsics` pattern). Surfaced as its link name by
+        // `extract_func_info`; lowers to the same NVVM `Barrier0Op`
+        // (`bar.sync`) as `cuda_device::sync_threads`.
+        "cuda_device::sync_threads" | "llvm.nvvm.barrier0" => Ok(Some(
+            intrinsics::sync::emit_sync_threads(ctx, target, block_ptr, prev_op, block_map, loc)?,
+        )),
         "cuda_device::threadfence_block" | "cuda_device::fence::threadfence_block" => {
             Ok(Some(intrinsics::sync::emit_threadfence_block(
                 ctx, target, block_ptr, prev_op, block_map, loc,

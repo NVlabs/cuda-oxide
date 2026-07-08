@@ -1,0 +1,14 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+[package]
+name = "llvmlink_device"
+version = "0.1.0"
+edition = "2024"
+[workspace]
+[lib]
+crate-type = ["lib"]
+[dependencies]
+cuda-device = { path = "../../../cuda-device" }
