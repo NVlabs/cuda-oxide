@@ -375,6 +375,38 @@ fn emit_unsize_cast(
         let dst_is_struct = llvm_ty.deref(ctx).is::<llvm_export::types::StructType>();
 
         if dst_is_struct {
+            // Coerce the source data pointer to the slice's field-0 address
+            // space. When the array lives in shared memory (addrspace 3, e.g.
+            // a `&[T; N]` row of a nested `SharedArray<[T; N], M>` borrowed
+            // via indexing — see `examples/shared_slice_unsize`), forming a
+            // `&[T]`/`&mut [T]` fat pointer over it yields a
+            // `ptr addrspace(3)`, but the canonical slice type stores
+            // `ptr addrspace(0)` in field 0. Insert an addrspacecast so the
+            // insert_value types match (PTX lowers this to `cvta.shared`).
+            let field0_as = llvm_ty
+                .deref(ctx)
+                .downcast_ref::<llvm_export::types::StructType>()
+                .map(|st| st.field_type(0))
+                .and_then(|f0| {
+                    f0.deref(ctx)
+                        .downcast_ref::<llvm_export::types::PointerType>()
+                        .map(|pt| pt.address_space())
+                });
+            let val_as = val
+                .get_type(ctx)
+                .deref(ctx)
+                .downcast_ref::<llvm_export::types::PointerType>()
+                .map(|pt| pt.address_space());
+            let val = match (val_as, field0_as) {
+                (Some(s_as), Some(d_as)) if s_as != d_as => {
+                    let cast_ty = llvm_export::types::PointerType::get(ctx, d_as).into();
+                    let c = llvm::AddrSpaceCastOp::new(ctx, val, cast_ty);
+                    rewriter.insert_operation(ctx, c.get_operation());
+                    c.get_operation().deref(ctx).get_result(0)
+                }
+                _ => val,
+            };
+
             let undef = llvm::UndefOp::new(ctx, llvm_ty);
             rewriter.insert_operation(ctx, undef.get_operation());
             let undef_val = undef.get_operation().deref(ctx).get_result(0);
@@ -500,13 +532,13 @@ fn emit_pointer_cast(
         // which checks size equality and stamps the natural alignment (an
         // unguarded round-trip could silently move the wrong bytes). See #21.
         //
-        // Scope note: we intentionally do NOT add the address-space-coercion
-        // cast variants (array->slice unsize, or thin-ptr->wrapper-field-0,
-        // over an `addrspace(3)` source). Those only arise for rust-gpu
-        // `#[spirv(workgroup)]` shared arrays; cuda-oxide has no such construct
-        // (its shared memory is `SharedArray`, which exposes no `&[T; N]` to
-        // unsize and no addrspace-3 slice), so there is no reachable trigger.
-        // And `std`-originated casts can never reach here at all: the collector
+        // Scope note: the addrspace(3) array->slice unsize DOES arise for
+        // shared-memory arrays exposed as `&[T; N]`/`&mut [T; N]` — e.g. a
+        // row of a nested `SharedArray` borrowed via indexing (see
+        // `examples/shared_slice_unsize`); `emit_unsize_cast` coerces the
+        // data pointer to the slice's field-0 address space for that case. The thin-ptr->wrapper-field-0 variant
+        // over an addrspace(3) source has no known trigger and is left out.
+        // `std`-originated casts can never reach here at all: the collector
         // rejects any `std::` call up front (device code is `core`/`alloc`-only).
         emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
     } else if src_is_struct && llvm_ty.deref(ctx).is::<IntegerType>() {
@@ -1291,6 +1323,75 @@ mod tests {
             pointer_addrspace(&ctx, result_ty),
             3,
             "ptr -> ptr addrspace cast must produce an addrspace(3) pointer"
+        );
+    }
+
+    /// `&mut [T; N]` in shared memory (addrspace 3) unsized to `&mut [T]`:
+    /// the slice's field-0 pointer slot is generic (addrspace 0), so the data
+    /// pointer must be `addrspacecast` before the `insert_value` (PTX
+    /// `cvta.shared`). Without the coercion the lowered module fails
+    /// verification with "Value being inserted / extracted does not match the
+    /// type of the indexed aggregate".
+    #[test]
+    fn shared_array_unsize_coerces_data_pointer_to_slice_addrspace() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&mut ctx).into();
+        let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
+        let src_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, arr_ty, true).into();
+        let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            src_ty,
+            dst_ty,
+            MirCastKindAttr::PointerCoercionUnsize,
+        );
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            1,
+            "shared -> generic data pointer must be addrspacecast before insertion"
+        );
+        assert_eq!(
+            count_ops::<llvm::InsertValueOp>(&ctx, &body),
+            2,
+            "fat pointer construction must insert data pointer and length"
+        );
+        assert_eq!(
+            count_ops::<mir::MirCastOp>(&ctx, &body),
+            0,
+            "mir.cast must be replaced during lowering"
+        );
+    }
+
+    /// The same unsize from a generic (addrspace 0) array must NOT insert a
+    /// spurious addrspacecast.
+    #[test]
+    fn generic_array_unsize_needs_no_addrspace_coercion() {
+        let mut ctx = make_ctx();
+        let f32_ty: TypeHandle = FP32Type::get(&mut ctx).into();
+        let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
+        let src_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, arr_ty, true).into();
+        let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
+
+        let module_ptr = lower_single_cast(
+            &mut ctx,
+            src_ty,
+            dst_ty,
+            MirCastKindAttr::PointerCoercionUnsize,
+        );
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            0,
+            "matching address spaces must not introduce an addrspacecast"
+        );
+        assert_eq!(
+            count_ops::<llvm::InsertValueOp>(&ctx, &body),
+            2,
+            "fat pointer construction must insert data pointer and length"
         );
     }
 }
