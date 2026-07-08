@@ -680,7 +680,22 @@ impl CodegenBackend for CudaCodegenBackend {
                                 artifact.name, artifact.kind, result.target
                             );
                         }
-                        if let Some(artifact) = result.artifact.as_ref() {
+                        // Device-only crates (compiled with
+                        // `--target nvptx64-nvidia-cuda`) have no host object to
+                        // embed the device blob into; the standalone .ptx/.ll
+                        // already written to the PTX output dir is the
+                        // deliverable, and the host-object writer does not
+                        // support an nvptx host target. Skip the embed step.
+                        let device_only_target =
+                            tcx.sess.target.llvm_target.as_ref().starts_with("nvptx64");
+                        if device_only_target {
+                            if self.config.verbose {
+                                eprintln!(
+                                    "[rustc_codegen_cuda] Device-only target; \
+                                     skipping host-object embed (PTX written to output dir)"
+                                );
+                            }
+                        } else if let Some(artifact) = result.artifact.as_ref() {
                             match write_device_artifact_object(
                                 &device_config.output_dir,
                                 &device_config.output_name,

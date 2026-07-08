@@ -115,6 +115,18 @@ enum Commands {
         /// Generate NVVM IR (use with libNVVM -gen-lto)
         #[arg(long)]
         emit_nvvm_ir: bool,
+        /// Compile as a device-only crate for the real `nvptx64-nvidia-cuda`
+        /// target (adds `--target nvptx64-nvidia-cuda -Z build-std=core`).
+        ///
+        /// In this mode `cfg(target_arch = "nvptx64")` is active, so crates
+        /// written for multiple GPU targets select their device code paths
+        /// (real barriers, scalar math, `link_llvm_intrinsics` externs) with
+        /// no host-target workarounds. The crate must be a pure device crate
+        /// (no `cuda_host` / `main` host glue); the emitted `<crate>.ptx` is
+        /// the deliverable. Library crates without a cuda-host dependency
+        /// select this mode automatically; the flag forces it.
+        #[arg(long)]
+        device: bool,
         /// Target architecture (e.g., sm_90, sm_100, sm_120)
         #[arg(long)]
         arch: Option<String>,
@@ -361,6 +373,7 @@ fn main() {
         Commands::Build {
             example,
             emit_nvvm_ir,
+            device,
             arch,
             features,
             verbose,
@@ -386,6 +399,7 @@ fn main() {
                     &example,
                     verbose,
                     emit_nvvm_ir,
+                    device,
                     arch.as_deref(),
                     features.as_deref(),
                     no_fmad,

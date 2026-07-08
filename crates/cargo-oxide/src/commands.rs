@@ -1213,11 +1213,29 @@ fn run_compute_sanitizer(
 /// Same as [`codegen_run`] but uses `cargo build --release` instead of
 /// `cargo run`. Useful for cross-compilation or when the target hardware
 /// (e.g., Blackwell tensor cores) isn't available on the build machine.
+/// Detect a device-only crate: a library with no binary target and no
+/// dependency on the host-side crates (`cuda-host` / `cuda-core`).
+///
+/// Such a crate cannot be a unified host+device build — there is nothing to
+/// produce for the host — so `build` selects the `--device` path (real
+/// `nvptx64-nvidia-cuda` target) automatically. The explicit `--device` flag
+/// remains as an override for crates the heuristic cannot see through
+/// (e.g. a lib that optionally depends on host crates behind a feature).
+fn is_device_only_crate(crate_dir: &Path) -> bool {
+    let Ok(manifest) = std::fs::read_to_string(crate_dir.join("Cargo.toml")) else {
+        return false;
+    };
+    let has_bin_target = crate_dir.join("src/main.rs").is_file() || manifest.contains("[[bin]]");
+    let depends_on_host = manifest.contains("cuda-host") || manifest.contains("cuda-core");
+    !has_bin_target && !depends_on_host
+}
+
 pub fn codegen_build(
     ctx: &Context,
     example: &str,
     verbose: bool,
     emit_nvvm_ir: bool,
+    device: bool,
     arch: Option<&str>,
     features: Option<&str>,
     no_fmad: bool,
@@ -1257,6 +1275,27 @@ pub fn codegen_build(
 
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(&example_dir);
+
+    let device = device || {
+        let auto = is_device_only_crate(&example_dir);
+        if auto {
+            println!(
+                "Device-only crate detected (library without cuda-host); \
+                 building for nvptx64-nvidia-cuda"
+            );
+        }
+        auto
+    };
+    if device {
+        // Device-only crate: compile the front-end for the real nvptx64 target
+        // so `cfg(target_arch = "nvptx64")` is active (no host-target SIMD /
+        // barrier fallbacks). `core` is cross-compiled via build-std since the
+        // nvptx target ships no precompiled std. The backend writes the
+        // standalone `<crate>.ptx`; point it at the crate dir and skip the
+        // host-object embed (handled in the backend for nvptx targets).
+        cmd.args(["--target", "nvptx64-nvidia-cuda", "-Z", "build-std=core"]);
+        cmd.env("CUDA_OXIDE_PTX_DIR", &example_dir);
+    }
 
     if let Some(features) = features {
         cmd.args(["--features", features]);
@@ -1331,6 +1370,7 @@ pub fn emit_ltoir(
         example,
         verbose,
         true,
+        false,
         Some(&sm_arch),
         features,
         no_fmad,

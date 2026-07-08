@@ -4050,10 +4050,18 @@ fn generate_cuda_kernel_impl(fn_name: &Ident, ptx_name: &str, _func: &ItemFn) ->
     quote! {
         /// Marker type for the kernel, implements CudaKernel trait.
         /// This enables cuda_launch! to look up the PTX entry point name.
+        ///
+        /// Host-only: a device-only crate compiled for `nvptx64-nvidia-cuda`
+        /// has no `cuda_host` in scope, and the marker is meaningless on the
+        /// device anyway, so it is gated out for that target. This lets the
+        /// same `#[kernel]` source compile both as a unified host+device crate
+        /// (host target) and as a pure device crate (`--target nvptx64`).
+        #[cfg(not(target_arch = "nvptx64"))]
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
         pub struct #marker_name;
 
+        #[cfg(not(target_arch = "nvptx64"))]
         impl cuda_host::CudaKernel for #marker_name {
             const PTX_NAME: &'static str = #ptx_name;
         }
