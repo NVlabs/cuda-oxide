@@ -396,6 +396,24 @@ pub fn is_kernel_function(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     is_kernel_symbol(&tcx.def_path_str(def_id))
 }
 
+/// Returns `true` when `def_path` names a kernel entry point *itself*, as
+/// opposed to an item nested inside a kernel body.
+///
+/// [`is_kernel_function`] matches by substring, so a closure or a named `fn`
+/// defined inside a `#[kernel]` also matches — its def path has the kernel's
+/// name as a path *prefix* (`...::cuda_oxide_kernel_<hash>_k::helper`). Only
+/// a def path whose *final* segment carries the kernel marker is the kernel:
+/// nested items are plain device functions, exported under their mangled
+/// symbol by the call-graph walk. Rooting them as kernels would give generic
+/// nested fns a `_TID_<hash>` export name that no call site references,
+/// failing module verification with "Symbol ... not found".
+pub(crate) fn is_kernel_entry_def_path(def_path: &str) -> bool {
+    if def_path.contains("{closure") || def_path.contains("::closure") {
+        return false;
+    }
+    def_path.rsplit("::").next().is_some_and(is_kernel_symbol)
+}
+
 /// Checks if a function is a standalone device function definition.
 ///
 /// Detection is based on the `DEVICE_PREFIX` substring added by the
@@ -730,14 +748,16 @@ pub fn collect_device_functions<'tcx>(
             if let MonoItem::Fn(instance) = item
                 && is_kernel_function(tcx, instance.def_id())
             {
-                // Skip closures inside kernels - they are device functions, not kernels.
-                // Closures have names like "cuda_oxide_kernel_<hash>_foo::{closure#0}" but
-                // only "cuda_oxide_kernel_<hash>_foo" is the actual kernel entry point.
+                // Items nested inside a kernel body (closures, named fns)
+                // match the substring check above but are device functions,
+                // not entry points; rooting a nested fn here would export it
+                // under a `_TID_` kernel name that no call site uses. They
+                // are collected transitively via the call-graph walk instead.
                 let name = tcx.def_path_str(instance.def_id());
-                if name.contains("{closure") || name.contains("::closure") {
+                if !is_kernel_entry_def_path(&name) {
                     if verbose {
                         eprintln!(
-                            "[collector] Skipping closure inside kernel (not an entry point): {}",
+                            "[collector] Skipping item nested inside kernel (not an entry point): {}",
                             name
                         );
                     }
@@ -2132,7 +2152,7 @@ mod tests {
         PTX_MERGE_REQUIRED_PREFIX, is_ptx_merge_required_marker, ptx_merge_required_marker,
     };
 
-    use super::unsupported_codegen_protocol_root;
+    use super::{is_kernel_entry_def_path, unsupported_codegen_protocol_root};
 
     #[test]
     fn ptx_merge_marker_matches_only_the_final_path_component() {
@@ -2174,5 +2194,44 @@ mod tests {
         assert!(!unsupported_codegen_protocol_root(
             "ordinary::host_function"
         ));
+    }
+
+        const K: &str = "cuda_oxide_kernel_246e25db_vecadd";
+
+    #[test]
+    fn kernel_def_paths_are_entry_points() {
+        // Bare and fully-qualified kernel names: the marker is the final segment.
+        assert!(is_kernel_entry_def_path(K));
+        assert!(is_kernel_entry_def_path(&format!("kernels::{K}")));
+        assert!(is_kernel_entry_def_path(&format!("my_crate::kernels::{K}")));
+    }
+
+    #[test]
+    fn items_nested_inside_kernel_bodies_are_not_entry_points() {
+        // A named fn defined inside a kernel body: the kernel name is a path
+        // prefix, not the final segment. Rooting it would mint a `_TID_`
+        // export name (generic case) that no call site references.
+        assert!(!is_kernel_entry_def_path(&format!(
+            "{K}::reduce_workspace_max"
+        )));
+        assert!(!is_kernel_entry_def_path(&format!(
+            "my_crate::kernels::{K}::helper"
+        )));
+        // Deeper nesting (fn inside a block inside the kernel).
+        assert!(!is_kernel_entry_def_path(&format!("{K}::inner::helper")));
+    }
+
+    #[test]
+    fn closures_inside_kernel_bodies_are_not_entry_points() {
+        assert!(!is_kernel_entry_def_path(&format!("{K}::{{closure#0}}")));
+        assert!(!is_kernel_entry_def_path(&format!(
+            "kernels::{K}::{{closure#1}}"
+        )));
+    }
+
+    #[test]
+    fn non_kernel_paths_are_not_entry_points() {
+        assert!(!is_kernel_entry_def_path("my_crate::helpers::sum_slice"));
+        assert!(!is_kernel_entry_def_path(""));
     }
 }
