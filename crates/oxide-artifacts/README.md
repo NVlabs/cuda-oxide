@@ -56,7 +56,7 @@ Artifact Blob
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  |       Payload Count           |        Entry Count            |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |                         Reserved (zero)                       |
+ |         Compile Options (v2)  /  Reserved zero (v1)           |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
  |                         Bundle Name ...                      /
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -72,6 +72,11 @@ Artifact Blob
 ```
 
 Header size is currently 32 bytes.
+
+For version-2 bundles, the final 32-bit header field stores compile option
+bits that must remain attached to the payload until final machine-code
+generation. Version-1 bundles treated this field as reserved zero; readers map
+version-1 blobs to the historical default compile policy.
 
 ```text
 Payload Record (24 bytes)
@@ -144,7 +149,8 @@ cubin from embedded NVVM IR/LTOIR before loading.
 
 ## Constraints
 
-- The format version is currently `1`.
+- The current format version is `2`; version `1` remains accepted as the 
+  legacy default-policy format.
 - All numeric fields are little-endian.
 - The blob header is fixed at 32 bytes.
 - Payload and entry records are fixed at 24 bytes each.
