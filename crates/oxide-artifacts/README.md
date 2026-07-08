@@ -163,9 +163,20 @@ cubin from embedded NVVM IR/LTOIR before loading.
   section.
 - `object`: enables both read and write support.
 
+## Compression Policy
+
+Compression is intentionally not part of the base artifact wire format.
+
+`oxide-artifacts` stores device-code payload bytes as provided by the compiler
+or packaging layer. This keeps the crate as a neutral container for PTX, NVVM IR,
+LTOIR, cubin, and entry metadata, while allowing runtime or loader layers to
+decide how those payloads should be consumed.
+
+If embedded payload size becomes a measured problem, compression should first be
+handled by a higher-level packaging, distribution, or loader layer. Per-payload
+compression should only be added to this format as an explicit versioned
+extension with codec and decompressed-size metadata.
+
 ## TODO
 
-- Investigate whether compression is useful or necessary for embedded payloads,
-  especially for large PTX bundles, and whether it belongs in this crate
-  or in a higher-level packaging layer.
 - Consider Windows support later.
