@@ -2644,9 +2644,14 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Synchronization (from intrinsics::sync)
         // =================================================================
-        "cuda_device::sync_threads" => Ok(Some(intrinsics::sync::emit_sync_threads(
-            ctx, target, block_ptr, prev_op, block_map, loc,
-        )?)),
+        // Match the canonical `thread::` path too, like every sreg accessor
+        // above: `sync_threads` lives in `cuda_device::thread`, and a call
+        // resolved via that path (rather than the crate-root re-export)
+        // otherwise falls through to a plain call against a symbol no
+        // definition provides.
+        "cuda_device::sync_threads" | "cuda_device::thread::sync_threads" => Ok(Some(
+            intrinsics::sync::emit_sync_threads(ctx, target, block_ptr, prev_op, block_map, loc)?,
+        )),
         "cuda_device::threadfence_block" | "cuda_device::fence::threadfence_block" => {
             Ok(Some(intrinsics::sync::emit_threadfence_block(
                 ctx, target, block_ptr, prev_op, block_map, loc,
