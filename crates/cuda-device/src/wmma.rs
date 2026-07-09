@@ -443,3 +443,59 @@ pub unsafe fn mma_m16n8k32_s32_s8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32
     let _ = (c, a, b);
     unreachable!("mma_m16n8k32_s32_s8 called outside CUDA kernel context")
 }
+
+/// Multiply one warp-distributed unsigned INT8 tile and add an i32 accumulator.
+///
+/// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with
+/// shape 16×32, column-major `B` with shape 32×8, and `C`/`D` with shape
+/// 16×8. Each lane supplies its fragments in registers and receives four i32
+/// result registers. The call itself does not access memory or act as a fence.
+///
+/// Each `a` and `b` register packs four unsigned `u8` values from low byte to
+/// high byte. In other words, logical element `i` is stored in bits
+/// `(i % 4) * 8..(i % 4 + 1) * 8` of register `[i / 4]`.
+///
+/// For lane `lane`, let `group = lane / 4` and `thread = lane % 4`:
+///
+/// ```text
+/// A element i=0,...,15:
+///   row = group       for 0 <= i < 4 or 8 <= i < 12; otherwise group + 8
+///   col = thread*4 + (i&3) + (if i >= 8 { 16 } else { 0 })
+///
+/// B element i=0,...,7:
+///   row = thread*4 + (i&3) + (if i >= 4 { 16 } else { 0 })
+///   col = group
+///
+/// C/D register i=0,...,3:
+///   row = group + (if i >= 2 { 8 } else { 0 })
+///   col = thread*2 + (i&1)
+/// ```
+///
+/// This is the non-`.satfinite` form. The i32 accumulator is signed, so
+/// accumulator overflow wraps rather than clamping to `i32::MIN` or `i32::MAX`.
+///
+/// # PTX
+///
+/// ```ptx
+/// mma.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32
+///     {%d0, %d1, %d2, %d3},
+///     {%a0, %a1, %a2, %a3},
+///     {%b0, %b1},
+///     {%c0, %c1, %c2, %c3};
+/// ```
+///
+/// # Safety
+///
+/// - All 32 lanes must execute the same instruction with the same qualifiers.
+///   Calling from divergent control flow, or after any lane has exited, is
+///   undefined behavior.
+/// - `c`, `a`, and `b` must contain the calling lane's fragments in the layout
+///   above. A different layout computes a different matrix operation.
+/// - Requires `sm_80+` and PTX ISA 7.0+. cuda-oxide selects both floors
+///   automatically and rejects an explicit lower target.
+#[inline(never)]
+#[must_use]
+pub unsafe fn mma_m16n8k32_s32_u8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
+    let _ = (c, a, b);
+    unreachable!("mma_m16n8k32_s32_u8 called outside CUDA kernel context")
+}
