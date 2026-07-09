@@ -21,7 +21,9 @@
 //! 5. F16, TF32, and INT8 warp-MMA lowering through the complete PTX pipeline
 
 use cuda_device::thread;
-use cuda_device::wmma::{mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_f16, mma_m16n8k32_s32_s8};
+use cuda_device::wmma::{
+    mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_f16, mma_m16n8k32_s32_s8, mma_m16n8k32_s32_u8,
+};
 use cuda_device::{device, ptx_asm};
 
 // =============================================================================
@@ -211,6 +213,17 @@ pub unsafe fn int8_mma_registers(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32;
     unsafe { mma_m16n8k32_s32_s8(c, a, b) }
 }
 
+/// Emits one register-only unsigned INT8 tensor-core MMA instruction.
+///
+/// # Safety
+///
+/// The caller must satisfy [`mma_m16n8k32_s32_u8`]'s warp participation and
+/// per-lane fragment-layout contract.
+#[device]
+pub unsafe fn uint8_mma_registers(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32; 4] {
+    unsafe { mma_m16n8k32_s32_u8(c, a, b) }
+}
+
 // =============================================================================
 // HOST CODE - Verifies PTX was generated correctly
 // =============================================================================
@@ -253,6 +266,7 @@ fn main() {
             "Test 5: f32-to-TF32 conversion path",
         ),
         ("int8_mma_registers", "Test 5: signed INT8 warp-MMA stub"),
+        ("uint8_mma_registers", "Test 5: unsigned INT8 warp-MMA stub"),
     ];
 
     let mut passed = 0;
@@ -325,6 +339,15 @@ fn main() {
         failed += 1;
     }
 
+    let uint8_mma = "mma.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32";
+    if ptx_content.contains(uint8_mma) {
+        println!("  PASS  Unsigned INT8 MMA lowered to the exact PTX instruction");
+        passed += 1;
+    } else {
+        println!("  FAIL  Missing exact unsigned INT8 MMA PTX instruction");
+        failed += 1;
+    }
+
     let ptx_version = ptx_content
         .lines()
         .find_map(|line| line.trim().strip_prefix(".version "))
@@ -358,7 +381,7 @@ fn main() {
 
     println!();
     if failed == 0 {
-        let total = tests.len() + 8;
+        let total = tests.len() + 9;
         println!(
             "SUCCESS: {}/{} tests passed — all device functions compiled to PTX!",
             passed, total
