@@ -1337,7 +1337,8 @@ pub fn emit_ltoir(
     );
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.
-    let ll_path = example_dir.join(format!("{example}.ll"));
+    let stem = artifact_stem(example);
+    let ll_path = example_dir.join(format!("{stem}.ll"));
     let ir = std::fs::read(&ll_path).unwrap_or_else(|e| {
         eprintln!(
             "Error: could not read emitted NVVM IR at {}: {e}",
@@ -1375,7 +1376,7 @@ pub fn emit_ltoir(
     // Step 3: write the artifact.
     let out_path = output
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| example_dir.join(format!("{example}.ltoir")));
+        .unwrap_or_else(|| example_dir.join(format!("{stem}.ltoir")));
     for metadata_path in [
         out_path.with_extension("target"),
         out_path.with_extension("options"),
