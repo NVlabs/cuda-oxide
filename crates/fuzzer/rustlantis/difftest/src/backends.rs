@@ -80,7 +80,7 @@ pub fn from_config(config: Config) -> HashMap<String, Box<dyn Backend>> {
             BackendConfig::MiriRepo { path, flags } => {
                 Box::new(Miri::from_repo(path, flags).unwrap())
             }
-            BackendConfig::LLVM { toolchain, flags } => Box::new(LLVM::new(toolchain, flags)),
+            BackendConfig::LLVM { toolchain, flags } => Box::new(Llvm::new(toolchain, flags)),
             BackendConfig::Cranelift { toolchain, flags } => {
                 Box::new(Cranelift::from_rustup(toolchain, flags))
             }
@@ -91,7 +91,7 @@ pub fn from_config(config: Config) -> HashMap<String, Box<dyn Backend>> {
                 Box::new(Cranelift::from_binary(path, flags))
             }
             BackendConfig::GCC { path, flags } => {
-                Box::new(GCC::from_built_repo(path, flags).unwrap())
+                Box::new(Gcc::from_built_repo(path, flags).unwrap())
             }
         };
         backends.insert(name, backend);
@@ -154,25 +154,23 @@ fn run_compile_command(mut command: Command, source: &Source) -> process::Output
         }
     };
 
-    let compile_out = compiler
+    compiler
         .wait_with_output()
-        .expect("can execute rustc and get output");
-
-    compile_out
+        .expect("can execute rustc and get output")
 }
 
-struct LLVM {
+struct Llvm {
     toolchain: String,
     flags: Vec<String>,
 }
 
-impl LLVM {
+impl Llvm {
     fn new(toolchain: String, flags: Vec<String>) -> Self {
         Self { toolchain, flags }
     }
 }
 
-impl Backend for LLVM {
+impl Backend for Llvm {
     fn compile(&self, source: &Source, target: &Path) -> ProcessOutput {
         let mut command = Command::new("rustc");
 
@@ -312,7 +310,7 @@ impl Backend for Miri {
             BackendSource::Path(binary) => Command::new(binary),
             BackendSource::Rustup(toolchain) => {
                 let mut cmd = Command::new("rustup");
-                cmd.args(["run", &toolchain, "miri"]);
+                cmd.args(["run", toolchain, "miri"]);
                 cmd
             }
         };
@@ -413,14 +411,14 @@ impl Backend for Cranelift {
     }
 }
 
-struct GCC {
+struct Gcc {
     library: PathBuf,
     sysroot: PathBuf,
     repo: PathBuf,
     flags: Vec<String>,
 }
 
-impl GCC {
+impl Gcc {
     fn from_built_repo<P: AsRef<Path>>(
         cg_gcc: P,
         flags: Vec<String>,
@@ -452,7 +450,7 @@ impl GCC {
     }
 }
 
-impl Backend for GCC {
+impl Backend for Gcc {
     fn compile(&self, source: &Source, target: &Path) -> ProcessOutput {
         let mut command = Command::new("rustc");
         command
