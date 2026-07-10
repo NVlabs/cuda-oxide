@@ -35,31 +35,62 @@ pub struct ExecResults {
 }
 
 impl ExecResults {
+    fn exec_results_eq(lhs: &ExecResult, rhs: &ExecResult) -> bool {
+        match (lhs, rhs) {
+            (Ok(lhs), Ok(rhs)) => lhs.stdout == rhs.stdout,
+            _ => lhs == rhs,
+        }
+    }
+
+    fn insert_exec_result(
+        eq_classes: &mut HashMap<ExecResult, HashSet<String>>,
+        name: String,
+        result: ExecResult,
+    ) {
+        for (class_result, names) in eq_classes.iter_mut() {
+            if Self::exec_results_eq(class_result, &result) {
+                names.insert(name);
+                return;
+            }
+        }
+
+        eq_classes.insert(result, HashSet::from([name]));
+    }
+
     fn from_exec_results(map: impl Iterator<Item = (String, ExecResult)>) -> Self {
-        //TODO: optimisation here to check if all results are equal directly, since most should be
+        let mut map = map;
 
-        // Split execution results into equivalent classes
-        let mut eq_classes: HashMap<ExecResult, HashSet<String>> = HashMap::new();
+        let Some((first_name, first_result)) = map.next() else {
+            return Self {
+                results: HashMap::new(),
+            };
+        };
 
-        'outer: for (name, result) in map {
-            for (class_result, names) in &mut eq_classes {
-                // Put into an existing equivalence class
-                let eq = if let Ok(class_out) = class_result
-                    && let Ok(ref out) = result
-                {
-                    class_out.stdout == out.stdout
-                } else {
-                    result == *class_result
-                };
-                if eq {
-                    names.insert(name);
-                    continue 'outer;
-                }
+        let mut first_names = HashSet::from([first_name]);
+
+        while let Some((name, result)) = map.next() {
+            if Self::exec_results_eq(&first_result, &result) {
+                first_names.insert(name);
+                continue;
             }
 
-            // No equal execution result, make a new class
-            eq_classes.insert(result.clone(), HashSet::from([name]));
+            // Slow path: at least one backend disagrees, so split into equivalence classes.
+            let mut eq_classes = HashMap::new();
+            eq_classes.insert(first_result, first_names);
+
+            Self::insert_exec_result(&mut eq_classes, name, result);
+
+            for (name, result) in map {
+                Self::insert_exec_result(&mut eq_classes, name, result);
+            }
+
+            return Self {
+                results: eq_classes,
+            };
         }
+
+        let mut eq_classes = HashMap::new();
+        eq_classes.insert(first_result, first_names);
 
         Self {
             results: eq_classes,
