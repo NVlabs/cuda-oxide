@@ -5,19 +5,29 @@ use mir::{
 use rand::{Rng, RngCore, seq::IndexedRandom};
 use rand_distr::Distribution;
 
-struct Sombrero;
+struct UsizeSombrero {
+    small_values_upper_bound: usize,
+}
 
-impl Distribution<usize> for Sombrero {
+impl UsizeSombrero {
+    fn small_values_range(&self) -> std::ops::Range<usize> {
+        0..self.small_values_upper_bound
+    }
+}
+
+impl Distribution<usize> for UsizeSombrero {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> usize {
         match rng.random_range(0..=1) {
-            0 => rng.random_range(0..8), // FIXME: ARRAY_MAX_LEN
+            0 => rng.random_range(self.small_values_range()),
             1 => rng.random_range(usize::MIN..=usize::MAX),
             _ => unreachable!(),
         }
     }
 }
 
-impl Distribution<isize> for Sombrero {
+struct IsizeSombrero;
+
+impl Distribution<isize> for IsizeSombrero {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> isize {
         match rng.random_range(0..=2) {
             0 => rng.random_range(-128i32..=127i32) as isize,
@@ -49,7 +59,10 @@ pub trait GenLiteral: Rng {
                 }
             }
             TyKind::Uint(UintTy::Usize) => {
-                let i: usize = Sombrero.sample(self);
+                let distribution = UsizeSombrero {
+                    small_values_upper_bound: tcx.config.array_max_len,
+                };
+                let i: usize = distribution.sample(self);
                 i.try_into().expect("usize isn't greater than 128 bits")
             }
             TyKind::Uint(UintTy::U8) => self.random_range(u8::MIN..=u8::MAX).into(),
@@ -58,7 +71,7 @@ pub trait GenLiteral: Rng {
             TyKind::Uint(UintTy::U64) => self.random_range(u64::MIN..=u64::MAX).into(),
             TyKind::Uint(UintTy::U128) => self.random_range(u128::MIN..=u128::MAX).into(),
             TyKind::Int(IntTy::Isize) => {
-                let i: isize = Sombrero.sample(self);
+                let i: isize = IsizeSombrero.sample(self);
                 i.try_into().expect("isize isn't greater than 128 bits")
             }
             TyKind::Int(IntTy::I8) => self.random_range(i8::MIN..=i8::MAX).into(),
@@ -157,5 +170,19 @@ fn generate_f64<R: Rng + ?Sized>(rng: &mut R) -> f64 {
         Category::Zero => *[0.0, -0.0].choose(rng).unwrap(),
         Category::Infinity => *[f64::INFINITY, f64::NEG_INFINITY].choose(rng).unwrap(),
         Category::NaN => f64::NAN,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usize_sombrero_uses_configured_small_values_upper_bound() {
+        let distribution = UsizeSombrero {
+            small_values_upper_bound: 3,
+        };
+
+        assert_eq!(distribution.small_values_range(), 0..3);
     }
 }
