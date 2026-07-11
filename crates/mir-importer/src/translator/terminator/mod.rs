@@ -2581,59 +2581,16 @@ fn try_dispatch_intrinsic(
 
         // =================================================================
         // Thread Index Helpers (from intrinsics::indexing)
-        // Support both re-exported (cuda_device::) and full paths (cuda_device::thread::)
-        //
-        // TODO: These three handlers (index_1d, index_2d_row, index_2d_col) are not
-        // strictly necessary. Their Rust bodies are real code that calls true intrinsics
-        // (threadIdx_x, blockIdx_y, etc.), so they compile correctly through the normal
-        // function path. They exist as a reliability workaround because #[inline(always)]
-        // is not always honored by rustc — without these handlers, a non-inlined call
-        // would require compiling the function body separately. The arithmetic expansion
-        // is trivial (3 ops + cast), so we keep them for now. If rustc inlining becomes
-        // reliable, these can be removed along with emit_index_1d_expansion,
-        // emit_index_2d_row, and emit_index_2d_col in intrinsics/indexing.rs.
         // =================================================================
-        "cuda_device::thread::__internal::index_1d"
-        | "cuda_device::index_1d"
-        | "cuda_device::thread::index_1d" => {
-            Ok(Some(intrinsics::indexing::emit_index_1d_expansion(
-                ctx,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::index_2d_row" | "cuda_device::thread::index_2d_row" => {
-            Ok(Some(intrinsics::indexing::emit_index_2d_row(
-                ctx,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::index_2d_col" | "cuda_device::thread::index_2d_col" => {
-            Ok(Some(intrinsics::indexing::emit_index_2d_col(
-                ctx,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        // index_2d returns Option<ThreadIndex> with an internal col < stride check.
-        // It is compiled as a normal function (not expanded inline) so that the
-        // Option construction and branch are handled by the standard MIR translator.
+        //
+        // `index_1d`, `index_2d_row`, and `index_2d_col` intentionally fall
+        // through to the normal function-call path. Their Rust bodies are real
+        // code over the lower-level thread/block intrinsics, so they do not
+        // need custom MIR-importer expansion here.
+        //
+        // `index_2d` and `index_2d_runtime` also remain ordinary function calls:
+        // they return `Option<ThreadIndex>` and rely on the standard MIR
+        // translator for the branch and option construction.
         "cuda_device::thread::__internal::index_2d"
         | "cuda_device::thread::__internal::index_2d_runtime"
         | "cuda_device::index_2d"
