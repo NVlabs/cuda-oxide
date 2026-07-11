@@ -359,20 +359,15 @@ fn translate_assert(
     // panic occurs, the GPU thread traps.
     let _ = unwind;
 
-    // Translate the condition operand
-    let (cond_value, mut last_inserted) = match cond {
-        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
-            rvalue::translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?
-        }
-        _ => {
-            return input_err!(
-                loc.clone(),
-                TranslationErr::unsupported(
-                    "Constant conditions in assert not yet implemented".to_string(),
-                )
-            );
-        }
-    };
+    // Translate the condition operand.
+    //
+    // MIR assert conditions are operands, not necessarily places. In particular,
+    // rustc may leave constant boolean conditions as `Operand::Constant`, and
+    // runtime-check operands also lower to a boolean value through the shared
+    // operand translator. `translate_operand` already preserves the old
+    // Copy/Move path by delegating to `translate_place`.
+    let (cond_value, mut last_inserted) =
+        rvalue::translate_operand(ctx, body, cond, value_map, block_ptr, prev_op, loc.clone())?;
 
     // Apply negation if expected == false
     let final_cond = if !expected {
