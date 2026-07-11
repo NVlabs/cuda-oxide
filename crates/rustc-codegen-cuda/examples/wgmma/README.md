@@ -78,8 +78,8 @@ Loading PTX from: wgmma.ptx
 Launching wgmma_sync_test kernel...
 SMEM descriptor: 0xC000000000000xxx
 ✓ Swizzle mode correct (128B)
-  Leading dimension offset: xxx (raw bits)
-  Stride offset: xxx (raw bits)
+  Leading dimension offset: 8 (raw bits)
+  Stride offset: 8 (raw bits)
 
 === WGMMA Test Complete ===
 ```
