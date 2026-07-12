@@ -716,7 +716,9 @@ fn looks_like_cubin(bytes: &[u8]) -> bool {
         || bytes[6] != 1
         || read_u16(bytes, 16) != Some(2)
         || read_u16(bytes, 18) != Some(190)
-        || read_u32(bytes, 20) != Some(1)
+        // CUDA cubins use non-zero, CUDA-specific e_version values rather
+        // than consistently using the generic ELF EV_CURRENT value (1).
+        || read_u32(bytes, 20).is_none_or(|version| version == 0)
         || read_u16(bytes, 52) != Some(ELF64_HEADER_LENGTH as u16)
     {
         return false;
@@ -920,7 +922,7 @@ mod tests {
         }
     }
 
-    fn fake_cubin(marker: u8) -> Vec<u8> {
+    fn fake_cubin_with_version(marker: u8, elf_version: u32) -> Vec<u8> {
         let mut cubin = vec![0_u8; 120];
         cubin[..4].copy_from_slice(b"\x7fELF");
         cubin[4] = 2;
@@ -929,7 +931,7 @@ mod tests {
         cubin[15] = marker;
         cubin[16..18].copy_from_slice(&2_u16.to_le_bytes());
         cubin[18..20].copy_from_slice(&190_u16.to_le_bytes());
-        cubin[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        cubin[20..24].copy_from_slice(&elf_version.to_le_bytes());
         cubin[32..40].copy_from_slice(&64_u64.to_le_bytes());
         cubin[52..54].copy_from_slice(&(ELF64_HEADER_LENGTH as u16).to_le_bytes());
         cubin[54..56].copy_from_slice(&ELF64_PROGRAM_HEADER_LENGTH.to_le_bytes());
@@ -943,6 +945,10 @@ mod tests {
         cubin[104..112].copy_from_slice(&cubin_len.to_le_bytes());
         cubin[112..120].copy_from_slice(&8_u64.to_le_bytes());
         cubin
+    }
+
+    fn fake_cubin(marker: u8) -> Vec<u8> {
+        fake_cubin_with_version(marker, 1)
     }
 
     fn artifacts(marker: u8) -> BuiltArtifacts {
@@ -1066,6 +1072,19 @@ mod tests {
         let mut out_of_bounds = fake_cubin(2);
         out_of_bounds[32..40].copy_from_slice(&119_u64.to_le_bytes());
         assert!(!looks_like_cubin(&out_of_bounds));
+    }
+
+    #[test]
+    fn cubin_validation_accepts_cuda_specific_elf_versions() {
+        // Observed in cubins from multiple CUDA toolchain generations.
+        for version in [0x73, 0x80] {
+            assert!(
+                looks_like_cubin(&fake_cubin_with_version(1, version)),
+                "CUDA ELF version {version:#x} should be accepted"
+            );
+        }
+
+        assert!(!looks_like_cubin(&fake_cubin_with_version(1, 0)));
     }
 
     #[test]
