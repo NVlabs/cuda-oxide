@@ -211,6 +211,13 @@ impl Verify for MirGetDiscriminantOp {
             }
         };
 
+        if enum_ty.variant_count() == 0 {
+            return verify_err!(
+                op.loc(),
+                "MirGetDiscriminantOp cannot inspect an enum with no variants"
+            );
+        }
+
         // Result must match the enum's discriminant type
         let result = op.get_result(0);
         let result_ty = result.get_type(ctx);
@@ -289,6 +296,12 @@ impl Verify for MirSetDiscriminantOp {
                 let pointee = ptr_type.pointee.deref(ctx);
                 match pointee.downcast_ref::<MirEnumType>() {
                     Some(enum_ty) => {
+                        if enum_ty.variant_count() == 0 {
+                            return verify_err!(
+                                op.loc(),
+                                "MirSetDiscriminantOp cannot mutate an enum with no variants"
+                            );
+                        }
                         let expected_discr_ty = enum_ty.discriminant_type();
                         if discr_ty != expected_discr_ty {
                             return verify_err!(

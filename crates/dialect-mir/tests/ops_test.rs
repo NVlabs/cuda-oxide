@@ -4,13 +4,14 @@
  */
 
 use dialect_mir::{
-    attributes::MirCastKindAttr,
+    attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr},
     ops::{
         MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
-        MirCondBranchOp, MirConstantOp, MirConstructSliceOp, MirDivOp, MirEqOp, MirExtractFieldOp,
-        MirFuncOp, MirGeOp, MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp,
-        MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp,
-        MirSetDiscriminantOp, MirStoreOp, MirSubOp,
+        MirCondBranchOp, MirConstantOp, MirConstructEnumOp, MirConstructSliceOp, MirDivOp,
+        MirEnumPayloadOp, MirEqOp, MirExtractFieldOp, MirFuncOp, MirGeOp, MirGetDiscriminantOp,
+        MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp,
+        MirNegOp, MirNotOp, MirPtrOffsetOp, MirRemOp, MirReturnOp, MirSetDiscriminantOp,
+        MirStoreOp, MirSubOp,
     },
     types::{EnumVariant, MirEnumType, MirPtrType, MirSliceType, MirTupleType, MirUnionType},
 };
@@ -29,6 +30,98 @@ use pliron::{
     utils::apint::APInt,
 };
 use std::num::NonZeroUsize;
+
+#[test]
+fn empty_enum_types_are_valid_but_reject_value_operations() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    let discr = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let empty = MirEnumType::get(
+        &mut ctx,
+        "Infallible".to_string(),
+        discr.into(),
+        vec![],
+        vec![],
+    );
+
+    assert!(empty.deref(&ctx).verify(&ctx).is_ok());
+    assert_eq!(empty.deref(&ctx).variant_count(), 0);
+    assert!(empty.deref(&ctx).get_variant(0).is_none());
+
+    let value_block = BasicBlock::new(&mut ctx, None, vec![empty.into()]);
+    let empty_value = value_block.deref(&ctx).get_argument(0);
+
+    let construct = Operation::new(
+        &mut ctx,
+        MirConstructEnumOp::get_concrete_op_info(),
+        vec![empty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    let construct = MirConstructEnumOp::new(construct);
+    construct.set_attr_construct_enum_variant_index(&ctx, VariantIndexAttr(0));
+    let error = construct.verify(&ctx).unwrap_err().to_string();
+    assert!(
+        error.contains("variant_index 0 out of bounds") && error.contains("with 0 variants"),
+        "unexpected construct diagnostic: {error}"
+    );
+
+    let payload = Operation::new(
+        &mut ctx,
+        MirEnumPayloadOp::get_concrete_op_info(),
+        vec![discr.into()],
+        vec![empty_value],
+        vec![],
+        0,
+    );
+    let payload = MirEnumPayloadOp::new(payload);
+    payload.set_attr_payload_variant_index(&ctx, VariantIndexAttr(0));
+    payload.set_attr_payload_field_index(&ctx, FieldIndexAttr(0));
+    let error = payload.verify(&ctx).unwrap_err().to_string();
+    assert!(
+        error.contains("variant_index 0 out of bounds") && error.contains("with 0 variants"),
+        "unexpected payload diagnostic: {error}"
+    );
+
+    let get_discriminant = Operation::new(
+        &mut ctx,
+        MirGetDiscriminantOp::get_concrete_op_info(),
+        vec![discr.into()],
+        vec![empty_value],
+        vec![],
+        0,
+    );
+    let error = MirGetDiscriminantOp::new(get_discriminant)
+        .verify(&ctx)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cannot inspect an enum with no variants"),
+        "unexpected get-discriminant diagnostic: {error}"
+    );
+
+    let empty_ptr = MirPtrType::get_generic(&mut ctx, empty.into(), true);
+    let set_block = BasicBlock::new(&mut ctx, None, vec![empty_ptr.into(), discr.into()]);
+    let empty_ptr_value = set_block.deref(&ctx).get_argument(0);
+    let discr_value = set_block.deref(&ctx).get_argument(1);
+    let set_discriminant = Operation::new(
+        &mut ctx,
+        MirSetDiscriminantOp::get_concrete_op_info(),
+        vec![],
+        vec![empty_ptr_value, discr_value],
+        vec![],
+        0,
+    );
+    let error = MirSetDiscriminantOp::new(set_discriminant)
+        .verify(&ctx)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cannot mutate an enum with no variants"),
+        "unexpected set-discriminant diagnostic: {error}"
+    );
+}
 
 #[test]
 fn test_mir_control_flow_verify() {

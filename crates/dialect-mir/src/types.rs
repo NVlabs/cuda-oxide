@@ -735,8 +735,8 @@ impl EnumVariant {
 /// `variant_field_counts` to split the `all_*` vectors per variant.
 ///
 /// # Verification
-/// * Must have at least one variant.
-/// * Discriminant type must be an integer type.
+/// * Zero variants are valid and represent an uninhabited Rust type.
+/// * The parallel variant metadata vectors must have consistent lengths.
 #[pliron_type(
     name = "mir.enum",
     format = "`<` $name `,` $discriminant_ty `,` `[` vec($variant_names, CharSpace(`,`)) `]` `,` `[` vec($variant_discriminants, CharSpace(`,`)) `]` `,` `[` vec($variant_field_counts, CharSpace(`,`)) `]` `,` `[` vec($all_field_types, CharSpace(`,`)) `]` `,` `[` vec($all_field_offsets, CharSpace(`,`)) `]` `,` $tag_offset `,` $total_size `,` $abi_align `>`"
@@ -950,13 +950,9 @@ impl MirEnumType {
 
 impl Verify for MirEnumType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
-        // Enum types must have at least one variant
-        if self.variant_names.is_empty() {
-            return verify_err!(
-                Location::Unknown,
-                "MirEnumType must have at least one variant"
-            );
-        }
+        // Rust permits uninhabited enums with no variants. Enum operations
+        // reject attempts to construct, inspect, or mutate values of these
+        // types.
         if self.variant_names.len() != self.variant_discriminants.len() {
             return verify_err!(
                 Location::Unknown,
