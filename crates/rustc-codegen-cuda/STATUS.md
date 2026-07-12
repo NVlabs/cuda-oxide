@@ -25,6 +25,7 @@ Run `scripts/check-error-example-status.sh` to verify both are in sync.
 | `error_missing_device_attr`           | diagnostics-fixture | `thread::index_*` stub (#76)        |
 | `error_set_discriminant_uninhabited`  | diagnostics-fixture | Invalid enum variant selection      |
 | `error_static_initializer_provenance` | support-gap         | Device-global pointer relocation    |
+| `error_tuple_array_provenance`        | support-gap         | Tuple-array pointer relocation      |
 | `error_wgmma_mma_unimplemented`       | support-gap         | WGMMA MMA lowering                  |
 
 Drops whose monomorphized glue is provably a no-op (e.g. the
