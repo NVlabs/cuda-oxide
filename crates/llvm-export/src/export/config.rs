@@ -110,7 +110,7 @@ impl ExportBackendConfig for PtxExportConfig {
     }
 
     fn emit_llvm_used(&self) -> bool {
-        false
+        true
     }
 
     fn emit_nvvmir_version(&self) -> bool {

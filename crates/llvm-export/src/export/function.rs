@@ -105,7 +105,9 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(ty, output)?;
             writeln!(output, ", align {alignment}").unwrap();
         } else {
-            // Internal linkage: static storage in the global's address space.
+            self.public_globals.push(name.to_string());
+            // Defined static storage in the global's address space. The LLVM
+            // definition retains external linkage for host-side symbol lookup.
             write!(output, "@{name} = addrspace({address_space}) global ").unwrap();
             self.export_type(ty, output)?;
             if let Some(hex) = global.initializer_hex(self.ctx) {
@@ -244,8 +246,9 @@ impl<'a> ModuleExportState<'a> {
 
         self.function_types.insert(fixed_func_name.clone(), ft);
 
-        // Track ALL kernels if backend requires annotations for every kernel.
-        if is_kernel && self.track_all_kernels {
+        // Track every kernel as an external root. Backends independently decide
+        // whether to emit annotations for all of them.
+        if is_kernel {
             self.all_kernels.push(KernelInfo {
                 name: fixed_func_name.clone(),
             });

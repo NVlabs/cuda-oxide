@@ -27,6 +27,7 @@ use crate::{
 };
 
 use super::{
+    ExportedModule,
     config::{DebugKind, ExportBackendConfig, NvvmIrDialect},
     externs::{DeviceExternDecl, DeviceExternType},
     metadata::{emit_nvvm_annotations, emit_nvvmir_version, needs_nvvm_annotations},
@@ -371,14 +372,13 @@ pub(super) fn export_module_with_externs_impl(
     module: &ModuleOp,
     device_externs: &[DeviceExternDecl],
     config: &dyn ExportBackendConfig,
-) -> Result<String, String> {
+) -> Result<ExportedModule, String> {
     validate_export_config(config)?;
     let mut output = String::new();
     let emit_all_annotations = config.emit_all_kernel_annotations();
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
     let mut state = ModuleExportState::new(
         ctx,
-        emit_all_annotations,
         emit_ptx_kernel_keyword,
         config.debug_kind(),
         config.nvvm_ir_dialect(),
@@ -536,7 +536,26 @@ pub(super) fn export_module_with_externs_impl(
     }
 
     verify_legacy_text(&output, &state)?;
-    Ok(output)
+    Ok(ExportedModule {
+        llvm_ir: output,
+        public_symbols: public_symbols(&state),
+    })
+}
+
+fn public_symbols(state: &ModuleExportState<'_>) -> Vec<String> {
+    let mut symbols = if state.all_kernels.is_empty() {
+        state.device_functions.clone()
+    } else {
+        state
+            .all_kernels
+            .iter()
+            .map(|kernel| kernel.name.clone())
+            .collect()
+    };
+    symbols.extend(state.public_globals.iter().cloned());
+    symbols.sort_unstable();
+    symbols.dedup();
+    symbols
 }
 
 /// Export a module op to a String containing LLVM IR with custom backend configuration.
@@ -554,7 +573,6 @@ pub(super) fn export_module_to_string_with_config(
     let emit_ptx_kernel_keyword = config.emit_ptx_kernel_keyword();
     let mut state = ModuleExportState::new(
         ctx,
-        emit_all_annotations,
         emit_ptx_kernel_keyword,
         config.debug_kind(),
         config.nvvm_ir_dialect(),

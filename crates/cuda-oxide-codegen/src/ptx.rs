@@ -92,7 +92,12 @@ fn link_libdevice(
     }
 }
 
-/// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
+/// Runs LLVM's middle-end on the emitted IR before `llc`.
+///
+/// Modules with explicit `@llvm.used` roots internalize every other definition
+/// before the default O2 pipeline so fully inlined helpers are eligible for
+/// global dead-code elimination. Modules without an explicit root set retain
+/// the historical `opt -O2` path.
 ///
 /// This is what consumes the per-op ABI alignment we emit: the
 /// LoadStoreVectorizer fuses aligned aggregate/element accesses, SROA
@@ -109,6 +114,7 @@ fn link_libdevice(
 /// is strict; the legacy rustc path retains its warn-and-continue behavior.
 fn optimize_ll(
     ll_path: &Path,
+    public_symbols: &[String],
     toolchain: &LlvmToolchain,
     opts: &BackendOptions,
     strict: bool,
@@ -127,9 +133,11 @@ fn optimize_ll(
         return Ok((None, Vec::new()));
     };
 
+    let optimization_args = optimization_args(public_symbols)?;
+
     let opt_ll = ll_path.with_extension("opt.ll");
     match std::process::Command::new(&opt.path)
-        .arg("-O2")
+        .args(&optimization_args)
         .arg(ll_path)
         .arg("-S")
         .arg("-o")
@@ -139,7 +147,14 @@ fn optimize_ll(
         Ok(output) if output.status.success() => {
             let diagnostics = opts
                 .verbose
-                .then(|| format!("opt -O2 via {}: {}", opt.path, opt_ll.display()))
+                .then(|| {
+                    format!(
+                        "opt {} via {}: {}",
+                        optimization_args.join(" "),
+                        opt.path,
+                        opt_ll.display()
+                    )
+                })
                 .into_iter()
                 .collect();
             Ok((Some(opt_ll), diagnostics))
@@ -178,6 +193,32 @@ fn optimize_ll(
     }
 }
 
+/// Build the middle-end arguments for a self-contained PTX module.
+///
+/// The LLVM exporter returns the module's externally consumed definitions as
+/// typed export metadata: entry kernels (or standalone device functions) plus
+/// host-visible globals. Passing that root set directly avoids inferring
+/// visibility from symbol spelling or rendered LLVM text.
+/// Once ordinary inlining has copied a non-root helper into every caller,
+/// internalization lets GlobalDCE remove it instead of asking `llc` to emit an
+/// unreachable `.visible .func` body.
+fn optimization_args(public_symbols: &[String]) -> Result<Vec<String>, PipelineError> {
+    if public_symbols.is_empty() {
+        return Ok(vec!["-O2".to_string()]);
+    }
+
+    if let Some(symbol) = public_symbols.iter().find(|symbol| symbol.contains(',')) {
+        return Err(PipelineError::Optimization(format!(
+            "external symbol `{symbol}` cannot be represented in LLVM's comma-separated internalization API list"
+        )));
+    }
+
+    Ok(vec![
+        "-passes=internalize,default<O2>".to_string(),
+        format!("-internalize-public-api-list={}", public_symbols.join(",")),
+    ])
+}
+
 /// Legacy rustc-pipeline result, including messages the CLI should print.
 #[doc(hidden)]
 #[allow(missing_docs)]
@@ -191,6 +232,12 @@ struct PtxBackend<'a> {
     options: &'a BackendOptions,
     toolchain: &'a LlvmToolchain,
     generated: &'a GeneratedModuleRequirements,
+}
+
+struct PtxModule<'a> {
+    llvm_ir: &'a Path,
+    output: &'a Path,
+    public_symbols: &'a [String],
 }
 
 /// Generates PTX from LLVM IR using `llc`.
@@ -215,6 +262,7 @@ struct PtxBackend<'a> {
 pub fn generate_ptx(
     ll_path: &Path,
     ptx_path: &Path,
+    public_symbols: &[String],
     debug_kind: DebugKind,
     opts: &BackendOptions,
     diagnostic_sink: Option<fn(&str)>,
@@ -256,8 +304,11 @@ pub fn generate_ptx(
     }
     emit_diagnostics(diagnostic_sink, &diagnostics);
     let mut generated = generate_ptx_impl(
-        ll_path,
-        ptx_path,
+        PtxModule {
+            llvm_ir: ll_path,
+            output: ptx_path,
+            public_symbols,
+        },
         debug_kind,
         PtxBackend {
             options: opts,
@@ -280,6 +331,7 @@ pub fn generate_ptx(
 pub(crate) fn generate_ptx_with_toolchain(
     ll_path: &Path,
     ptx_path: &Path,
+    public_symbols: &[String],
     debug_kind: DebugKind,
     opts: &BackendOptions,
     toolchain: &LlvmToolchain,
@@ -287,8 +339,11 @@ pub(crate) fn generate_ptx_with_toolchain(
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     generate_ptx_impl(
-        ll_path,
-        ptx_path,
+        PtxModule {
+            llvm_ir: ll_path,
+            output: ptx_path,
+            public_symbols,
+        },
         debug_kind,
         PtxBackend {
             options: opts,
@@ -302,8 +357,7 @@ pub(crate) fn generate_ptx_with_toolchain(
 }
 
 fn generate_ptx_impl(
-    ll_path: &Path,
-    ptx_path: &Path,
+    module: PtxModule<'_>,
     debug_kind: DebugKind,
     backend: PtxBackend<'_>,
     strict_optimization: bool,
@@ -322,7 +376,7 @@ fn generate_ptx_impl(
     let device_hint = opts.device_arch_hint.clone();
 
     let requirements = merge_generated_module_requirements(
-        detect_module_requirements_in_llvm_file(ll_path)?,
+        detect_module_requirements_in_llvm_file(module.llvm_ir)?,
         generated,
     )
     .map_err(PipelineError::PtxGeneration)?;
@@ -365,7 +419,7 @@ fn generate_ptx_impl(
     // the legacy NVVM IR path, which cannot represent f16 on pre-Blackwell.
     let linked = match libdevice_path {
         Some(lp) => Some(link_libdevice(
-            ll_path,
+            module.llvm_ir,
             lp,
             toolchain,
             diagnostic_sink,
@@ -374,7 +428,7 @@ fn generate_ptx_impl(
         )?),
         None => None,
     };
-    let post_link_input: &Path = linked.as_deref().unwrap_or(ll_path);
+    let post_link_input: &Path = linked.as_deref().unwrap_or(module.llvm_ir);
 
     // Run the LLVM middle-end (opt -O2) before llc. Feature detection above
     // intentionally reads the original (pre-opt) IR so the target is determined
@@ -396,8 +450,13 @@ fn generate_ptx_impl(
         }
         None
     } else {
-        let (optimized, mut opt_diagnostics) =
-            optimize_ll(post_link_input, toolchain, opts, strict_optimization)?;
+        let (optimized, mut opt_diagnostics) = optimize_ll(
+            post_link_input,
+            module.public_symbols,
+            toolchain,
+            opts,
+            strict_optimization,
+        )?;
         for diagnostic in opt_diagnostics.drain(..) {
             record_diagnostic(&mut diagnostics, diagnostic_sink, diagnostic);
         }
@@ -447,12 +506,12 @@ fn generate_ptx_impl(
     if !opts.no_fma {
         llc_cmd.arg("-fp-contract=fast");
     }
-    let result = llc_cmd.arg(llc_input).arg("-o").arg(ptx_path).output();
+    let result = llc_cmd.arg(llc_input).arg("-o").arg(module.output).output();
 
     match result {
         Ok(output) if output.status.success() => {
             if matches!(debug_kind, DebugKind::LineTables) {
-                strip_target_debug_from_ptx(ptx_path)?;
+                strip_target_debug_from_ptx(module.output)?;
                 if opts.verbose {
                     record_diagnostic(
                         &mut diagnostics,
@@ -587,13 +646,37 @@ mod tests {
         let opts = BackendOptions::default();
         let input = Path::new("unused.ll");
 
-        let (optimized, diagnostics) = optimize_ll(input, &toolchain, &opts, false).unwrap();
+        let (optimized, diagnostics) = optimize_ll(input, &[], &toolchain, &opts, false).unwrap();
         assert!(optimized.is_none());
         assert!(diagnostics[0].contains("continuing with unoptimized IR"));
 
-        let error = optimize_ll(input, &toolchain, &opts, true).unwrap_err();
+        let error = optimize_ll(input, &[], &toolchain, &opts, true).unwrap_err();
         assert!(matches!(&error, PipelineError::Optimization(_)));
         assert!(error.to_string().contains("opt (/bin/false) failed"));
+    }
+
+    #[test]
+    fn ptx_optimization_internalizes_helpers_but_preserves_public_roots() {
+        let symbols = vec!["constant_data".into(), "first_kernel".into()];
+        assert_eq!(
+            optimization_args(&symbols).unwrap(),
+            [
+                "-passes=internalize,default<O2>",
+                "-internalize-public-api-list=constant_data,first_kernel",
+            ]
+        );
+    }
+
+    #[test]
+    fn modules_without_public_roots_keep_the_existing_optimization_pipeline() {
+        assert_eq!(optimization_args(&[]).unwrap(), ["-O2"]);
+    }
+
+    #[test]
+    fn unrepresentable_public_root_is_rejected() {
+        let error = optimization_args(&["invalid,root".into()]).unwrap_err();
+        assert!(matches!(error, PipelineError::Optimization(_)));
+        assert!(error.to_string().contains("invalid,root"));
     }
 
     #[test]
@@ -631,6 +714,7 @@ mod tests {
         let error = generate_ptx(
             &ll_path,
             &ptx_path,
+            &[],
             DebugKind::Off,
             &opts,
             Some(collect_legacy_diagnostic),

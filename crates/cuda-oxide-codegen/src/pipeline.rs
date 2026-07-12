@@ -371,7 +371,7 @@ pub fn compile_translated_module(
             .emit(format!("\n=== Exporting to LLVM IR ({mode} mode) ==="));
     }
     remove_stale_files(request.files.stale_before_export)?;
-    export_llvm_ir(
+    let exported = export_llvm_ir(
         ctx,
         module,
         request.device_externs,
@@ -419,6 +419,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Discover => generate_ptx(
             request.files.llvm_ir,
             request.files.ptx,
+            &exported.public_symbols,
             request.debug_kind,
             request.backend,
             request.trace.sink,
@@ -428,6 +429,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Explicit(toolchain) => generate_ptx_with_toolchain(
             request.files.llvm_ir,
             request.files.ptx,
+            &exported.public_symbols,
             request.debug_kind,
             request.backend,
             toolchain,
