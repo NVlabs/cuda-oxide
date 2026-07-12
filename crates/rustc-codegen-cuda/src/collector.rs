@@ -125,12 +125,55 @@
 //! with human-readable base names derived from the `#[kernel]` macro.
 
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
+use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{ConstOperand, ConstValue, Location, TerminatorKind};
+use rustc_middle::mir::{
+    BasicBlock, ConstOperand, ConstValue, Location, START_BLOCK, TerminatorKind,
+};
 use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
+
+/// Blocks reachable under the values CUDA Oxide emits for device-only runtime
+/// checks.
+///
+/// rustc's `mono_reachable_as_bitset` is the right semantic source for
+/// monomorphized constants, but it evaluates `Operand::RuntimeChecks` from the
+/// host compilation session. The MIR importer deliberately emits every such
+/// query as `false` on device. Override only that operand shape here so call
+/// collection and MIR import cannot choose different switch arms.
+fn device_mono_reachable_as_bitset<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+) -> DenseBitSet<BasicBlock> {
+    let mut reachable = DenseBitSet::new_empty(body.basic_blocks.len());
+    let mut worklist = vec![START_BLOCK];
+
+    while let Some(bb) = worklist.pop() {
+        if !reachable.insert(bb) {
+            continue;
+        }
+
+        let data = &body.basic_blocks[bb];
+        if let TerminatorKind::SwitchInt {
+            discr: rustc_middle::mir::Operand::RuntimeChecks(_),
+            targets,
+        } = &data.terminator().kind
+        {
+            worklist.push(device_runtime_checks_target(targets));
+        } else {
+            worklist.extend(data.mono_successors(tcx, instance));
+        }
+    }
+
+    reachable
+}
+
+fn device_runtime_checks_target(targets: &rustc_middle::mir::SwitchTargets) -> BasicBlock {
+    targets.target_for_value(0)
+}
 
 /// Result of checking if a function should be collected for device compilation.
 #[derive(Debug)]
@@ -980,6 +1023,17 @@ impl<'tcx> DeviceCollector<'tcx> {
                     );
                 }
 
+                // Skip blocks that are unreachable after monomorphization —
+                // e.g. the const-false arm of `if S::CONST_FLAG` in a generic
+                // fn. rustc's own collector walks only mono-reachable blocks
+                // (see `Body::mono_successors`), so dead-arm callees are never
+                // instantiated anywhere else; collecting them here would
+                // demand symbols that can never resolve, and reject panic-only
+                // hooks that are never actually called. The MIR importer
+                // prunes the same blocks (`prune_const_switch_targets` in
+                // mir-importer), so collection and translation stay in sync.
+                let reachable = device_mono_reachable_as_bitset(mir, self.tcx, func.instance);
+
                 // Fail fast with an actionable diagnostic when this body
                 // contains panic-formatting machinery the device pipeline
                 // cannot compile (issue #76). Skip for drop glue shims:
@@ -988,13 +1042,16 @@ impl<'tcx> DeviceCollector<'tcx> {
                 // in practice; the mir-importer handles these via its
                 // existing unreachable-block patching.
                 if !matches!(func.instance.def, InstanceKind::DropGlue(..)) {
-                    self.check_panic_machinery(mir, &func, &ctx);
+                    self.check_panic_machinery(mir, &func, &ctx, &reachable);
                 }
 
-                // Walk all basic blocks looking for calls.
+                // Walk the reachable basic blocks looking for calls.
                 // Pass the caller so we can substitute its args into callees
                 // and attribute diagnostics to the right discovery path.
-                for bb_data in mir.basic_blocks.iter() {
+                for (bb, bb_data) in mir.basic_blocks.iter_enumerated() {
+                    if !reachable.contains(bb) {
+                        continue;
+                    }
                     if let Some(ref terminator) = bb_data.terminator {
                         self.process_terminator(terminator, mir, &func, &ctx);
                     }
@@ -2184,8 +2241,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         mir: &rustc_middle::mir::Body<'tcx>,
         func: &CollectedFunction<'tcx>,
         ctx: &DiscoveryCtx,
+        reachable: &DenseBitSet<BasicBlock>,
     ) {
         for (bb, bb_data) in mir.basic_blocks.iter_enumerated() {
+            // A panic in a mono-unreachable block never runs on device.
+            if !reachable.contains(bb) {
+                continue;
+            }
             let Some(term) = &bb_data.terminator else {
                 continue;
             };
@@ -2336,12 +2398,15 @@ pub fn dump_device_mir_info<'tcx>(tcx: TyCtxt<'tcx>, functions: &[CollectedFunct
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        device_runtime_checks_target, is_kernel_entry_def_path, unsupported_codegen_protocol_root,
+    };
     use reserved_oxide_symbols::{
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
         PTX_MERGE_REQUIRED_PREFIX, is_ptx_merge_required_marker, ptx_merge_required_marker,
     };
-
-    use super::{is_kernel_entry_def_path, unsupported_codegen_protocol_root};
+    use rustc_index::Idx;
+    use rustc_middle::mir::BasicBlock;
 
     #[test]
     fn ptx_merge_marker_matches_only_the_final_path_component() {
@@ -2383,6 +2448,14 @@ mod tests {
         assert!(!unsupported_codegen_protocol_root(
             "ordinary::host_function"
         ));
+    }
+
+    #[test]
+    fn runtime_checks_select_the_device_false_target() {
+        let false_target = BasicBlock::from_usize(1);
+        let true_target = BasicBlock::from_usize(2);
+        let targets = rustc_middle::mir::SwitchTargets::static_if(0, false_target, true_target);
+        assert_eq!(device_runtime_checks_target(&targets), false_target);
     }
 
     #[test]

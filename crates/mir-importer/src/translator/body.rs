@@ -249,16 +249,112 @@ fn detect_dynamic_shared_alignment(body: &mir::Body) -> Option<DynamicSharedAlig
     None
 }
 
-/// Return the non-unwind successors of a terminator.
+/// Try to resolve a block's `SwitchInt` discriminant to a compile-time
+/// constant.
+///
+/// This is the `rustc_public` analogue of rustc's
+/// `Body::try_const_mono_switchint`, which the mono collector uses to walk
+/// only mono-reachable blocks: in a *generic* fn, `if S::CONST_FLAG { .. }`
+/// survives to monomorphized MIR as a `SwitchInt` whose discriminant only
+/// becomes constant after substitution, and rustc never instantiates the
+/// dead arm's callees. `Instance::body()` (via `rustc_public_bridge`'s
+/// `BodyBuilder`) has already monomorphized the body, so the associated-const
+/// discriminants covered here arrive as allocations we can read directly.
+///
+/// The discriminant is either a const operand on the terminator itself, or
+/// (the shape rustc handles) a `Move`/`Copy` of a place assigned a constant
+/// by the last non-storage-marker statement of the same block.
+fn try_const_switch_discr(block: &mir::BasicBlock) -> Option<u128> {
+    use rustc_public::ty::TyConstKind;
+
+    let mir::TerminatorKind::SwitchInt { discr, .. } = &block.terminator.kind else {
+        return None;
+    };
+
+    let const_op = match discr {
+        mir::Operand::Constant(c) => Some(&c.const_),
+        mir::Operand::Move(place) | mir::Operand::Copy(place) => block
+            .statements
+            .iter()
+            .rev()
+            .find(|stmt| {
+                !matches!(
+                    stmt.kind,
+                    mir::StatementKind::StorageLive(_) | mir::StatementKind::StorageDead(_)
+                )
+            })
+            .and_then(|stmt| match &stmt.kind {
+                mir::StatementKind::Assign(lhs, mir::Rvalue::Use(mir::Operand::Constant(c)))
+                    if lhs == place =>
+                {
+                    Some(&c.const_)
+                }
+                _ => None,
+            }),
+        // Device runtime-check queries are emitted as false. Reachability must
+        // select that same edge so the importer never follows an uncollected
+        // branch.
+        mir::Operand::RuntimeChecks(check) => return device_runtime_checks_value(check),
+    }?;
+
+    match const_op.kind() {
+        ConstantKind::Allocated(alloc) => alloc.read_uint().ok(),
+        ConstantKind::Ty(tc) => match tc.kind() {
+            TyConstKind::Value(_, alloc) => alloc.read_uint().ok(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Device MIR lowers every rustc runtime-check query to `false`.
+fn device_runtime_checks_value(_check: &mir::RuntimeChecks) -> Option<u128> {
+    // `translate_operand` defines the same device policy. Keep reachability
+    // synchronized with the value that will be emitted into device MIR.
+    Some(0)
+}
+
+fn switch_target_for_bits(targets: &mir::SwitchTargets, bits: u128) -> usize {
+    targets
+        .branches()
+        .find(|(value, _)| *value == bits)
+        .map(|(_, target)| target)
+        .unwrap_or_else(|| targets.otherwise())
+}
+
+/// If a block ends in a `SwitchInt` over a compile-time constant, return the
+/// single successor that branch actually takes.
+///
+/// Blocks only reachable through pruned arms never enter the reachable set,
+/// so their statements are never translated — matching rustc's collector,
+/// which never instantiates the dead arms' callees (translating them would
+/// demand symbols that cannot resolve; see [`try_const_switch_discr`]). The
+/// codegen collector applies the same rule via
+/// `device_mono_reachable_as_bitset` in `collector.rs`.
+fn prune_const_switch_targets(block: &mir::BasicBlock) -> Option<Vec<usize>> {
+    let mir::TerminatorKind::SwitchInt { targets, .. } = &block.terminator.kind else {
+        return None;
+    };
+    let bits = try_const_switch_discr(block)?;
+    let target = switch_target_for_bits(targets, bits);
+    Some(vec![target])
+}
+
+/// Return the non-unwind successors of a block's terminator.
 ///
 /// [`mir::Terminator::successors`] includes unwind cleanup blocks alongside
 /// "normal" control-flow targets. The CUDA toolchain does not support stack
 /// unwinding (hardware could, but `nvcc`/`ptxas` never wire it up), so the
 /// translator treats unwind cleanups as dead code. This helper strips them
-/// out so the worklist only visits blocks that matter on GPU.
-fn non_unwind_successors(kind: &mir::TerminatorKind) -> Vec<usize> {
+/// out so the worklist only visits blocks that matter on GPU. `SwitchInt`s
+/// over compile-time constants are likewise narrowed to the arm actually
+/// taken (see [`prune_const_switch_targets`]).
+fn non_unwind_successors(block: &mir::BasicBlock) -> Vec<usize> {
     use mir::TerminatorKind::*;
-    match kind {
+    if let Some(pruned) = prune_const_switch_targets(block) {
+        return pruned;
+    }
+    match &block.terminator.kind {
         Goto { target } => vec![*target],
         SwitchInt { targets, .. } => targets.all_targets(),
         Return | Resume | Abort | Unreachable => vec![],
@@ -279,7 +375,7 @@ fn compute_reachable_blocks(body: &mir::Body) -> std::collections::BTreeSet<usiz
     let mut frontier: Vec<usize> = vec![0];
     reachable.insert(0);
     while let Some(idx) = frontier.pop() {
-        let successors = non_unwind_successors(&body.blocks[idx].terminator.kind);
+        let successors = non_unwind_successors(&body.blocks[idx]);
         for succ in successors {
             if reachable.insert(succ) {
                 frontier.push(succ);
@@ -1114,6 +1210,24 @@ mod tests {
         op::Op,
         operation::Operation,
     };
+
+    #[test]
+    fn device_runtime_checks_take_the_false_switch_edge() {
+        for check in [
+            mir::RuntimeChecks::UbChecks,
+            mir::RuntimeChecks::ContractChecks,
+            mir::RuntimeChecks::OverflowChecks,
+        ] {
+            assert_eq!(device_runtime_checks_value(&check), Some(0));
+        }
+    }
+
+    #[test]
+    fn constant_switch_selects_explicit_and_otherwise_targets() {
+        let targets = mir::SwitchTargets::new(vec![(0, 3), (7, 5)], 9);
+        assert_eq!(switch_target_for_bits(&targets, 7), 5);
+        assert_eq!(switch_target_for_bits(&targets, 99), 9);
+    }
 
     #[test]
     fn inline_always_flag_reaches_llvm_func_attr_before_export() {
