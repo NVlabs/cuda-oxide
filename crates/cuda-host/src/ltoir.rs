@@ -1257,6 +1257,12 @@ pub(crate) fn execution_route(
             "an artifact built for a newer GPU cannot run on an older GPU",
         ));
     }
+    // NVIDIA guarantees cubin binary compatibility within one compute
+    // capability major version when the execution minor is at least the
+    // emitted minor. The backward case was rejected immediately above.
+    if emitted.capability() / 10 == execution.capability() / 10 {
+        return Ok(ExecutionRoute::Cubin);
+    }
     if emitted.uses_legacy_llvm() && execution.capability() >= 100 {
         return Ok(ExecutionRoute::PtxBridge);
     }
@@ -1494,6 +1500,21 @@ mod tests {
     }
 
     #[test]
+    fn same_major_forward_minor_uses_binary_compatible_cubin() {
+        for (emitted, execution) in [
+            ("sm_80", "sm_86"),
+            ("compute_86", "sm_89"),
+            ("sm_120", "sm_121"),
+        ] {
+            assert_eq!(
+                execution_route(&emitted.parse().unwrap(), &execution.parse().unwrap()).unwrap(),
+                ExecutionRoute::Cubin,
+                "{emitted} on {execution}"
+            );
+        }
+    }
+
+    #[test]
     fn standard_legacy_target_bridges_forward_to_blackwell_as_ptx() {
         for (emitted, execution) in [
             ("sm_75", "sm_100"),
@@ -1527,20 +1548,25 @@ mod tests {
 
     #[test]
     fn execution_route_rejects_backward_targets() {
-        let error = execution_route(&"sm_120".parse().unwrap(), &"sm_86".parse().unwrap())
+        for (emitted_target, execution_target) in [("sm_89", "sm_86"), ("sm_120", "sm_86")] {
+            let error = execution_route(
+                &emitted_target.parse().unwrap(),
+                &execution_target.parse().unwrap(),
+            )
             .expect_err("a newer artifact cannot run on an older GPU");
 
-        let LtoirError::IncompatibleExecutionTarget {
-            emitted,
-            execution,
-            reason,
-        } = error
-        else {
-            panic!("unexpected error: {error}");
-        };
-        assert_eq!(emitted, "sm_120");
-        assert_eq!(execution, "sm_86");
-        assert!(reason.contains("newer GPU"));
+            let LtoirError::IncompatibleExecutionTarget {
+                emitted,
+                execution,
+                reason,
+            } = error
+            else {
+                panic!("unexpected error: {error}");
+            };
+            assert_eq!(emitted, emitted_target);
+            assert_eq!(execution, execution_target);
+            assert!(reason.contains("newer GPU"));
+        }
     }
 
     #[test]
