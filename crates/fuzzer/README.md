@@ -41,8 +41,10 @@ For each accepted seed:
 4. The CPU and GPU traces are compared as `u64` hashes.
 
 `dump_var` hashes intermediate values, not just the final return value. A seed
-can have one dump site or several dump sites. Seed `192` is the current checked
-in example because it has two dump sites:
+can have one dump site or several dump sites. Seed `162` is the current checked
+in example, because its device code calls libdevice (`fmaf64`) and so covers the
+artifact path that a PTX-only loader cannot serve. Seed `192` is a smaller case
+with two dump sites:
 
 ```rust
 __rl_dump0 = (Move(_1), Move(_2), Move(_3), Move(_4));
@@ -72,16 +74,37 @@ UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: u128
 ```
 
 That means rustlantis successfully generated a program, but a generated
-`dump_var(...)` call included a `u128`. Our current trace API only hashes:
+`dump_var(...)` call included a type the adapter cannot rewrite. The trace API
+hashes:
 
 ```text
-bool, i8, i16, i32, i64, u8, u16, u32, u64
+bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char
 ```
 
-It does not yet hash `u128`, `i128`, `usize`, `isize`, or `char`. In many
-`UNSUPPORTED [adapter]` cases, the MIR can probably be patched by widening the
-adapter and trace API. The adapter stops because it does not yet know how to
-rewrite/hash that dumped type safely.
+It does not hash `f32` or `f64`. In many `UNSUPPORTED [adapter]` cases, the MIR
+can probably be patched by widening the adapter and trace API. The adapter stops
+because it does not yet know how to rewrite/hash that dumped type safely.
+
+## Floating point and libdevice seeds
+
+The comparison is exact `u64` hash equality, so it assumes the CPU and the GPU
+agree bit for bit. Floats are never hashed directly, since the trace API has no
+`f32` or `f64` arm and the adapter refuses a bare float dump. A float can still
+reach the hash indirectly, through an `as` cast to an integer, through a
+comparison that yields a `bool`, or through rustlantis' `transmute_place`.
+
+Where that happens on a seed whose device code calls libdevice, a mismatch is
+not on its own evidence of a backend bug. Only a few libdevice entry points are
+specified as single correctly-rounded operations, `fma` among them. The
+transcendentals (`sin`, `cos`, `exp`, `log`, `pow`, `atan2` and the rest) are not
+required to be bit-identical to the host's libm, and the repository compares them
+within a tolerance elsewhere: see the 2-ULP comparison in
+`examples/math_atan/src/main.rs` and `ulp_distance` in
+`examples/libdevice_math/src/main.rs`.
+
+So triage a `MISMATCH` on a float-influenced seed by hand before filing it. Check
+whether the differing value derives from a transcendental, and compare the two
+results in ULPs before treating the difference as a miscompile.
 
 ## Artifacts
 
