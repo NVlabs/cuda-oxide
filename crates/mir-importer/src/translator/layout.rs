@@ -1,4 +1,4 @@
-//! Shared readers over rustc's enum layout metadata.
+//! Shared readers over rustc's aggregate layout metadata.
 //!
 //! Both the type importer (`translator/types.rs`, which records tag and
 //! field byte offsets on `MirEnumType`) and constant decoding
@@ -7,10 +7,49 @@
 //! two consumers cannot drift apart on how an offset is derived.
 
 use pliron::location::Location;
-use pliron::{input_err, input_error_noloc};
+use pliron::{input_err, input_error, input_error_noloc};
 use rustc_public_bridge::IndexedVal;
 
 use crate::error::{TranslationErr, TranslationResult};
+
+/// Byte offsets of an aggregate's fields, in declaration order.
+///
+/// A constant's bytes are the memory image of its type, so a field's bytes start
+/// where rustc's layout puts them. Advancing a cursor by each field's size instead
+/// assumes the fields are packed in declaration order, which holds for neither a
+/// type rustc pads nor one it reorders: in `(u8, u64)` the `u64` sits at offset 8,
+/// rather than at offset 1.
+///
+/// `FieldsShape::Primitive` is rejected here. A struct or tuple carrying fields
+/// is laid out as `Arbitrary`, so a primitive shape means the type was not the
+/// aggregate the caller took it for. The enum reader above accepts it because a
+/// single-variant enum legitimately reaches that shape with no fields to place.
+pub(crate) fn aggregate_field_offsets(
+    rust_ty: &rustc_public::ty::Ty,
+    what: &str,
+    loc: &Location,
+) -> TranslationResult<Vec<usize>> {
+    let layout = rust_ty.layout().map_err(|e| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Failed to query layout for {what} constant: {e:?}"
+            ))
+        )
+    })?;
+
+    match &layout.shape().fields {
+        rustc_public::abi::FieldsShape::Arbitrary { offsets } => {
+            Ok(offsets.iter().map(|offset| offset.bytes()).collect())
+        }
+        other => input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "{what} constant has an unsupported field shape: {other:?}"
+            ))
+        ),
+    }
+}
 
 /// Return the byte offsets for the fields of one active enum variant.
 pub(crate) fn enum_variant_field_offsets(
