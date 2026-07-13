@@ -1668,10 +1668,11 @@ fn convert_small_array_element_addr(
         let marker_key: pliron::identifier::Identifier = SMALL_ARRAY_ADDRESS_SELECT_ATTR
             .try_into()
             .expect("valid small-array marker attribute name");
-        select.get_operation().deref_mut(ctx).attributes.set(
-            marker_key,
-            pliron::builtin::attributes::UnitAttr::new(),
-        );
+        select
+            .get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(marker_key, pliron::builtin::attributes::UnitAttr::new());
         rewriter.insert_operation(ctx, select.get_operation());
         selected = select.get_operation().deref(ctx).get_result(0);
     }
@@ -1795,6 +1796,40 @@ mod tests {
         module_ptr
     }
 
+    fn build_array_element_addr_write(ctx: &mut Context, array_size: u64) -> Ptr<Operation> {
+        let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        let usize_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Unsigned).into();
+        let array_ty: TypeHandle = MirArrayType::get(ctx, i32_ty, array_size).into();
+        let array_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, array_ty, true).into();
+        let element_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, i32_ty, true).into();
+
+        let (module_ptr, block) = build_kernel(ctx, vec![array_ptr_ty, usize_ty, i32_ty], vec![]);
+        let array_ptr = block.deref(ctx).get_argument(0);
+        let index = block.deref(ctx).get_argument(1);
+        let value = block.deref(ctx).get_argument(2);
+        let address = Operation::new(
+            ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![element_ptr_ty],
+            vec![array_ptr, index],
+            vec![],
+            0,
+        );
+        address.insert_at_back(block, ctx);
+        let element_ptr = address.deref(ctx).get_result(0);
+        let store = Operation::new(
+            ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![element_ptr, value],
+            vec![],
+            0,
+        );
+        store.insert_at_back(block, ctx);
+        append_mir_return(ctx, block, vec![]);
+        module_ptr
+    }
+
     #[test]
     fn small_runtime_array_extract_stays_in_ssa() {
         let mut ctx = make_ctx();
@@ -1839,6 +1874,20 @@ mod tests {
         assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 2);
         assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 4);
         assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 3);
+    }
+
+    #[test]
+    fn small_runtime_array_store_updates_constant_pointer_candidates() {
+        let mut ctx = make_ctx();
+        let module_ptr = build_array_element_addr_write(&mut ctx, 3);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module_ptr);
+
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 3);
+        assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 2);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 3);
+        assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 3);
     }
 
     #[test]

@@ -102,8 +102,28 @@ pub(crate) fn convert_store(
         }
     };
 
+    let mir_store = dialect_mir::ops::MirStoreOp::new(op);
+    if !mir_store.is_volatile(ctx)
+        && matches!(small_array_pointer_candidate_count(ctx, ptr), Some(1..=64))
+    {
+        let false_value = integer_constant(ctx, rewriter, 1, 0);
+        let true_value = integer_constant(ctx, rewriter, 1, 1);
+        store_through_small_array_pointer_selection(
+            ctx,
+            rewriter,
+            ptr,
+            val,
+            op,
+            &[],
+            true_value,
+            false_value,
+        )?;
+        rewriter.erase_operation(ctx, op);
+        return Ok(());
+    }
+
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
-    if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
+    if mir_store.is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
     }
     copy_alignment(ctx, op, llvm_store.get_operation());
@@ -324,6 +344,20 @@ struct DeferredGep {
     source_element_type: TypeHandle,
 }
 
+fn integer_constant(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    width: u32,
+    value: u64,
+) -> pliron::value::Value {
+    let ty = IntegerType::get(ctx, width, Signedness::Signless);
+    let width = std::num::NonZeroUsize::new(width as usize).expect("integer width is nonzero");
+    let attr: AttrObj = IntegerAttr::new(ty, APInt::from_u64(value, width)).into();
+    let constant = llvm::ConstantOp::new(ctx, attr);
+    rewriter.insert_operation(ctx, constant.get_operation());
+    constant.get_operation().deref(ctx).get_result(0)
+}
+
 /// Count the constant-address leaves represented by a small-array pointer
 /// selection. `None` means the expression has no marked selection and should
 /// retain ordinary load lowering.
@@ -415,6 +449,108 @@ fn load_through_small_array_pointer_selection(
     copy_alignment(ctx, mir_load, load.get_operation());
     rewriter.insert_operation(ctx, load.get_operation());
     Ok(load.get_operation().deref(ctx).get_result(0))
+}
+
+/// Store through a tree of marked pointer selections by updating every
+/// constant candidate under a mutually exclusive predicate.
+///
+/// Keeping the candidate addresses constant lets SROA promote fixed local
+/// arrays after a small indexing loop is unrolled. Each unselected candidate
+/// is written back unchanged, preserving the semantics of one dynamic store.
+fn store_through_small_array_pointer_selection(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    ptr: pliron::value::Value,
+    value: pliron::value::Value,
+    mir_store: Ptr<Operation>,
+    deferred_geps: &[DeferredGep],
+    enabled: pliron::value::Value,
+    false_value: pliron::value::Value,
+) -> Result<()> {
+    if let Some(defining_op) = ptr.defining_op() {
+        if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
+            let condition = defining_op.deref(ctx).get_operand(0);
+            let true_ptr = defining_op.deref(ctx).get_operand(1);
+            let false_ptr = defining_op.deref(ctx).get_operand(2);
+
+            let true_enabled = llvm::SelectOp::new(ctx, condition, enabled, false_value);
+            rewriter.insert_operation(ctx, true_enabled.get_operation());
+            let true_enabled = true_enabled.get_operation().deref(ctx).get_result(0);
+
+            let false_enabled = llvm::SelectOp::new(ctx, condition, false_value, enabled);
+            rewriter.insert_operation(ctx, false_enabled.get_operation());
+            let false_enabled = false_enabled.get_operation().deref(ctx).get_result(0);
+
+            store_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                true_ptr,
+                value,
+                mir_store,
+                deferred_geps,
+                true_enabled,
+                false_value,
+            )?;
+            store_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                false_ptr,
+                value,
+                mir_store,
+                deferred_geps,
+                false_enabled,
+                false_value,
+            )?;
+            return Ok(());
+        }
+        if let Some(gep) = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx) {
+            let base = gep.get_operation().deref(ctx).get_operand(0);
+            if small_array_pointer_candidate_count(ctx, base).is_some() {
+                let mut nested_geps = deferred_geps.to_vec();
+                nested_geps.push(DeferredGep {
+                    indices: gep.indices(ctx),
+                    source_element_type: gep.src_elem_type(ctx),
+                });
+                return store_through_small_array_pointer_selection(
+                    ctx,
+                    rewriter,
+                    base,
+                    value,
+                    mir_store,
+                    &nested_geps,
+                    enabled,
+                    false_value,
+                );
+            }
+        }
+    }
+
+    let mut candidate_ptr = ptr;
+    for gep in deferred_geps.iter().rev() {
+        let cloned = llvm::GetElementPtrOp::new(
+            ctx,
+            candidate_ptr,
+            gep.indices.clone(),
+            gep.source_element_type,
+        );
+        rewriter.insert_operation(ctx, cloned.get_operation());
+        candidate_ptr = cloned.get_operation().deref(ctx).get_result(0);
+    }
+
+    let value_ty = value.get_type(ctx);
+    let old_value = llvm::LoadOp::new(ctx, candidate_ptr, value_ty);
+    copy_alignment(ctx, mir_store, old_value.get_operation());
+    rewriter.insert_operation(ctx, old_value.get_operation());
+    let old_value = old_value.get_operation().deref(ctx).get_result(0);
+
+    let selected = llvm::SelectOp::new(ctx, enabled, value, old_value);
+    rewriter.insert_operation(ctx, selected.get_operation());
+    let selected = selected.get_operation().deref(ctx).get_result(0);
+
+    let store = llvm::StoreOp::new(ctx, selected, candidate_ptr);
+    copy_alignment(ctx, mir_store, store.get_operation());
+    rewriter.insert_operation(ctx, store.get_operation());
+    Ok(())
 }
 
 /// Convert `mir.dbg_value` to the LLVM-export debug marker.
