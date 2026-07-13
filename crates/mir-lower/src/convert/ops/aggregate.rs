@@ -653,6 +653,22 @@ pub(crate) fn is_small_array_address_select(ctx: &Context, op: Ptr<Operation>) -
         .is_some()
 }
 
+fn is_local_array_address(ctx: &Context, ptr: Value) -> bool {
+    let Some(defining_op) = ptr.defining_op() else {
+        return false;
+    };
+    if Operation::get_op::<llvm::AllocaOp>(defining_op, ctx).is_some() {
+        return true;
+    }
+    if is_small_array_address_select(ctx, defining_op) {
+        return is_local_array_address(ctx, defining_op.deref(ctx).get_operand(1))
+            && is_local_array_address(ctx, defining_op.deref(ctx).get_operand(2));
+    }
+    Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx).is_some_and(|gep| {
+        is_local_array_address(ctx, gep.get_operation().deref(ctx).get_operand(0))
+    })
+}
+
 /// Convert `mir.extract_array_element` to LLVM SSA operations for small arrays.
 ///
 /// LLVM's `extractvalue` only accepts constant indices, so a runtime index is
@@ -1564,7 +1580,8 @@ pub(crate) fn convert_field_addr(
 // MirArrayElementAddrOp Conversion
 // ============================================================================
 
-/// Convert `mir.array_element_addr` to `llvm.getelementptr`.
+/// Convert `mir.array_element_addr` to constant-address selection for small
+/// local arrays or to `llvm.getelementptr` otherwise.
 ///
 /// This computes the address of an array element using a runtime index.
 /// The operation is: `&arr[i]` → `getelementptr [N x T], ptr %arr_ptr, i64 0, i64 %i`
@@ -1600,7 +1617,7 @@ pub(crate) fn convert_array_element_addr(
 
     let llvm_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
 
-    if (1..=MAX_SSA_ARRAY_ELEMENTS).contains(&array_size) {
+    if (1..=MAX_SSA_ARRAY_ELEMENTS).contains(&array_size) && is_local_array_address(ctx, arr_ptr) {
         return convert_small_array_element_addr(
             ctx,
             rewriter,
@@ -1796,17 +1813,35 @@ mod tests {
         module_ptr
     }
 
-    fn build_array_element_addr_write(ctx: &mut Context, array_size: u64) -> Ptr<Operation> {
+    fn build_local_array_element_addr_access(
+        ctx: &mut Context,
+        array_size: u64,
+        write: bool,
+    ) -> Ptr<Operation> {
         let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
         let usize_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Unsigned).into();
         let array_ty: TypeHandle = MirArrayType::get(ctx, i32_ty, array_size).into();
         let array_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, array_ty, true).into();
         let element_ptr_ty: TypeHandle = MirPtrType::get_generic(ctx, i32_ty, true).into();
 
-        let (module_ptr, block) = build_kernel(ctx, vec![array_ptr_ty, usize_ty, i32_ty], vec![]);
-        let array_ptr = block.deref(ctx).get_argument(0);
-        let index = block.deref(ctx).get_argument(1);
-        let value = block.deref(ctx).get_argument(2);
+        let arg_tys = if write {
+            vec![usize_ty, i32_ty]
+        } else {
+            vec![usize_ty]
+        };
+        let result_tys = if write { vec![] } else { vec![i32_ty] };
+        let (module_ptr, block) = build_kernel(ctx, arg_tys, result_tys);
+        let index = block.deref(ctx).get_argument(0);
+        let alloca = Operation::new(
+            ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![array_ptr_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        alloca.insert_at_back(block, ctx);
+        let array_ptr = alloca.deref(ctx).get_result(0);
         let address = Operation::new(
             ctx,
             mir::MirArrayElementAddrOp::get_concrete_op_info(),
@@ -1817,16 +1852,32 @@ mod tests {
         );
         address.insert_at_back(block, ctx);
         let element_ptr = address.deref(ctx).get_result(0);
-        let store = Operation::new(
-            ctx,
-            mir::MirStoreOp::get_concrete_op_info(),
-            vec![],
-            vec![element_ptr, value],
-            vec![],
-            0,
-        );
-        store.insert_at_back(block, ctx);
-        append_mir_return(ctx, block, vec![]);
+
+        if write {
+            let value = block.deref(ctx).get_argument(1);
+            let store = Operation::new(
+                ctx,
+                mir::MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![element_ptr, value],
+                vec![],
+                0,
+            );
+            store.insert_at_back(block, ctx);
+            append_mir_return(ctx, block, vec![]);
+        } else {
+            let load = Operation::new(
+                ctx,
+                mir::MirLoadOp::get_concrete_op_info(),
+                vec![i32_ty],
+                vec![element_ptr],
+                vec![],
+                0,
+            );
+            load.insert_at_back(block, ctx);
+            let loaded = load.deref(ctx).get_result(0);
+            append_mir_return(ctx, block, vec![loaded]);
+        }
         module_ptr
     }
 
@@ -1865,7 +1916,7 @@ mod tests {
     #[test]
     fn small_runtime_array_address_uses_constant_pointer_selection() {
         let mut ctx = make_ctx();
-        let module_ptr = build_array_element_addr_read(&mut ctx, 3);
+        let module_ptr = build_local_array_element_addr_access(&mut ctx, 3, false);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
         let body = kernel_blocks(&ctx, module_ptr);
@@ -1879,7 +1930,7 @@ mod tests {
     #[test]
     fn small_runtime_array_store_updates_constant_pointer_candidates() {
         let mut ctx = make_ctx();
-        let module_ptr = build_array_element_addr_write(&mut ctx, 3);
+        let module_ptr = build_local_array_element_addr_access(&mut ctx, 3, true);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
         let body = kernel_blocks(&ctx, module_ptr);
@@ -1888,6 +1939,20 @@ mod tests {
         assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 2);
         assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 3);
         assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 3);
+    }
+
+    #[test]
+    fn small_external_array_address_keeps_single_dynamic_gep() {
+        let mut ctx = make_ctx();
+        let module_ptr = build_array_element_addr_read(&mut ctx, 3);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        let body = kernel_blocks(&ctx, module_ptr);
+
+        assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
     }
 
     #[test]

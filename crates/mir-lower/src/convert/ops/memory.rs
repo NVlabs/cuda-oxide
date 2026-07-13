@@ -115,8 +115,10 @@ pub(crate) fn convert_store(
             val,
             op,
             &[],
-            true_value,
-            false_value,
+            StorePredicate {
+                enabled: true_value,
+                false_value,
+            },
         )?;
         rewriter.erase_operation(ctx, op);
         return Ok(());
@@ -344,6 +346,12 @@ struct DeferredGep {
     source_element_type: TypeHandle,
 }
 
+#[derive(Clone, Copy)]
+struct StorePredicate {
+    enabled: pliron::value::Value,
+    false_value: pliron::value::Value,
+}
+
 fn integer_constant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -464,8 +472,7 @@ fn store_through_small_array_pointer_selection(
     value: pliron::value::Value,
     mir_store: Ptr<Operation>,
     deferred_geps: &[DeferredGep],
-    enabled: pliron::value::Value,
-    false_value: pliron::value::Value,
+    predicate: StorePredicate,
 ) -> Result<()> {
     if let Some(defining_op) = ptr.defining_op() {
         if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
@@ -473,11 +480,13 @@ fn store_through_small_array_pointer_selection(
             let true_ptr = defining_op.deref(ctx).get_operand(1);
             let false_ptr = defining_op.deref(ctx).get_operand(2);
 
-            let true_enabled = llvm::SelectOp::new(ctx, condition, enabled, false_value);
+            let true_enabled =
+                llvm::SelectOp::new(ctx, condition, predicate.enabled, predicate.false_value);
             rewriter.insert_operation(ctx, true_enabled.get_operation());
             let true_enabled = true_enabled.get_operation().deref(ctx).get_result(0);
 
-            let false_enabled = llvm::SelectOp::new(ctx, condition, false_value, enabled);
+            let false_enabled =
+                llvm::SelectOp::new(ctx, condition, predicate.false_value, predicate.enabled);
             rewriter.insert_operation(ctx, false_enabled.get_operation());
             let false_enabled = false_enabled.get_operation().deref(ctx).get_result(0);
 
@@ -488,8 +497,10 @@ fn store_through_small_array_pointer_selection(
                 value,
                 mir_store,
                 deferred_geps,
-                true_enabled,
-                false_value,
+                StorePredicate {
+                    enabled: true_enabled,
+                    ..predicate
+                },
             )?;
             store_through_small_array_pointer_selection(
                 ctx,
@@ -498,8 +509,10 @@ fn store_through_small_array_pointer_selection(
                 value,
                 mir_store,
                 deferred_geps,
-                false_enabled,
-                false_value,
+                StorePredicate {
+                    enabled: false_enabled,
+                    ..predicate
+                },
             )?;
             return Ok(());
         }
@@ -518,8 +531,7 @@ fn store_through_small_array_pointer_selection(
                     value,
                     mir_store,
                     &nested_geps,
-                    enabled,
-                    false_value,
+                    predicate,
                 );
             }
         }
@@ -543,7 +555,7 @@ fn store_through_small_array_pointer_selection(
     rewriter.insert_operation(ctx, old_value.get_operation());
     let old_value = old_value.get_operation().deref(ctx).get_result(0);
 
-    let selected = llvm::SelectOp::new(ctx, enabled, value, old_value);
+    let selected = llvm::SelectOp::new(ctx, predicate.enabled, value, old_value);
     rewriter.insert_operation(ctx, selected.get_operation());
     let selected = selected.get_operation().deref(ctx).get_result(0);
 
