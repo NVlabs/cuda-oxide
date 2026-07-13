@@ -223,7 +223,7 @@ fn slot_pointee(ctx: &Context, slot: Value) -> TypeHandle {
 }
 
 /// Insert `op` after `prev_op` if provided, else at the front of `block`.
-fn insert_at(
+pub(crate) fn insert_at(
     ctx: &mut Context,
     op: Ptr<Operation>,
     block: Ptr<BasicBlock>,

@@ -50,6 +50,9 @@ BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64 tcgen05)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_uninhabited error_enum_constant_provenance error_enum_pointer_overlap error_enum_shared_pointer_layout error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
+# Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
+NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
+
 classify() {
     local ex="$1" cat
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
@@ -535,10 +538,26 @@ verdict_compile() {
 
 # ---- Runner --------------------------------------------------------------
 
+# Run `cargo oxide "$@"`, prepending EXTRA_RUSTFLAGS (set per-example by run_cargo)
+# to any inherited RUSTFLAGS
+EXTRA_RUSTFLAGS=""
+invoke_cargo_oxide() {
+    if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
+        RUSTFLAGS="${EXTRA_RUSTFLAGS}${RUSTFLAGS:+ ${RUSTFLAGS}}" cargo oxide "$@"
+    else
+        cargo oxide "$@"
+    fi
+}
+
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
+    local noinline
+    EXTRA_RUSTFLAGS=""
+    for noinline in "${NOINLINE_MIR_EXAMPLES[@]}"; do
+        [[ "${ex}" == "${noinline}" ]] && EXTRA_RUSTFLAGS="-Zinline-mir=no"
+    done
     # This exact-target batch must pass both compiler routes. The second build
     # may replace the first artifact, so preserve both exit codes in one gate.
     if [[ "${cat}" == "blackwell-compile" ]]; then
@@ -1201,10 +1220,10 @@ run_cargo() {
         nvvm_arch="$(nvvm_verify_arch "${ex}")"
         local -a args=("emit-ltoir" "${ex}" "--arch=${nvvm_arch}")
         if [[ ${VERBOSE} -eq 1 ]]; then
-            cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+            invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
             CARGO_EC=${PIPESTATUS[0]}
         else
-            cargo oxide "${args[@]}" >"${log}" 2>&1
+            invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
             CARGO_EC=$?
         fi
         return
@@ -1220,10 +1239,10 @@ run_cargo() {
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
     if [[ ${VERBOSE} -eq 1 ]]; then
-        cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+        invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
         CARGO_EC=${PIPESTATUS[0]}
     else
-        cargo oxide "${args[@]}" >"${log}" 2>&1
+        invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
     fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "helper_fn" ]]; then
