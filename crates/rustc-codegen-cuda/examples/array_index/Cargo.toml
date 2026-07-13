@@ -14,7 +14,7 @@ license = "Apache-2.0"
 #
 # Expected results:
 #   - Constant index read: PASS (uses extractvalue)
-#   - Runtime index read: PASS (uses alloca+gep+load, inefficient but works)
+#   - Runtime index read: PASS (small fixed arrays stay in SSA)
 #   - Constant index write: FAIL (MirInsertFieldOp doesn't support arrays yet)
 #   - Runtime index write: FAIL (ProjectionElem::Index not implemented for writes)
 

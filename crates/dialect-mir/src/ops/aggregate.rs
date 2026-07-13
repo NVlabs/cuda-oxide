@@ -884,8 +884,9 @@ impl Verify for MirConstructArrayOp {
 /// ```
 ///
 /// When Rust code indexes an array with a runtime value (e.g., `arr[tid % 4]`),
-/// we need this op to represent that access before lowering to the
-/// alloca→store→GEP→load pattern that LLVM requires.
+/// we need this op to represent that access before lowering. Small fixed arrays
+/// become constant `extractvalue` operations plus an SSA select chain; larger
+/// arrays use an alloca→store→GEP→load sequence to bound code growth.
 ///
 /// # Example
 ///
@@ -915,8 +916,8 @@ impl Verify for MirConstructArrayOp {
 ///
 /// # LLVM Lowering
 ///
-/// Since LLVM's `extractvalue` only supports constant indices, this op
-/// is lowered to:
+/// Since LLVM's `extractvalue` only supports constant indices, larger arrays
+/// are lowered to:
 /// ```text
 /// %ptr      = llvm.alloca [4 x float]       ; 1. Stack allocate
 /// llvm.store %arr, %ptr                     ; 2. Store array to memory
@@ -1157,7 +1158,7 @@ impl Verify for MirFieldAddrOp {
 ///   %x = mir.load %elem_ptr        // for reads
 /// ```
 ///
-/// This enables O(1) element access without copying the entire array.
+/// This preserves pointer semantics without copying the entire array.
 ///
 /// # Operands
 ///
@@ -1178,10 +1179,13 @@ impl Verify for MirFieldAddrOp {
 ///
 /// # LLVM Lowering
 ///
-/// Lowers to a single LLVM GEP instruction:
+/// Larger arrays lower to a single LLVM GEP instruction:
 /// ```llvm
 /// %elem_ptr = getelementptr [N x T], ptr %arr_ptr, i64 0, i64 %index
 /// ```
+/// Small fixed arrays lower to constant GEPs and an `icmp`/`select` pointer
+/// chain. The constant addresses let LLVM scalarize compiler-owned local arrays
+/// while still accessing exactly one element through user-visible pointers.
 #[pliron_op(
     name = "mir.array_element_addr",
     format,
