@@ -297,8 +297,18 @@ pub(crate) fn convert_load(
     let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
+    let mir_load = dialect_mir::ops::MirLoadOp::new(op);
+    if !mir_load.is_volatile(ctx)
+        && matches!(small_array_pointer_candidate_count(ctx, ptr), Some(1..=64))
+    {
+        let loaded =
+            load_through_small_array_pointer_selection(ctx, rewriter, ptr, llvm_ty, op, &[])?;
+        rewriter.replace_operation_with_values(ctx, op, vec![loaded]);
+        return Ok(());
+    }
+
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
-    if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
+    if mir_load.is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_load.get_operation(), true);
     }
     copy_alignment(ctx, op, llvm_load.get_operation());
@@ -306,6 +316,105 @@ pub(crate) fn convert_load(
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
     Ok(())
+}
+
+#[derive(Clone)]
+struct DeferredGep {
+    indices: Vec<llvm::GepIndex>,
+    source_element_type: TypeHandle,
+}
+
+/// Count the constant-address leaves represented by a small-array pointer
+/// selection. `None` means the expression has no marked selection and should
+/// retain ordinary load lowering.
+fn small_array_pointer_candidate_count(ctx: &Context, ptr: pliron::value::Value) -> Option<u64> {
+    let defining_op = ptr.defining_op()?;
+    if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
+        let true_ptr = defining_op.deref(ctx).get_operand(1);
+        let false_ptr = defining_op.deref(ctx).get_operand(2);
+        let true_count = small_array_pointer_candidate_count(ctx, true_ptr).unwrap_or(1);
+        let false_count = small_array_pointer_candidate_count(ctx, false_ptr).unwrap_or(1);
+        return true_count.checked_add(false_count);
+    }
+    let gep = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx)?;
+    small_array_pointer_candidate_count(ctx, gep.get_operation().deref(ctx).get_operand(0))
+}
+
+/// Load through a tree of marked pointer selections by loading every constant
+/// candidate and selecting values instead of pointers.
+///
+/// LLVM otherwise canonicalizes `select (gep 0), (gep 1)` back into one dynamic
+/// GEP, which prevents SROA from promoting a fixed local array. Nested array
+/// indexing can wrap a marked selection in constant GEPs, so those GEPs are
+/// deferred and cloned onto each constant pointer leaf before the load.
+fn load_through_small_array_pointer_selection(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    ptr: pliron::value::Value,
+    result_ty: TypeHandle,
+    mir_load: Ptr<Operation>,
+    deferred_geps: &[DeferredGep],
+) -> Result<pliron::value::Value> {
+    if let Some(defining_op) = ptr.defining_op() {
+        if crate::convert::ops::aggregate::is_small_array_address_select(ctx, defining_op) {
+            let condition = defining_op.deref(ctx).get_operand(0);
+            let true_ptr = defining_op.deref(ctx).get_operand(1);
+            let false_ptr = defining_op.deref(ctx).get_operand(2);
+            let true_value = load_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                true_ptr,
+                result_ty,
+                mir_load,
+                deferred_geps,
+            )?;
+            let false_value = load_through_small_array_pointer_selection(
+                ctx,
+                rewriter,
+                false_ptr,
+                result_ty,
+                mir_load,
+                deferred_geps,
+            )?;
+            let select = llvm::SelectOp::new(ctx, condition, true_value, false_value);
+            rewriter.insert_operation(ctx, select.get_operation());
+            return Ok(select.get_operation().deref(ctx).get_result(0));
+        }
+        if let Some(gep) = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx) {
+            let base = gep.get_operation().deref(ctx).get_operand(0);
+            if small_array_pointer_candidate_count(ctx, base).is_some() {
+                let mut nested_geps = deferred_geps.to_vec();
+                nested_geps.push(DeferredGep {
+                    indices: gep.indices(ctx),
+                    source_element_type: gep.src_elem_type(ctx),
+                });
+                return load_through_small_array_pointer_selection(
+                    ctx,
+                    rewriter,
+                    base,
+                    result_ty,
+                    mir_load,
+                    &nested_geps,
+                );
+            }
+        }
+    }
+
+    let mut candidate_ptr = ptr;
+    for gep in deferred_geps.iter().rev() {
+        let cloned = llvm::GetElementPtrOp::new(
+            ctx,
+            candidate_ptr,
+            gep.indices.clone(),
+            gep.source_element_type,
+        );
+        rewriter.insert_operation(ctx, cloned.get_operation());
+        candidate_ptr = cloned.get_operation().deref(ctx).get_result(0);
+    }
+    let load = llvm::LoadOp::new(ctx, candidate_ptr, result_ty);
+    copy_alignment(ctx, mir_load, load.get_operation());
+    rewriter.insert_operation(ctx, load.get_operation());
+    Ok(load.get_operation().deref(ctx).get_result(0))
 }
 
 /// Convert `mir.dbg_value` to the LLVM-export debug marker.

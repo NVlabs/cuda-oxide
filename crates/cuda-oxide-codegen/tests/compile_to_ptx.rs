@@ -76,7 +76,17 @@ if [ "${1:-}" = "--version" ]; then
   echo "LLVM version 21.0.0"
   exit 0
 fi
-cp "$2" "$5"
+input=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) shift; output="$1" ;;
+    -*) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+cp "$input" "$output"
 "#,
             )
         });

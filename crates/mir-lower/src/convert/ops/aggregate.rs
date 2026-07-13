@@ -641,6 +641,18 @@ pub(crate) fn convert_construct_array(
 /// retain the compact memory-based lowering.
 const MAX_SSA_ARRAY_ELEMENTS: u64 = 16;
 
+const SMALL_ARRAY_ADDRESS_SELECT_ATTR: &str = "small_array_address_select";
+
+pub(crate) fn is_small_array_address_select(ctx: &Context, op: Ptr<Operation>) -> bool {
+    let key: pliron::identifier::Identifier = SMALL_ARRAY_ADDRESS_SELECT_ATTR
+        .try_into()
+        .expect("valid small-array marker attribute name");
+    op.deref(ctx)
+        .attributes
+        .get::<pliron::builtin::attributes::UnitAttr>(&key)
+        .is_some()
+}
+
 /// Convert `mir.extract_array_element` to LLVM SSA operations for small arrays.
 ///
 /// LLVM's `extractvalue` only accepts constant indices, so a runtime index is
@@ -1653,6 +1665,13 @@ fn convert_small_array_element_addr(
         let condition = matches.get_operation().deref(ctx).get_result(0);
 
         let select = llvm::SelectOp::new(ctx, condition, pointer, selected);
+        let marker_key: pliron::identifier::Identifier = SMALL_ARRAY_ADDRESS_SELECT_ATTR
+            .try_into()
+            .expect("valid small-array marker attribute name");
+        select.get_operation().deref_mut(ctx).attributes.set(
+            marker_key,
+            pliron::builtin::attributes::UnitAttr::new(),
+        );
         rewriter.insert_operation(ctx, select.get_operation());
         selected = select.get_operation().deref(ctx).get_result(0);
     }
@@ -1818,8 +1837,8 @@ mod tests {
 
         assert_eq!(count_ops::<llvm::GetElementPtrOp>(&ctx, &body), 3);
         assert_eq!(count_ops::<llvm::ICmpOp>(&ctx, &body), 2);
-        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 2);
-        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 1);
+        assert_eq!(count_ops::<llvm::SelectOp>(&ctx, &body), 4);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 3);
     }
 
     #[test]

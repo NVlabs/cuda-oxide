@@ -92,7 +92,7 @@ fn link_libdevice(
     }
 }
 
-/// Runs LLVM's middle-end (`opt -O2`) on the emitted IR before `llc`.
+/// Runs LLVM's middle-end on the emitted IR before `llc`.
 ///
 /// This is what consumes the per-op ABI alignment we emit: the
 /// LoadStoreVectorizer fuses aligned aggregate/element accesses, SROA
@@ -128,8 +128,12 @@ fn optimize_ll(
     };
 
     let opt_ll = ll_path.with_extension("opt.ll");
+    let optimization_args = [
+        "-passes=default<O2>,function(loop-unroll<O3;full-unroll-max=16;no-partial;no-peeling;no-runtime>),default<O2>",
+        "-unroll-threshold=512",
+    ];
     match std::process::Command::new(&opt.path)
-        .arg("-O2")
+        .args(optimization_args)
         .arg(ll_path)
         .arg("-S")
         .arg("-o")
@@ -139,7 +143,14 @@ fn optimize_ll(
         Ok(output) if output.status.success() => {
             let diagnostics = opts
                 .verbose
-                .then(|| format!("opt -O2 via {}: {}", opt.path, opt_ll.display()))
+                .then(|| {
+                    format!(
+                        "opt {} via {}: {}",
+                        optimization_args.join(" "),
+                        opt.path,
+                        opt_ll.display()
+                    )
+                })
                 .into_iter()
                 .collect();
             Ok((Some(opt_ll), diagnostics))
