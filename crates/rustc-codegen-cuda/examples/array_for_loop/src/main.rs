@@ -47,6 +47,22 @@ mod kernels {
         padding: [u8; 24],
     }
 
+    #[derive(Clone, Copy)]
+    struct GridShape {
+        counts: [u32; 3],
+        periodic: [bool; 3],
+    }
+
+    #[inline(always)]
+    fn select_grid_field(grid: &GridShape, index: usize) -> u32 {
+        let count = grid.counts[index];
+        if grid.periodic[index] {
+            count + 10
+        } else {
+            count
+        }
+    }
+
     /// Sum a by-value `[u32; 4]` with a `for` loop (the issue-138 shape).
     #[kernel]
     pub fn sum_u32_array(mut out: DisjointSlice<u32>) {
@@ -153,6 +169,22 @@ mod kernels {
                 + components[2].values[1];
         }
     }
+
+    /// Runtime indexing of small array fields through a shared aggregate
+    /// reference should expose constant candidate loads for caller SROA.
+    #[kernel]
+    pub fn runtime_borrowed_array_field(mut out: DisjointSlice<u32>) {
+        let tid = thread::index_1d();
+        let index = tid.get();
+        let t = index as u32;
+        if let Some(out_elem) = out.get_mut(tid) {
+            let grid = GridShape {
+                counts: [t, t + 1, t + 2],
+                periodic: [false, true, false],
+            };
+            *out_elem = select_grid_field(&grid, index % 3);
+        }
+    }
 }
 
 fn kernel_body<'a>(ptx: &'a str, kernel_prefix: &str) -> &'a str {
@@ -235,11 +267,19 @@ fn main() {
         .expect("launch map_over_aligned_array");
     let got_aligned_map = d_aligned_map.to_host_vec(&stream).unwrap();
 
+    let mut d_borrowed_field = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    // SAFETY: the 32-thread 1D block matches the kernel's indexing model and
+    // the 32-element output allocation.
+    unsafe { module.runtime_borrowed_array_field(stream.as_ref(), cfg, &mut d_borrowed_field) }
+        .expect("launch runtime_borrowed_array_field");
+    let got_borrowed_field = d_borrowed_field.to_host_vec(&stream).unwrap();
+
     let ptx = std::fs::read_to_string(ptx_path).expect("read generated PTX");
     for kernel in [
         "runtime_aggregate_array_read",
         "runtime_aggregate_array_write",
         "map_over_aligned_array",
+        "runtime_borrowed_array_field",
     ] {
         let body = kernel_body(&ptx, kernel);
         assert!(
@@ -294,6 +334,15 @@ fn main() {
             println!(
                 "FAIL tid={tid}: map_over_aligned_array={} expected={want_aligned_map}",
                 got_aligned_map[tid]
+            );
+            failures += 1;
+        }
+        let component = tid % 3;
+        let want_borrowed_field = tid as u32 + component as u32 + u32::from(component == 1) * 10;
+        if got_borrowed_field[tid] != want_borrowed_field {
+            println!(
+                "FAIL tid={tid}: runtime_borrowed_array_field={} expected={want_borrowed_field}",
+                got_borrowed_field[tid]
             );
             failures += 1;
         }
