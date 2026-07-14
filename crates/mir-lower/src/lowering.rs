@@ -35,7 +35,7 @@ use crate::convert::types::{
 
 use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::{
-    MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirUnionType,
+    MirArrayType, MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType, MirUnionType,
 };
 use llvm_export::ops as llvm;
 use pliron::{
@@ -712,7 +712,7 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
 // Alignment Pre-Pass
 // ============================================================================
 
-/// The real (rustc) alignment of a struct or enum type, when recorded.
+/// The real (rustc) alignment of an aggregate type, when recorded.
 ///
 /// The converted LLVM struct alone can claim too little: an enum that
 /// lowers to `{ i8, [7 x i8] }` looks like "align 1" to LLVM even when
@@ -729,7 +729,37 @@ fn aggregate_over_align(ctx: &Context, ty: TypeHandle) -> Option<u64> {
     if let Some(u) = ty_ref.downcast_ref::<MirUnionType>() {
         return Some(u.abi_align()).filter(|a| *a > 0);
     }
+    if let Some(a) = ty_ref.downcast_ref::<MirArrayType>() {
+        return aggregate_over_align(ctx, a.element_ty);
+    }
     None
+}
+
+#[cfg(test)]
+mod aggregate_alignment_tests {
+    use super::*;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    #[test]
+    fn array_inherits_union_abi_alignment() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        crate::register(&mut ctx);
+
+        let word: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let union: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "OverAligned".into(),
+            vec!["word".into()],
+            vec![word],
+            32,
+            32,
+        )
+        .into();
+        let array: TypeHandle = MirArrayType::get(&mut ctx, union, 3).into();
+
+        assert_eq!(aggregate_over_align(&ctx, array), Some(32));
+    }
 }
 
 /// Stamp the true ABI alignment onto every `mir.load`, `mir.store`,

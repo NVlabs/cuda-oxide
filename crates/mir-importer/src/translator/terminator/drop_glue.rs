@@ -28,7 +28,9 @@
 //! drop shim and the whole chain does nothing at runtime: it only
 //! shuffles index values between local variables on the way to the
 //! empty shim. The same holds for any element type without drop glue,
-//! including plain `Copy` structs.
+//! including plain `Copy` structs. `array::map` uses a related
+//! `core::array::drain::Drain<T, N, F>` guard. Its cleanup only drops
+//! the unconsumed `T` values, so it is harmless under the same condition.
 //!
 //! What counts as "nothing observable":
 //!
@@ -75,9 +77,10 @@ use pliron::input_error;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use rustc_public::CrateDef;
 use rustc_public::mir;
 use rustc_public::mir::mono::Instance;
-use rustc_public::ty::{RigidTy, Ty, TyKind};
+use rustc_public::ty::{GenericArgKind, RigidTy, Ty, TyKind};
 
 /// Cap on the call-chain depth the proof is willing to follow. Real
 /// no-op drop glue is shallow (the `IntoIter` case above is two levels:
@@ -94,9 +97,37 @@ const MAX_PROOF_DEPTH: usize = 16;
 ///
 /// This is a thin wrapper over [`drop_instance_is_noop`], the single
 /// no-op predicate shared by every site that must agree on whether a
-/// drop is observable.
+/// drop is observable, with one type-level reduction applied first:
+/// core's private `array::Drain` guard drops only unconsumed input
+/// elements, so proving the element type's drop glue harmless is both
+/// sufficient and tighter than interpreting the guard's
+/// pointer-distance calculation and unreachable invariant panic.
 pub fn drop_glue_is_noop(dropped_ty: Ty) -> bool {
+    if let Some(element_ty) = array_drain_element_type(dropped_ty) {
+        return drop_instance_is_noop(&Instance::resolve_drop_in_place(element_ty));
+    }
     drop_instance_is_noop(&Instance::resolve_drop_in_place(dropped_ty))
+}
+
+/// Return the consumed element type for core's private `array::Drain` guard.
+fn array_drain_element_type(ty: Ty) -> Option<Ty> {
+    let TyKind::RigidTy(RigidTy::Adt(def, args)) = ty.kind() else {
+        return None;
+    };
+    let name = def.name();
+    if name.as_str() != "core::array::drain::Drain" && name.as_str() != "std::array::drain::Drain" {
+        return None;
+    }
+    match args.0.as_slice() {
+        [
+            GenericArgKind::Lifetime(_),
+            GenericArgKind::Lifetime(_),
+            GenericArgKind::Type(element_ty),
+            GenericArgKind::Const(_),
+            GenericArgKind::Type(_),
+        ] => Some(*element_ty),
+        _ => None,
+    }
 }
 
 /// Returns true when the given `drop_in_place` instance is provably a

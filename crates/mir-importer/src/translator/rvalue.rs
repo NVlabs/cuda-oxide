@@ -1828,6 +1828,9 @@ pub fn translate_operand(
             let is_enum = const_ty_ptr
                 .deref(ctx)
                 .is::<dialect_mir::types::MirEnumType>();
+            let is_union = const_ty_ptr
+                .deref(ctx)
+                .is::<dialect_mir::types::MirUnionType>();
 
             // Check if this is a pointer to an array (byte strings, or typed arrays like [f64; 3])
             let is_ptr_to_array = const_ty_ptr
@@ -1902,6 +1905,15 @@ pub fn translate_operand(
                     ctx,
                     constant,
                     &rust_ty,
+                    const_ty_ptr,
+                    block_ptr,
+                    prev_op,
+                    loc,
+                )
+            } else if is_union {
+                translate_uninitialized_union_constant(
+                    ctx,
+                    constant,
                     const_ty_ptr,
                     block_ptr,
                     prev_op,
@@ -2516,6 +2528,56 @@ pub fn translate_operand(
             Ok((val, Some(const_op.get_operation())))
         }
     }
+}
+
+/// Materialize a union constant whose allocation is entirely uninitialized.
+///
+/// `core::array::map` initializes its output buffer from
+/// `[MaybeUninit::uninit(); N]`. rustc represents each repeated element as an
+/// allocated union constant containing only uninitialized bytes, which maps
+/// exactly to a typed `mir.undef`. Initialized union constants need an active
+/// byte-preserving field view and remain a loud error until that representation
+/// is available.
+fn translate_uninitialized_union_constant(
+    ctx: &mut Context,
+    constant: &mir::ConstOperand,
+    union_ty: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    use rustc_public::ty::TyConstKind;
+
+    let allocation = match constant.const_.kind() {
+        ConstantKind::Allocated(allocation) => Some(allocation),
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            TyConstKind::Value(_, allocation) => Some(allocation),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(allocation) = allocation else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported("Non-ZST union constant is not backed by an allocation")
+        );
+    };
+    if allocation.bytes.iter().any(Option::is_some) || !allocation.provenance.ptrs.is_empty() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "Union constants with initialized bytes are not yet supported"
+            )
+        );
+    }
+
+    let undef = MirUndefOp::new(ctx, union_ty).get_operation();
+    undef.deref_mut(ctx).set_loc(loc);
+    match prev_op {
+        Some(prev) => undef.insert_after(ctx, prev),
+        None => undef.insert_at_front(block_ptr, ctx),
+    }
+    Ok((undef.deref(ctx).get_result(0), Some(undef)))
 }
 
 /// Translate MIR [`Place`](mir::Place) reads to pliron IR SSA [`Value`]s.
