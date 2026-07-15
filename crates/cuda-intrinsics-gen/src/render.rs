@@ -49,6 +49,10 @@ pub fn all_outputs(
         render_compat_dotprod(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/cuda-device/src/generated/atomic.rs".into(),
+        render_compat_packed_atomic(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/cuda-device/src/generated/bf16x2.rs".into(),
         render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::Bf16x2),
     );
@@ -1134,6 +1138,77 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
+    for record in packed_atomics(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::atomic::"))
+            .expect("packed-atomic compatibility path");
+        assert_eq!(path, &format!("cuda_device::atomic::{}", record.rust.name));
+        let packed = record
+            .packed_atomic
+            .as_ref()
+            .expect("packed-atomic semantics");
+        let lane_type = match packed.format {
+            PackedAtomicFormat::F16x2 => "f16",
+            PackedAtomicFormat::Bf16x2 => "bf16",
+        };
+        let minimum_sm = match &record.target.hardware {
+            CatalogHardwareTarget::AnyOf { alternatives } => match alternatives.as_slice() {
+                [CatalogHardwareAlternative::MinimumSm { sm }] => *sm,
+                _ => panic!("packed-atomic compatibility API requires one minimum SM"),
+            },
+            _ => panic!("packed-atomic compatibility API requires one minimum SM"),
+        };
+        assert!(!record.rust.safe);
+        assert!(record.rust.must_use);
+        assert_eq!(record.rust.arguments, ["*mut u32", "u32"]);
+        assert_eq!(record.rust.result, "u32");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "/// `val` and the result pack two {lane_type} lanes into `u32`, low lane first."
+        )
+        .unwrap();
+        output.push_str(
+            "/// The lanes are atomic independently and may not form one old 32-bit snapshot.\n",
+        );
+        output.push_str("/// This is a relaxed GPU-scope operation. Each lane rounds to nearest-even and preserves subnormals.\n");
+        writeln!(
+            output,
+            "/// Requires PTX {} and `sm_{minimum_sm}+`.",
+            record.target.minimum_ptx
+        )
+        .unwrap();
+        output.push_str("///\n/// # Safety\n");
+        output.push_str(
+            "/// `addr` must point to four writable, four-byte-aligned bytes in global memory.\n",
+        );
+        output.push_str("/// Do not overlap this operation with a whole-word atomic or non-atomic lane access.\n");
+        output.push_str("/// Racing atomics must use mutually inclusive scopes; host/system access is not included.\n");
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub unsafe fn {}(addr: *mut u32, val: u32) -> u32 {{",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("    let _ = (addr, val);\n");
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
         )
         .unwrap();
         output.push_str("}\n\n");
@@ -4591,6 +4666,36 @@ mod tests {
             let index = rendered.find(&signature).unwrap();
             assert!(rendered[..index].ends_with("#[must_use]\n#[inline(never)]\n"));
         }
+    }
+
+    #[test]
+    fn packed_atomic_compatibility_preserves_paths_signature_and_safety() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let rendered = render_compat_packed_atomic(&catalog, "test-hash");
+
+        for name in ["atom_add_f16x2", "atom_add_bf16x2"] {
+            let signature = format!("pub unsafe fn {name}(addr: *mut u32, val: u32) -> u32");
+            let index = rendered.find(&signature).unwrap();
+            assert!(rendered[..index].ends_with("#[must_use]\n#[inline(never)]\n"));
+            assert!(rendered.contains(&format!(
+                "unreachable!(\"{name} called outside CUDA kernel context\")"
+            )));
+        }
+        assert!(rendered.contains("relaxed GPU-scope operation"));
+        assert!(rendered.contains("low lane first"));
+        assert!(rendered.contains("may not form one old 32-bit snapshot"));
+        assert!(rendered.contains("Requires PTX 6.2 and `sm_70+`"));
+        assert!(rendered.contains("Requires PTX 7.8 and `sm_90+`"));
+        assert!(rendered.contains("four writable, four-byte-aligned bytes in global memory"));
+        assert!(rendered.contains("whole-word atomic or non-atomic lane access"));
+        assert!(rendered.contains("Racing atomics must use mutually inclusive scopes"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert_eq!(
+            outputs.get(&PathBuf::from("crates/cuda-device/src/generated/atomic.rs")),
+            Some(&rendered)
+        );
     }
 
     #[test]

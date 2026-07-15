@@ -3359,42 +3359,6 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
-        // Packed atomic add (from intrinsics::atomic)
-        // =================================================================
-        path if intrinsics::atomic::packed_atomic_add_kind(path)
-            == Some(intrinsics::atomic::PackedAtomicAddKind::F16x2) =>
-        {
-            Ok(Some(intrinsics::atomic::emit_atom_add_f16x2(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        path if intrinsics::atomic::packed_atomic_add_kind(path)
-            == Some(intrinsics::atomic::PackedAtomicAddKind::Bf16x2) =>
-        {
-            Ok(Some(intrinsics::atomic::emit_atom_add_bf16x2(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-
-        // =================================================================
         // CLC - Cluster Launch Control (from intrinsics::clc)
         // =================================================================
         "cuda_device::clc::clc_try_cancel" => Ok(Some(intrinsics::clc::emit_clc_try_cancel(
