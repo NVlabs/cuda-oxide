@@ -151,63 +151,484 @@ impl GeneratedIntrinsicTarget {
 
 pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
     GeneratedIntrinsicTarget {
-        marker: "v1:i0070",
-        id: "abs_bf16x2",
-        abi_id: "i0070",
-        dialect_op: "nvvm.abs_bf16x2",
+        marker: "v1:i0001",
+        id: "thread_idx_x",
+        abi_id: "i0001",
+        dialect_op: "nvvm.read_ptx_sreg_tid_x",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
         },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
+        backend_requirements: &[],
         selections: &[GeneratedSelectionAlternative {
-            source_record: "ABS_BF16X2",
-            asm: "abs.bf16x2 \t$dst, $src0;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
+            source_record: "INT_PTX_SREG_TID_x",
+            asm: "mov.u32 \t$d, %tid.x;",
+            predicates: &[],
             constraints: GeneratedSelectionConstraints {
                 address_space: None,
                 immediate_bindings: &[],
             },
         }],
         llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,1024>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "1024",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0002",
+        id: "block_idx_x",
+        abi_id: "i0002",
+        dialect_op: "nvvm.read_ptx_sreg_ctaid_x",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_CTAID_x",
+            asm: "mov.u32 \t$d, %ctaid.x;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,2147483647>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "2147483647",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0003",
+        id: "block_dim_x",
+        abi_id: "i0003",
+        dialect_op: "nvvm.read_ptx_sreg_ntid_x",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_NTID_x",
+            asm: "mov.u32 \t$d, %ntid.x;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,1025>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "1",
+                upper_exclusive: "1025",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0004",
+        id: "grid_dim_x",
+        abi_id: "i0004",
+        dialect_op: "nvvm.read_ptx_sreg_nctaid_x",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_NCTAID_x",
+            asm: "mov.u32 \t$d, %nctaid.x;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,2147483648>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "1",
+                upper_exclusive: "2147483648",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0005",
+        id: "thread_idx_y",
+        abi_id: "i0005",
+        dialect_op: "nvvm.read_ptx_sreg_tid_y",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_TID_y",
+            asm: "mov.u32 \t$d, %tid.y;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,1024>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "1024",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0006",
+        id: "block_idx_y",
+        abi_id: "i0006",
+        dialect_op: "nvvm.read_ptx_sreg_ctaid_y",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_CTAID_y",
+            asm: "mov.u32 \t$d, %ctaid.y;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,65535>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "65535",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0007",
+        id: "block_dim_y",
+        abi_id: "i0007",
+        dialect_op: "nvvm.read_ptx_sreg_ntid_y",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_NTID_y",
+            asm: "mov.u32 \t$d, %ntid.y;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,1025>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "1",
+                upper_exclusive: "1025",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0008",
+        id: "grid_dim_y",
+        abi_id: "i0008",
+        dialect_op: "nvvm.read_ptx_sreg_nctaid_y",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_NCTAID_y",
+            asm: "mov.u32 \t$d, %nctaid.y;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,65536>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "1",
+                upper_exclusive: "65536",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0009",
+        id: "thread_idx_z",
+        abi_id: "i0009",
+        dialect_op: "nvvm.read_ptx_sreg_tid_z",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_TID_z",
+            asm: "mov.u32 \t$d, %tid.z;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,64>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "64",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0010",
+        id: "block_idx_z",
+        abi_id: "i0010",
+        dialect_op: "nvvm.read_ptx_sreg_ctaid_z",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_CTAID_z",
+            asm: "mov.u32 \t$d, %ctaid.z;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,65535>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "65535",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0011",
+        id: "block_dim_z",
+        abi_id: "i0011",
+        dialect_op: "nvvm.read_ptx_sreg_ntid_z",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_NTID_z",
+            asm: "mov.u32 \t$d, %ntid.z;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,65>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "1",
+                upper_exclusive: "65",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0012",
+        id: "grid_dim_z",
+        abi_id: "i0012",
+        dialect_op: "nvvm.read_ptx_sreg_nctaid_z",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_NCTAID_z",
+            asm: "mov.u32 \t$d, %nctaid.z;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,65536>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "1",
+                upper_exclusive: "65536",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0013",
+        id: "ldmatrix_m8n8_x4_b16",
+        abi_id: "i0013",
+        dialect_op: "nvvm.ldmatrix",
+        variant: GeneratedIntrinsicVariant::Ldmatrix {
+            shape: GeneratedLdmatrixShape::M8n8,
+            multiplicity: GeneratedLdmatrixMultiplicity::X4,
+            layout: GeneratedLdmatrixLayout::Normal,
+        },
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                75,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_20697",
+            asm: "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
+            predicates: &[
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>",
+            ],
             result_no_undef: false,
             result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0080",
-        id: "abs_f16x2",
-        abi_id: "i0080",
-        dialect_op: "nvvm.abs_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
+        marker: "v1:i0014",
+        id: "packed_atomic_add_f16x2",
+        abi_id: "i0014",
+        dialect_op: "nvvm.packed_atomic_add",
+        variant: GeneratedIntrinsicVariant::PackedAtomic {
+            format: GeneratedPackedAtomicFormat::F16x2,
+        },
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            minimum_ptx: GeneratedPtxVersion::from_encoded(62),
             hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
                 70,
             )]),
@@ -216,7 +637,7 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
             GeneratedBackendRequirement {
                 backend: GeneratedIntrinsicBackend::LlvmNvptx,
                 requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
                     hardware: GeneratedHardwareTarget::AnyOf(&[
                         GeneratedHardwareAlternative::MinimumSm(70),
                     ]),
@@ -225,92 +646,24 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
             GeneratedBackendRequirement {
                 backend: GeneratedIntrinsicBackend::LibNvvm,
                 requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
                     hardware: GeneratedHardwareTarget::AnyOf(&[
                         GeneratedHardwareAlternative::MinimumSm(75),
                     ]),
                 },
             },
         ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "ABS_F16X2",
-            asm: "abs.f16x2 \t$dst, $src0;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 53",
-                "Subtarget->getPTXVersion() >= 65",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
+        selections: &[],
+        llvm: None,
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0044",
-        id: "active_mask",
-        abi_id: "i0044",
-        dialect_op: "nvvm.activemask",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
+        marker: "v1:i0015",
+        id: "packed_atomic_add_bf16x2",
+        abi_id: "i0015",
+        dialect_op: "nvvm.packed_atomic_add",
+        variant: GeneratedIntrinsicVariant::PackedAtomic {
+            format: GeneratedPackedAtomicFormat::Bf16x2,
         },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "ACTIVEMASK",
-            asm: "activemask.b32 \t$dest;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 30",
-                "Subtarget->getPTXVersion() >= 62",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrHasSideEffects",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0064",
-        id: "add_bf16x2",
-        abi_id: "i0064",
-        dialect_op: "nvvm.add_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
             minimum_ptx: GeneratedPtxVersion::from_encoded(78),
             hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
@@ -341,39 +694,1002 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
         llvm: None,
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0074",
-        id: "add_f16x2",
-        abi_id: "i0074",
-        dialect_op: "nvvm.add_f16x2",
+        marker: "v1:i0016",
+        id: "lane_id",
+        abi_id: "i0016",
+        dialect_op: "nvvm.read_ptx_sreg_laneid",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+            minimum_ptx: GeneratedPtxVersion::from_encoded(13),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "SREG_LANEID",
+            asm: "mov.u32 \t$d, %laneid;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,32>",
+            ],
+            result_no_undef: true,
+            result_range: Some(GeneratedIntrinsicRange {
+                lower: "0",
+                upper_exclusive: "32",
+            }),
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0017",
+        id: "redux_sync_add",
+        abi_id: "i0017",
+        dialect_op: "nvvm.redux_sync_add",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
             hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15029",
+            asm: "redux.sync.add.s32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0018",
+        id: "redux_sync_min_u32",
+        abi_id: "i0018",
+        dialect_op: "nvvm.redux_sync_umin",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15027",
+            asm: "redux.sync.min.u32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0019",
+        id: "redux_sync_min_i32",
+        abi_id: "i0019",
+        dialect_op: "nvvm.redux_sync_min",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15030",
+            asm: "redux.sync.min.s32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0020",
+        id: "redux_sync_max_u32",
+        abi_id: "i0020",
+        dialect_op: "nvvm.redux_sync_umax",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15028",
+            asm: "redux.sync.max.u32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0021",
+        id: "redux_sync_max_i32",
+        abi_id: "i0021",
+        dialect_op: "nvvm.redux_sync_max",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15031",
+            asm: "redux.sync.max.s32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0022",
+        id: "redux_sync_and",
+        abi_id: "i0022",
+        dialect_op: "nvvm.redux_sync_and",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15032",
+            asm: "redux.sync.and.b32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0023",
+        id: "redux_sync_or",
+        abi_id: "i0023",
+        dialect_op: "nvvm.redux_sync_or",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15034",
+            asm: "redux.sync.or.b32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0024",
+        id: "redux_sync_xor",
+        abi_id: "i0024",
+        dialect_op: "nvvm.redux_sync_xor",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_15033",
+            asm: "redux.sync.xor.b32 \t$dst, $src, $mask;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0025",
+        id: "ldmatrix_m8n8_x1_b16",
+        abi_id: "i0025",
+        dialect_op: "nvvm.ldmatrix",
+        variant: GeneratedIntrinsicVariant::Ldmatrix {
+            shape: GeneratedLdmatrixShape::M8n8,
+            multiplicity: GeneratedLdmatrixMultiplicity::X1,
+            layout: GeneratedLdmatrixLayout::Normal,
+        },
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                75,
             )]),
         },
         backend_requirements: &[
             GeneratedBackendRequirement {
                 backend: GeneratedIntrinsicBackend::LlvmNvptx,
                 requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
                     hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(70),
+                        GeneratedHardwareAlternative::MinimumSm(75),
                     ]),
                 },
             },
             GeneratedBackendRequirement {
                 backend: GeneratedIntrinsicBackend::LibNvvm,
                 requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
                     hardware: GeneratedHardwareTarget::AnyOf(&[
                         GeneratedHardwareAlternative::MinimumSm(75),
                     ]),
                 },
             },
         ],
-        selections: &[],
-        llvm: None,
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_20675",
+            asm: "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {{$rx10}}, [$src];",
+            predicates: &[
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0026",
+        id: "ldmatrix_m8n8_x1_trans_b16",
+        abi_id: "i0026",
+        dialect_op: "nvvm.ldmatrix",
+        variant: GeneratedIntrinsicVariant::Ldmatrix {
+            shape: GeneratedLdmatrixShape::M8n8,
+            multiplicity: GeneratedLdmatrixMultiplicity::X1,
+            layout: GeneratedLdmatrixLayout::Transposed,
+        },
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                75,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_20758",
+            asm: "ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {{$rx10}}, [$src];",
+            predicates: &[
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0027",
+        id: "ldmatrix_m8n8_x2_b16",
+        abi_id: "i0027",
+        dialect_op: "nvvm.ldmatrix",
+        variant: GeneratedIntrinsicVariant::Ldmatrix {
+            shape: GeneratedLdmatrixShape::M8n8,
+            multiplicity: GeneratedLdmatrixMultiplicity::X2,
+            layout: GeneratedLdmatrixLayout::Normal,
+        },
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                75,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_20687",
+            asm: "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {{$rx20, $rx21}}, [$src];",
+            predicates: &[
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0028",
+        id: "ldmatrix_m8n8_x2_trans_b16",
+        abi_id: "i0028",
+        dialect_op: "nvvm.ldmatrix",
+        variant: GeneratedIntrinsicVariant::Ldmatrix {
+            shape: GeneratedLdmatrixShape::M8n8,
+            multiplicity: GeneratedLdmatrixMultiplicity::X2,
+            layout: GeneratedLdmatrixLayout::Transposed,
+        },
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                75,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_20762",
+            asm: "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {{$rx20, $rx21}}, [$src];",
+            predicates: &[
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0029",
+        id: "ldmatrix_m8n8_x4_trans_b16",
+        abi_id: "i0029",
+        dialect_op: "nvvm.ldmatrix",
+        variant: GeneratedIntrinsicVariant::Ldmatrix {
+            shape: GeneratedLdmatrixShape::M8n8,
+            multiplicity: GeneratedLdmatrixMultiplicity::X4,
+            layout: GeneratedLdmatrixLayout::Transposed,
+        },
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                75,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "anonymous_20766",
+            asm: "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
+            predicates: &[
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0030",
+        id: "dp4a_s32",
+        abi_id: "i0030",
+        dialect_op: "nvvm.dp4a_s32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                61,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(61),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "DOT4_ss",
+            asm: "dp4a.s32.s32 \t$dst, $a, $b, $c;",
+            predicates: &["hasDotInstructions"],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0031",
+        id: "dp4a_u32",
+        abi_id: "i0031",
+        dialect_op: "nvvm.dp4a_u32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                61,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(61),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "DOT4_uu",
+            asm: "dp4a.u32.u32 \t$dst, $a, $b, $c;",
+            predicates: &["hasDotInstructions"],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0032",
+        id: "dp2a_s32",
+        abi_id: "i0032",
+        dialect_op: "nvvm.dp2a_s32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                61,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(61),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "DOT2_lo_ss",
+            asm: "dp2a.lo.s32.s32 \t$dst, $a, $b, $c;",
+            predicates: &["hasDotInstructions"],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[GeneratedImmediateBinding {
+                    argument_index: 2,
+                    value: 0,
+                }],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0033",
+        id: "dp2a_u32",
+        abi_id: "i0033",
+        dialect_op: "nvvm.dp2a_u32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                61,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(61),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "DOT2_lo_uu",
+            asm: "dp2a.lo.u32.u32 \t$dst, $a, $b, $c;",
+            predicates: &["hasDotInstructions"],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[GeneratedImmediateBinding {
+                    argument_index: 2,
+                    value: 0,
+                }],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0034",
+        id: "sync_threads",
+        abi_id: "i0034",
+        dialect_op: "nvvm.barrier0",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(10),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(32),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(20),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(10),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "BARRIER_CTA_SYNC_ALIGNED_ALL_i",
+            asm: "bar.sync \t$i;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrConvergent", "IntrNoCallback"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0035",
+        id: "lanemask_lt",
+        abi_id: "i0035",
+        dialect_op: "nvvm.read_ptx_sreg_lanemask_lt",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                20,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_LANEMASK_LT",
+            asm: "mov.u32 \t$d, %lanemask_lt;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
+            result_no_undef: true,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0036",
+        id: "lanemask_le",
+        abi_id: "i0036",
+        dialect_op: "nvvm.read_ptx_sreg_lanemask_le",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                20,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_LANEMASK_LE",
+            asm: "mov.u32 \t$d, %lanemask_le;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
+            result_no_undef: true,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0037",
+        id: "lanemask_eq",
+        abi_id: "i0037",
+        dialect_op: "nvvm.read_ptx_sreg_lanemask_eq",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                20,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_LANEMASK_EQ",
+            asm: "mov.u32 \t$d, %lanemask_eq;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
+            result_no_undef: true,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0038",
+        id: "lanemask_ge",
+        abi_id: "i0038",
+        dialect_op: "nvvm.read_ptx_sreg_lanemask_ge",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                20,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_LANEMASK_GE",
+            asm: "mov.u32 \t$d, %lanemask_ge;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
+            result_no_undef: true,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0039",
+        id: "lanemask_gt",
+        abi_id: "i0039",
+        dialect_op: "nvvm.read_ptx_sreg_lanemask_gt",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                20,
+            )]),
+        },
+        backend_requirements: &[],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_PTX_SREG_LANEMASK_GT",
+            asm: "mov.u32 \t$d, %lanemask_gt;",
+            predicates: &[],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
+            result_no_undef: true,
+            result_range: None,
+        }),
     },
     GeneratedIntrinsicTarget {
         marker: "v1:i0040",
@@ -523,20 +1839,93 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0003",
-        id: "block_dim_x",
-        abi_id: "i0003",
-        dialect_op: "nvvm.read_ptx_sreg_ntid_x",
+        marker: "v1:i0043",
+        id: "uni_sync",
+        abi_id: "i0043",
+        dialect_op: "nvvm.vote_sync_uni",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
         },
         backend_requirements: &[],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "VOTE_SYNC_UNIi",
+                asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "VOTE_SYNC_UNIr",
+                asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0044",
+        id: "active_mask",
+        abi_id: "i0044",
+        dialect_op: "nvvm.activemask",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(62),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
         selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_NTID_x",
-            asm: "mov.u32 \t$d, %ntid.x;",
-            predicates: &[],
+            source_record: "ACTIVEMASK",
+            asm: "activemask.b32 \t$dest;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 30",
+                "Subtarget->getPTXVersion() >= 62",
+            ],
             constraints: GeneratedSelectionConstraints {
                 address_space: None,
                 immediate_bindings: &[],
@@ -544,193 +1933,1636 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
         }],
         llvm: Some(GeneratedLlvmFacts {
             properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,1025>",
+                "IntrConvergent",
+                "IntrHasSideEffects",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
             ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "1",
-                upper_exclusive: "1025",
-            }),
+            result_no_undef: false,
+            result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0007",
-        id: "block_dim_y",
-        abi_id: "i0007",
-        dialect_op: "nvvm.read_ptx_sreg_ntid_y",
+        marker: "v1:i0045",
+        id: "match_any_sync",
+        abi_id: "i0045",
+        dialect_op: "nvvm.match_any_sync_i32",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
         },
         backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_NTID_y",
-            asm: "mov.u32 \t$d, %ntid.y;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_32ii",
+                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
             },
-        }],
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_32ir",
+                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_32ri",
+                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_32rr",
+                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
         llvm: Some(GeneratedLlvmFacts {
             properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,1025>",
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
             ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "1",
-                upper_exclusive: "1025",
-            }),
+            result_no_undef: false,
+            result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0011",
-        id: "block_dim_z",
-        abi_id: "i0011",
-        dialect_op: "nvvm.read_ptx_sreg_ntid_z",
+        marker: "v1:i0046",
+        id: "match_any_i64_sync",
+        abi_id: "i0046",
+        dialect_op: "nvvm.match_any_sync_i64",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
         },
         backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_NTID_z",
-            asm: "mov.u32 \t$d, %ntid.z;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_64ii",
+                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
             },
-        }],
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_64ir",
+                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_64ri",
+                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ANY_SYNC_64rr",
+                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
         llvm: Some(GeneratedLlvmFacts {
             properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,65>",
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
             ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "1",
-                upper_exclusive: "65",
-            }),
+            result_no_undef: false,
+            result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0002",
-        id: "block_idx_x",
-        abi_id: "i0002",
-        dialect_op: "nvvm.read_ptx_sreg_ctaid_x",
+        marker: "v1:i0047",
+        id: "match_all_sync",
+        abi_id: "i0047",
+        dialect_op: "nvvm.match_all_sync_i32",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
         },
         backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_CTAID_x",
-            asm: "mov.u32 \t$d, %ctaid.x;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_32ii",
+                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
             },
-        }],
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_32ir",
+                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_32ri",
+                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_32rr",
+                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
         llvm: Some(GeneratedLlvmFacts {
             properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,2147483647>",
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
             ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "2147483647",
-            }),
+            result_no_undef: false,
+            result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0006",
-        id: "block_idx_y",
-        abi_id: "i0006",
-        dialect_op: "nvvm.read_ptx_sreg_ctaid_y",
+        marker: "v1:i0048",
+        id: "match_all_i64_sync",
+        abi_id: "i0048",
+        dialect_op: "nvvm.match_all_sync_i64",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
         },
         backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_CTAID_y",
-            asm: "mov.u32 \t$d, %ctaid.y;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_64ii",
+                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
             },
-        }],
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_64ir",
+                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_64ri",
+                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "MATCH_ALLP_SYNC_64rr",
+                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
         llvm: Some(GeneratedLlvmFacts {
             properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,65535>",
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
             ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "65535",
-            }),
+            result_no_undef: false,
+            result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0010",
-        id: "block_idx_z",
-        abi_id: "i0010",
-        dialect_op: "nvvm.read_ptx_sreg_ctaid_z",
+        marker: "v1:i0049",
+        id: "sync_mask",
+        abi_id: "i0049",
+        dialect_op: "nvvm.bar_warp_sync",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
         },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_CTAID_z",
-            asm: "mov.u32 \t$d, %ctaid.z;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
             },
-        }],
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "INT_BAR_WARP_SYNC_I",
+                asm: "bar.warp.sync \t$i;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "INT_BAR_WARP_SYNC_R",
+                asm: "bar.warp.sync \t$i;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
         llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,65535>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "65535",
-            }),
+            properties: &["IntrConvergent", "IntrNoCallback"],
+            result_no_undef: false,
+            result_range: None,
         }),
     },
     GeneratedIntrinsicTarget {
-        marker: "v1:i0090",
-        id: "cp_async_ca_16",
-        abi_id: "i0090",
-        dialect_op: "nvvm.cp_async_ca_16",
+        marker: "v1:i0050",
+        id: "shuffle_sync",
+        abi_id: "i0050",
+        dialect_op: "nvvm.shfl_sync_idx_i32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14989",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14990",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14991",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14992",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14993",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14994",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14995",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14996",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0051",
+        id: "shuffle_xor_sync",
+        abi_id: "i0051",
+        dialect_op: "nvvm.shfl_sync_bfly_i32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14957",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14958",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14959",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14960",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14961",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14962",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14963",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14964",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0052",
+        id: "shuffle_down_sync",
+        abi_id: "i0052",
+        dialect_op: "nvvm.shfl_sync_down_i32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14925",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14926",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14927",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14928",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14929",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14930",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14931",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14932",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0053",
+        id: "shuffle_up_sync",
+        abi_id: "i0053",
+        dialect_op: "nvvm.shfl_sync_up_i32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14893",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14894",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14895",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14896",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14897",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14898",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14899",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14900",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0054",
+        id: "shuffle_f32_sync",
+        abi_id: "i0054",
+        dialect_op: "nvvm.shfl_sync_idx_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15005",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15006",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15007",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15008",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15009",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15010",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15011",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_15012",
+                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0055",
+        id: "shuffle_xor_f32_sync",
+        abi_id: "i0055",
+        dialect_op: "nvvm.shfl_sync_bfly_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14973",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14974",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14975",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14976",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14977",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14978",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14979",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14980",
+                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0056",
+        id: "shuffle_down_f32_sync",
+        abi_id: "i0056",
+        dialect_op: "nvvm.shfl_sync_down_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14941",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14942",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14943",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14944",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14945",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14946",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14947",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14948",
+                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0057",
+        id: "shuffle_up_f32_sync",
+        abi_id: "i0057",
+        dialect_op: "nvvm.shfl_sync_up_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14909",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14910",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14911",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14912",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14913",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14914",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14915",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "anonymous_14916",
+                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 60",
+                    "Subtarget->getSmVersion() >= 30",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0058",
+        id: "shuffle_u64_sync",
+        abi_id: "i0058",
+        dialect_op: "nvvm.shfl_sync_idx_i64",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0059",
+        id: "shuffle_xor_u64_sync",
+        abi_id: "i0059",
+        dialect_op: "nvvm.shfl_sync_bfly_i64",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0060",
+        id: "shuffle_down_u64_sync",
+        abi_id: "i0060",
+        dialect_op: "nvvm.shfl_sync_down_i64",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0061",
+        id: "shuffle_up_u64_sync",
+        abi_id: "i0061",
+        dialect_op: "nvvm.shfl_sync_up_i64",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                30,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(30),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0062",
+        id: "fma_bf16x2",
+        abi_id: "i0062",
+        dialect_op: "nvvm.fma_bf16x2",
         variant: GeneratedIntrinsicVariant::Scalar,
         requirement: GeneratedTargetRequirement {
             minimum_ptx: GeneratedPtxVersion::from_encoded(70),
@@ -759,8 +3591,8 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
             },
         ],
         selections: &[GeneratedSelectionAlternative {
-            source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16",
-            asm: "cp.async.ca.shared.global [$dst], [$src], 16;",
+            source_record: "INT_NVVM_FMA_rn_bf16x2",
+            asm: "fma.rn.bf16x2 \t$dst, $src0, $src1, $src2;",
             predicates: &[
                 "Subtarget->getSmVersion() >= 80",
                 "Subtarget->getPTXVersion() >= 70",
@@ -771,14 +3603,986 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
             },
         }],
         llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrNoCallback",
-                "NoAlias<arg0>",
-                "NoAlias<arg1>",
-                "ReadOnly<arg1>",
-                "WriteOnly<arg0>",
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0063",
+        id: "fma_relu_bf16x2",
+        abi_id: "i0063",
+        dialect_op: "nvvm.fma_relu_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMA_rn_relu_bf16x2",
+            asm: "fma.rn.relu.bf16x2 \t$dst, $src0, $src1, $src2;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
             ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0064",
+        id: "add_bf16x2",
+        abi_id: "i0064",
+        dialect_op: "nvvm.add_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                90,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(90),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(90),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0065",
+        id: "sub_bf16x2",
+        abi_id: "i0065",
+        dialect_op: "nvvm.sub_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                90,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(90),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(90),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0066",
+        id: "mul_bf16x2",
+        abi_id: "i0066",
+        dialect_op: "nvvm.mul_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                90,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(90),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(90),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0067",
+        id: "min_bf16x2",
+        abi_id: "i0067",
+        dialect_op: "nvvm.min_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMIN_bf16x2",
+            asm: "min.bf16x2 \t$dst, $src0, $src1;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0068",
+        id: "max_bf16x2",
+        abi_id: "i0068",
+        dialect_op: "nvvm.max_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMAN_bf16x2",
+            asm: "max.bf16x2 \t$dst, $src0, $src1;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0069",
+        id: "neg_bf16x2",
+        abi_id: "i0069",
+        dialect_op: "nvvm.neg_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_NEG_BF16X2",
+            asm: "neg.bf16x2 \t$dst, $src0;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0070",
+        id: "abs_bf16x2",
+        abi_id: "i0070",
+        dialect_op: "nvvm.abs_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "ABS_BF16X2",
+            asm: "abs.bf16x2 \t$dst, $src0;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0071",
+        id: "cvt_f32x2_bf16x2",
+        abi_id: "i0071",
+        dialect_op: "nvvm.cvt_f32x2_bf16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0072",
+        id: "fma_f16x2",
+        abi_id: "i0072",
+        dialect_op: "nvvm.fma_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(70),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMA_rn_f16x2",
+            asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 53",
+                "Subtarget->getPTXVersion() >= 42",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0073",
+        id: "fma_relu_f16x2",
+        abi_id: "i0073",
+        dialect_op: "nvvm.fma_relu_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMA_rn_relu_f16x2",
+            asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0074",
+        id: "add_f16x2",
+        abi_id: "i0074",
+        dialect_op: "nvvm.add_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(70),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0075",
+        id: "sub_f16x2",
+        abi_id: "i0075",
+        dialect_op: "nvvm.sub_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(70),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0076",
+        id: "mul_f16x2",
+        abi_id: "i0076",
+        dialect_op: "nvvm.mul_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(70),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0077",
+        id: "min_f16x2",
+        abi_id: "i0077",
+        dialect_op: "nvvm.min_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMIN_f16x2",
+            asm: "min.f16x2 \t$dst, $src0, $src1;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0078",
+        id: "max_f16x2",
+        abi_id: "i0078",
+        dialect_op: "nvvm.max_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "INT_NVVM_FMAN_f16x2",
+            asm: "max.f16x2 \t$dst, $src0, $src1;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0079",
+        id: "neg_f16x2",
+        abi_id: "i0079",
+        dialect_op: "nvvm.neg_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(70),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: None,
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0080",
+        id: "abs_f16x2",
+        abi_id: "i0080",
+        dialect_op: "nvvm.abs_f16x2",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                70,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(70),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(75),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "ABS_F16X2",
+            asm: "abs.f16x2 \t$dst, $src0;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 53",
+                "Subtarget->getPTXVersion() >= 65",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0081",
+        id: "cvt_f16x2_f32",
+        abi_id: "i0081",
+        dialect_op: "nvvm.cvt_f16x2_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0082",
+        id: "cvt_rz_f16x2_f32",
+        abi_id: "i0082",
+        dialect_op: "nvvm.cvt_rz_f16x2_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0083",
+        id: "cvt_rn_relu_f16x2_f32",
+        abi_id: "i0083",
+        dialect_op: "nvvm.cvt_rn_relu_f16x2_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0084",
+        id: "cvt_rn_relu_bf16x2_f32",
+        abi_id: "i0084",
+        dialect_op: "nvvm.cvt_rn_relu_bf16x2_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0085",
+        id: "cvt_rz_bf16x2_f32",
+        abi_id: "i0085",
+        dialect_op: "nvvm.cvt_rz_bf16x2_f32",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &["IntrNoMem", "IntrSpeculatable"],
             result_no_undef: false,
             result_range: None,
         }),
@@ -827,134 +4631,6 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
                 immediate_bindings: &[],
             },
         }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrNoCallback",
-                "NoAlias<arg0>",
-                "NoAlias<arg1>",
-                "ReadOnly<arg1>",
-                "WriteOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0088",
-        id: "cp_async_ca_8",
-        abi_id: "i0088",
-        dialect_op: "nvvm.cp_async_ca_8",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "CP_ASYNC_CA_SHARED_GLOBAL_8",
-            asm: "cp.async.ca.shared.global [$dst], [$src], 8;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrNoCallback",
-                "NoAlias<arg0>",
-                "NoAlias<arg1>",
-                "ReadOnly<arg1>",
-                "WriteOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0091",
-        id: "cp_async_ca_zfill_16",
-        abi_id: "i0091",
-        dialect_op: "nvvm.cp_async_ca_zfill_16",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_s",
-                asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_si",
-                asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
         llvm: Some(GeneratedLlvmFacts {
             properties: &[
                 "IntrArgMemOnly",
@@ -1040,6 +4716,63 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
         }),
     },
     GeneratedIntrinsicTarget {
+        marker: "v1:i0088",
+        id: "cp_async_ca_8",
+        abi_id: "i0088",
+        dialect_op: "nvvm.cp_async_ca_8",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "CP_ASYNC_CA_SHARED_GLOBAL_8",
+            asm: "cp.async.ca.shared.global [$dst], [$src], 8;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
         marker: "v1:i0089",
         id: "cp_async_ca_zfill_8",
         abi_id: "i0089",
@@ -1087,6 +4820,134 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
             GeneratedSelectionAlternative {
                 source_record: "CP_ASYNC_CA_SHARED_GLOBAL_8_si",
                 asm: "cp.async.ca.shared.global [$dst], [$src], 8, $src_size;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+        ],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0090",
+        id: "cp_async_ca_16",
+        abi_id: "i0090",
+        dialect_op: "nvvm.cp_async_ca_16",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[GeneratedSelectionAlternative {
+            source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16",
+            asm: "cp.async.ca.shared.global [$dst], [$src], 16;",
+            predicates: &[
+                "Subtarget->getSmVersion() >= 80",
+                "Subtarget->getPTXVersion() >= 70",
+            ],
+            constraints: GeneratedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: &[],
+            },
+        }],
+        llvm: Some(GeneratedLlvmFacts {
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>",
+            ],
+            result_no_undef: false,
+            result_range: None,
+        }),
+    },
+    GeneratedIntrinsicTarget {
+        marker: "v1:i0091",
+        id: "cp_async_ca_zfill_16",
+        abi_id: "i0091",
+        dialect_op: "nvvm.cp_async_ca_zfill_16",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
+                80,
+            )]),
+        },
+        backend_requirements: &[
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+            GeneratedBackendRequirement {
+                backend: GeneratedIntrinsicBackend::LibNvvm,
+                requirement: GeneratedTargetRequirement {
+                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                    hardware: GeneratedHardwareTarget::AnyOf(&[
+                        GeneratedHardwareAlternative::MinimumSm(80),
+                    ]),
+                },
+            },
+        ],
+        selections: &[
+            GeneratedSelectionAlternative {
+                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_s",
+                asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70",
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[],
+                },
+            },
+            GeneratedSelectionAlternative {
+                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_si",
+                asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
                 predicates: &[
                     "Subtarget->getSmVersion() >= 80",
                     "Subtarget->getPTXVersion() >= 70",
@@ -1388,3867 +5249,6 @@ pub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[
             result_range: None,
         }),
     },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0081",
-        id: "cvt_f16x2_f32",
-        abi_id: "i0081",
-        dialect_op: "nvvm.cvt_f16x2_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0071",
-        id: "cvt_f32x2_bf16x2",
-        abi_id: "i0071",
-        dialect_op: "nvvm.cvt_f32x2_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0084",
-        id: "cvt_rn_relu_bf16x2_f32",
-        abi_id: "i0084",
-        dialect_op: "nvvm.cvt_rn_relu_bf16x2_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0083",
-        id: "cvt_rn_relu_f16x2_f32",
-        abi_id: "i0083",
-        dialect_op: "nvvm.cvt_rn_relu_f16x2_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0085",
-        id: "cvt_rz_bf16x2_f32",
-        abi_id: "i0085",
-        dialect_op: "nvvm.cvt_rz_bf16x2_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0082",
-        id: "cvt_rz_f16x2_f32",
-        abi_id: "i0082",
-        dialect_op: "nvvm.cvt_rz_f16x2_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0032",
-        id: "dp2a_s32",
-        abi_id: "i0032",
-        dialect_op: "nvvm.dp2a_s32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                61,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(61),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "DOT2_lo_ss",
-            asm: "dp2a.lo.s32.s32 \t$dst, $a, $b, $c;",
-            predicates: &["hasDotInstructions"],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[GeneratedImmediateBinding {
-                    argument_index: 2,
-                    value: 0,
-                }],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0033",
-        id: "dp2a_u32",
-        abi_id: "i0033",
-        dialect_op: "nvvm.dp2a_u32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                61,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(61),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "DOT2_lo_uu",
-            asm: "dp2a.lo.u32.u32 \t$dst, $a, $b, $c;",
-            predicates: &["hasDotInstructions"],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[GeneratedImmediateBinding {
-                    argument_index: 2,
-                    value: 0,
-                }],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0030",
-        id: "dp4a_s32",
-        abi_id: "i0030",
-        dialect_op: "nvvm.dp4a_s32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                61,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(61),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "DOT4_ss",
-            asm: "dp4a.s32.s32 \t$dst, $a, $b, $c;",
-            predicates: &["hasDotInstructions"],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0031",
-        id: "dp4a_u32",
-        abi_id: "i0031",
-        dialect_op: "nvvm.dp4a_u32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                61,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(61),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "DOT4_uu",
-            asm: "dp4a.u32.u32 \t$dst, $a, $b, $c;",
-            predicates: &["hasDotInstructions"],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0062",
-        id: "fma_bf16x2",
-        abi_id: "i0062",
-        dialect_op: "nvvm.fma_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMA_rn_bf16x2",
-            asm: "fma.rn.bf16x2 \t$dst, $src0, $src1, $src2;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0072",
-        id: "fma_f16x2",
-        abi_id: "i0072",
-        dialect_op: "nvvm.fma_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(70),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMA_rn_f16x2",
-            asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 53",
-                "Subtarget->getPTXVersion() >= 42",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0063",
-        id: "fma_relu_bf16x2",
-        abi_id: "i0063",
-        dialect_op: "nvvm.fma_relu_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMA_rn_relu_bf16x2",
-            asm: "fma.rn.relu.bf16x2 \t$dst, $src0, $src1, $src2;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0073",
-        id: "fma_relu_f16x2",
-        abi_id: "i0073",
-        dialect_op: "nvvm.fma_relu_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMA_rn_relu_f16x2",
-            asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0004",
-        id: "grid_dim_x",
-        abi_id: "i0004",
-        dialect_op: "nvvm.read_ptx_sreg_nctaid_x",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_NCTAID_x",
-            asm: "mov.u32 \t$d, %nctaid.x;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,2147483648>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "1",
-                upper_exclusive: "2147483648",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0008",
-        id: "grid_dim_y",
-        abi_id: "i0008",
-        dialect_op: "nvvm.read_ptx_sreg_nctaid_y",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_NCTAID_y",
-            asm: "mov.u32 \t$d, %nctaid.y;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,65536>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "1",
-                upper_exclusive: "65536",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0012",
-        id: "grid_dim_z",
-        abi_id: "i0012",
-        dialect_op: "nvvm.read_ptx_sreg_nctaid_z",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_NCTAID_z",
-            asm: "mov.u32 \t$d, %nctaid.z;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,65536>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "1",
-                upper_exclusive: "65536",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0016",
-        id: "lane_id",
-        abi_id: "i0016",
-        dialect_op: "nvvm.read_ptx_sreg_laneid",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(13),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "SREG_LANEID",
-            asm: "mov.u32 \t$d, %laneid;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,32>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "32",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0037",
-        id: "lanemask_eq",
-        abi_id: "i0037",
-        dialect_op: "nvvm.read_ptx_sreg_lanemask_eq",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                20,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_LANEMASK_EQ",
-            asm: "mov.u32 \t$d, %lanemask_eq;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
-            result_no_undef: true,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0038",
-        id: "lanemask_ge",
-        abi_id: "i0038",
-        dialect_op: "nvvm.read_ptx_sreg_lanemask_ge",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                20,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_LANEMASK_GE",
-            asm: "mov.u32 \t$d, %lanemask_ge;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
-            result_no_undef: true,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0039",
-        id: "lanemask_gt",
-        abi_id: "i0039",
-        dialect_op: "nvvm.read_ptx_sreg_lanemask_gt",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                20,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_LANEMASK_GT",
-            asm: "mov.u32 \t$d, %lanemask_gt;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
-            result_no_undef: true,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0036",
-        id: "lanemask_le",
-        abi_id: "i0036",
-        dialect_op: "nvvm.read_ptx_sreg_lanemask_le",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                20,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_LANEMASK_LE",
-            asm: "mov.u32 \t$d, %lanemask_le;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
-            result_no_undef: true,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0035",
-        id: "lanemask_lt",
-        abi_id: "i0035",
-        dialect_op: "nvvm.read_ptx_sreg_lanemask_lt",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                20,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_LANEMASK_LT",
-            asm: "mov.u32 \t$d, %lanemask_lt;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"],
-            result_no_undef: true,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0025",
-        id: "ldmatrix_m8n8_x1_b16",
-        abi_id: "i0025",
-        dialect_op: "nvvm.ldmatrix",
-        variant: GeneratedIntrinsicVariant::Ldmatrix {
-            shape: GeneratedLdmatrixShape::M8n8,
-            multiplicity: GeneratedLdmatrixMultiplicity::X1,
-            layout: GeneratedLdmatrixLayout::Normal,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                75,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_20675",
-            asm: "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {{$rx10}}, [$src];",
-            predicates: &[
-                "Subtarget->getPTXVersion() >= 65",
-                "Subtarget->getSmVersion() >= 75",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0026",
-        id: "ldmatrix_m8n8_x1_trans_b16",
-        abi_id: "i0026",
-        dialect_op: "nvvm.ldmatrix",
-        variant: GeneratedIntrinsicVariant::Ldmatrix {
-            shape: GeneratedLdmatrixShape::M8n8,
-            multiplicity: GeneratedLdmatrixMultiplicity::X1,
-            layout: GeneratedLdmatrixLayout::Transposed,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                75,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_20758",
-            asm: "ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {{$rx10}}, [$src];",
-            predicates: &[
-                "Subtarget->getPTXVersion() >= 65",
-                "Subtarget->getSmVersion() >= 75",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0027",
-        id: "ldmatrix_m8n8_x2_b16",
-        abi_id: "i0027",
-        dialect_op: "nvvm.ldmatrix",
-        variant: GeneratedIntrinsicVariant::Ldmatrix {
-            shape: GeneratedLdmatrixShape::M8n8,
-            multiplicity: GeneratedLdmatrixMultiplicity::X2,
-            layout: GeneratedLdmatrixLayout::Normal,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                75,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_20687",
-            asm: "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {{$rx20, $rx21}}, [$src];",
-            predicates: &[
-                "Subtarget->getPTXVersion() >= 65",
-                "Subtarget->getSmVersion() >= 75",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0028",
-        id: "ldmatrix_m8n8_x2_trans_b16",
-        abi_id: "i0028",
-        dialect_op: "nvvm.ldmatrix",
-        variant: GeneratedIntrinsicVariant::Ldmatrix {
-            shape: GeneratedLdmatrixShape::M8n8,
-            multiplicity: GeneratedLdmatrixMultiplicity::X2,
-            layout: GeneratedLdmatrixLayout::Transposed,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                75,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_20762",
-            asm: "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {{$rx20, $rx21}}, [$src];",
-            predicates: &[
-                "Subtarget->getPTXVersion() >= 65",
-                "Subtarget->getSmVersion() >= 75",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0013",
-        id: "ldmatrix_m8n8_x4_b16",
-        abi_id: "i0013",
-        dialect_op: "nvvm.ldmatrix",
-        variant: GeneratedIntrinsicVariant::Ldmatrix {
-            shape: GeneratedLdmatrixShape::M8n8,
-            multiplicity: GeneratedLdmatrixMultiplicity::X4,
-            layout: GeneratedLdmatrixLayout::Normal,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                75,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_20697",
-            asm: "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
-            predicates: &[
-                "Subtarget->getPTXVersion() >= 65",
-                "Subtarget->getSmVersion() >= 75",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0029",
-        id: "ldmatrix_m8n8_x4_trans_b16",
-        abi_id: "i0029",
-        dialect_op: "nvvm.ldmatrix",
-        variant: GeneratedIntrinsicVariant::Ldmatrix {
-            shape: GeneratedLdmatrixShape::M8n8,
-            multiplicity: GeneratedLdmatrixMultiplicity::X4,
-            layout: GeneratedLdmatrixLayout::Transposed,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                75,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_20766",
-            asm: "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
-            predicates: &[
-                "Subtarget->getPTXVersion() >= 65",
-                "Subtarget->getSmVersion() >= 75",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0048",
-        id: "match_all_i64_sync",
-        abi_id: "i0048",
-        dialect_op: "nvvm.match_all_sync_i64",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_64ii",
-                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_64ir",
-                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_64ri",
-                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_64rr",
-                asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0047",
-        id: "match_all_sync",
-        abi_id: "i0047",
-        dialect_op: "nvvm.match_all_sync_i32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_32ii",
-                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_32ir",
-                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_32ri",
-                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ALLP_SYNC_32rr",
-                asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0046",
-        id: "match_any_i64_sync",
-        abi_id: "i0046",
-        dialect_op: "nvvm.match_any_sync_i64",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_64ii",
-                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_64ir",
-                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_64ri",
-                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_64rr",
-                asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0045",
-        id: "match_any_sync",
-        abi_id: "i0045",
-        dialect_op: "nvvm.match_any_sync_i32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_32ii",
-                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_32ir",
-                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_32ri",
-                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "MATCH_ANY_SYNC_32rr",
-                asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 70",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0068",
-        id: "max_bf16x2",
-        abi_id: "i0068",
-        dialect_op: "nvvm.max_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMAN_bf16x2",
-            asm: "max.bf16x2 \t$dst, $src0, $src1;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0078",
-        id: "max_f16x2",
-        abi_id: "i0078",
-        dialect_op: "nvvm.max_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMAN_f16x2",
-            asm: "max.f16x2 \t$dst, $src0, $src1;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0067",
-        id: "min_bf16x2",
-        abi_id: "i0067",
-        dialect_op: "nvvm.min_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMIN_bf16x2",
-            asm: "min.bf16x2 \t$dst, $src0, $src1;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0077",
-        id: "min_f16x2",
-        abi_id: "i0077",
-        dialect_op: "nvvm.min_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_FMIN_f16x2",
-            asm: "min.f16x2 \t$dst, $src0, $src1;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["Commutative", "IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0066",
-        id: "mul_bf16x2",
-        abi_id: "i0066",
-        dialect_op: "nvvm.mul_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                90,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(90),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(90),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0076",
-        id: "mul_f16x2",
-        abi_id: "i0076",
-        dialect_op: "nvvm.mul_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(70),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0069",
-        id: "neg_bf16x2",
-        abi_id: "i0069",
-        dialect_op: "nvvm.neg_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(80),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_NVVM_NEG_BF16X2",
-            asm: "neg.bf16x2 \t$dst, $src0;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrNoMem", "IntrSpeculatable"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0079",
-        id: "neg_f16x2",
-        abi_id: "i0079",
-        dialect_op: "nvvm.neg_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(70),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0015",
-        id: "packed_atomic_add_bf16x2",
-        abi_id: "i0015",
-        dialect_op: "nvvm.packed_atomic_add",
-        variant: GeneratedIntrinsicVariant::PackedAtomic {
-            format: GeneratedPackedAtomicFormat::Bf16x2,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                90,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(90),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(90),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0014",
-        id: "packed_atomic_add_f16x2",
-        abi_id: "i0014",
-        dialect_op: "nvvm.packed_atomic_add",
-        variant: GeneratedIntrinsicVariant::PackedAtomic {
-            format: GeneratedPackedAtomicFormat::F16x2,
-        },
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(70),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0017",
-        id: "redux_sync_add",
-        abi_id: "i0017",
-        dialect_op: "nvvm.redux_sync_add",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15029",
-            asm: "redux.sync.add.s32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0022",
-        id: "redux_sync_and",
-        abi_id: "i0022",
-        dialect_op: "nvvm.redux_sync_and",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15032",
-            asm: "redux.sync.and.b32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0021",
-        id: "redux_sync_max_i32",
-        abi_id: "i0021",
-        dialect_op: "nvvm.redux_sync_max",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15031",
-            asm: "redux.sync.max.s32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0020",
-        id: "redux_sync_max_u32",
-        abi_id: "i0020",
-        dialect_op: "nvvm.redux_sync_umax",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15028",
-            asm: "redux.sync.max.u32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0019",
-        id: "redux_sync_min_i32",
-        abi_id: "i0019",
-        dialect_op: "nvvm.redux_sync_min",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15030",
-            asm: "redux.sync.min.s32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0018",
-        id: "redux_sync_min_u32",
-        abi_id: "i0018",
-        dialect_op: "nvvm.redux_sync_umin",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15027",
-            asm: "redux.sync.min.u32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0023",
-        id: "redux_sync_or",
-        abi_id: "i0023",
-        dialect_op: "nvvm.redux_sync_or",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15034",
-            asm: "redux.sync.or.b32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0024",
-        id: "redux_sync_xor",
-        abi_id: "i0024",
-        dialect_op: "nvvm.redux_sync_xor",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                80,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "anonymous_15033",
-            asm: "redux.sync.xor.b32 \t$dst, $src, $mask;",
-            predicates: &[
-                "Subtarget->getSmVersion() >= 80",
-                "Subtarget->getPTXVersion() >= 70",
-            ],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0056",
-        id: "shuffle_down_f32_sync",
-        abi_id: "i0056",
-        dialect_op: "nvvm.shfl_sync_down_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14941",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14942",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14943",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14944",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14945",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14946",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14947",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14948",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0052",
-        id: "shuffle_down_sync",
-        abi_id: "i0052",
-        dialect_op: "nvvm.shfl_sync_down_i32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14925",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14926",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14927",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14928",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14929",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14930",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14931",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14932",
-                asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0060",
-        id: "shuffle_down_u64_sync",
-        abi_id: "i0060",
-        dialect_op: "nvvm.shfl_sync_down_i64",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0054",
-        id: "shuffle_f32_sync",
-        abi_id: "i0054",
-        dialect_op: "nvvm.shfl_sync_idx_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15005",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15006",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15007",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15008",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15009",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15010",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15011",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_15012",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0050",
-        id: "shuffle_sync",
-        abi_id: "i0050",
-        dialect_op: "nvvm.shfl_sync_idx_i32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14989",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14990",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14991",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14992",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14993",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14994",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14995",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14996",
-                asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0058",
-        id: "shuffle_u64_sync",
-        abi_id: "i0058",
-        dialect_op: "nvvm.shfl_sync_idx_i64",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0057",
-        id: "shuffle_up_f32_sync",
-        abi_id: "i0057",
-        dialect_op: "nvvm.shfl_sync_up_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14909",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14910",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14911",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14912",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14913",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14914",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14915",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14916",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0053",
-        id: "shuffle_up_sync",
-        abi_id: "i0053",
-        dialect_op: "nvvm.shfl_sync_up_i32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14893",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14894",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14895",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14896",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14897",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14898",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14899",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14900",
-                asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0061",
-        id: "shuffle_up_u64_sync",
-        abi_id: "i0061",
-        dialect_op: "nvvm.shfl_sync_up_i64",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0055",
-        id: "shuffle_xor_f32_sync",
-        abi_id: "i0055",
-        dialect_op: "nvvm.shfl_sync_bfly_f32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14973",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14974",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14975",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14976",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14977",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14978",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14979",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14980",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0051",
-        id: "shuffle_xor_sync",
-        abi_id: "i0051",
-        dialect_op: "nvvm.shfl_sync_bfly_i32",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14957",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14958",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14959",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14960",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14961",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14962",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14963",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "anonymous_14964",
-                asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0059",
-        id: "shuffle_xor_u64_sync",
-        abi_id: "i0059",
-        dialect_op: "nvvm.shfl_sync_bfly_i64",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0065",
-        id: "sub_bf16x2",
-        abi_id: "i0065",
-        dialect_op: "nvvm.sub_bf16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                90,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(90),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(90),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0075",
-        id: "sub_f16x2",
-        abi_id: "i0075",
-        dialect_op: "nvvm.sub_f16x2",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                70,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(70),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[],
-        llvm: None,
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0049",
-        id: "sync_mask",
-        abi_id: "i0049",
-        dialect_op: "nvvm.bar_warp_sync",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(30),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "INT_BAR_WARP_SYNC_I",
-                asm: "bar.warp.sync \t$i;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "INT_BAR_WARP_SYNC_R",
-                asm: "bar.warp.sync \t$i;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrConvergent", "IntrNoCallback"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0034",
-        id: "sync_threads",
-        abi_id: "i0034",
-        dialect_op: "nvvm.barrier0",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(10),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(32),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(20),
-                    ]),
-                },
-            },
-            GeneratedBackendRequirement {
-                backend: GeneratedIntrinsicBackend::LibNvvm,
-                requirement: GeneratedTargetRequirement {
-                    minimum_ptx: GeneratedPtxVersion::from_encoded(10),
-                    hardware: GeneratedHardwareTarget::AnyOf(&[
-                        GeneratedHardwareAlternative::MinimumSm(75),
-                    ]),
-                },
-            },
-        ],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "BARRIER_CTA_SYNC_ALIGNED_ALL_i",
-            asm: "bar.sync \t$i;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &["IntrConvergent", "IntrNoCallback"],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0001",
-        id: "thread_idx_x",
-        abi_id: "i0001",
-        dialect_op: "nvvm.read_ptx_sreg_tid_x",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_TID_x",
-            asm: "mov.u32 \t$d, %tid.x;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,1024>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "1024",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0005",
-        id: "thread_idx_y",
-        abi_id: "i0005",
-        dialect_op: "nvvm.read_ptx_sreg_tid_y",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_TID_y",
-            asm: "mov.u32 \t$d, %tid.y;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,1024>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "1024",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0009",
-        id: "thread_idx_z",
-        abi_id: "i0009",
-        dialect_op: "nvvm.read_ptx_sreg_tid_z",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(20),
-            hardware: GeneratedHardwareTarget::All,
-        },
-        backend_requirements: &[],
-        selections: &[GeneratedSelectionAlternative {
-            source_record: "INT_PTX_SREG_TID_z",
-            asm: "mov.u32 \t$d, %tid.z;",
-            predicates: &[],
-            constraints: GeneratedSelectionConstraints {
-                address_space: None,
-                immediate_bindings: &[],
-            },
-        }],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,64>",
-            ],
-            result_no_undef: true,
-            result_range: Some(GeneratedIntrinsicRange {
-                lower: "0",
-                upper_exclusive: "64",
-            }),
-        }),
-    },
-    GeneratedIntrinsicTarget {
-        marker: "v1:i0043",
-        id: "uni_sync",
-        abi_id: "i0043",
-        dialect_op: "nvvm.vote_sync_uni",
-        variant: GeneratedIntrinsicVariant::Scalar,
-        requirement: GeneratedTargetRequirement {
-            minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-            hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(
-                30,
-            )]),
-        },
-        backend_requirements: &[],
-        selections: &[
-            GeneratedSelectionAlternative {
-                source_record: "VOTE_SYNC_UNIi",
-                asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-            GeneratedSelectionAlternative {
-                source_record: "VOTE_SYNC_UNIr",
-                asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 60",
-                    "Subtarget->getSmVersion() >= 30",
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[],
-                },
-            },
-        ],
-        llvm: Some(GeneratedLlvmFacts {
-            properties: &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback",
-            ],
-            result_no_undef: false,
-            result_range: None,
-        }),
-    },
 ];
 
 pub fn generated_intrinsic_target_by_marker(
@@ -5378,7 +5378,16 @@ mod tests {
     fn generated_target_table_is_unique_and_lookup_is_complete() {
         let mut ids = BTreeSet::new();
         let mut markers = BTreeSet::new();
+        let mut previous_abi_id = None;
         for target in GENERATED_INTRINSIC_TARGETS {
+            if let Some(previous) = previous_abi_id {
+                assert!(
+                    previous < target.abi_id,
+                    "generated ABI IDs are not strictly increasing: {previous} then {}",
+                    target.abi_id
+                );
+            }
+            previous_abi_id = Some(target.abi_id);
             assert!(
                 ids.insert(target.id),
                 "duplicate generated intrinsic ID {}",
@@ -5398,48 +5407,20 @@ mod tests {
                     .any(|candidate| candidate == target)
             );
         }
-        let target = generated_intrinsic_target_by_marker("v1:i0070").unwrap();
-        assert_eq!(target.id, "abs_bf16x2");
-        assert_eq!(target.abi_id, "i0070");
-        assert_eq!(target.dialect_op, "nvvm.abs_bf16x2");
+        let target = generated_intrinsic_target_by_marker("v1:i0001").unwrap();
+        assert_eq!(target.id, "thread_idx_x");
+        assert_eq!(target.abi_id, "i0001");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_tid_x");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
         assert_eq!(
             target.selections,
             &[GeneratedSelectionAlternative {
-                source_record: "ABS_BF16X2",
-                asm: "abs.bf16x2 \t$dst, $src0;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
+                source_record: "INT_PTX_SREG_TID_x",
+                asm: "mov.u32 \t$d, %tid.x;",
+                predicates: &[],
                 constraints: GeneratedSelectionConstraints {
                     address_space: None,
                     immediate_bindings: &[]
@@ -5448,14 +5429,409 @@ mod tests {
         );
         assert_eq!(
             target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,1024>"
+            ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0080").unwrap();
-        assert_eq!(target.id, "abs_f16x2");
-        assert_eq!(target.abi_id, "i0080");
-        assert_eq!(target.dialect_op, "nvvm.abs_f16x2");
+        let target = generated_intrinsic_target_by_marker("v1:i0002").unwrap();
+        assert_eq!(target.id, "block_idx_x");
+        assert_eq!(target.abi_id, "i0002");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ctaid_x");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_CTAID_x",
+                asm: "mov.u32 \t$d, %ctaid.x;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,2147483647>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0003").unwrap();
+        assert_eq!(target.id, "block_dim_x");
+        assert_eq!(target.abi_id, "i0003");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ntid_x");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_NTID_x",
+                asm: "mov.u32 \t$d, %ntid.x;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,1025>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0004").unwrap();
+        assert_eq!(target.id, "grid_dim_x");
+        assert_eq!(target.abi_id, "i0004");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_nctaid_x");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_NCTAID_x",
+                asm: "mov.u32 \t$d, %nctaid.x;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,2147483648>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0005").unwrap();
+        assert_eq!(target.id, "thread_idx_y");
+        assert_eq!(target.abi_id, "i0005");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_tid_y");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_TID_y",
+                asm: "mov.u32 \t$d, %tid.y;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,1024>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0006").unwrap();
+        assert_eq!(target.id, "block_idx_y");
+        assert_eq!(target.abi_id, "i0006");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ctaid_y");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_CTAID_y",
+                asm: "mov.u32 \t$d, %ctaid.y;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,65535>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0007").unwrap();
+        assert_eq!(target.id, "block_dim_y");
+        assert_eq!(target.abi_id, "i0007");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ntid_y");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_NTID_y",
+                asm: "mov.u32 \t$d, %ntid.y;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,1025>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0008").unwrap();
+        assert_eq!(target.id, "grid_dim_y");
+        assert_eq!(target.abi_id, "i0008");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_nctaid_y");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_NCTAID_y",
+                asm: "mov.u32 \t$d, %nctaid.y;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,65536>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0009").unwrap();
+        assert_eq!(target.id, "thread_idx_z");
+        assert_eq!(target.abi_id, "i0009");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_tid_z");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_TID_z",
+                asm: "mov.u32 \t$d, %tid.z;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,64>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0010").unwrap();
+        assert_eq!(target.id, "block_idx_z");
+        assert_eq!(target.abi_id, "i0010");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ctaid_z");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_CTAID_z",
+                asm: "mov.u32 \t$d, %ctaid.z;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,65535>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0011").unwrap();
+        assert_eq!(target.id, "block_dim_z");
+        assert_eq!(target.abi_id, "i0011");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ntid_z");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_NTID_z",
+                asm: "mov.u32 \t$d, %ntid.z;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,65>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0012").unwrap();
+        assert_eq!(target.id, "grid_dim_z");
+        assert_eq!(target.abi_id, "i0012");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_nctaid_z");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_NCTAID_z",
+                asm: "mov.u32 \t$d, %nctaid.z;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,1,65536>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0013").unwrap();
+        assert_eq!(target.id, "ldmatrix_m8n8_x4_b16");
+        assert_eq!(target.abi_id, "i0013");
+        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::Ldmatrix {
+                shape: GeneratedLdmatrixShape::M8n8,
+                multiplicity: GeneratedLdmatrixMultiplicity::X4,
+                layout: GeneratedLdmatrixLayout::Normal
+            }
+        );
         assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_20697",
+                asm: "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0014").unwrap();
+        assert_eq!(target.id, "packed_atomic_add_f16x2");
+        assert_eq!(target.abi_id, "i0014");
+        assert_eq!(target.dialect_op, "nvvm.packed_atomic_add");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::PackedAtomic {
+                format: GeneratedPackedAtomicFormat::F16x2
+            }
+        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 62);
         assert_eq!(
             target.requirement.hardware,
             GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
@@ -5466,7 +5842,7 @@ mod tests {
                 GeneratedBackendRequirement {
                     backend: GeneratedIntrinsicBackend::LlvmNvptx,
                     requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(62),
                         hardware: GeneratedHardwareTarget::AnyOf(&[
                             GeneratedHardwareAlternative::MinimumSm(70)
                         ])
@@ -5475,58 +5851,6 @@ mod tests {
                 GeneratedBackendRequirement {
                     backend: GeneratedIntrinsicBackend::LibNvvm,
                     requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "ABS_F16X2",
-                asm: "abs.f16x2 \t$dst, $src0;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 53",
-                    "Subtarget->getPTXVersion() >= 65"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0044").unwrap();
-        assert_eq!(target.id, "active_mask");
-        assert_eq!(target.abi_id, "i0044");
-        assert_eq!(target.dialect_op, "nvvm.activemask");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 62);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
                         minimum_ptx: GeneratedPtxVersion::from_encoded(62),
                         hardware: GeneratedHardwareTarget::AnyOf(&[
                             GeneratedHardwareAlternative::MinimumSm(75)
@@ -5535,35 +5859,18 @@ mod tests {
                 }
             ]
         );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0015").unwrap();
+        assert_eq!(target.id, "packed_atomic_add_bf16x2");
+        assert_eq!(target.abi_id, "i0015");
+        assert_eq!(target.dialect_op, "nvvm.packed_atomic_add");
         assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "ACTIVEMASK",
-                asm: "activemask.b32 \t$dest;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 30",
-                    "Subtarget->getPTXVersion() >= 62"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
+            target.variant,
+            GeneratedIntrinsicVariant::PackedAtomic {
+                format: GeneratedPackedAtomicFormat::Bf16x2
+            }
         );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrHasSideEffects",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0064").unwrap();
-        assert_eq!(target.id, "add_bf16x2");
-        assert_eq!(target.abi_id, "i0064");
-        assert_eq!(target.dialect_op, "nvvm.add_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
         assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
         assert_eq!(
             target.requirement.hardware,
@@ -5594,15 +5901,323 @@ mod tests {
         );
         assert_eq!(target.selections, &[]);
         assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0074").unwrap();
-        assert_eq!(target.id, "add_f16x2");
-        assert_eq!(target.abi_id, "i0074");
-        assert_eq!(target.dialect_op, "nvvm.add_f16x2");
+        let target = generated_intrinsic_target_by_marker("v1:i0016").unwrap();
+        assert_eq!(target.id, "lane_id");
+        assert_eq!(target.abi_id, "i0016");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_laneid");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 13);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "SREG_LANEID",
+                asm: "mov.u32 \t$d, %laneid;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrNoMem",
+                "IntrSpeculatable",
+                "NoUndef<ret>",
+                "Range<ret,0,32>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0017").unwrap();
+        assert_eq!(target.id, "redux_sync_add");
+        assert_eq!(target.abi_id, "i0017");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_add");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
         assert_eq!(
             target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15029",
+                asm: "redux.sync.add.s32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0018").unwrap();
+        assert_eq!(target.id, "redux_sync_min_u32");
+        assert_eq!(target.abi_id, "i0018");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_umin");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15027",
+                asm: "redux.sync.min.u32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0019").unwrap();
+        assert_eq!(target.id, "redux_sync_min_i32");
+        assert_eq!(target.abi_id, "i0019");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_min");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15030",
+                asm: "redux.sync.min.s32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0020").unwrap();
+        assert_eq!(target.id, "redux_sync_max_u32");
+        assert_eq!(target.abi_id, "i0020");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_umax");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15028",
+                asm: "redux.sync.max.u32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0021").unwrap();
+        assert_eq!(target.id, "redux_sync_max_i32");
+        assert_eq!(target.abi_id, "i0021");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_max");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15031",
+                asm: "redux.sync.max.s32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0022").unwrap();
+        assert_eq!(target.id, "redux_sync_and");
+        assert_eq!(target.abi_id, "i0022");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_and");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15032",
+                asm: "redux.sync.and.b32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0023").unwrap();
+        assert_eq!(target.id, "redux_sync_or");
+        assert_eq!(target.abi_id, "i0023");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_or");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15034",
+                asm: "redux.sync.or.b32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0024").unwrap();
+        assert_eq!(target.id, "redux_sync_xor");
+        assert_eq!(target.abi_id, "i0024");
+        assert_eq!(target.dialect_op, "nvvm.redux_sync_xor");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_15033",
+                asm: "redux.sync.xor.b32 \t$dst, $src, $mask;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0025").unwrap();
+        assert_eq!(target.id, "ldmatrix_m8n8_x1_b16");
+        assert_eq!(target.abi_id, "i0025");
+        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::Ldmatrix {
+                shape: GeneratedLdmatrixShape::M8n8,
+                multiplicity: GeneratedLdmatrixMultiplicity::X1,
+                layout: GeneratedLdmatrixLayout::Normal
+            }
+        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
         );
         assert_eq!(
             target.backend_requirements,
@@ -5610,16 +6225,16 @@ mod tests {
                 GeneratedBackendRequirement {
                     backend: GeneratedIntrinsicBackend::LlvmNvptx,
                     requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
                         hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(70)
+                            GeneratedHardwareAlternative::MinimumSm(75)
                         ])
                     }
                 },
                 GeneratedBackendRequirement {
                     backend: GeneratedIntrinsicBackend::LibNvvm,
                     requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
                         hardware: GeneratedHardwareTarget::AnyOf(&[
                             GeneratedHardwareAlternative::MinimumSm(75)
                         ])
@@ -5627,8 +6242,679 @@ mod tests {
                 }
             ]
         );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_20675",
+                asm: "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {{$rx10}}, [$src];",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0026").unwrap();
+        assert_eq!(target.id, "ldmatrix_m8n8_x1_trans_b16");
+        assert_eq!(target.abi_id, "i0026");
+        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::Ldmatrix {
+                shape: GeneratedLdmatrixShape::M8n8,
+                multiplicity: GeneratedLdmatrixMultiplicity::X1,
+                layout: GeneratedLdmatrixLayout::Transposed
+            }
+        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_20758",
+                asm: "ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {{$rx10}}, [$src];",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0027").unwrap();
+        assert_eq!(target.id, "ldmatrix_m8n8_x2_b16");
+        assert_eq!(target.abi_id, "i0027");
+        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::Ldmatrix {
+                shape: GeneratedLdmatrixShape::M8n8,
+                multiplicity: GeneratedLdmatrixMultiplicity::X2,
+                layout: GeneratedLdmatrixLayout::Normal
+            }
+        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_20687",
+                asm: "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {{$rx20, $rx21}}, [$src];",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0028").unwrap();
+        assert_eq!(target.id, "ldmatrix_m8n8_x2_trans_b16");
+        assert_eq!(target.abi_id, "i0028");
+        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::Ldmatrix {
+                shape: GeneratedLdmatrixShape::M8n8,
+                multiplicity: GeneratedLdmatrixMultiplicity::X2,
+                layout: GeneratedLdmatrixLayout::Transposed
+            }
+        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_20762",
+                asm: "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {{$rx20, $rx21}}, [$src];",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0029").unwrap();
+        assert_eq!(target.id, "ldmatrix_m8n8_x4_trans_b16");
+        assert_eq!(target.abi_id, "i0029");
+        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
+        assert_eq!(
+            target.variant,
+            GeneratedIntrinsicVariant::Ldmatrix {
+                shape: GeneratedLdmatrixShape::M8n8,
+                multiplicity: GeneratedLdmatrixMultiplicity::X4,
+                layout: GeneratedLdmatrixLayout::Transposed
+            }
+        );
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "anonymous_20766",
+                asm: "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
+                predicates: &[
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrReadMem",
+                "NoCapture<arg0>",
+                "ReadOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0030").unwrap();
+        assert_eq!(target.id, "dp4a_s32");
+        assert_eq!(target.abi_id, "i0030");
+        assert_eq!(target.dialect_op, "nvvm.dp4a_s32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(61)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "DOT4_ss",
+                asm: "dp4a.s32.s32 \t$dst, $a, $b, $c;",
+                predicates: &["hasDotInstructions"],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0031").unwrap();
+        assert_eq!(target.id, "dp4a_u32");
+        assert_eq!(target.abi_id, "i0031");
+        assert_eq!(target.dialect_op, "nvvm.dp4a_u32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(61)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "DOT4_uu",
+                asm: "dp4a.u32.u32 \t$dst, $a, $b, $c;",
+                predicates: &["hasDotInstructions"],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0032").unwrap();
+        assert_eq!(target.id, "dp2a_s32");
+        assert_eq!(target.abi_id, "i0032");
+        assert_eq!(target.dialect_op, "nvvm.dp2a_s32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(61)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "DOT2_lo_ss",
+                asm: "dp2a.lo.s32.s32 \t$dst, $a, $b, $c;",
+                predicates: &["hasDotInstructions"],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[GeneratedImmediateBinding {
+                        argument_index: 2,
+                        value: 0
+                    }]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0033").unwrap();
+        assert_eq!(target.id, "dp2a_u32");
+        assert_eq!(target.abi_id, "i0033");
+        assert_eq!(target.dialect_op, "nvvm.dp2a_u32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(61)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "DOT2_lo_uu",
+                asm: "dp2a.lo.u32.u32 \t$dst, $a, $b, $c;",
+                predicates: &["hasDotInstructions"],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[GeneratedImmediateBinding {
+                        argument_index: 2,
+                        value: 0
+                    }]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0034").unwrap();
+        assert_eq!(target.id, "sync_threads");
+        assert_eq!(target.abi_id, "i0034");
+        assert_eq!(target.dialect_op, "nvvm.barrier0");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 10);
+        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(32),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(20)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(10),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "BARRIER_CTA_SYNC_ALIGNED_ALL_i",
+                asm: "bar.sync \t$i;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrConvergent", "IntrNoCallback"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0035").unwrap();
+        assert_eq!(target.id, "lanemask_lt");
+        assert_eq!(target.abi_id, "i0035");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_lt");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_LANEMASK_LT",
+                asm: "mov.u32 \t$d, %lanemask_lt;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0036").unwrap();
+        assert_eq!(target.id, "lanemask_le");
+        assert_eq!(target.abi_id, "i0036");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_le");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_LANEMASK_LE",
+                asm: "mov.u32 \t$d, %lanemask_le;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0037").unwrap();
+        assert_eq!(target.id, "lanemask_eq");
+        assert_eq!(target.abi_id, "i0037");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_eq");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_LANEMASK_EQ",
+                asm: "mov.u32 \t$d, %lanemask_eq;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0038").unwrap();
+        assert_eq!(target.id, "lanemask_ge");
+        assert_eq!(target.abi_id, "i0038");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_ge");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_LANEMASK_GE",
+                asm: "mov.u32 \t$d, %lanemask_ge;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0039").unwrap();
+        assert_eq!(target.id, "lanemask_gt");
+        assert_eq!(target.abi_id, "i0039");
+        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_gt");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
+        );
+        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_PTX_SREG_LANEMASK_GT",
+                asm: "mov.u32 \t$d, %lanemask_gt;",
+                predicates: &[],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
+        );
         let target = generated_intrinsic_target_by_marker("v1:i0040").unwrap();
         assert_eq!(target.id, "all_sync");
         assert_eq!(target.abi_id, "i0040");
@@ -5773,20 +7059,96 @@ mod tests {
                 "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0003").unwrap();
-        assert_eq!(target.id, "block_dim_x");
-        assert_eq!(target.abi_id, "i0003");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ntid_x");
+        let target = generated_intrinsic_target_by_marker("v1:i0043").unwrap();
+        assert_eq!(target.id, "uni_sync");
+        assert_eq!(target.abi_id, "i0043");
+        assert_eq!(target.dialect_op, "nvvm.vote_sync_uni");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
         assert_eq!(target.backend_requirements, &[]);
         assert_eq!(
             target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "VOTE_SYNC_UNIi",
+                    asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "VOTE_SYNC_UNIr",
+                    asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0044").unwrap();
+        assert_eq!(target.id, "active_mask");
+        assert_eq!(target.abi_id, "i0044");
+        assert_eq!(target.dialect_op, "nvvm.activemask");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 62);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(62),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(62),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
             &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_NTID_x",
-                asm: "mov.u32 \t$d, %ntid.x;",
-                predicates: &[],
+                source_record: "ACTIVEMASK",
+                asm: "activemask.b32 \t$dest;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 30",
+                    "Subtarget->getPTXVersion() >= 62"
+                ],
                 constraints: GeneratedSelectionConstraints {
                     address_space: None,
                     immediate_bindings: &[]
@@ -5796,161 +7158,1646 @@ mod tests {
         assert_eq!(
             target.llvm.unwrap().properties,
             &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,1025>"
+                "IntrConvergent",
+                "IntrHasSideEffects",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0007").unwrap();
-        assert_eq!(target.id, "block_dim_y");
-        assert_eq!(target.abi_id, "i0007");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ntid_y");
+        let target = generated_intrinsic_target_by_marker("v1:i0045").unwrap();
+        assert_eq!(target.id, "match_any_sync");
+        assert_eq!(target.abi_id, "i0045");
+        assert_eq!(target.dialect_op, "nvvm.match_any_sync_i32");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
         assert_eq!(target.backend_requirements, &[]);
         assert_eq!(
             target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_NTID_y",
-                asm: "mov.u32 \t$d, %ntid.y;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_32ii",
+                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_32ir",
+                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_32ri",
+                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_32rr",
+                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
         );
         assert_eq!(
             target.llvm.unwrap().properties,
             &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,1025>"
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0011").unwrap();
-        assert_eq!(target.id, "block_dim_z");
-        assert_eq!(target.abi_id, "i0011");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ntid_z");
+        let target = generated_intrinsic_target_by_marker("v1:i0046").unwrap();
+        assert_eq!(target.id, "match_any_i64_sync");
+        assert_eq!(target.abi_id, "i0046");
+        assert_eq!(target.dialect_op, "nvvm.match_any_sync_i64");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
         assert_eq!(target.backend_requirements, &[]);
         assert_eq!(
             target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_NTID_z",
-                asm: "mov.u32 \t$d, %ntid.z;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_64ii",
+                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_64ir",
+                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_64ri",
+                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ANY_SYNC_64rr",
+                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
         );
         assert_eq!(
             target.llvm.unwrap().properties,
             &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,65>"
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0002").unwrap();
-        assert_eq!(target.id, "block_idx_x");
-        assert_eq!(target.abi_id, "i0002");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ctaid_x");
+        let target = generated_intrinsic_target_by_marker("v1:i0047").unwrap();
+        assert_eq!(target.id, "match_all_sync");
+        assert_eq!(target.abi_id, "i0047");
+        assert_eq!(target.dialect_op, "nvvm.match_all_sync_i32");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
         assert_eq!(target.backend_requirements, &[]);
         assert_eq!(
             target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_CTAID_x",
-                asm: "mov.u32 \t$d, %ctaid.x;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_32ii",
+                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_32ir",
+                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_32ri",
+                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_32rr",
+                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
         );
         assert_eq!(
             target.llvm.unwrap().properties,
             &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,2147483647>"
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0006").unwrap();
-        assert_eq!(target.id, "block_idx_y");
-        assert_eq!(target.abi_id, "i0006");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ctaid_y");
+        let target = generated_intrinsic_target_by_marker("v1:i0048").unwrap();
+        assert_eq!(target.id, "match_all_i64_sync");
+        assert_eq!(target.abi_id, "i0048");
+        assert_eq!(target.dialect_op, "nvvm.match_all_sync_i64");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
         assert_eq!(target.backend_requirements, &[]);
         assert_eq!(
             target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_CTAID_y",
-                asm: "mov.u32 \t$d, %ctaid.y;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_64ii",
+                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_64ir",
+                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_64ri",
+                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "MATCH_ALLP_SYNC_64rr",
+                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
         );
         assert_eq!(
             target.llvm.unwrap().properties,
             &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,65535>"
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0010").unwrap();
-        assert_eq!(target.id, "block_idx_z");
-        assert_eq!(target.abi_id, "i0010");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_ctaid_z");
+        let target = generated_intrinsic_target_by_marker("v1:i0049").unwrap();
+        assert_eq!(target.id, "sync_mask");
+        assert_eq!(target.abi_id, "i0049");
+        assert_eq!(target.dialect_op, "nvvm.bar_warp_sync");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
         assert_eq!(
             target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_CTAID_z",
-                asm: "mov.u32 \t$d, %ctaid.z;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "INT_BAR_WARP_SYNC_I",
+                    asm: "bar.warp.sync \t$i;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "INT_BAR_WARP_SYNC_R",
+                    asm: "bar.warp.sync \t$i;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrConvergent", "IntrNoCallback"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0050").unwrap();
+        assert_eq!(target.id, "shuffle_sync");
+        assert_eq!(target.abi_id, "i0050");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_idx_i32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
                 }
-            },]
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14989",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14990",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14991",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14992",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14993",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14994",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14995",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14996",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
         );
         assert_eq!(
             target.llvm.unwrap().properties,
             &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,65535>"
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
             ] as &[&str]
         );
-        let target = generated_intrinsic_target_by_marker("v1:i0090").unwrap();
-        assert_eq!(target.id, "cp_async_ca_16");
-        assert_eq!(target.abi_id, "i0090");
-        assert_eq!(target.dialect_op, "nvvm.cp_async_ca_16");
+        let target = generated_intrinsic_target_by_marker("v1:i0051").unwrap();
+        assert_eq!(target.id, "shuffle_xor_sync");
+        assert_eq!(target.abi_id, "i0051");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_bfly_i32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14957",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14958",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14959",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14960",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14961",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14962",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14963",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14964",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0052").unwrap();
+        assert_eq!(target.id, "shuffle_down_sync");
+        assert_eq!(target.abi_id, "i0052");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_down_i32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14925",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14926",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14927",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14928",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14929",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14930",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14931",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14932",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0053").unwrap();
+        assert_eq!(target.id, "shuffle_up_sync");
+        assert_eq!(target.abi_id, "i0053");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_up_i32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14893",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14894",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14895",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14896",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14897",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14898",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14899",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14900",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0054").unwrap();
+        assert_eq!(target.id, "shuffle_f32_sync");
+        assert_eq!(target.abi_id, "i0054");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_idx_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15005",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15006",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15007",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15008",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15009",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15010",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15011",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_15012",
+                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0055").unwrap();
+        assert_eq!(target.id, "shuffle_xor_f32_sync");
+        assert_eq!(target.abi_id, "i0055");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_bfly_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14973",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14974",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14975",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14976",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14977",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14978",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14979",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14980",
+                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0056").unwrap();
+        assert_eq!(target.id, "shuffle_down_f32_sync");
+        assert_eq!(target.abi_id, "i0056");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_down_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14941",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14942",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14943",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14944",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14945",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14946",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14947",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14948",
+                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0057").unwrap();
+        assert_eq!(target.id, "shuffle_up_f32_sync");
+        assert_eq!(target.abi_id, "i0057");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_up_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14909",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14910",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14911",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14912",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14913",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14914",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14915",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "anonymous_14916",
+                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    predicates: &[
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0058").unwrap();
+        assert_eq!(target.id, "shuffle_u64_sync");
+        assert_eq!(target.abi_id, "i0058");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_idx_i64");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0059").unwrap();
+        assert_eq!(target.id, "shuffle_xor_u64_sync");
+        assert_eq!(target.abi_id, "i0059");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_bfly_i64");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0060").unwrap();
+        assert_eq!(target.id, "shuffle_down_u64_sync");
+        assert_eq!(target.abi_id, "i0060");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_down_i64");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0061").unwrap();
+        assert_eq!(target.id, "shuffle_up_u64_sync");
+        assert_eq!(target.abi_id, "i0061");
+        assert_eq!(target.dialect_op, "nvvm.shfl_sync_up_i64");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(30)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0062").unwrap();
+        assert_eq!(target.id, "fma_bf16x2");
+        assert_eq!(target.abi_id, "i0062");
+        assert_eq!(target.dialect_op, "nvvm.fma_bf16x2");
         assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
         assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
         assert_eq!(
@@ -5983,8 +8830,8 @@ mod tests {
         assert_eq!(
             target.selections,
             &[GeneratedSelectionAlternative {
-                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16",
-                asm: "cp.async.ca.shared.global [$dst], [$src], 16;",
+                source_record: "INT_NVVM_FMA_rn_bf16x2",
+                asm: "fma.rn.bf16x2 \t$dst, $src0, $src1, $src2;",
                 predicates: &[
                     "Subtarget->getSmVersion() >= 80",
                     "Subtarget->getPTXVersion() >= 70"
@@ -5997,14 +8844,1000 @@ mod tests {
         );
         assert_eq!(
             target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0063").unwrap();
+        assert_eq!(target.id, "fma_relu_bf16x2");
+        assert_eq!(target.abi_id, "i0063");
+        assert_eq!(target.dialect_op, "nvvm.fma_relu_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
             &[
-                "IntrArgMemOnly",
-                "IntrNoCallback",
-                "NoAlias<arg0>",
-                "NoAlias<arg1>",
-                "ReadOnly<arg1>",
-                "WriteOnly<arg0>"
-            ] as &[&str]
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMA_rn_relu_bf16x2",
+                asm: "fma.rn.relu.bf16x2 \t$dst, $src0, $src1, $src2;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0064").unwrap();
+        assert_eq!(target.id, "add_bf16x2");
+        assert_eq!(target.abi_id, "i0064");
+        assert_eq!(target.dialect_op, "nvvm.add_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(90)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(90)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(90)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0065").unwrap();
+        assert_eq!(target.id, "sub_bf16x2");
+        assert_eq!(target.abi_id, "i0065");
+        assert_eq!(target.dialect_op, "nvvm.sub_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(90)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(90)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(90)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0066").unwrap();
+        assert_eq!(target.id, "mul_bf16x2");
+        assert_eq!(target.abi_id, "i0066");
+        assert_eq!(target.dialect_op, "nvvm.mul_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(90)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(90)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(90)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0067").unwrap();
+        assert_eq!(target.id, "min_bf16x2");
+        assert_eq!(target.abi_id, "i0067");
+        assert_eq!(target.dialect_op, "nvvm.min_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMIN_bf16x2",
+                asm: "min.bf16x2 \t$dst, $src0, $src1;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0068").unwrap();
+        assert_eq!(target.id, "max_bf16x2");
+        assert_eq!(target.abi_id, "i0068");
+        assert_eq!(target.dialect_op, "nvvm.max_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMAN_bf16x2",
+                asm: "max.bf16x2 \t$dst, $src0, $src1;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0069").unwrap();
+        assert_eq!(target.id, "neg_bf16x2");
+        assert_eq!(target.abi_id, "i0069");
+        assert_eq!(target.dialect_op, "nvvm.neg_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_NEG_BF16X2",
+                asm: "neg.bf16x2 \t$dst, $src0;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0070").unwrap();
+        assert_eq!(target.id, "abs_bf16x2");
+        assert_eq!(target.abi_id, "i0070");
+        assert_eq!(target.dialect_op, "nvvm.abs_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "ABS_BF16X2",
+                asm: "abs.bf16x2 \t$dst, $src0;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0071").unwrap();
+        assert_eq!(target.id, "cvt_f32x2_bf16x2");
+        assert_eq!(target.abi_id, "i0071");
+        assert_eq!(target.dialect_op, "nvvm.cvt_f32x2_bf16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0072").unwrap();
+        assert_eq!(target.id, "fma_f16x2");
+        assert_eq!(target.abi_id, "i0072");
+        assert_eq!(target.dialect_op, "nvvm.fma_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(70)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMA_rn_f16x2",
+                asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 53",
+                    "Subtarget->getPTXVersion() >= 42"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0073").unwrap();
+        assert_eq!(target.id, "fma_relu_f16x2");
+        assert_eq!(target.abi_id, "i0073");
+        assert_eq!(target.dialect_op, "nvvm.fma_relu_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMA_rn_relu_f16x2",
+                asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0074").unwrap();
+        assert_eq!(target.id, "add_f16x2");
+        assert_eq!(target.abi_id, "i0074");
+        assert_eq!(target.dialect_op, "nvvm.add_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(70)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0075").unwrap();
+        assert_eq!(target.id, "sub_f16x2");
+        assert_eq!(target.abi_id, "i0075");
+        assert_eq!(target.dialect_op, "nvvm.sub_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(70)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0076").unwrap();
+        assert_eq!(target.id, "mul_f16x2");
+        assert_eq!(target.abi_id, "i0076");
+        assert_eq!(target.dialect_op, "nvvm.mul_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(70)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0077").unwrap();
+        assert_eq!(target.id, "min_f16x2");
+        assert_eq!(target.abi_id, "i0077");
+        assert_eq!(target.dialect_op, "nvvm.min_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMIN_f16x2",
+                asm: "min.f16x2 \t$dst, $src0, $src1;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0078").unwrap();
+        assert_eq!(target.id, "max_f16x2");
+        assert_eq!(target.abi_id, "i0078");
+        assert_eq!(target.dialect_op, "nvvm.max_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "INT_NVVM_FMAN_f16x2",
+                asm: "max.f16x2 \t$dst, $src0, $src1;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0079").unwrap();
+        assert_eq!(target.id, "neg_f16x2");
+        assert_eq!(target.abi_id, "i0079");
+        assert_eq!(target.dialect_op, "nvvm.neg_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(70)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert!(target.llvm.is_none());
+        let target = generated_intrinsic_target_by_marker("v1:i0080").unwrap();
+        assert_eq!(target.id, "abs_f16x2");
+        assert_eq!(target.abi_id, "i0080");
+        assert_eq!(target.dialect_op, "nvvm.abs_f16x2");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(70)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(75)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "ABS_F16X2",
+                asm: "abs.f16x2 \t$dst, $src0;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 53",
+                    "Subtarget->getPTXVersion() >= 65"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0081").unwrap();
+        assert_eq!(target.id, "cvt_f16x2_f32");
+        assert_eq!(target.abi_id, "i0081");
+        assert_eq!(target.dialect_op, "nvvm.cvt_f16x2_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0082").unwrap();
+        assert_eq!(target.id, "cvt_rz_f16x2_f32");
+        assert_eq!(target.abi_id, "i0082");
+        assert_eq!(target.dialect_op, "nvvm.cvt_rz_f16x2_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0083").unwrap();
+        assert_eq!(target.id, "cvt_rn_relu_f16x2_f32");
+        assert_eq!(target.abi_id, "i0083");
+        assert_eq!(target.dialect_op, "nvvm.cvt_rn_relu_f16x2_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0084").unwrap();
+        assert_eq!(target.id, "cvt_rn_relu_bf16x2_f32");
+        assert_eq!(target.abi_id, "i0084");
+        assert_eq!(target.dialect_op, "nvvm.cvt_rn_relu_bf16x2_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0085").unwrap();
+        assert_eq!(target.id, "cvt_rz_bf16x2_f32");
+        assert_eq!(target.abi_id, "i0085");
+        assert_eq!(target.dialect_op, "nvvm.cvt_rz_bf16x2_f32");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(target.selections, &[]);
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
         );
         let target = generated_intrinsic_target_by_marker("v1:i0086").unwrap();
         assert_eq!(target.id, "cp_async_ca_4");
@@ -6053,138 +9886,6 @@ mod tests {
                     immediate_bindings: &[]
                 }
             },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrNoCallback",
-                "NoAlias<arg0>",
-                "NoAlias<arg1>",
-                "ReadOnly<arg1>",
-                "WriteOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0088").unwrap();
-        assert_eq!(target.id, "cp_async_ca_8");
-        assert_eq!(target.abi_id, "i0088");
-        assert_eq!(target.dialect_op, "nvvm.cp_async_ca_8");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_8",
-                asm: "cp.async.ca.shared.global [$dst], [$src], 8;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrNoCallback",
-                "NoAlias<arg0>",
-                "NoAlias<arg1>",
-                "ReadOnly<arg1>",
-                "WriteOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0091").unwrap();
-        assert_eq!(target.id, "cp_async_ca_zfill_16");
-        assert_eq!(target.abi_id, "i0091");
-        assert_eq!(target.dialect_op, "nvvm.cp_async_ca_zfill_16");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_s",
-                    asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
-                    predicates: &[
-                        "Subtarget->getSmVersion() >= 80",
-                        "Subtarget->getPTXVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_si",
-                    asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
-                    predicates: &[
-                        "Subtarget->getSmVersion() >= 80",
-                        "Subtarget->getPTXVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
         );
         assert_eq!(
             target.llvm.unwrap().properties,
@@ -6270,6 +9971,65 @@ mod tests {
                 "WriteOnly<arg0>"
             ] as &[&str]
         );
+        let target = generated_intrinsic_target_by_marker("v1:i0088").unwrap();
+        assert_eq!(target.id, "cp_async_ca_8");
+        assert_eq!(target.abi_id, "i0088");
+        assert_eq!(target.dialect_op, "nvvm.cp_async_ca_8");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_8",
+                asm: "cp.async.ca.shared.global [$dst], [$src], 8;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>"
+            ] as &[&str]
+        );
         let target = generated_intrinsic_target_by_marker("v1:i0089").unwrap();
         assert_eq!(target.id, "cp_async_ca_zfill_8");
         assert_eq!(target.abi_id, "i0089");
@@ -6321,6 +10081,138 @@ mod tests {
                 GeneratedSelectionAlternative {
                     source_record: "CP_ASYNC_CA_SHARED_GLOBAL_8_si",
                     asm: "cp.async.ca.shared.global [$dst], [$src], 8, $src_size;",
+                    predicates: &[
+                        "Subtarget->getSmVersion() >= 80",
+                        "Subtarget->getPTXVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0090").unwrap();
+        assert_eq!(target.id, "cp_async_ca_16");
+        assert_eq!(target.abi_id, "i0090");
+        assert_eq!(target.dialect_op, "nvvm.cp_async_ca_16");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[GeneratedSelectionAlternative {
+                source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16",
+                asm: "cp.async.ca.shared.global [$dst], [$src], 16;",
+                predicates: &[
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70"
+                ],
+                constraints: GeneratedSelectionConstraints {
+                    address_space: None,
+                    immediate_bindings: &[]
+                }
+            },]
+        );
+        assert_eq!(
+            target.llvm.unwrap().properties,
+            &[
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>"
+            ] as &[&str]
+        );
+        let target = generated_intrinsic_target_by_marker("v1:i0091").unwrap();
+        assert_eq!(target.id, "cp_async_ca_zfill_16");
+        assert_eq!(target.abi_id, "i0091");
+        assert_eq!(target.dialect_op, "nvvm.cp_async_ca_zfill_16");
+        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
+        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
+        assert_eq!(
+            target.requirement.hardware,
+            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
+        );
+        assert_eq!(
+            target.backend_requirements,
+            &[
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                },
+                GeneratedBackendRequirement {
+                    backend: GeneratedIntrinsicBackend::LibNvvm,
+                    requirement: GeneratedTargetRequirement {
+                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
+                        hardware: GeneratedHardwareTarget::AnyOf(&[
+                            GeneratedHardwareAlternative::MinimumSm(80)
+                        ])
+                    }
+                }
+            ]
+        );
+        assert_eq!(
+            target.selections,
+            &[
+                GeneratedSelectionAlternative {
+                    source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_s",
+                    asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
+                    predicates: &[
+                        "Subtarget->getSmVersion() >= 80",
+                        "Subtarget->getPTXVersion() >= 70"
+                    ],
+                    constraints: GeneratedSelectionConstraints {
+                        address_space: None,
+                        immediate_bindings: &[]
+                    }
+                },
+                GeneratedSelectionAlternative {
+                    source_record: "CP_ASYNC_CA_SHARED_GLOBAL_16_si",
+                    asm: "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
                     predicates: &[
                         "Subtarget->getSmVersion() >= 80",
                         "Subtarget->getPTXVersion() >= 70"
@@ -6624,3889 +10516,6 @@ mod tests {
         assert_eq!(
             target.llvm.unwrap().properties,
             &["ImmArg<arg0>"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0081").unwrap();
-        assert_eq!(target.id, "cvt_f16x2_f32");
-        assert_eq!(target.abi_id, "i0081");
-        assert_eq!(target.dialect_op, "nvvm.cvt_f16x2_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0071").unwrap();
-        assert_eq!(target.id, "cvt_f32x2_bf16x2");
-        assert_eq!(target.abi_id, "i0071");
-        assert_eq!(target.dialect_op, "nvvm.cvt_f32x2_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0084").unwrap();
-        assert_eq!(target.id, "cvt_rn_relu_bf16x2_f32");
-        assert_eq!(target.abi_id, "i0084");
-        assert_eq!(target.dialect_op, "nvvm.cvt_rn_relu_bf16x2_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0083").unwrap();
-        assert_eq!(target.id, "cvt_rn_relu_f16x2_f32");
-        assert_eq!(target.abi_id, "i0083");
-        assert_eq!(target.dialect_op, "nvvm.cvt_rn_relu_f16x2_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0085").unwrap();
-        assert_eq!(target.id, "cvt_rz_bf16x2_f32");
-        assert_eq!(target.abi_id, "i0085");
-        assert_eq!(target.dialect_op, "nvvm.cvt_rz_bf16x2_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0082").unwrap();
-        assert_eq!(target.id, "cvt_rz_f16x2_f32");
-        assert_eq!(target.abi_id, "i0082");
-        assert_eq!(target.dialect_op, "nvvm.cvt_rz_f16x2_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0032").unwrap();
-        assert_eq!(target.id, "dp2a_s32");
-        assert_eq!(target.abi_id, "i0032");
-        assert_eq!(target.dialect_op, "nvvm.dp2a_s32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(61)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "DOT2_lo_ss",
-                asm: "dp2a.lo.s32.s32 \t$dst, $a, $b, $c;",
-                predicates: &["hasDotInstructions"],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[GeneratedImmediateBinding {
-                        argument_index: 2,
-                        value: 0
-                    }]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0033").unwrap();
-        assert_eq!(target.id, "dp2a_u32");
-        assert_eq!(target.abi_id, "i0033");
-        assert_eq!(target.dialect_op, "nvvm.dp2a_u32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(61)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "DOT2_lo_uu",
-                asm: "dp2a.lo.u32.u32 \t$dst, $a, $b, $c;",
-                predicates: &["hasDotInstructions"],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[GeneratedImmediateBinding {
-                        argument_index: 2,
-                        value: 0
-                    }]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0030").unwrap();
-        assert_eq!(target.id, "dp4a_s32");
-        assert_eq!(target.abi_id, "i0030");
-        assert_eq!(target.dialect_op, "nvvm.dp4a_s32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(61)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "DOT4_ss",
-                asm: "dp4a.s32.s32 \t$dst, $a, $b, $c;",
-                predicates: &["hasDotInstructions"],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0031").unwrap();
-        assert_eq!(target.id, "dp4a_u32");
-        assert_eq!(target.abi_id, "i0031");
-        assert_eq!(target.dialect_op, "nvvm.dp4a_u32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 50);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(61)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(61)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(50),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "DOT4_uu",
-                asm: "dp4a.u32.u32 \t$dst, $a, $b, $c;",
-                predicates: &["hasDotInstructions"],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0062").unwrap();
-        assert_eq!(target.id, "fma_bf16x2");
-        assert_eq!(target.abi_id, "i0062");
-        assert_eq!(target.dialect_op, "nvvm.fma_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMA_rn_bf16x2",
-                asm: "fma.rn.bf16x2 \t$dst, $src0, $src1, $src2;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0072").unwrap();
-        assert_eq!(target.id, "fma_f16x2");
-        assert_eq!(target.abi_id, "i0072");
-        assert_eq!(target.dialect_op, "nvvm.fma_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(70)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMA_rn_f16x2",
-                asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 53",
-                    "Subtarget->getPTXVersion() >= 42"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0063").unwrap();
-        assert_eq!(target.id, "fma_relu_bf16x2");
-        assert_eq!(target.abi_id, "i0063");
-        assert_eq!(target.dialect_op, "nvvm.fma_relu_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMA_rn_relu_bf16x2",
-                asm: "fma.rn.relu.bf16x2 \t$dst, $src0, $src1, $src2;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0073").unwrap();
-        assert_eq!(target.id, "fma_relu_f16x2");
-        assert_eq!(target.abi_id, "i0073");
-        assert_eq!(target.dialect_op, "nvvm.fma_relu_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMA_rn_relu_f16x2",
-                asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0004").unwrap();
-        assert_eq!(target.id, "grid_dim_x");
-        assert_eq!(target.abi_id, "i0004");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_nctaid_x");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_NCTAID_x",
-                asm: "mov.u32 \t$d, %nctaid.x;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,2147483648>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0008").unwrap();
-        assert_eq!(target.id, "grid_dim_y");
-        assert_eq!(target.abi_id, "i0008");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_nctaid_y");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_NCTAID_y",
-                asm: "mov.u32 \t$d, %nctaid.y;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,65536>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0012").unwrap();
-        assert_eq!(target.id, "grid_dim_z");
-        assert_eq!(target.abi_id, "i0012");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_nctaid_z");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_NCTAID_z",
-                asm: "mov.u32 \t$d, %nctaid.z;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,1,65536>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0016").unwrap();
-        assert_eq!(target.id, "lane_id");
-        assert_eq!(target.abi_id, "i0016");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_laneid");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 13);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "SREG_LANEID",
-                asm: "mov.u32 \t$d, %laneid;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,32>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0037").unwrap();
-        assert_eq!(target.id, "lanemask_eq");
-        assert_eq!(target.abi_id, "i0037");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_eq");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_LANEMASK_EQ",
-                asm: "mov.u32 \t$d, %lanemask_eq;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0038").unwrap();
-        assert_eq!(target.id, "lanemask_ge");
-        assert_eq!(target.abi_id, "i0038");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_ge");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_LANEMASK_GE",
-                asm: "mov.u32 \t$d, %lanemask_ge;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0039").unwrap();
-        assert_eq!(target.id, "lanemask_gt");
-        assert_eq!(target.abi_id, "i0039");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_gt");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_LANEMASK_GT",
-                asm: "mov.u32 \t$d, %lanemask_gt;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0036").unwrap();
-        assert_eq!(target.id, "lanemask_le");
-        assert_eq!(target.abi_id, "i0036");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_le");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_LANEMASK_LE",
-                asm: "mov.u32 \t$d, %lanemask_le;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0035").unwrap();
-        assert_eq!(target.id, "lanemask_lt");
-        assert_eq!(target.abi_id, "i0035");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_lanemask_lt");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_LANEMASK_LT",
-                asm: "mov.u32 \t$d, %lanemask_lt;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0025").unwrap();
-        assert_eq!(target.id, "ldmatrix_m8n8_x1_b16");
-        assert_eq!(target.abi_id, "i0025");
-        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::Ldmatrix {
-                shape: GeneratedLdmatrixShape::M8n8,
-                multiplicity: GeneratedLdmatrixMultiplicity::X1,
-                layout: GeneratedLdmatrixLayout::Normal
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_20675",
-                asm: "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {{$rx10}}, [$src];",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 65",
-                    "Subtarget->getSmVersion() >= 75"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0026").unwrap();
-        assert_eq!(target.id, "ldmatrix_m8n8_x1_trans_b16");
-        assert_eq!(target.abi_id, "i0026");
-        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::Ldmatrix {
-                shape: GeneratedLdmatrixShape::M8n8,
-                multiplicity: GeneratedLdmatrixMultiplicity::X1,
-                layout: GeneratedLdmatrixLayout::Transposed
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_20758",
-                asm: "ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {{$rx10}}, [$src];",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 65",
-                    "Subtarget->getSmVersion() >= 75"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0027").unwrap();
-        assert_eq!(target.id, "ldmatrix_m8n8_x2_b16");
-        assert_eq!(target.abi_id, "i0027");
-        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::Ldmatrix {
-                shape: GeneratedLdmatrixShape::M8n8,
-                multiplicity: GeneratedLdmatrixMultiplicity::X2,
-                layout: GeneratedLdmatrixLayout::Normal
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_20687",
-                asm: "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {{$rx20, $rx21}}, [$src];",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 65",
-                    "Subtarget->getSmVersion() >= 75"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0028").unwrap();
-        assert_eq!(target.id, "ldmatrix_m8n8_x2_trans_b16");
-        assert_eq!(target.abi_id, "i0028");
-        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::Ldmatrix {
-                shape: GeneratedLdmatrixShape::M8n8,
-                multiplicity: GeneratedLdmatrixMultiplicity::X2,
-                layout: GeneratedLdmatrixLayout::Transposed
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_20762",
-                asm: "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {{$rx20, $rx21}}, [$src];",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 65",
-                    "Subtarget->getSmVersion() >= 75"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0013").unwrap();
-        assert_eq!(target.id, "ldmatrix_m8n8_x4_b16");
-        assert_eq!(target.abi_id, "i0013");
-        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::Ldmatrix {
-                shape: GeneratedLdmatrixShape::M8n8,
-                multiplicity: GeneratedLdmatrixMultiplicity::X4,
-                layout: GeneratedLdmatrixLayout::Normal
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_20697",
-                asm: "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 65",
-                    "Subtarget->getSmVersion() >= 75"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0029").unwrap();
-        assert_eq!(target.id, "ldmatrix_m8n8_x4_trans_b16");
-        assert_eq!(target.abi_id, "i0029");
-        assert_eq!(target.dialect_op, "nvvm.ldmatrix");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::Ldmatrix {
-                shape: GeneratedLdmatrixShape::M8n8,
-                multiplicity: GeneratedLdmatrixMultiplicity::X4,
-                layout: GeneratedLdmatrixLayout::Transposed
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 65);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(65),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_20766",
-                asm: "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
-                predicates: &[
-                    "Subtarget->getPTXVersion() >= 65",
-                    "Subtarget->getSmVersion() >= 75"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: Some(GeneratedSelectionAddressSpace::Shared),
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrArgMemOnly",
-                "IntrConvergent",
-                "IntrNoCallback",
-                "IntrReadMem",
-                "NoCapture<arg0>",
-                "ReadOnly<arg0>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0048").unwrap();
-        assert_eq!(target.id, "match_all_i64_sync");
-        assert_eq!(target.abi_id, "i0048");
-        assert_eq!(target.dialect_op, "nvvm.match_all_sync_i64");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_64ii",
-                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_64ir",
-                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_64ri",
-                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_64rr",
-                    asm: "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0047").unwrap();
-        assert_eq!(target.id, "match_all_sync");
-        assert_eq!(target.abi_id, "i0047");
-        assert_eq!(target.dialect_op, "nvvm.match_all_sync_i32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_32ii",
-                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_32ir",
-                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_32ri",
-                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ALLP_SYNC_32rr",
-                    asm: "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0046").unwrap();
-        assert_eq!(target.id, "match_any_i64_sync");
-        assert_eq!(target.abi_id, "i0046");
-        assert_eq!(target.dialect_op, "nvvm.match_any_sync_i64");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_64ii",
-                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_64ir",
-                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_64ri",
-                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_64rr",
-                    asm: "match.any.sync.b64 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0045").unwrap();
-        assert_eq!(target.id, "match_any_sync");
-        assert_eq!(target.abi_id, "i0045");
-        assert_eq!(target.dialect_op, "nvvm.match_any_sync_i32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_32ii",
-                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_32ir",
-                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_32ri",
-                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "MATCH_ANY_SYNC_32rr",
-                    asm: "match.any.sync.b32 \t$dest, $value, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 70"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0068").unwrap();
-        assert_eq!(target.id, "max_bf16x2");
-        assert_eq!(target.abi_id, "i0068");
-        assert_eq!(target.dialect_op, "nvvm.max_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMAN_bf16x2",
-                asm: "max.bf16x2 \t$dst, $src0, $src1;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0078").unwrap();
-        assert_eq!(target.id, "max_f16x2");
-        assert_eq!(target.abi_id, "i0078");
-        assert_eq!(target.dialect_op, "nvvm.max_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMAN_f16x2",
-                asm: "max.f16x2 \t$dst, $src0, $src1;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0067").unwrap();
-        assert_eq!(target.id, "min_bf16x2");
-        assert_eq!(target.abi_id, "i0067");
-        assert_eq!(target.dialect_op, "nvvm.min_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMIN_bf16x2",
-                asm: "min.bf16x2 \t$dst, $src0, $src1;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0077").unwrap();
-        assert_eq!(target.id, "min_f16x2");
-        assert_eq!(target.abi_id, "i0077");
-        assert_eq!(target.dialect_op, "nvvm.min_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_FMIN_f16x2",
-                asm: "min.f16x2 \t$dst, $src0, $src1;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["Commutative", "IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0066").unwrap();
-        assert_eq!(target.id, "mul_bf16x2");
-        assert_eq!(target.abi_id, "i0066");
-        assert_eq!(target.dialect_op, "nvvm.mul_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(90)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(90)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(90)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0076").unwrap();
-        assert_eq!(target.id, "mul_f16x2");
-        assert_eq!(target.abi_id, "i0076");
-        assert_eq!(target.dialect_op, "nvvm.mul_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(70)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0069").unwrap();
-        assert_eq!(target.id, "neg_bf16x2");
-        assert_eq!(target.abi_id, "i0069");
-        assert_eq!(target.dialect_op, "nvvm.neg_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(70),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(80)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_NVVM_NEG_BF16X2",
-                asm: "neg.bf16x2 \t$dst, $src0;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrNoMem", "IntrSpeculatable"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0079").unwrap();
-        assert_eq!(target.id, "neg_f16x2");
-        assert_eq!(target.abi_id, "i0079");
-        assert_eq!(target.dialect_op, "nvvm.neg_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(70)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0015").unwrap();
-        assert_eq!(target.id, "packed_atomic_add_bf16x2");
-        assert_eq!(target.abi_id, "i0015");
-        assert_eq!(target.dialect_op, "nvvm.packed_atomic_add");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::PackedAtomic {
-                format: GeneratedPackedAtomicFormat::Bf16x2
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(90)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(90)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(90)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0014").unwrap();
-        assert_eq!(target.id, "packed_atomic_add_f16x2");
-        assert_eq!(target.abi_id, "i0014");
-        assert_eq!(target.dialect_op, "nvvm.packed_atomic_add");
-        assert_eq!(
-            target.variant,
-            GeneratedIntrinsicVariant::PackedAtomic {
-                format: GeneratedPackedAtomicFormat::F16x2
-            }
-        );
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 62);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(70)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(62),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0017").unwrap();
-        assert_eq!(target.id, "redux_sync_add");
-        assert_eq!(target.abi_id, "i0017");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_add");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15029",
-                asm: "redux.sync.add.s32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0022").unwrap();
-        assert_eq!(target.id, "redux_sync_and");
-        assert_eq!(target.abi_id, "i0022");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_and");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15032",
-                asm: "redux.sync.and.b32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0021").unwrap();
-        assert_eq!(target.id, "redux_sync_max_i32");
-        assert_eq!(target.abi_id, "i0021");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_max");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15031",
-                asm: "redux.sync.max.s32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0020").unwrap();
-        assert_eq!(target.id, "redux_sync_max_u32");
-        assert_eq!(target.abi_id, "i0020");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_umax");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15028",
-                asm: "redux.sync.max.u32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0019").unwrap();
-        assert_eq!(target.id, "redux_sync_min_i32");
-        assert_eq!(target.abi_id, "i0019");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_min");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15030",
-                asm: "redux.sync.min.s32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0018").unwrap();
-        assert_eq!(target.id, "redux_sync_min_u32");
-        assert_eq!(target.abi_id, "i0018");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_umin");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15027",
-                asm: "redux.sync.min.u32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0023").unwrap();
-        assert_eq!(target.id, "redux_sync_or");
-        assert_eq!(target.abi_id, "i0023");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_or");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15034",
-                asm: "redux.sync.or.b32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0024").unwrap();
-        assert_eq!(target.id, "redux_sync_xor");
-        assert_eq!(target.abi_id, "i0024");
-        assert_eq!(target.dialect_op, "nvvm.redux_sync_xor");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 70);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "anonymous_15033",
-                asm: "redux.sync.xor.b32 \t$dst, $src, $mask;",
-                predicates: &[
-                    "Subtarget->getSmVersion() >= 80",
-                    "Subtarget->getPTXVersion() >= 70"
-                ],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0056").unwrap();
-        assert_eq!(target.id, "shuffle_down_f32_sync");
-        assert_eq!(target.abi_id, "i0056");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_down_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14941",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14942",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14943",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14944",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14945",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14946",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14947",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14948",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0052").unwrap();
-        assert_eq!(target.id, "shuffle_down_sync");
-        assert_eq!(target.abi_id, "i0052");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_down_i32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14925",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14926",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14927",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14928",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14929",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14930",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14931",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14932",
-                    asm: "shfl.sync.down.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0060").unwrap();
-        assert_eq!(target.id, "shuffle_down_u64_sync");
-        assert_eq!(target.abi_id, "i0060");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_down_i64");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0054").unwrap();
-        assert_eq!(target.id, "shuffle_f32_sync");
-        assert_eq!(target.abi_id, "i0054");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_idx_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15005",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15006",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15007",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15008",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15009",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15010",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15011",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_15012",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0050").unwrap();
-        assert_eq!(target.id, "shuffle_sync");
-        assert_eq!(target.abi_id, "i0050");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_idx_i32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14989",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14990",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14991",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14992",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14993",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14994",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14995",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14996",
-                    asm: "shfl.sync.idx.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0058").unwrap();
-        assert_eq!(target.id, "shuffle_u64_sync");
-        assert_eq!(target.abi_id, "i0058");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_idx_i64");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0057").unwrap();
-        assert_eq!(target.id, "shuffle_up_f32_sync");
-        assert_eq!(target.abi_id, "i0057");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_up_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14909",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14910",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14911",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14912",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14913",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14914",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14915",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14916",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0053").unwrap();
-        assert_eq!(target.id, "shuffle_up_sync");
-        assert_eq!(target.abi_id, "i0053");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_up_i32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14893",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14894",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14895",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14896",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14897",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14898",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14899",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14900",
-                    asm: "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0061").unwrap();
-        assert_eq!(target.id, "shuffle_up_u64_sync");
-        assert_eq!(target.abi_id, "i0061");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_up_i64");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0055").unwrap();
-        assert_eq!(target.id, "shuffle_xor_f32_sync");
-        assert_eq!(target.abi_id, "i0055");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_bfly_f32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14973",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14974",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14975",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14976",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14977",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14978",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14979",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14980",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0051").unwrap();
-        assert_eq!(target.id, "shuffle_xor_sync");
-        assert_eq!(target.abi_id, "i0051");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_bfly_i32");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14957",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14958",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14959",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14960",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14961",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14962",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14963",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "anonymous_14964",
-                    asm: "shfl.sync.bfly.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0059").unwrap();
-        assert_eq!(target.id, "shuffle_xor_u64_sync");
-        assert_eq!(target.abi_id, "i0059");
-        assert_eq!(target.dialect_op, "nvvm.shfl_sync_bfly_i64");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0065").unwrap();
-        assert_eq!(target.id, "sub_bf16x2");
-        assert_eq!(target.abi_id, "i0065");
-        assert_eq!(target.dialect_op, "nvvm.sub_bf16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 78);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(90)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(90)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(78),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(90)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0075").unwrap();
-        assert_eq!(target.id, "sub_f16x2");
-        assert_eq!(target.abi_id, "i0075");
-        assert_eq!(target.dialect_op, "nvvm.sub_f16x2");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 42);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(70)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(70)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(42),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(target.selections, &[]);
-        assert!(target.llvm.is_none());
-        let target = generated_intrinsic_target_by_marker("v1:i0049").unwrap();
-        assert_eq!(target.id, "sync_mask");
-        assert_eq!(target.abi_id, "i0049");
-        assert_eq!(target.dialect_op, "nvvm.bar_warp_sync");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(30)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(60),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "INT_BAR_WARP_SYNC_I",
-                    asm: "bar.warp.sync \t$i;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "INT_BAR_WARP_SYNC_R",
-                    asm: "bar.warp.sync \t$i;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrConvergent", "IntrNoCallback"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0034").unwrap();
-        assert_eq!(target.id, "sync_threads");
-        assert_eq!(target.abi_id, "i0034");
-        assert_eq!(target.dialect_op, "nvvm.barrier0");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 10);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(
-            target.backend_requirements,
-            &[
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LlvmNvptx,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(32),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(20)
-                        ])
-                    }
-                },
-                GeneratedBackendRequirement {
-                    backend: GeneratedIntrinsicBackend::LibNvvm,
-                    requirement: GeneratedTargetRequirement {
-                        minimum_ptx: GeneratedPtxVersion::from_encoded(10),
-                        hardware: GeneratedHardwareTarget::AnyOf(&[
-                            GeneratedHardwareAlternative::MinimumSm(75)
-                        ])
-                    }
-                }
-            ]
-        );
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "BARRIER_CTA_SYNC_ALIGNED_ALL_i",
-                asm: "bar.sync \t$i;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &["IntrConvergent", "IntrNoCallback"] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0001").unwrap();
-        assert_eq!(target.id, "thread_idx_x");
-        assert_eq!(target.abi_id, "i0001");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_tid_x");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_TID_x",
-                asm: "mov.u32 \t$d, %tid.x;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,1024>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0005").unwrap();
-        assert_eq!(target.id, "thread_idx_y");
-        assert_eq!(target.abi_id, "i0005");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_tid_y");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_TID_y",
-                asm: "mov.u32 \t$d, %tid.y;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,1024>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0009").unwrap();
-        assert_eq!(target.id, "thread_idx_z");
-        assert_eq!(target.abi_id, "i0009");
-        assert_eq!(target.dialect_op, "nvvm.read_ptx_sreg_tid_z");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 20);
-        assert_eq!(target.requirement.hardware, GeneratedHardwareTarget::All);
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[GeneratedSelectionAlternative {
-                source_record: "INT_PTX_SREG_TID_z",
-                asm: "mov.u32 \t$d, %tid.z;",
-                predicates: &[],
-                constraints: GeneratedSelectionConstraints {
-                    address_space: None,
-                    immediate_bindings: &[]
-                }
-            },]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrNoMem",
-                "IntrSpeculatable",
-                "NoUndef<ret>",
-                "Range<ret,0,64>"
-            ] as &[&str]
-        );
-        let target = generated_intrinsic_target_by_marker("v1:i0043").unwrap();
-        assert_eq!(target.id, "uni_sync");
-        assert_eq!(target.abi_id, "i0043");
-        assert_eq!(target.dialect_op, "nvvm.vote_sync_uni");
-        assert_eq!(target.variant, GeneratedIntrinsicVariant::Scalar);
-        assert_eq!(target.requirement.minimum_ptx.encoded(), 60);
-        assert_eq!(
-            target.requirement.hardware,
-            GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(30)])
-        );
-        assert_eq!(target.backend_requirements, &[]);
-        assert_eq!(
-            target.selections,
-            &[
-                GeneratedSelectionAlternative {
-                    source_record: "VOTE_SYNC_UNIi",
-                    asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-                GeneratedSelectionAlternative {
-                    source_record: "VOTE_SYNC_UNIr",
-                    asm: "vote.sync.uni.pred \t$dest, $pred, $mask;",
-                    predicates: &[
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30"
-                    ],
-                    constraints: GeneratedSelectionConstraints {
-                        address_space: None,
-                        immediate_bindings: &[]
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            target.llvm.unwrap().properties,
-            &[
-                "IntrConvergent",
-                "IntrInaccessibleMemOnly",
-                "IntrNoCallback"
-            ] as &[&str]
         );
         assert!(generated_intrinsic_target_by_marker("v1:i9999").is_none());
     }
