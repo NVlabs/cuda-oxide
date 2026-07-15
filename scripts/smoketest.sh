@@ -73,7 +73,7 @@ nvvm_verify_arch() {
     local ex="$1" arch="${LTOIR_ARCH}" floor=0 number
     case "${ex}" in
         cp_async_small) floor=80 ;;
-        generated_intrinsics) floor=75 ;;
+        generated_intrinsics) floor=80 ;;
         generated_ldmatrix) floor=75 ;;
         packed_atomic_add) floor=90 ;;
         shuffle_64) floor=75 ;;

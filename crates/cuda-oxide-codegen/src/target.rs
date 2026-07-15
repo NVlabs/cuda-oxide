@@ -166,18 +166,30 @@ fn contains_mma_m16n8k8_f32_tf32_features(contents: &str) -> bool {
     )
 }
 
-/// Checks for the Ampere INT8 MMA operation (PTX 7.0, sm_80+).
-///
-/// PTX permits both wrapping and `.satfinite` accumulator-overflow behavior.
-/// Match each complete legal mnemonic so a qualifier near-miss cannot raise
-/// the module target accidentally.
-fn contains_mma_m16n8k32_s32_s8_features(contents: &str) -> bool {
-    [
+/// Checks the dense Ampere INT8 MMA forms (PTX 7.0, sm_80+).
+fn contains_dense_int8_mma_features(contents: &str) -> bool {
+    const MNEMONICS: &[&str] = &[
+        "mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.s32.s8.u8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.s32.u8.s8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.s32.u8.u8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.satfinite.s32.s8.s8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.satfinite.s32.s8.u8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.satfinite.s32.u8.s8.s32",
+        "mma.sync.aligned.m16n8k16.row.col.satfinite.s32.u8.u8.s32",
         "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32",
+        "mma.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32",
+        "mma.sync.aligned.m16n8k32.row.col.s32.u8.s8.s32",
+        "mma.sync.aligned.m16n8k32.row.col.s32.u8.u8.s32",
         "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32",
-    ]
-    .into_iter()
-    .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.u8.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u8.s8.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u8.u8.s32",
+    ];
+
+    MNEMONICS
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
 }
 
 /// Checks for the Ampere FP64 tensor-core MMA operation (PTX 7.0, sm_80+).
@@ -287,7 +299,7 @@ fn contains_sm80_features(contents: &str) -> bool {
         || contains_mma_m16n8k16_f32_bf16_features(contents)
         || contains_mma_m16n8k16_f32_f16_features(contents)
         || contains_mma_m16n8k8_f32_tf32_features(contents)
-        || contains_mma_m16n8k32_s32_s8_features(contents)
+        || contains_dense_int8_mma_features(contents)
 }
 
 /// Checks for TMA/mbarrier instructions (Hopper+ compatible with Blackwell).
@@ -766,7 +778,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_mma_m16n8k16_f32_bf16_features(contents)
         || contains_mma_m16n8k16_f32_f16_features(contents)
         || contains_mma_m16n8k8_f32_tf32_features(contents)
-        || contains_mma_m16n8k32_s32_s8_features(contents)
+        || contains_dense_int8_mma_features(contents)
         || contains_mma_m8n8k4_f64_features(contents)
     {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx70);
@@ -1976,50 +1988,61 @@ mod tests {
 
     #[test]
     fn int8_mma_detection_applies_exact_sm80_and_ptx70_floors() {
-        let mnemonic = concat!(
-            "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 ",
-            "{$0, $1, $2, $3}, {$4, $5, $6, $7}, {$8, $9}, {$10, $11, $12, $13};"
-        );
-        let satfinite_mnemonic = concat!(
-            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 ",
-            "{$0, $1, $2, $3}, {$4, $5, $6, $7}, {$8, $9}, {$10, $11, $12, $13};"
-        );
+        let mut forms = 0;
+        for shape in ["m16n8k16", "m16n8k32"] {
+            for a_type in ["s8", "u8"] {
+                for b_type in ["s8", "u8"] {
+                    for satfinite in [false, true] {
+                        let overflow = if satfinite { ".satfinite" } else { "" };
+                        let spelling = format!(
+                            "mma.sync.aligned.{shape}.row.col{overflow}.s32.{a_type}.{b_type}.s32 {{$0}}, {{$1}}, {{$2}}, {{$3}};"
+                        );
+                        assert!(
+                            contains_dense_int8_mma_features(&spelling),
+                            "missed {spelling:?}"
+                        );
+                        assert_eq!(
+                            detect_module_requirements_in_llvm_text(&spelling),
+                            ModuleRequirements {
+                                features: DetectedFeatures::Sm80,
+                                ptx_isa: PtxIsaRequirement::Ptx70,
+                            },
+                            "{spelling}"
+                        );
+                        forms += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(forms, 16);
+
         for spelling in [
-            mnemonic,
-            satfinite_mnemonic,
-            "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32\t{$0}, {$1}, {$2}, {$3};",
-            "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32\\09{$0}, {$1}, {$2}, {$3};",
-            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32\t{$0}, {$1}, {$2}, {$3};",
-            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32\\09{$0}, {$1}, {$2}, {$3};",
-            ";mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            ";mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "prefix\\0Amma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "\"mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "{mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "$L:mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "/* comment */mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "@p mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "@!%p\\09mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
-            "@p mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.satfinite.s32.s8.u8.s32\t{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.s32.u8.s8.s32\\09{$0}, {$1}, {$2}, {$3};",
+            ";mma.sync.aligned.m16n8k16.row.col.s32.u8.u8.s32 {$0}, {$1}, {$2}, {$3};",
+            "prefix\\0Amma.sync.aligned.m16n8k32.row.col.satfinite.s32.u8.u8.s32 {$0}, {$1}, {$2}, {$3};",
+            "@p mma.sync.aligned.m16n8k16.row.col.s32.s8.u8.s32 {$0}, {$1}, {$2}, {$3};",
+            "@!%p\\09mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u8.s8.s32 {$0}, {$1}, {$2}, {$3};",
         ] {
             assert!(
-                contains_mma_m16n8k32_s32_s8_features(spelling),
+                contains_dense_int8_mma_features(spelling),
                 "missed {spelling:?}"
             );
         }
 
-        for spelling in [mnemonic, satfinite_mnemonic] {
-            let requirements = detect_module_requirements_in_llvm_text(spelling);
-            assert_eq!(requirements.features, DetectedFeatures::Sm80, "{spelling}");
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70, "{spelling}");
-        }
-        let requirements = detect_module_requirements_in_llvm_text(mnemonic);
+        let representative = concat!(
+            "mma.sync.aligned.m16n8k16.row.col.satfinite.s32.s8.u8.s32 ",
+            "{$0, $1, $2, $3}, {$4, $5}, {$6}, {$7, $8, $9, $10};"
+        );
+        let requirements = detect_module_requirements_in_llvm_text(representative);
         let (target, _) =
             resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
         assert_eq!(target, "sm_80");
 
         for near_miss in [
-            "mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k8.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.col.row.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32x {$0}, {$1}, {$2}, {$3};",
@@ -2028,6 +2051,8 @@ mod tests {
             "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32x {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.u32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.s32.s4.u8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.s32.u8.f16.s32 {$0}, {$1}, {$2}, {$3};",
             "not_mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "$mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "$mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
@@ -2040,7 +2065,7 @@ mod tests {
             ")mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
         ] {
             assert!(
-                !contains_mma_m16n8k32_s32_s8_features(near_miss),
+                !contains_dense_int8_mma_features(near_miss),
                 "matched {near_miss:?}"
             );
         }
@@ -2057,7 +2082,7 @@ mod tests {
             "{error}"
         );
 
-        let combined = format!("{mnemonic}\nmovmatrix.sync.aligned.m8n8.trans.b16 $0, $1;");
+        let combined = format!("{representative}\nmovmatrix.sync.aligned.m8n8.trans.b16 $0, $1;");
         assert_eq!(
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {

@@ -4627,19 +4627,21 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
     struct Case {
         shape: nvvm::RegisterMmaShapeAttr,
         accumulator: nvvm::RegisterMmaAccumulatorAttr,
-        element: nvvm::RegisterMmaElementAttr,
+        a_element: nvvm::RegisterMmaElementAttr,
+        b_element: nvvm::RegisterMmaElementAttr,
         overflow: nvvm::RegisterMmaOverflowAttr,
         operands: &'static [Carrier],
         results: &'static [Carrier],
-        template: &'static str,
+        template: String,
         constraints: &'static str,
     }
 
-    let cases = [
+    let mut cases = vec![
         Case {
             shape: nvvm::RegisterMmaShapeAttr::M16n8k16,
             accumulator: nvvm::RegisterMmaAccumulatorAttr::F32,
-            element: nvvm::RegisterMmaElementAttr::Bf16,
+            a_element: nvvm::RegisterMmaElementAttr::Bf16,
+            b_element: nvvm::RegisterMmaElementAttr::Bf16,
             overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
             operands: &[
                 Carrier::F32,
@@ -4658,13 +4660,15 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 ",
                 "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
                 "{$12, $13}, {$4, $5, $6, $7};"
-            ),
+            )
+            .into(),
             constraints: "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
         },
         Case {
             shape: nvvm::RegisterMmaShapeAttr::M16n8k16,
             accumulator: nvvm::RegisterMmaAccumulatorAttr::F32,
-            element: nvvm::RegisterMmaElementAttr::F16,
+            a_element: nvvm::RegisterMmaElementAttr::F16,
+            b_element: nvvm::RegisterMmaElementAttr::F16,
             overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
             operands: &[
                 Carrier::F32,
@@ -4683,13 +4687,15 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
                 "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
                 "{$12, $13}, {$4, $5, $6, $7};"
-            ),
+            )
+            .into(),
             constraints: "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
         },
         Case {
             shape: nvvm::RegisterMmaShapeAttr::M16n8k8,
             accumulator: nvvm::RegisterMmaAccumulatorAttr::F32,
-            element: nvvm::RegisterMmaElementAttr::Tf32,
+            a_element: nvvm::RegisterMmaElementAttr::Tf32,
+            b_element: nvvm::RegisterMmaElementAttr::Tf32,
             overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
             operands: &[
                 Carrier::F32,
@@ -4708,15 +4714,48 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 ",
                 "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
                 "{$12, $13}, {$4, $5, $6, $7};"
-            ),
+            )
+            .into(),
             constraints: "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
         },
         Case {
-            shape: nvvm::RegisterMmaShapeAttr::M16n8k32,
-            accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
-            element: nvvm::RegisterMmaElementAttr::S8,
-            overflow: nvvm::RegisterMmaOverflowAttr::Wrapping,
-            operands: &[
+            shape: nvvm::RegisterMmaShapeAttr::M8n8k4,
+            accumulator: nvvm::RegisterMmaAccumulatorAttr::F64,
+            a_element: nvvm::RegisterMmaElementAttr::F64,
+            b_element: nvvm::RegisterMmaElementAttr::F64,
+            overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
+            operands: &[Carrier::F64; 4],
+            results: &[Carrier::F64; 2],
+            template: concat!(
+                "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 ",
+                "{$0, $1}, {$4}, {$5}, {$2, $3};"
+            )
+            .into(),
+            constraints: "=d,=d,d,d,d,d",
+        },
+    ];
+
+    for (shape, shape_attr, operands, a_count, b_count, constraints) in [
+        (
+            "m16n8k16",
+            nvvm::RegisterMmaShapeAttr::M16n8k16,
+            &[
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ] as &'static [Carrier],
+            2,
+            1,
+            "=r,=r,=r,=r,r,r,r,r,r,r,r",
+        ),
+        (
+            "m16n8k32",
+            nvvm::RegisterMmaShapeAttr::M16n8k32,
+            &[
                 Carrier::I32,
                 Carrier::I32,
                 Carrier::I32,
@@ -4728,28 +4767,52 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 Carrier::U32,
                 Carrier::U32,
             ],
-            results: &[Carrier::I32; 4],
-            template: concat!(
-                "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 ",
-                "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
-                "{$12, $13}, {$4, $5, $6, $7};"
-            ),
-            constraints: "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r",
-        },
-        Case {
-            shape: nvvm::RegisterMmaShapeAttr::M8n8k4,
-            accumulator: nvvm::RegisterMmaAccumulatorAttr::F64,
-            element: nvvm::RegisterMmaElementAttr::F64,
-            overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
-            operands: &[Carrier::F64; 4],
-            results: &[Carrier::F64; 2],
-            template: concat!(
-                "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 ",
-                "{$0, $1}, {$4}, {$5}, {$2, $3};"
-            ),
-            constraints: "=d,=d,d,d,d,d",
-        },
-    ];
+            4,
+            2,
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r",
+        ),
+    ] {
+        for (a_name, a_element) in [
+            ("s8", nvvm::RegisterMmaElementAttr::S8),
+            ("u8", nvvm::RegisterMmaElementAttr::U8),
+        ] {
+            for (b_name, b_element) in [
+                ("s8", nvvm::RegisterMmaElementAttr::S8),
+                ("u8", nvvm::RegisterMmaElementAttr::U8),
+            ] {
+                for (overflow_name, overflow) in [
+                    ("", nvvm::RegisterMmaOverflowAttr::Wrapping),
+                    (".satfinite", nvvm::RegisterMmaOverflowAttr::Satfinite),
+                ] {
+                    let register_list = |first, count| {
+                        format!(
+                            "{{{}}}",
+                            (first..first + count)
+                                .map(|index| format!("${index}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    };
+                    let a = register_list(8, a_count);
+                    let b = register_list(8 + a_count, b_count);
+                    cases.push(Case {
+                        shape: shape_attr.clone(),
+                        accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
+                        a_element: a_element.clone(),
+                        b_element: b_element.clone(),
+                        overflow,
+                        operands,
+                        results: &[Carrier::I32; 4],
+                        template: format!(
+                            "mma.sync.aligned.{shape}.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {a}, {b}, {{$4, $5, $6, $7}};"
+                        ),
+                        constraints,
+                    });
+                }
+            }
+        }
+    }
+    assert_eq!(cases.len(), 20);
 
     let carrier_type = |ctx: &Context, carrier: Carrier| -> TypeHandle {
         match carrier {
@@ -4791,8 +4854,8 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
             let mma = nvvm::RegisterMmaOp::new(operation);
             mma.set_attr_nvvm_register_mma_shape(&ctx, case.shape.clone());
             mma.set_attr_nvvm_register_mma_accumulator(&ctx, case.accumulator.clone());
-            mma.set_attr_nvvm_register_mma_a_element(&ctx, case.element.clone());
-            mma.set_attr_nvvm_register_mma_b_element(&ctx, case.element.clone());
+            mma.set_attr_nvvm_register_mma_a_element(&ctx, case.a_element.clone());
+            mma.set_attr_nvvm_register_mma_b_element(&ctx, case.b_element.clone());
             mma.set_attr_nvvm_register_mma_a_layout(&ctx, nvvm::RegisterMmaLayoutAttr::Row);
             mma.set_attr_nvvm_register_mma_b_layout(&ctx, nvvm::RegisterMmaLayoutAttr::Col);
             mma.set_attr_nvvm_register_mma_overflow(&ctx, case.overflow.clone());
@@ -4820,7 +4883,7 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 asm.get_attr_inline_asm_template(&ctx)
                     .as_deref()
                     .map(|value| String::from(value.clone())),
-                Some(case.template.to_string())
+                Some(case.template.clone())
             );
             assert_eq!(
                 asm.get_attr_inline_asm_constraints(&ctx)

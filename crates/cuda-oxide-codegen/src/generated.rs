@@ -467,4 +467,164 @@ mod tests {
             "{error}"
         );
     }
+
+    #[test]
+    fn integer_register_mma_markers_require_exact_variant_attributes() {
+        use dialect_nvvm::ops::{
+            RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
+            RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+        };
+        use pliron::basic_block::BasicBlock;
+
+        fn register_mma(
+            ctx: &mut Context,
+            shape: RegisterMmaShapeAttr,
+            a_element: RegisterMmaElementAttr,
+            b_element: RegisterMmaElementAttr,
+            overflow: RegisterMmaOverflowAttr,
+            marker: &str,
+        ) -> Ptr<Operation> {
+            let (a_count, b_count) = match &shape {
+                RegisterMmaShapeAttr::M16n8k16 => (2, 1),
+                RegisterMmaShapeAttr::M16n8k32 => (4, 2),
+                _ => panic!("unsupported integer MMA shape"),
+            };
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+            let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..4)
+                .map(|_| i32_ty.into())
+                .chain((0..a_count + b_count).map(|_| u32_ty.into()))
+                .collect();
+            let block = BasicBlock::new(ctx, None, argument_types);
+            let operands = (0..4 + a_count + b_count)
+                .map(|index| block.deref(ctx).get_argument(index))
+                .collect();
+            let operation = Operation::new(
+                ctx,
+                RegisterMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = RegisterMmaOp::new(operation);
+            mma.set_attr_nvvm_register_mma_shape(ctx, shape);
+            mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_register_mma_a_element(ctx, a_element);
+            mma.set_attr_nvvm_register_mma_b_element(ctx, b_element);
+            mma.set_attr_nvvm_register_mma_a_layout(ctx, RegisterMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_register_mma_b_layout(ctx, RegisterMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_register_mma_overflow(ctx, overflow);
+            operation.deref_mut(ctx).attributes.set(
+                Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                StringAttr::new(marker.to_string()),
+            );
+            operation
+        }
+
+        fn require_marker(ctx: &Context, op: Ptr<Operation>, marker: &str, id: &str) {
+            let requirements =
+                collect_generated_intrinsic_requirements(ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            assert_eq!(requirements.targets[0].marker, marker);
+            assert_eq!(requirements.targets[0].id, id);
+        }
+
+        fn reject_marker(ctx: &Context, op: Ptr<Operation>) {
+            let error =
+                collect_generated_intrinsic_requirements(ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap_err()
+                    .to_string();
+            assert!(
+                error.contains("does not match the exact variant attributes"),
+                "{error}"
+            );
+        }
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+
+        let k16_satfinite = register_mma(
+            &mut ctx,
+            RegisterMmaShapeAttr::M16n8k16,
+            RegisterMmaElementAttr::S8,
+            RegisterMmaElementAttr::U8,
+            RegisterMmaOverflowAttr::Satfinite,
+            "v1:i0118",
+        );
+        require_marker(
+            &ctx,
+            k16_satfinite,
+            "v1:i0118",
+            "mma_m16n8k16_s32_s8_u8_satfinite",
+        );
+
+        let k32_wrapping = register_mma(
+            &mut ctx,
+            RegisterMmaShapeAttr::M16n8k32,
+            RegisterMmaElementAttr::U8,
+            RegisterMmaElementAttr::S8,
+            RegisterMmaOverflowAttr::Wrapping,
+            "v1:i0116",
+        );
+        require_marker(&ctx, k32_wrapping, "v1:i0116", "mma_m16n8k32_s32_u8_s8");
+
+        let wrong_signedness = register_mma(
+            &mut ctx,
+            RegisterMmaShapeAttr::M16n8k16,
+            RegisterMmaElementAttr::U8,
+            RegisterMmaElementAttr::U8,
+            RegisterMmaOverflowAttr::Satfinite,
+            "v1:i0118",
+        );
+        reject_marker(&ctx, wrong_signedness);
+
+        let wrong_overflow = register_mma(
+            &mut ctx,
+            RegisterMmaShapeAttr::M16n8k16,
+            RegisterMmaElementAttr::S8,
+            RegisterMmaElementAttr::U8,
+            RegisterMmaOverflowAttr::Wrapping,
+            "v1:i0118",
+        );
+        reject_marker(&ctx, wrong_overflow);
+
+        let wrong_shape = register_mma(
+            &mut ctx,
+            RegisterMmaShapeAttr::M16n8k32,
+            RegisterMmaElementAttr::S8,
+            RegisterMmaElementAttr::U8,
+            RegisterMmaOverflowAttr::Satfinite,
+            "v1:i0118",
+        );
+        reject_marker(&ctx, wrong_shape);
+    }
+
+    #[test]
+    fn integer_register_mma_targets_require_ampere_on_both_backends() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedHardwareAlternative, GeneratedHardwareTarget,
+        };
+
+        for marker in [
+            "v1:i0108", "v1:i0110", "v1:i0111", "v1:i0112", "v1:i0113", "v1:i0114", "v1:i0115",
+            "v1:i0116", "v1:i0117", "v1:i0118", "v1:i0119", "v1:i0120", "v1:i0121", "v1:i0122",
+            "v1:i0123", "v1:i0124",
+        ] {
+            let target = generated_intrinsic_target_by_marker(marker).unwrap();
+            for backend in [
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                GeneratedIntrinsicBackend::LibNvvm,
+            ] {
+                let requirement = target.requirement_for_backend(backend);
+                assert_eq!(requirement.minimum_ptx.encoded(), 70, "{marker}");
+                assert_eq!(
+                    requirement.hardware,
+                    GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)]),
+                    "{marker}"
+                );
+            }
+        }
+    }
 }

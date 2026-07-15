@@ -147,7 +147,31 @@ pub struct OverlayShardFile {
     pub schema: u32,
     pub family: String,
     #[serde(rename = "intrinsic")]
+    #[serde(default)]
     pub intrinsics: Vec<OverlayIntrinsic>,
+    #[serde(default)]
+    pub register_mma_int8: Option<RegisterMmaInt8Admission>,
+}
+
+/// Compact admission for a closed dense INT8 register-MMA family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaInt8Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<RegisterMmaInt8Variant>,
+}
+
+/// One reviewed member of a dense INT8 register-MMA family.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaInt8Variant {
+    pub shape: RegisterMmaShape,
+    pub a_element: RegisterMmaElement,
+    pub b_element: RegisterMmaElement,
+    pub overflow: RegisterMmaOverflow,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -385,6 +409,7 @@ pub struct RegisterMma {
     pub overflow: RegisterMmaOverflow,
     pub participation: RegisterMmaParticipation,
     pub adapter: RegisterMmaAdapter,
+    pub compatibility_source: RegisterMmaCompatibilitySource,
     pub runtime_validation: RuntimeValidation,
 }
 
@@ -413,6 +438,7 @@ pub enum RegisterMmaElement {
     Tf32,
     F64,
     S8,
+    U8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -443,6 +469,15 @@ pub enum RegisterMmaAdapter {
     C4F32A4U32B2U32ToD4F32,
     C2F64A1F64B1F64ToD2F64,
     C4I32A4U32B2U32ToD4I32,
+    C4I32A2U32B1U32ToD4I32,
+}
+
+/// Where the stable `cuda_device::wmma` callable is defined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaCompatibilitySource {
+    ExistingStub,
+    GeneratedStub,
 }
 
 /// Closed semantic contract for the generated packed global atomic-add
@@ -1820,6 +1855,48 @@ runtime_validation = "unexecuted"
         ] {
             assert!(
                 toml::from_str::<MbarrierBasic>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn register_mma_contract_parses_unsigned_k16_generated_stub() {
+        let valid = r#"
+shape = "m16n8k16"
+accumulator = "s32"
+a_element = "s8"
+b_element = "u8"
+a_layout = "row"
+b_layout = "col"
+overflow = "satfinite"
+participation = "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes"
+adapter = "c4_i32_a2_u32_b1_u32_to_d4_i32"
+compatibility_source = "generated_stub"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<RegisterMma>(valid).unwrap();
+        assert_eq!(parsed.b_element, RegisterMmaElement::U8);
+        assert_eq!(parsed.adapter, RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32);
+        assert_eq!(
+            parsed.compatibility_source,
+            RegisterMmaCompatibilitySource::GeneratedStub
+        );
+
+        for invalid in [
+            valid.replace("b_element = \"u8\"", "b_element = \"i8\""),
+            valid.replace(
+                "adapter = \"c4_i32_a2_u32_b1_u32_to_d4_i32\"",
+                "adapter = \"direct\"",
+            ),
+            valid.replace(
+                "compatibility_source = \"generated_stub\"",
+                "compatibility_source = \"automatic\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<RegisterMma>(&invalid).is_err(),
                 "{invalid}"
             );
         }
