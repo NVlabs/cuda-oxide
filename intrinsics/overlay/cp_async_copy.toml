@@ -1,6 +1,6 @@
 # Reviewed classic global-to-shared cp.async copies.
 
-schema = 16
+schema = 17
 family = "cp_async_copy"
 
 [[intrinsic]]

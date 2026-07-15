@@ -1030,6 +1030,7 @@ fn register_mma_attr_variants(
     let shape = match mma.shape {
         RegisterMmaShape::M8n8k4 => "RegisterMmaShapeAttr::M8n8k4",
         RegisterMmaShape::M8n8k16 => "RegisterMmaShapeAttr::M8n8k16",
+        RegisterMmaShape::M8n8k32 => "RegisterMmaShapeAttr::M8n8k32",
         RegisterMmaShape::M16n8k8 => "RegisterMmaShapeAttr::M16n8k8",
         RegisterMmaShape::M16n8k16 => "RegisterMmaShapeAttr::M16n8k16",
         RegisterMmaShape::M16n8k32 => "RegisterMmaShapeAttr::M16n8k32",
@@ -1044,6 +1045,8 @@ fn register_mma_attr_variants(
         RegisterMmaElement::F16 => "RegisterMmaElementAttr::F16",
         RegisterMmaElement::Tf32 => "RegisterMmaElementAttr::Tf32",
         RegisterMmaElement::F64 => "RegisterMmaElementAttr::F64",
+        RegisterMmaElement::S4 => "RegisterMmaElementAttr::S4",
+        RegisterMmaElement::U4 => "RegisterMmaElementAttr::U4",
         RegisterMmaElement::S8 => "RegisterMmaElementAttr::S8",
         RegisterMmaElement::U8 => "RegisterMmaElementAttr::U8",
     };
@@ -3184,7 +3187,7 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 #[pliron_attr(name = "nvvm.register_mma_shape", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaShapeAttr { M8n8k4, M8n8k16, M16n8k8, M16n8k16, M16n8k32 }
+pub enum RegisterMmaShapeAttr { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32 }
 
 #[pliron_attr(name = "nvvm.register_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -3192,7 +3195,7 @@ pub enum RegisterMmaAccumulatorAttr { F32, F64, S32 }
 
 #[pliron_attr(name = "nvvm.register_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaElementAttr { Bf16, F16, Tf32, F64, S8, U8 }
+pub enum RegisterMmaElementAttr { Bf16, F16, Tf32, F64, S4, U4, S8, U8 }
 
 #[pliron_attr(name = "nvvm.register_mma_layout", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -5477,6 +5480,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
         let shape = match mma.shape {
             RegisterMmaShape::M8n8k4 => "GeneratedRegisterMmaShape::M8n8k4",
             RegisterMmaShape::M8n8k16 => "GeneratedRegisterMmaShape::M8n8k16",
+            RegisterMmaShape::M8n8k32 => "GeneratedRegisterMmaShape::M8n8k32",
             RegisterMmaShape::M16n8k8 => "GeneratedRegisterMmaShape::M16n8k8",
             RegisterMmaShape::M16n8k16 => "GeneratedRegisterMmaShape::M16n8k16",
             RegisterMmaShape::M16n8k32 => "GeneratedRegisterMmaShape::M16n8k32",
@@ -5491,6 +5495,8 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             RegisterMmaElement::F16 => "GeneratedRegisterMmaElement::F16",
             RegisterMmaElement::Tf32 => "GeneratedRegisterMmaElement::Tf32",
             RegisterMmaElement::F64 => "GeneratedRegisterMmaElement::F64",
+            RegisterMmaElement::S4 => "GeneratedRegisterMmaElement::S4",
+            RegisterMmaElement::U4 => "GeneratedRegisterMmaElement::U4",
             RegisterMmaElement::S8 => "GeneratedRegisterMmaElement::S8",
             RegisterMmaElement::U8 => "GeneratedRegisterMmaElement::U8",
         };
@@ -5572,7 +5578,12 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaShape { M8n8k4, M16n8k8",
-        "GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M16n8k8",
+        "GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }",
+        "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S4, U4, S8, U8 }",
     );
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -5613,7 +5624,12 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8",
-        "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16),\n                GeneratedRegisterMmaShape::M16n8k8",
+        "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16),\n                GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32),\n                GeneratedRegisterMmaShape::M16n8k8",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8",
+        "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S4 => actual == Some(&RegisterMmaElementAttr::S4),\n                GeneratedRegisterMmaElement::U4 => actual == Some(&RegisterMmaElementAttr::U4),\n                GeneratedRegisterMmaElement::S8",
     );
     output.push_str(
         "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
@@ -7801,7 +7817,7 @@ mod tests {
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         let records: Vec<_> = register_mmas(&catalog).collect();
-        assert_eq!(records.len(), 28);
+        assert_eq!(records.len(), 36);
         let generated_records = records
             .iter()
             .copied()
@@ -7818,7 +7834,7 @@ mod tests {
                     == RegisterMmaCompatibilitySource::ExistingStub
             })
             .collect::<Vec<_>>();
-        assert_eq!(generated_records.len(), 23);
+        assert_eq!(generated_records.len(), 31);
         assert_eq!(existing_records.len(), 5);
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -7830,7 +7846,7 @@ mod tests {
         assert!(raw.contains("Signed accumulator overflow clamps"));
 
         let compatibility = render_compat_register_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 23);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 31);
         for record in generated_records {
             let arguments = ["c", "a", "b"]
                 .into_iter()
@@ -7852,7 +7868,10 @@ mod tests {
         assert!(dialect.contains("let recipe: (&[MmaCarrier], &[MmaCarrier])"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k4"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k16"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k32"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k32"));
+        assert!(dialect.contains("RegisterMmaElementAttr::S4"));
+        assert!(dialect.contains("RegisterMmaElementAttr::U4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U8"));
         assert!(dialect.contains("RegisterMmaOverflowAttr::Wrapping"));
         assert!(dialect.contains("RegisterMmaOverflowAttr::Satfinite"));
@@ -7888,6 +7907,8 @@ mod tests {
         assert!(lowering.contains("=r,=r,r,r,r,r"));
         assert!(lowering.contains("mma.sync.aligned.m8n8k16.row.col.s32.s8.u8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m8n8k16.row.col.satfinite.s32.u8.s8.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m8n8k32.row.col.s32.s4.u4.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m8n8k32.row.col.satfinite.s32.u4.s4.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k16.row.col.s32.s8.u8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u8.s8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32"));
@@ -7896,13 +7917,24 @@ mod tests {
         assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
         assert!(targets.contains("GeneratedRegisterMmaShape::M8n8k4"));
         assert!(targets.contains(
-            "pub enum GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M16n8k8, M16n8k16, M16n8k32 }"
+            "pub enum GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32 }"
         ));
         assert!(targets.contains(
             "GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16)"
         ));
+        assert!(targets.contains(
+            "GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32)"
+        ));
         assert!(targets.contains("GeneratedRegisterMmaShape::M16n8k32"));
+        assert!(targets.contains("GeneratedRegisterMmaElement::S4"));
+        assert!(targets.contains("GeneratedRegisterMmaElement::U4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U8"));
+        assert!(targets.contains(
+            "a_element: GeneratedRegisterMmaElement::S4, b_element: GeneratedRegisterMmaElement::U4"
+        ));
+        assert!(targets.contains(
+            "a_element: GeneratedRegisterMmaElement::U4, b_element: GeneratedRegisterMmaElement::S4"
+        ));
         assert!(targets.contains(
             "a_element: GeneratedRegisterMmaElement::S8, b_element: GeneratedRegisterMmaElement::U8"
         ));

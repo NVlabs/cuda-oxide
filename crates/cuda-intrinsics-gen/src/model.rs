@@ -150,24 +150,26 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub intrinsics: Vec<OverlayIntrinsic>,
     #[serde(default)]
-    pub register_mma_int8: Option<RegisterMmaInt8Admission>,
+    pub register_mma_int4: Option<RegisterMmaIntegerAdmission>,
+    #[serde(default)]
+    pub register_mma_int8: Option<RegisterMmaIntegerAdmission>,
 }
 
-/// Compact admission for a closed dense INT8 register-MMA family.
+/// Compact admission for a closed dense integer register-MMA family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RegisterMmaInt8Admission {
+pub struct RegisterMmaIntegerAdmission {
     pub llvm_evidence_profile: String,
     pub libnvvm_evidence_profile: String,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
-    pub variants: Vec<RegisterMmaInt8Variant>,
+    pub variants: Vec<RegisterMmaIntegerVariant>,
 }
 
-/// One reviewed member of a dense INT8 register-MMA family.
+/// One reviewed member of a dense integer register-MMA family.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RegisterMmaInt8Variant {
+pub struct RegisterMmaIntegerVariant {
     pub shape: RegisterMmaShape,
     pub a_element: RegisterMmaElement,
     pub b_element: RegisterMmaElement,
@@ -418,6 +420,7 @@ pub struct RegisterMma {
 pub enum RegisterMmaShape {
     M8n8k4,
     M8n8k16,
+    M8n8k32,
     M16n8k8,
     M16n8k16,
     M16n8k32,
@@ -438,6 +441,8 @@ pub enum RegisterMmaElement {
     F16,
     Tf32,
     F64,
+    S4,
+    U4,
     S8,
     U8,
 }

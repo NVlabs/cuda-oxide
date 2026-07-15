@@ -4829,7 +4829,41 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
             }
         }
     }
-    assert_eq!(cases.len(), 28);
+
+    for (a_name, a_element) in [
+        ("s4", nvvm::RegisterMmaElementAttr::S4),
+        ("u4", nvvm::RegisterMmaElementAttr::U4),
+    ] {
+        for (b_name, b_element) in [
+            ("s4", nvvm::RegisterMmaElementAttr::S4),
+            ("u4", nvvm::RegisterMmaElementAttr::U4),
+        ] {
+            for (overflow_name, overflow) in [
+                ("", nvvm::RegisterMmaOverflowAttr::Wrapping),
+                (".satfinite", nvvm::RegisterMmaOverflowAttr::Satfinite),
+            ] {
+                cases.push(Case {
+                    shape: nvvm::RegisterMmaShapeAttr::M8n8k32,
+                    accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
+                    a_element: a_element.clone(),
+                    b_element: b_element.clone(),
+                    overflow,
+                    operands: &[
+                        Carrier::I32,
+                        Carrier::I32,
+                        Carrier::U32,
+                        Carrier::U32,
+                    ],
+                    results: &[Carrier::I32; 2],
+                    template: format!(
+                        "mma.sync.aligned.m8n8k32.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1}}, {{$4}}, {{$5}}, {{$2, $3}};"
+                    ),
+                    constraints: "=r,=r,r,r,r,r",
+                });
+            }
+        }
+    }
+    assert_eq!(cases.len(), 36);
 
     let carrier_type = |ctx: &Context, carrier: Carrier| -> TypeHandle {
         match carrier {

@@ -27,7 +27,7 @@ use crate::model::{
     PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
     PreSm70MemberMaskRule, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation,
     RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource,
-    RegisterMmaElement, RegisterMmaInt8Admission, RegisterMmaLayout, RegisterMmaOverflow,
+    RegisterMmaElement, RegisterMmaIntegerAdmission, RegisterMmaLayout, RegisterMmaOverflow,
     RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, VoteAdapter, VoteMode,
     VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
     WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
@@ -41,9 +41,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 20;
-const OVERLAY_SHARD_SCHEMA: u32 = 16;
-pub(crate) const CATALOG_SCHEMA: u32 = 19;
+const OVERLAY_SCHEMA: u32 = 21;
+const OVERLAY_SHARD_SCHEMA: u32 = 17;
+pub(crate) const CATALOG_SCHEMA: u32 = 20;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -239,12 +239,24 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             shard.schema,
             path.display()
         );
-        if let Some(admission) = shard.register_mma_int8.take() {
+        let integer_mma_admission = match (
+            shard.register_mma_int4.take(),
+            shard.register_mma_int8.take(),
+        ) {
+            (Some(_), Some(_)) => bail!(
+                "overlay shard {} contains more than one compact integer MMA admission",
+                path.display()
+            ),
+            (Some(admission), None) => Some((RegisterMmaIntegerKind::Int4, admission)),
+            (None, Some(admission)) => Some((RegisterMmaIntegerKind::Int8, admission)),
+            (None, None) => None,
+        };
+        if let Some((kind, admission)) = integer_mma_admission {
             ensure!(
                 shard.family == "register_mma" && shard.intrinsics.is_empty(),
-                "compact INT8 MMA admission must be the only content of a register_mma shard"
+                "compact integer MMA admission must be the only content of a register_mma shard"
             );
-            shard.intrinsics = expand_register_mma_int8_admission(&admission)?;
+            shard.intrinsics = expand_register_mma_integer_admission(kind, &admission)?;
         }
         ensure!(
             !shard.intrinsics.is_empty(),
@@ -5562,9 +5574,9 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
         C2I32A1U32B1U32ToD2I32, C4I32A2U32B1U32ToD4I32, C4I32A4U32B2U32ToD4I32,
     };
     use RegisterMmaCompatibilitySource::{ExistingStub, GeneratedStub};
-    use RegisterMmaElement::{S8, U8};
+    use RegisterMmaElement::{S4, S8, U4, U8};
     use RegisterMmaOverflow::{Satfinite, Wrapping};
-    use RegisterMmaShape::{M8n8k16, M16n8k16, M16n8k32};
+    use RegisterMmaShape::{M8n8k16, M8n8k32, M16n8k16, M16n8k32};
 
     if !common || mma.accumulator != RegisterMmaAccumulator::S32 {
         return None;
@@ -5764,17 +5776,85 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
                 "llvm.nvvm.mma.m8n8k16.row.col.satfinite.u8.s8",
                 GeneratedStub,
             ),
+            (M8n8k32, S4, S4, Wrapping) => (
+                "mma_m8n8k32_s32_s4",
+                "i0133",
+                "matrix.mma.m8n8k32.row.col.s32.s4.s4.s32.wrapping",
+                "int_nvvm_mma_m8n8k32_row_col_s4",
+                "llvm.nvvm.mma.m8n8k32.row.col.s4",
+                GeneratedStub,
+            ),
+            (M8n8k32, S4, U4, Wrapping) => (
+                "mma_m8n8k32_s32_s4_u4",
+                "i0134",
+                "matrix.mma.m8n8k32.row.col.s32.s4.u4.s32.wrapping",
+                "int_nvvm_mma_m8n8k32_row_col_s4_u4",
+                "llvm.nvvm.mma.m8n8k32.row.col.s4.u4",
+                GeneratedStub,
+            ),
+            (M8n8k32, U4, U4, Wrapping) => (
+                "mma_m8n8k32_s32_u4",
+                "i0135",
+                "matrix.mma.m8n8k32.row.col.s32.u4.u4.s32.wrapping",
+                "int_nvvm_mma_m8n8k32_row_col_u4",
+                "llvm.nvvm.mma.m8n8k32.row.col.u4",
+                GeneratedStub,
+            ),
+            (M8n8k32, U4, S4, Wrapping) => (
+                "mma_m8n8k32_s32_u4_s4",
+                "i0136",
+                "matrix.mma.m8n8k32.row.col.s32.u4.s4.s32.wrapping",
+                "int_nvvm_mma_m8n8k32_row_col_u4_s4",
+                "llvm.nvvm.mma.m8n8k32.row.col.u4.s4",
+                GeneratedStub,
+            ),
+            (M8n8k32, S4, S4, Satfinite) => (
+                "mma_m8n8k32_s32_s4_satfinite",
+                "i0137",
+                "matrix.mma.m8n8k32.row.col.s32.s4.s4.s32.satfinite",
+                "int_nvvm_mma_m8n8k32_row_col_satfinite_s4",
+                "llvm.nvvm.mma.m8n8k32.row.col.satfinite.s4",
+                GeneratedStub,
+            ),
+            (M8n8k32, S4, U4, Satfinite) => (
+                "mma_m8n8k32_s32_s4_u4_satfinite",
+                "i0138",
+                "matrix.mma.m8n8k32.row.col.s32.s4.u4.s32.satfinite",
+                "int_nvvm_mma_m8n8k32_row_col_satfinite_s4_u4",
+                "llvm.nvvm.mma.m8n8k32.row.col.satfinite.s4.u4",
+                GeneratedStub,
+            ),
+            (M8n8k32, U4, U4, Satfinite) => (
+                "mma_m8n8k32_s32_u4_satfinite",
+                "i0139",
+                "matrix.mma.m8n8k32.row.col.s32.u4.u4.s32.satfinite",
+                "int_nvvm_mma_m8n8k32_row_col_satfinite_u4",
+                "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4",
+                GeneratedStub,
+            ),
+            (M8n8k32, U4, S4, Satfinite) => (
+                "mma_m8n8k32_s32_u4_s4_satfinite",
+                "i0140",
+                "matrix.mma.m8n8k32.row.col.s32.u4.s4.s32.satfinite",
+                "int_nvvm_mma_m8n8k32_row_col_satfinite_u4_s4",
+                "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4.s4",
+                GeneratedStub,
+            ),
             _ => return None,
         };
 
     let (rust_arguments, dialect_operands, llvm_arguments, adapter, shape, register_counts) =
         match mma.shape {
-            M8n8k16 => (
+            M8n8k16 | M8n8k32 => (
                 &["[i32; 2]", "u32", "u32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32"] as &'static [&'static str],
                 C2I32A1U32B1U32ToD2I32,
-                "m8n8k16",
+                match mma.shape {
+                    M8n8k16 => "m8n8k16",
+                    M8n8k32 => "m8n8k32",
+                    _ => unreachable!(),
+                },
                 [2, 1, 1, 2],
             ),
             M16n8k16 => (
@@ -5804,7 +5884,7 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
     }
 
     let (rust_result, dialect_results, llvm_results, minimum_ptx, minimum_sm) = match mma.shape {
-        M8n8k16 => (
+        M8n8k16 | M8n8k32 => (
             "[i32; 2]",
             &["i32", "i32"] as &'static [&'static str],
             &["i32", "i32"] as &'static [&'static str],
@@ -5822,6 +5902,8 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
     };
 
     let element = |element| match element {
+        S4 => Some("s4"),
+        U4 => Some("u4"),
         S8 => Some("s8"),
         U8 => Some("u8"),
         _ => None,
@@ -6022,8 +6104,41 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
     }
 }
 
-fn expand_register_mma_int8_admission(
-    admission: &RegisterMmaInt8Admission,
+#[derive(Debug, Clone, Copy)]
+enum RegisterMmaIntegerKind {
+    Int4,
+    Int8,
+}
+
+impl RegisterMmaIntegerKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Int4 => "INT4",
+            Self::Int8 => "INT8",
+        }
+    }
+
+    fn supports(self, shape: RegisterMmaShape, element: RegisterMmaElement) -> bool {
+        match self {
+            Self::Int4 => {
+                shape == RegisterMmaShape::M8n8k32
+                    && matches!(element, RegisterMmaElement::S4 | RegisterMmaElement::U4)
+            }
+            Self::Int8 => {
+                matches!(
+                    shape,
+                    RegisterMmaShape::M8n8k16
+                        | RegisterMmaShape::M16n8k16
+                        | RegisterMmaShape::M16n8k32
+                ) && matches!(element, RegisterMmaElement::S8 | RegisterMmaElement::U8)
+            }
+        }
+    }
+}
+
+fn expand_register_mma_integer_admission(
+    kind: RegisterMmaIntegerKind,
+    admission: &RegisterMmaIntegerAdmission,
 ) -> Result<Vec<OverlayIntrinsic>> {
     use RegisterMmaAdapter::{
         C2I32A1U32B1U32ToD2I32, C4I32A2U32B1U32ToD4I32, C4I32A4U32B2U32ToD4I32,
@@ -6031,15 +6146,17 @@ fn expand_register_mma_int8_admission(
     use RegisterMmaCompatibilitySource::GeneratedStub;
     use RegisterMmaLayout::{Col, Row};
     use RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes;
-    use RegisterMmaShape::{M8n8k16, M16n8k16, M16n8k32};
+    use RegisterMmaShape::{M8n8k16, M8n8k32, M16n8k16, M16n8k32};
 
     ensure!(
         !admission.variants.is_empty(),
-        "compact INT8 MMA admission has no variants"
+        "compact {} MMA admission has no variants",
+        kind.label()
     );
     ensure!(
         admission.runtime_validation == RuntimeValidation::Unexecuted,
-        "INT8 MMA runtime validation may be marked executed only with GPU evidence"
+        "{} MMA runtime validation may be marked executed only with GPU evidence",
+        kind.label()
     );
 
     let mut seen = BTreeSet::new();
@@ -6052,13 +6169,23 @@ fn expand_register_mma_int8_admission(
                 variant.b_element,
                 variant.overflow,
             )),
-            "compact INT8 MMA admission contains a duplicate variant"
+            "compact {} MMA admission contains a duplicate variant",
+            kind.label()
+        );
+        ensure!(
+            kind.supports(variant.shape, variant.a_element)
+                && kind.supports(variant.shape, variant.b_element),
+            "compact {} MMA admission contains an unsupported shape or element",
+            kind.label()
         );
         let adapter = match variant.shape {
-            M8n8k16 => C2I32A1U32B1U32ToD2I32,
+            M8n8k16 | M8n8k32 => C2I32A1U32B1U32ToD2I32,
             M16n8k16 => C4I32A2U32B1U32ToD4I32,
             M16n8k32 => C4I32A4U32B2U32ToD4I32,
-            _ => bail!("compact INT8 MMA admission contains an unsupported shape"),
+            _ => bail!(
+                "compact {} MMA admission contains an unsupported shape",
+                kind.label()
+            ),
         };
         let mma = RegisterMma {
             shape: variant.shape,
@@ -6073,30 +6200,43 @@ fn expand_register_mma_int8_admission(
             compatibility_source: GeneratedStub,
             runtime_validation: admission.runtime_validation,
         };
-        let recipe = register_mma_recipe(&mma).context(
-            "compact INT8 MMA admission requests a variant outside the closed recipe set",
-        )?;
+        let recipe = register_mma_recipe(&mma).with_context(|| {
+            format!(
+                "compact {} MMA admission requests a variant outside the closed recipe set",
+                kind.label()
+            )
+        })?;
         ensure!(
             recipe.compatibility_source == GeneratedStub,
-            "compact INT8 MMA admission may only add generated compatibility stubs"
+            "compact {} MMA admission may only add generated compatibility stubs",
+            kind.label()
         );
 
-        let element = |element| match element {
-            RegisterMmaElement::S8 => Ok("signed"),
-            RegisterMmaElement::U8 => Ok("unsigned"),
-            _ => bail!("compact INT8 MMA admission requires s8 or u8 elements"),
+        let element = |element| match (kind, element) {
+            (RegisterMmaIntegerKind::Int4, RegisterMmaElement::S4)
+            | (RegisterMmaIntegerKind::Int8, RegisterMmaElement::S8) => Ok("signed"),
+            (RegisterMmaIntegerKind::Int4, RegisterMmaElement::U4)
+            | (RegisterMmaIntegerKind::Int8, RegisterMmaElement::U8) => Ok("unsigned"),
+            _ => bail!(
+                "compact {} MMA admission contains an unsupported element",
+                kind.label()
+            ),
         };
         let overflow = match variant.overflow {
             RegisterMmaOverflow::Wrapping => "wrapping",
             RegisterMmaOverflow::Satfinite => "saturating",
             RegisterMmaOverflow::NotApplicable => {
-                bail!("compact INT8 MMA admission requires an integer overflow mode")
+                bail!(
+                    "compact {} MMA admission requires an integer overflow mode",
+                    kind.label()
+                )
             }
         };
         let summary = format!(
-            "Multiplies warp-distributed {} A and {} B INT8 fragments and adds a {overflow} s32 accumulator.",
+            "Multiplies warp-distributed {} A and {} B {} fragments and adds a {overflow} s32 accumulator.",
             element(variant.a_element)?,
             element(variant.b_element)?,
+            kind.label(),
         );
 
         records.push(OverlayIntrinsic {
@@ -8286,8 +8426,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 20);
-        assert_eq!(overlay.intrinsics.len(), 132);
+        assert_eq!(overlay.shards.len(), 21);
+        assert_eq!(overlay.intrinsics.len(), 140);
         assert_eq!(
             overlay
                 .intrinsics
@@ -8334,7 +8474,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "register_mma")
                 .count(),
-            28
+            36
         );
         assert_eq!(
             overlay
@@ -8438,9 +8578,9 @@ mod tests {
             .iter()
             .filter(|record| record.family == "register_mma")
             .collect();
-        assert_eq!(records.len(), 28);
+        assert_eq!(records.len(), 36);
 
-        let int8_records: Vec<_> = records
+        let integer_records: Vec<_> = records
             .iter()
             .copied()
             .filter(|record| {
@@ -8450,15 +8590,45 @@ mod tests {
                     .is_some_and(|mma| mma.accumulator == RegisterMmaAccumulator::S32)
             })
             .collect();
+        assert_eq!(integer_records.len(), 32);
+        let int8_records = integer_records
+            .iter()
+            .copied()
+            .filter(|record| {
+                let mma = record.register_mma.as_ref().unwrap();
+                matches!(
+                    mma.a_element,
+                    RegisterMmaElement::S8 | RegisterMmaElement::U8
+                ) && matches!(
+                    mma.b_element,
+                    RegisterMmaElement::S8 | RegisterMmaElement::U8
+                )
+            })
+            .collect::<Vec<_>>();
         assert_eq!(int8_records.len(), 24);
-        let actual_variants = int8_records
+        let int4_records = integer_records
+            .iter()
+            .copied()
+            .filter(|record| {
+                let mma = record.register_mma.as_ref().unwrap();
+                matches!(
+                    mma.a_element,
+                    RegisterMmaElement::S4 | RegisterMmaElement::U4
+                ) && matches!(
+                    mma.b_element,
+                    RegisterMmaElement::S4 | RegisterMmaElement::U4
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(int4_records.len(), 8);
+        let actual_variants = integer_records
             .iter()
             .map(|record| {
                 let mma = record.register_mma.as_ref().unwrap();
                 (mma.shape, mma.a_element, mma.b_element, mma.overflow)
             })
             .collect::<BTreeSet<_>>();
-        let expected_variants = [
+        let expected_int8_variants = [
             RegisterMmaShape::M8n8k16,
             RegisterMmaShape::M16n8k16,
             RegisterMmaShape::M16n8k32,
@@ -8481,20 +8651,46 @@ mod tests {
                 })
         })
         .collect::<BTreeSet<_>>();
+        let expected_int4_variants = [RegisterMmaShape::M8n8k32]
+            .into_iter()
+            .flat_map(|shape| {
+                [RegisterMmaElement::S4, RegisterMmaElement::U4]
+                    .into_iter()
+                    .flat_map(move |a_element| {
+                        [RegisterMmaElement::S4, RegisterMmaElement::U4]
+                            .into_iter()
+                            .flat_map(move |b_element| {
+                                [
+                                    RegisterMmaOverflow::Wrapping,
+                                    RegisterMmaOverflow::Satfinite,
+                                ]
+                                .into_iter()
+                                .map(move |overflow| (shape, a_element, b_element, overflow))
+                            })
+                    })
+            })
+            .collect::<BTreeSet<_>>();
+        let expected_variants = expected_int8_variants
+            .union(&expected_int4_variants)
+            .copied()
+            .collect::<BTreeSet<_>>();
         assert_eq!(actual_variants, expected_variants);
         assert_eq!(
-            int8_records
+            integer_records
                 .iter()
                 .filter(|record| {
                     record.register_mma.as_ref().unwrap().compatibility_source
                         == RegisterMmaCompatibilitySource::GeneratedStub
                 })
                 .count(),
-            23
+            31
         );
 
-        for record in int8_records.iter().filter(|record| {
-            record.register_mma.as_ref().unwrap().shape == RegisterMmaShape::M8n8k16
+        for record in integer_records.iter().filter(|record| {
+            matches!(
+                record.register_mma.as_ref().unwrap().shape,
+                RegisterMmaShape::M8n8k16 | RegisterMmaShape::M8n8k32
+            )
         }) {
             assert_eq!(record.rust_arguments, ["[i32; 2]", "u32", "u32"]);
             assert_eq!(record.rust_result, "[i32; 2]");
@@ -8505,6 +8701,16 @@ mod tests {
                 RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
             );
         }
+
+        assert_eq!(
+            int4_records
+                .iter()
+                .map(|record| record.abi_id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "i0133", "i0134", "i0135", "i0136", "i0137", "i0138", "i0139", "i0140"
+            ]
+        );
 
         for policy in &records {
             let declaration = declarations[policy.source_record.as_deref().unwrap()];

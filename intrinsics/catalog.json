@@ -1,5 +1,5 @@
 {
-  "schema": 19,
+  "schema": 20,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,12 +11,13 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "93dff4d16755da48613bd01ef703a8dc9079dba581b716cad8af6bff70fe1eb4",
-    "abi_ledger_sha256": "a777641f9a0eb907321afc3b5ce2fde15ef8591b12a4c8a36dea4cfef3ac9f93",
+    "overlay_sha256": "fc8a5c81a7240596c8d40c6424519c4490834bf62c1022968493f75ac664b370",
+    "abi_ledger_sha256": "572301c5c0b59c518ab5225bd3506a30a0640b4080239e3e5e41aa7ac01fae5d",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
+      "cuda-13.3-libnvvm-13.3.33-register-mma-int4-m8.json:c64d20e835ef405cb9d5d4448ca5d3f76c40fbb8679572b7fd8bcbf8f227fe42",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int8-m8.json:6fe0e1040e0bf4e65dfa703c13bef620576dfa5918168d2a8c0c5010fbd0845a",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int8.json:f22f834b5730f364caf25aeb4786322dd4dfa662ac28ed89378221782f053b23",
       "cuda-13.3-libnvvm-13.3.33-register-mma.json:05f89b4d37b319d35a88eee6bd9c321fce8c913adae0ca91b394708d1fd22b2a",
@@ -24,6 +25,7 @@
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
+      "rust-llvm-22.1.2-1cb4e383-register-mma-int4-m8.json:fdddc37e76fb5e60fcd7d6cb0a395539b7665f8ea5882b97cde735d7f0407f29",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int8-m8.json:1e296485b0355fd6034d91454ebdf3eb713745fc2219d08c180bf3ea2470047c",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int8.json:893ec319d37148b10a2bf8a66583332d24c10b3bc820171eeaef078a2cd21aad",
       "rust-llvm-22.1.2-1cb4e383-register-mma.json:6d81f18c407b60773dcc03a1e1a07d6dc69bd2320d135f03a0bf0059ac84c855",
@@ -21791,6 +21793,2034 @@
         ]
       },
       "summary": "Multiplies warp-distributed unsigned A and unsigned B INT8 fragments and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.s4.s4.s32.wrapping",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0133",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_s4",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0133",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_s4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_s4"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 signed INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact wrapping s4-by-s4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 signed INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "s32",
+          "s4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed signed A and signed B INT4 fragments and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4_satfinite",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.s4.s4.s32.satfinite",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0137",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_s4_satfinite",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0137",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_s4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_s4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 signed INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact satfinite s4-by-s4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 signed INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "s4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed signed A and signed B INT4 fragments and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4_u4",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.s4.u4.s32.wrapping",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_s4_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0134",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_s4_u4",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0134",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_s4_u4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_s4_u4"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.s4.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact wrapping s4-by-u4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "s32",
+          "s4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed signed A and unsigned B INT4 fragments and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_s4_u4_satfinite",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.s4.u4.s32.satfinite",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_s4_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0138",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_s4_u4_satfinite",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0138",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_s4_u4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_s4_u4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.s4.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact satfinite s4-by-u4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "s4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "s4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed signed A and unsigned B INT4 fragments and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.u4.u4.s32.wrapping",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0135",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_u4",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0135",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_u4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_u4"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 unsigned INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact wrapping u4-by-u4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 unsigned INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "s32",
+          "u4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed unsigned A and unsigned B INT4 fragments and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4_s4",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.u4.s4.s32.wrapping",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_u4_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0136",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_u4_s4",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0136",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_u4_s4",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_u4_s4"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.u4.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact wrapping u4-by-s4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "s32",
+          "u4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed unsigned A and signed B INT4 fragments and adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4_s4_satfinite",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.u4.s4.s32.satfinite",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_u4_s4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0140",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_u4_s4_satfinite",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0140",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_u4_s4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_u4_s4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4.s4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact satfinite u4-by-s4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 mixed-sign INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "s4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "u4",
+          "s4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed unsigned A and signed B INT4 fragments and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k32_s32_u4_satfinite",
+      "operation_key": "matrix.mma.m8n8k32.row.col.s32.u4.u4.s32.satfinite",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_m8n8k32_row_col_satfinite_u4"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0139",
+        "module": "matrix",
+        "name": "mma_m8n8k32_s32_u4_satfinite",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0139",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k32_s32_u4_satfinite",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k32_s32_u4_satfinite"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 unsigned INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The LLVM declaration lacks IntrConvergent; the generated probe preserved convergence and emitted the exact satfinite u4-by-u4 instruction in C, A, B API order.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM register-MMA probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for saturating m8n8k32 unsigned INT4 MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated m8 floor probe produced 11,127-byte compute_75 NVVM IR with SHA-256 2e7b1ba07e4a33d1e8409480ea887f824bc1e4a4a7e5d9d2eae9d96302bf5278 and 4,956-byte LTOIR with SHA-256 a5984684763bcdda15f246065a3f8de5d38e803558bd5a7303322343e1a15b33.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated dense m8 INT4 register-MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,240-byte cubin with SHA-256 ed0d8aab36380a3c8d47906de00491623462d5b4ac9ee3c77e6fc46b17c18963; cuobjdump contained all eight distinct IMMA.8832.{S4,U4}.{S4,U4}[.SAT] heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k32",
+        "accumulator": "s32",
+        "a_element": "u4",
+        "b_element": "u4",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "satfinite",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k32",
+          "row",
+          "col",
+          "satfinite",
+          "s32",
+          "u4",
+          "u4",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed unsigned A and unsigned B INT4 fragments and adds a saturating s32 accumulator."
     },
     {
       "id": "mma_m8n8k4_f64",
