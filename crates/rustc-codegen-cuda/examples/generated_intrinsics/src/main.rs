@@ -44,9 +44,17 @@ mod kernels {
                 matrix::mma_m8n8k4_f64([0.0; 2], 0.0, 0.0),
             )
         };
-        // Keep the complete dense m16 INT8 family in the generated path.
+        // Keep the complete dense INT8 families in the generated path.
         let int8 = unsafe {
             [
+                matrix::mma_m8n8k16_s32_s8([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_s8_u8([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_u8([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_u8_s8([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_s8_satfinite([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_s8_u8_satfinite([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_u8_satfinite([0; 2], 0, 0)[0],
+                matrix::mma_m8n8k16_s32_u8_s8_satfinite([0; 2], 0, 0)[0],
                 matrix::mma_m16n8k16_s32_s8([0; 4], [0; 2], 0)[0],
                 matrix::mma_m16n8k16_s32_s8_u8([0; 4], [0; 2], 0)[0],
                 matrix::mma_m16n8k16_s32_u8([0; 4], [0; 2], 0)[0],
@@ -69,6 +77,7 @@ mod kernels {
         // same catalog. This kernel remains unlaunched.
         let compatibility = unsafe {
             [
+                cuda_device::wmma::mma_m8n8k16_s32_s8_u8_satfinite([0; 2], 0, 0)[0],
                 cuda_device::wmma::mma_m16n8k16_s32_s8_u8([0; 4], [0; 2], 0)[0],
                 cuda_device::wmma::mma_m16n8k32_s32_u8([0; 4], [0; 4], [0; 2])[0],
             ]

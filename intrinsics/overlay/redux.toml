@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for one intrinsic family.
 
-schema = 15
+schema = 16
 family = "redux"
 
 [[intrinsic]]

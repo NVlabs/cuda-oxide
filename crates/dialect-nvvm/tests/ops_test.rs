@@ -937,7 +937,7 @@ fn generated_register_mma_verifier_rejects_crossed_variants_and_carriers() {
 }
 
 #[test]
-fn generated_register_mma_verifies_dense_m16_int8_family() {
+fn generated_register_mma_verifies_dense_int8_family() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
@@ -975,9 +975,10 @@ fn generated_register_mma_verifies_dense_m16_int8_family() {
     }
 
     let mut accepted = 0;
-    for (shape, operand_count) in [
-        (RegisterMmaShapeAttr::M16n8k16, 7),
-        (RegisterMmaShapeAttr::M16n8k32, 10),
+    for (shape, accumulator_count, operand_count, result_count) in [
+        (RegisterMmaShapeAttr::M8n8k16, 2, 4, 2),
+        (RegisterMmaShapeAttr::M16n8k16, 4, 7, 4),
+        (RegisterMmaShapeAttr::M16n8k32, 4, 10, 4),
     ] {
         for (a_element, b_element) in [
             (RegisterMmaElementAttr::S8, RegisterMmaElementAttr::S8),
@@ -989,14 +990,26 @@ fn generated_register_mma_verifies_dense_m16_int8_family() {
                 RegisterMmaOverflowAttr::Wrapping,
                 RegisterMmaOverflowAttr::Satfinite,
             ] {
-                let operands = [vec![i32_value; 4], vec![u32_value; operand_count - 4]].concat();
+                let operands = [
+                    vec![i32_value; accumulator_count],
+                    vec![u32_value; operand_count - accumulator_count],
+                ]
+                .concat();
                 let mma = int_mma!(
                     shape.clone(),
                     a_element.clone(),
                     b_element.clone(),
                     overflow.clone(),
                     operands,
-                    vec![i32_ty.into(); 4]
+                    vec![i32_ty.into(); result_count]
+                );
+                assert_eq!(
+                    mma.get_operation().deref(&ctx).get_num_operands(),
+                    operand_count
+                );
+                assert_eq!(
+                    mma.get_operation().deref(&ctx).get_num_results(),
+                    result_count
                 );
                 assert!(
                     verify_op(&mma, &ctx).is_ok(),
@@ -1006,25 +1019,100 @@ fn generated_register_mma_verifies_dense_m16_int8_family() {
             }
         }
     }
-    assert_eq!(accepted, 16);
+    assert_eq!(accepted, 24);
 
-    for (shape, operand_count) in [
-        (RegisterMmaShapeAttr::M16n8k16, 7),
-        (RegisterMmaShapeAttr::M16n8k32, 10),
+    for (shape, accumulator_count, operand_count, result_count) in [
+        (RegisterMmaShapeAttr::M8n8k16, 2, 4, 2),
+        (RegisterMmaShapeAttr::M16n8k16, 4, 7, 4),
+        (RegisterMmaShapeAttr::M16n8k32, 4, 10, 4),
     ] {
         for wrong_count in [operand_count - 1, operand_count + 1] {
-            let operands = [vec![i32_value; 4], vec![u32_value; wrong_count - 4]].concat();
+            let operands = [
+                vec![i32_value; accumulator_count],
+                vec![u32_value; wrong_count - accumulator_count],
+            ]
+            .concat();
             let mma = int_mma!(
                 shape.clone(),
                 RegisterMmaElementAttr::S8,
                 RegisterMmaElementAttr::U8,
                 RegisterMmaOverflowAttr::Wrapping,
                 operands,
-                vec![i32_ty.into(); 4]
+                vec![i32_ty.into(); result_count]
             );
             assert!(verify_op(&mma, &ctx).is_err());
         }
     }
+
+    let m8_wrong_result_signedness = int_mma!(
+        RegisterMmaShapeAttr::M8n8k16,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::U8,
+        RegisterMmaOverflowAttr::Wrapping,
+        [vec![i32_value; 2], vec![u32_value; 2]].concat(),
+        vec![signless_i32_ty.into(); 2]
+    );
+    assert!(verify_op(&m8_wrong_result_signedness, &ctx).is_err());
+
+    let m8_wrong_accumulator_signedness = int_mma!(
+        RegisterMmaShapeAttr::M8n8k16,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::U8,
+        RegisterMmaOverflowAttr::Wrapping,
+        vec![u32_value; 4],
+        vec![i32_ty.into(); 2]
+    );
+    assert!(verify_op(&m8_wrong_accumulator_signedness, &ctx).is_err());
+
+    let m8_wrong_fragment_signedness = int_mma!(
+        RegisterMmaShapeAttr::M8n8k16,
+        RegisterMmaElementAttr::U8,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaOverflowAttr::Satfinite,
+        vec![i32_value; 4],
+        vec![i32_ty.into(); 2]
+    );
+    assert!(verify_op(&m8_wrong_fragment_signedness, &ctx).is_err());
+
+    let m8_crossed_element = int_mma!(
+        RegisterMmaShapeAttr::M8n8k16,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::F16,
+        RegisterMmaOverflowAttr::Wrapping,
+        [vec![i32_value; 2], vec![u32_value; 2]].concat(),
+        vec![i32_ty.into(); 2]
+    );
+    assert!(verify_op(&m8_crossed_element, &ctx).is_err());
+
+    let m8_crossed_overflow = int_mma!(
+        RegisterMmaShapeAttr::M8n8k16,
+        RegisterMmaElementAttr::U8,
+        RegisterMmaElementAttr::U8,
+        RegisterMmaOverflowAttr::NotApplicable,
+        [vec![i32_value; 2], vec![u32_value; 2]].concat(),
+        vec![i32_ty.into(); 2]
+    );
+    assert!(verify_op(&m8_crossed_overflow, &ctx).is_err());
+
+    let m8_crossed_carrier_shape = int_mma!(
+        RegisterMmaShapeAttr::M8n8k16,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaOverflowAttr::Wrapping,
+        [vec![i32_value; 4], vec![u32_value; 3]].concat(),
+        vec![i32_ty.into(); 4]
+    );
+    assert!(verify_op(&m8_crossed_carrier_shape, &ctx).is_err());
+
+    let m8_crossed_shape = int_mma!(
+        RegisterMmaShapeAttr::M8n8k4,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaOverflowAttr::Wrapping,
+        [vec![i32_value; 2], vec![u32_value; 2]].concat(),
+        vec![i32_ty.into(); 2]
+    );
+    assert!(verify_op(&m8_crossed_shape, &ctx).is_err());
 
     let wrong_result_signedness = int_mma!(
         RegisterMmaShapeAttr::M16n8k16,

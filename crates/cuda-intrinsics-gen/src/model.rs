@@ -417,6 +417,7 @@ pub struct RegisterMma {
 #[serde(rename_all = "snake_case")]
 pub enum RegisterMmaShape {
     M8n8k4,
+    M8n8k16,
     M16n8k8,
     M16n8k16,
     M16n8k32,
@@ -468,6 +469,7 @@ pub enum RegisterMmaParticipation {
 pub enum RegisterMmaAdapter {
     C4F32A4U32B2U32ToD4F32,
     C2F64A1F64B1F64ToD2F64,
+    C2I32A1U32B1U32ToD2I32,
     C4I32A4U32B2U32ToD4I32,
     C4I32A2U32B1U32ToD4I32,
 }

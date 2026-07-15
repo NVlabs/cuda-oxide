@@ -192,6 +192,24 @@ fn contains_dense_int8_mma_features(contents: &str) -> bool {
         .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
 }
 
+/// Checks the m8n8k16 INT8 MMA forms (PTX 6.5, sm_75+).
+fn contains_mma_m8n8k16_int8_features(contents: &str) -> bool {
+    const MNEMONICS: &[&str] = &[
+        "mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.s32.s8.u8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.s32.u8.s8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.s32.u8.u8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.s8.s8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.s8.u8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.u8.s8.s32",
+        "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.u8.u8.s32",
+    ];
+
+    MNEMONICS
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
 /// Checks for the Ampere FP64 tensor-core MMA operation (PTX 7.0, sm_80+).
 fn contains_mma_m8n8k4_f64_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64")
@@ -529,6 +547,8 @@ impl DetectedFeatures {
     pub(crate) const Sm90: Self = Self(1 << 7);
     /// Forward-compatible instructions with an sm_80 floor.
     pub(crate) const Sm80: Self = Self(1 << 8);
+    /// Forward-compatible instructions with an sm_75 floor.
+    pub(crate) const Sm75: Self = Self(1 << 17);
     /// Warp matrix register transpose introduced in PTX 7.8 on sm_75.
     pub(crate) const Movmatrix: Self = Self(1 << 9);
     /// Warp matrix shared-memory load introduced in PTX 6.5 on sm_75.
@@ -546,7 +566,7 @@ impl DetectedFeatures {
     /// FP8 / f16-accumulator multimem forms on supported Blackwell families.
     pub(crate) const MultimemFp8: Self = Self(1 << 16);
 
-    const ALL: [Self; 17] = [
+    const ALL: [Self; 18] = [
         Self::Blackwell,
         Self::TmaCtaGroup,
         Self::BlackwellAccelerated,
@@ -560,6 +580,7 @@ impl DetectedFeatures {
         Self::Cluster,
         Self::Sm90,
         Self::Sm80,
+        Self::Sm75,
         Self::Movmatrix,
         Self::Ldmatrix,
         Self::Sm100,
@@ -595,6 +616,7 @@ impl DetectedFeatures {
             Self::Cluster => "Cluster",
             Self::Sm90 => "Sm90",
             Self::Sm80 => "Sm80",
+            Self::Sm75 => "Sm75",
             Self::Movmatrix => "Movmatrix",
             Self::Ldmatrix => "Ldmatrix",
             Self::Sm100 => "Sm100",
@@ -743,6 +765,10 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
         (contains_sm90_features(contents), DetectedFeatures::Sm90),
         (contains_sm80_features(contents), DetectedFeatures::Sm80),
         (
+            contains_mma_m8n8k16_int8_features(contents),
+            DetectedFeatures::Sm75,
+        ),
+        (
             contains_movmatrix_features(contents),
             DetectedFeatures::Movmatrix,
         ),
@@ -770,7 +796,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
     if contains_packed_f16_atomic_features(contents) {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx62);
     }
-    if contains_ldmatrix_features(contents) {
+    if contains_ldmatrix_features(contents) || contains_mma_m8n8k16_int8_features(contents) {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx65);
     }
     if contains_mbarrier_features(contents)
@@ -867,7 +893,8 @@ pub fn select_target(features: DetectedFeatures) -> Result<&'static str, String>
         "sm_90"
     } else if features.contains(DetectedFeatures::Sm80) {
         "sm_80"
-    } else if features.contains(DetectedFeatures::Movmatrix)
+    } else if features.contains(DetectedFeatures::Sm75)
+        || features.contains(DetectedFeatures::Movmatrix)
         || features.contains(DetectedFeatures::Ldmatrix)
     {
         "sm_75"
@@ -1048,7 +1075,8 @@ fn describe_generated_hardware(hardware: GeneratedHardwareTarget) -> String {
 /// lack them, so an sm_120 GPU cannot run an sm_100 tcgen05 kernel even though
 /// 120 > 100. WGMMA is Hopper-only. The remaining features are forward
 /// compatible from their floor (TMA / cluster / sm_90 features need sm_90+,
-/// sm_80 features need sm_80+, and basic needs sm_70+).
+/// sm_80 features need sm_80+, sm_75 features need sm_75+, and basic needs
+/// sm_70+).
 ///
 /// Used to decide whether the GPU in this machine (the `CUDA_OXIDE_DEVICE_ARCH`
 /// hint) can actually run the kernel, or whether we must build for the arch the
@@ -1090,7 +1118,9 @@ fn arch_satisfies_feature(
         DetectedFeatures::Sm100 => is_known_blackwell_capability(capability),
         DetectedFeatures::Tma | DetectedFeatures::Cluster | DetectedFeatures::Sm90 => major >= 9,
         DetectedFeatures::Sm80 => major >= 8,
-        DetectedFeatures::Movmatrix | DetectedFeatures::Ldmatrix => capability >= 75,
+        DetectedFeatures::Sm75 | DetectedFeatures::Movmatrix | DetectedFeatures::Ldmatrix => {
+            capability >= 75
+        }
         // Basic kernels are supported on the project's Volta+ floor. The
         // cross-compilation default remains sm_80, but a detected sm_70/sm_75
         // GPU is a valid and more useful target for `cargo oxide run`.
@@ -2040,7 +2070,6 @@ mod tests {
         assert_eq!(target, "sm_80");
 
         for near_miss in [
-            "mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k8.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
             "mma.sync.aligned.m16n8k32.col.row.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
@@ -2090,6 +2119,134 @@ mod tests {
                 ptx_isa: PtxIsaRequirement::Ptx78,
             }
         );
+    }
+
+    #[test]
+    fn m8n8k16_int8_mma_detection_applies_exact_sm75_and_ptx65_floors() {
+        let mut forms = 0;
+        for a_type in ["s8", "u8"] {
+            for b_type in ["s8", "u8"] {
+                for satfinite in [false, true] {
+                    let overflow = if satfinite { ".satfinite" } else { "" };
+                    let spelling = format!(
+                        "mma.sync.aligned.m8n8k16.row.col{overflow}.s32.{a_type}.{b_type}.s32 {{$0, $1}}, {{$2}}, {{$3}}, {{$4, $5}};"
+                    );
+                    assert!(
+                        contains_mma_m8n8k16_int8_features(&spelling),
+                        "missed {spelling:?}"
+                    );
+                    assert!(
+                        !contains_dense_int8_mma_features(&spelling),
+                        "m8 form entered the m16 detector: {spelling:?}"
+                    );
+                    assert_eq!(
+                        detect_module_requirements_in_llvm_text(&spelling),
+                        ModuleRequirements {
+                            features: DetectedFeatures::Sm75,
+                            ptx_isa: PtxIsaRequirement::Ptx65,
+                        },
+                        "{spelling}"
+                    );
+                    forms += 1;
+                }
+            }
+        }
+        assert_eq!(forms, 8);
+
+        for spelling in [
+            "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.s8.u8.s32\t{$0, $1}, {$2}, {$3}, {$4, $5};",
+            "mma.sync.aligned.m8n8k16.row.col.s32.u8.s8.s32\\09{$0, $1}, {$2}, {$3}, {$4, $5};",
+            ";mma.sync.aligned.m8n8k16.row.col.s32.u8.u8.s32 {$0, $1}, {$2}, {$3}, {$4, $5};",
+            "prefix\\0Amma.sync.aligned.m8n8k16.row.col.satfinite.s32.u8.u8.s32 {$0, $1}, {$2}, {$3}, {$4, $5};",
+            "@p mma.sync.aligned.m8n8k16.row.col.s32.s8.u8.s32 {$0, $1}, {$2}, {$3}, {$4, $5};",
+            "@!%p\\09mma.sync.aligned.m8n8k16.row.col.satfinite.s32.u8.s8.s32 {$0, $1}, {$2}, {$3}, {$4, $5};",
+        ] {
+            assert!(
+                contains_mma_m8n8k16_int8_features(spelling),
+                "missed {spelling:?}"
+            );
+        }
+
+        let representative = concat!(
+            "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.s8.u8.s32 ",
+            "{$0, $1}, {$4}, {$5}, {$2, $3};"
+        );
+        let requirements = detect_module_requirements_in_llvm_text(representative);
+        let (target, _) =
+            resolve_ptx_target(None, None, requirements.features).expect("auto-resolve");
+        assert_eq!(target, "sm_75");
+        assert_eq!(
+            required_ptx_feature("sm_75", requirements.ptx_isa),
+            Some("+ptx65")
+        );
+        assert_eq!(required_ptx_feature("sm_80", requirements.ptx_isa), None);
+
+        let sm_70: CudaArch = "sm_70".parse().unwrap();
+        let sm_75: CudaArch = "sm_75".parse().unwrap();
+        let sm_80: CudaArch = "sm_80".parse().unwrap();
+        assert!(validate_target_features(&sm_70, requirements.features).is_err());
+        assert!(validate_target_features(&sm_75, requirements.features).is_ok());
+        assert!(validate_target_features(&sm_80, requirements.features).is_ok());
+        let error = resolve_ptx_target(Some("sm_70"), None, requirements.features)
+            .expect_err("sm_70 must not accept m8n8k16 INT8 MMA")
+            .to_string();
+        assert!(
+            error.contains("cannot lower detected feature Sm75"),
+            "{error}"
+        );
+
+        for near_miss in [
+            "mma.sync.aligned.m8n8k8.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.col.row.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sp.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32x {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32.satfinite {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.satfiniteX.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.s8.s8.u32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.satfinite.s32.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.s32.s4.u8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m8n8k16.row.col.s32.u8.f16.s32 {$0}, {$1}, {$2}, {$3};",
+            "not_mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "%mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "@mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "!mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            ")mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                !contains_mma_m8n8k16_int8_features(near_miss),
+                "matched {near_miss:?}"
+            );
+        }
+
+        let m16 = concat!(
+            "mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 ",
+            "{$0, $1, $2, $3}, {$4, $5}, {$6}, {$7, $8, $9, $10};"
+        );
+        assert!(!contains_mma_m8n8k16_int8_features(m16));
+        assert!(contains_dense_int8_mma_features(m16));
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(m16),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+
+        let combined = format!("{representative}\n{m16}");
+        let combined_requirements = detect_module_requirements_in_llvm_text(&combined);
+        assert_eq!(
+            combined_requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+        let (target, _) = resolve_ptx_target(None, None, combined_requirements.features)
+            .expect("combined m8 and m16 MMA should auto-resolve");
+        assert_eq!(target, "sm_80");
     }
 
     #[test]

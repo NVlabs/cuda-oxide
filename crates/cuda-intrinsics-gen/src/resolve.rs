@@ -41,9 +41,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 19;
-const OVERLAY_SHARD_SCHEMA: u32 = 15;
-pub(crate) const CATALOG_SCHEMA: u32 = 18;
+const OVERLAY_SCHEMA: u32 = 20;
+const OVERLAY_SHARD_SCHEMA: u32 = 16;
+pub(crate) const CATALOG_SCHEMA: u32 = 19;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -5551,16 +5551,20 @@ struct RegisterMmaRecipe {
     llvm_results: &'static [&'static str],
     adapter: RegisterMmaAdapter,
     compatibility_source: RegisterMmaCompatibilitySource,
+    minimum_ptx: &'static str,
+    minimum_sm: &'static str,
     ptx_modifiers: Vec<&'static str>,
     ptx_register_counts: [usize; 4],
 }
 
 fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<RegisterMmaRecipe> {
-    use RegisterMmaAdapter::{C4I32A2U32B1U32ToD4I32, C4I32A4U32B2U32ToD4I32};
+    use RegisterMmaAdapter::{
+        C2I32A1U32B1U32ToD2I32, C4I32A2U32B1U32ToD4I32, C4I32A4U32B2U32ToD4I32,
+    };
     use RegisterMmaCompatibilitySource::{ExistingStub, GeneratedStub};
     use RegisterMmaElement::{S8, U8};
     use RegisterMmaOverflow::{Satfinite, Wrapping};
-    use RegisterMmaShape::{M16n8k16, M16n8k32};
+    use RegisterMmaShape::{M8n8k16, M16n8k16, M16n8k32};
 
     if !common || mma.accumulator != RegisterMmaAccumulator::S32 {
         return None;
@@ -5696,11 +5700,83 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
                 "llvm.nvvm.mma.m16n8k32.row.col.satfinite.u8.s8",
                 GeneratedStub,
             ),
+            (M8n8k16, S8, S8, Wrapping) => (
+                "mma_m8n8k16_s32_s8",
+                "i0125",
+                "matrix.mma.m8n8k16.row.col.s32.s8.s8.s32.wrapping",
+                "int_nvvm_mma_m8n8k16_row_col_s8",
+                "llvm.nvvm.mma.m8n8k16.row.col.s8",
+                GeneratedStub,
+            ),
+            (M8n8k16, S8, U8, Wrapping) => (
+                "mma_m8n8k16_s32_s8_u8",
+                "i0126",
+                "matrix.mma.m8n8k16.row.col.s32.s8.u8.s32.wrapping",
+                "int_nvvm_mma_m8n8k16_row_col_s8_u8",
+                "llvm.nvvm.mma.m8n8k16.row.col.s8.u8",
+                GeneratedStub,
+            ),
+            (M8n8k16, U8, U8, Wrapping) => (
+                "mma_m8n8k16_s32_u8",
+                "i0127",
+                "matrix.mma.m8n8k16.row.col.s32.u8.u8.s32.wrapping",
+                "int_nvvm_mma_m8n8k16_row_col_u8",
+                "llvm.nvvm.mma.m8n8k16.row.col.u8",
+                GeneratedStub,
+            ),
+            (M8n8k16, U8, S8, Wrapping) => (
+                "mma_m8n8k16_s32_u8_s8",
+                "i0128",
+                "matrix.mma.m8n8k16.row.col.s32.u8.s8.s32.wrapping",
+                "int_nvvm_mma_m8n8k16_row_col_u8_s8",
+                "llvm.nvvm.mma.m8n8k16.row.col.u8.s8",
+                GeneratedStub,
+            ),
+            (M8n8k16, S8, S8, Satfinite) => (
+                "mma_m8n8k16_s32_s8_satfinite",
+                "i0129",
+                "matrix.mma.m8n8k16.row.col.s32.s8.s8.s32.satfinite",
+                "int_nvvm_mma_m8n8k16_row_col_satfinite_s8",
+                "llvm.nvvm.mma.m8n8k16.row.col.satfinite.s8",
+                GeneratedStub,
+            ),
+            (M8n8k16, S8, U8, Satfinite) => (
+                "mma_m8n8k16_s32_s8_u8_satfinite",
+                "i0130",
+                "matrix.mma.m8n8k16.row.col.s32.s8.u8.s32.satfinite",
+                "int_nvvm_mma_m8n8k16_row_col_satfinite_s8_u8",
+                "llvm.nvvm.mma.m8n8k16.row.col.satfinite.s8.u8",
+                GeneratedStub,
+            ),
+            (M8n8k16, U8, U8, Satfinite) => (
+                "mma_m8n8k16_s32_u8_satfinite",
+                "i0131",
+                "matrix.mma.m8n8k16.row.col.s32.u8.u8.s32.satfinite",
+                "int_nvvm_mma_m8n8k16_row_col_satfinite_u8",
+                "llvm.nvvm.mma.m8n8k16.row.col.satfinite.u8",
+                GeneratedStub,
+            ),
+            (M8n8k16, U8, S8, Satfinite) => (
+                "mma_m8n8k16_s32_u8_s8_satfinite",
+                "i0132",
+                "matrix.mma.m8n8k16.row.col.s32.u8.s8.s32.satfinite",
+                "int_nvvm_mma_m8n8k16_row_col_satfinite_u8_s8",
+                "llvm.nvvm.mma.m8n8k16.row.col.satfinite.u8.s8",
+                GeneratedStub,
+            ),
             _ => return None,
         };
 
     let (rust_arguments, dialect_operands, llvm_arguments, adapter, shape, register_counts) =
         match mma.shape {
+            M8n8k16 => (
+                &["[i32; 2]", "u32", "u32"] as &'static [&'static str],
+                &["i32", "i32", "i32", "i32"] as &'static [&'static str],
+                &["i32", "i32", "i32", "i32"] as &'static [&'static str],
+                C2I32A1U32B1U32ToD2I32,
+                "m8n8k16",
+                [2, 1, 1, 2],
+            ),
             M16n8k16 => (
                 &["[i32; 4]", "[u32; 2]", "u32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32", "i32", "i32", "i32"] as &'static [&'static str],
@@ -5727,6 +5803,24 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
         return None;
     }
 
+    let (rust_result, dialect_results, llvm_results, minimum_ptx, minimum_sm) = match mma.shape {
+        M8n8k16 => (
+            "[i32; 2]",
+            &["i32", "i32"] as &'static [&'static str],
+            &["i32", "i32"] as &'static [&'static str],
+            "6.5",
+            "sm_75",
+        ),
+        M16n8k16 | M16n8k32 => (
+            "[i32; 4]",
+            &["i32", "i32", "i32", "i32"] as &'static [&'static str],
+            &["i32", "i32", "i32", "i32"] as &'static [&'static str],
+            "7.0",
+            "sm_80",
+        ),
+        _ => return None,
+    };
+
     let element = |element| match element {
         S8 => Some("s8"),
         U8 => Some("u8"),
@@ -5750,15 +5844,17 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
         source_record,
         llvm_symbol,
         rust_arguments,
-        rust_result: "[i32; 4]",
+        rust_result,
         dialect_op_type: "RegisterMmaOp",
         dialect_op_name: "nvvm.register_mma",
         dialect_operands,
-        dialect_results: &["i32", "i32", "i32", "i32"],
+        dialect_results,
         llvm_arguments,
-        llvm_results: &["i32", "i32", "i32", "i32"],
+        llvm_results,
         adapter,
         compatibility_source,
+        minimum_ptx,
+        minimum_sm,
         ptx_modifiers,
         ptx_register_counts: register_counts,
     })
@@ -5814,6 +5910,8 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
             llvm_results: &["f32", "f32", "f32", "f32"],
             adapter: C4F32A4U32B2U32ToD4F32,
             compatibility_source: RegisterMmaCompatibilitySource::ExistingStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
             ptx_modifiers: vec![
                 "sync", "aligned", "m16n8k16", "row", "col", "f32", "bf16", "bf16", "f32",
             ],
@@ -5847,6 +5945,8 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
             llvm_results: &["f32", "f32", "f32", "f32"],
             adapter: C4F32A4U32B2U32ToD4F32,
             compatibility_source: RegisterMmaCompatibilitySource::ExistingStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
             ptx_modifiers: vec![
                 "sync", "aligned", "m16n8k16", "row", "col", "f32", "f16", "f16", "f32",
             ],
@@ -5880,6 +5980,8 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
             llvm_results: &["f32", "f32", "f32", "f32"],
             adapter: C4F32A4U32B2U32ToD4F32,
             compatibility_source: RegisterMmaCompatibilitySource::ExistingStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
             ptx_modifiers: vec![
                 "sync", "aligned", "m16n8k8", "row", "col", "f32", "tf32", "tf32", "f32",
             ],
@@ -5909,6 +6011,8 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
             llvm_results: &["f64", "f64"],
             adapter: C2F64A1F64B1F64ToD2F64,
             compatibility_source: RegisterMmaCompatibilitySource::ExistingStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
             ptx_modifiers: vec![
                 "sync", "aligned", "m8n8k4", "row", "col", "f64", "f64", "f64", "f64",
             ],
@@ -5921,11 +6025,13 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
 fn expand_register_mma_int8_admission(
     admission: &RegisterMmaInt8Admission,
 ) -> Result<Vec<OverlayIntrinsic>> {
-    use RegisterMmaAdapter::{C4I32A2U32B1U32ToD4I32, C4I32A4U32B2U32ToD4I32};
+    use RegisterMmaAdapter::{
+        C2I32A1U32B1U32ToD2I32, C4I32A2U32B1U32ToD4I32, C4I32A4U32B2U32ToD4I32,
+    };
     use RegisterMmaCompatibilitySource::GeneratedStub;
     use RegisterMmaLayout::{Col, Row};
     use RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes;
-    use RegisterMmaShape::{M16n8k16, M16n8k32};
+    use RegisterMmaShape::{M8n8k16, M16n8k16, M16n8k32};
 
     ensure!(
         !admission.variants.is_empty(),
@@ -5949,6 +6055,7 @@ fn expand_register_mma_int8_admission(
             "compact INT8 MMA admission contains a duplicate variant"
         );
         let adapter = match variant.shape {
+            M8n8k16 => C2I32A1U32B1U32ToD2I32,
             M16n8k16 => C4I32A2U32B1U32ToD4I32,
             M16n8k32 => C4I32A4U32B2U32ToD4I32,
             _ => bail!("compact INT8 MMA admission contains an unsupported shape"),
@@ -6040,8 +6147,8 @@ fn expand_register_mma_int8_admission(
             memory: "none".into(),
             convergent: true,
             execution_scope: "warp".into(),
-            minimum_ptx: "7.0".into(),
-            minimum_sm: Some("sm_80".into()),
+            minimum_ptx: recipe.minimum_ptx.into(),
+            minimum_sm: Some(recipe.minimum_sm.into()),
             ptx_result: recipe.rust_result.into(),
             targets: "all".into(),
             ptx_isa_version: "9.3".into(),
@@ -6053,15 +6160,15 @@ fn expand_register_mma_int8_admission(
                     backend: IntrinsicBackend::LlvmNvptx,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.llvm_evidence_profile.clone(),
-                    minimum_ptx: Some("7.0".into()),
-                    minimum_sm: Some("sm_80".into()),
+                    minimum_ptx: Some(recipe.minimum_ptx.into()),
+                    minimum_sm: Some(recipe.minimum_sm.into()),
                 },
                 OverlayBackendLowering {
                     backend: IntrinsicBackend::LibNvvm,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.libnvvm_evidence_profile.clone(),
-                    minimum_ptx: Some("7.0".into()),
-                    minimum_sm: Some("sm_80".into()),
+                    minimum_ptx: Some(recipe.minimum_ptx.into()),
+                    minimum_sm: Some(recipe.minimum_sm.into()),
                 },
             ],
             packed_atomic: None,
@@ -6153,8 +6260,8 @@ fn validate_register_mma_policy(
             && policy.memory == "none"
             && policy.convergent
             && policy.execution_scope == "warp"
-            && policy.minimum_ptx == "7.0"
-            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
             && policy.targets == "all",
         "{} register-MMA effects or target floor disagree with PTX",
         policy.id
@@ -6187,8 +6294,16 @@ fn validate_register_mma_policy(
     ensure_exact_inline_ptx_backends(
         policy,
         [
-            (IntrinsicBackend::LlvmNvptx, "7.0", "sm_80"),
-            (IntrinsicBackend::LibNvvm, "7.0", "sm_80"),
+            (
+                IntrinsicBackend::LlvmNvptx,
+                recipe.minimum_ptx,
+                recipe.minimum_sm,
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                recipe.minimum_ptx,
+                recipe.minimum_sm,
+            ),
         ],
         "register MMA",
     )?;
@@ -8171,8 +8286,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 19);
-        assert_eq!(overlay.intrinsics.len(), 124);
+        assert_eq!(overlay.shards.len(), 20);
+        assert_eq!(overlay.intrinsics.len(), 132);
         assert_eq!(
             overlay
                 .intrinsics
@@ -8219,7 +8334,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "register_mma")
                 .count(),
-            20
+            28
         );
         assert_eq!(
             overlay
@@ -8323,7 +8438,7 @@ mod tests {
             .iter()
             .filter(|record| record.family == "register_mma")
             .collect();
-        assert_eq!(records.len(), 20);
+        assert_eq!(records.len(), 28);
 
         let int8_records: Vec<_> = records
             .iter()
@@ -8335,7 +8450,7 @@ mod tests {
                     .is_some_and(|mma| mma.accumulator == RegisterMmaAccumulator::S32)
             })
             .collect();
-        assert_eq!(int8_records.len(), 16);
+        assert_eq!(int8_records.len(), 24);
         let actual_variants = int8_records
             .iter()
             .map(|record| {
@@ -8343,25 +8458,29 @@ mod tests {
                 (mma.shape, mma.a_element, mma.b_element, mma.overflow)
             })
             .collect::<BTreeSet<_>>();
-        let expected_variants = [RegisterMmaShape::M16n8k16, RegisterMmaShape::M16n8k32]
-            .into_iter()
-            .flat_map(|shape| {
-                [RegisterMmaElement::S8, RegisterMmaElement::U8]
-                    .into_iter()
-                    .flat_map(move |a_element| {
-                        [RegisterMmaElement::S8, RegisterMmaElement::U8]
+        let expected_variants = [
+            RegisterMmaShape::M8n8k16,
+            RegisterMmaShape::M16n8k16,
+            RegisterMmaShape::M16n8k32,
+        ]
+        .into_iter()
+        .flat_map(|shape| {
+            [RegisterMmaElement::S8, RegisterMmaElement::U8]
+                .into_iter()
+                .flat_map(move |a_element| {
+                    [RegisterMmaElement::S8, RegisterMmaElement::U8]
+                        .into_iter()
+                        .flat_map(move |b_element| {
+                            [
+                                RegisterMmaOverflow::Wrapping,
+                                RegisterMmaOverflow::Satfinite,
+                            ]
                             .into_iter()
-                            .flat_map(move |b_element| {
-                                [
-                                    RegisterMmaOverflow::Wrapping,
-                                    RegisterMmaOverflow::Satfinite,
-                                ]
-                                .into_iter()
-                                .map(move |overflow| (shape, a_element, b_element, overflow))
-                            })
-                    })
-            })
-            .collect::<BTreeSet<_>>();
+                            .map(move |overflow| (shape, a_element, b_element, overflow))
+                        })
+                })
+        })
+        .collect::<BTreeSet<_>>();
         assert_eq!(actual_variants, expected_variants);
         assert_eq!(
             int8_records
@@ -8371,8 +8490,21 @@ mod tests {
                         == RegisterMmaCompatibilitySource::GeneratedStub
                 })
                 .count(),
-            15
+            23
         );
+
+        for record in int8_records.iter().filter(|record| {
+            record.register_mma.as_ref().unwrap().shape == RegisterMmaShape::M8n8k16
+        }) {
+            assert_eq!(record.rust_arguments, ["[i32; 2]", "u32", "u32"]);
+            assert_eq!(record.rust_result, "[i32; 2]");
+            assert_eq!(record.minimum_ptx, "6.5");
+            assert_eq!(record.minimum_sm.as_deref(), Some("sm_75"));
+            assert_eq!(
+                record.register_mma.as_ref().unwrap().adapter,
+                RegisterMmaAdapter::C2I32A1U32B1U32ToD2I32
+            );
+        }
 
         for policy in &records {
             let declaration = declarations[policy.source_record.as_deref().unwrap()];

@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for synchronized warp shuffles.
 
-schema = 15
+schema = 16
 family = "warp_shuffle"
 
 [[intrinsic]]

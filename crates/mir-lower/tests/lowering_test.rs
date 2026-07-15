@@ -4735,7 +4735,17 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
         },
     ];
 
-    for (shape, shape_attr, operands, a_count, b_count, constraints) in [
+    for (shape, shape_attr, operands, results, accumulator_count, a_count, b_count, constraints) in [
+        (
+            "m8n8k16",
+            nvvm::RegisterMmaShapeAttr::M8n8k16,
+            &[Carrier::I32, Carrier::I32, Carrier::U32, Carrier::U32] as &'static [Carrier],
+            &[Carrier::I32; 2] as &'static [Carrier],
+            2,
+            1,
+            1,
+            "=r,=r,r,r,r,r",
+        ),
         (
             "m16n8k16",
             nvvm::RegisterMmaShapeAttr::M16n8k16,
@@ -4748,6 +4758,8 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 Carrier::U32,
                 Carrier::U32,
             ] as &'static [Carrier],
+            &[Carrier::I32; 4] as &'static [Carrier],
+            4,
             2,
             1,
             "=r,=r,=r,=r,r,r,r,r,r,r,r",
@@ -4767,6 +4779,8 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                 Carrier::U32,
                 Carrier::U32,
             ],
+            &[Carrier::I32; 4],
+            4,
             4,
             2,
             "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r",
@@ -4793,8 +4807,11 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                                 .join(", ")
                         )
                     };
-                    let a = register_list(8, a_count);
-                    let b = register_list(8 + a_count, b_count);
+                    let result_count = results.len();
+                    let d = register_list(0, result_count);
+                    let c = register_list(result_count, accumulator_count);
+                    let a = register_list(result_count + accumulator_count, a_count);
+                    let b = register_list(result_count + accumulator_count + a_count, b_count);
                     cases.push(Case {
                         shape: shape_attr.clone(),
                         accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
@@ -4802,9 +4819,9 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
                         b_element: b_element.clone(),
                         overflow,
                         operands,
-                        results: &[Carrier::I32; 4],
+                        results,
                         template: format!(
-                            "mma.sync.aligned.{shape}.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {a}, {b}, {{$4, $5, $6, $7}};"
+                            "mma.sync.aligned.{shape}.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {d}, {a}, {b}, {c};"
                         ),
                         constraints,
                     });
@@ -4812,7 +4829,7 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
             }
         }
     }
-    assert_eq!(cases.len(), 20);
+    assert_eq!(cases.len(), 28);
 
     let carrier_type = |ctx: &Context, carrier: Carrier| -> TypeHandle {
         match carrier {
