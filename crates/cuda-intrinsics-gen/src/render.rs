@@ -49,7 +49,11 @@ pub fn all_outputs(
     );
     outputs.insert(
         "crates/cuda-device/src/generated/bf16x2.rs".into(),
-        render_compat_packed_alu(catalog, catalog_sha256),
+        render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::Bf16x2),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/f16x2.rs".into(),
+        render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::F16x2),
     );
     outputs.insert(
         "crates/cuda-device/src/generated/tcgen05_conversion.rs".into(),
@@ -227,20 +231,23 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 record.id
             ),
             "packed_alu" => ensure!(
-                record.rust.module == "bf16x2"
+                record.packed_alu.as_ref().is_some_and(|packed| {
+                    let (module, must_use) = match packed.format {
+                        PackedAluFormat::Bf16x2 => ("bf16x2", false),
+                        PackedAluFormat::F16x2 => ("f16x2", true),
+                    };
+                    record.rust.module == module
+                        && record.rust.must_use == must_use
+                        && packed.adapter == PackedAluAdapter::DirectPackedU32
+                })
                     && (1..=3).contains(&record.rust.arguments.len())
                     && record.rust.arguments.iter().all(|argument| argument == "u32")
                     && record.rust.result == "u32"
                     && record.rust.safe
-                    && !record.rust.must_use
                     && record.dialect.operands.len() == record.rust.arguments.len()
                     && record.dialect.operands.iter().all(|operand| operand == "i32")
                     && record.dialect.results == ["i32"]
-                    && record.lowering == "generated_packed_alu_inline_ptx"
-                    && record.packed_alu.as_ref().is_some_and(|packed| {
-                        packed.format == PackedAluFormat::Bf16x2
-                            && packed.adapter == PackedAluAdapter::DirectPackedU32
-                    }),
+                    && record.lowering == "generated_packed_alu_inline_ptx",
                 "{} is outside the closed generated packed-ALU recipe",
                 record.id
             ),
@@ -619,7 +626,35 @@ fn packed_alu_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
         (PackedAluFormat::Bf16x2, PackedAluOperation::Abs, PackedAluAdapter::DirectPackedU32) => {
             "abs.bf16x2"
         }
-        combination => panic!("unsupported generated packed-ALU recipe {combination:?}"),
+        (PackedAluFormat::F16x2, PackedAluOperation::Add, PackedAluAdapter::DirectPackedU32) => {
+            "add.rn.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Sub, PackedAluAdapter::DirectPackedU32) => {
+            "sub.rn.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Mul, PackedAluAdapter::DirectPackedU32) => {
+            "mul.rn.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Fma, PackedAluAdapter::DirectPackedU32) => {
+            "fma.rn.f16x2"
+        }
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaRelu,
+            PackedAluAdapter::DirectPackedU32,
+        ) => "fma.rn.relu.f16x2",
+        (PackedAluFormat::F16x2, PackedAluOperation::Min, PackedAluAdapter::DirectPackedU32) => {
+            "min.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Max, PackedAluAdapter::DirectPackedU32) => {
+            "max.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Neg, PackedAluAdapter::DirectPackedU32) => {
+            "neg.f16x2"
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Abs, PackedAluAdapter::DirectPackedU32) => {
+            "abs.f16x2"
+        }
     }
 }
 
@@ -1009,15 +1044,28 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
-fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
+fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAluFormat) -> String {
     let mut output = rust_header(catalog, hash);
-    output.push_str("// Included inside `cuda_device::bf16x2` to keep existing paths stable.\n\n");
-    for record in packed_alus(catalog) {
+    let module = match format {
+        PackedAluFormat::Bf16x2 => "bf16x2",
+        PackedAluFormat::F16x2 => "f16x2",
+    };
+    writeln!(
+        output,
+        "// Included inside `cuda_device::{module}` to keep existing paths stable.\n"
+    )
+    .unwrap();
+    for record in packed_alus(catalog).filter(|record| {
+        record
+            .packed_alu
+            .as_ref()
+            .is_some_and(|packed| packed.format == format)
+    }) {
         let path = record
             .rust
             .compatibility_paths
             .iter()
-            .find(|path| path.starts_with("cuda_device::bf16x2::"))
+            .find(|path| path.starts_with(&format!("cuda_device::{module}::")))
             .expect("packed-ALU compatibility path");
         let arguments = record
             .rust
@@ -1032,6 +1080,9 @@ fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         writeln!(output, "/// {}", record.summary).unwrap();
+        if record.rust.must_use {
+            output.push_str("#[must_use]\n");
+        }
         output.push_str("#[inline(never)]\n");
         writeln!(output, "pub fn {}({arguments}) -> u32 {{", record.rust.name).unwrap();
         if record.rust.arguments.len() == 1 {
@@ -3845,11 +3896,35 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str("\n## Packed-ALU contracts\n\n");
     for record in packed_alus(catalog) {
+        let packed = record.packed_alu.as_ref().unwrap();
+        let format = match packed.format {
+            PackedAluFormat::Bf16x2 => "bf16x2",
+            PackedAluFormat::F16x2 => "f16x2",
+        };
+        let backend_floors = record
+            .backend_lowerings
+            .iter()
+            .map(|lowering| {
+                let backend = match lowering.backend {
+                    IntrinsicBackend::LlvmNvptx => "LLVM-NVPTX",
+                    IntrinsicBackend::LibNvvm => "libNVVM",
+                };
+                format!(
+                    "{backend} PTX {} on {}",
+                    lowering.target.minimum_ptx,
+                    hardware_target_label(&lowering.target.hardware),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
         writeln!(
             output,
-            "- `{}` carries two bf16 lanes in one `u32` and lowers to one pure `{}` instruction.",
+            "- `{}` carries one packed `{format}` value in a `u32` and lowers to one pure `{}` instruction. The native instruction starts at PTX {} / `sm_{}`; cuda-oxide admits it from {}. Backend profile floors: {backend_floors}.",
             record.id,
             packed_alu_ptx_mnemonic(record),
+            record.target.minimum_ptx,
+            packed.native_minimum_sm,
+            hardware_target_label(&record.target.hardware),
         )
         .unwrap();
     }
@@ -4141,7 +4216,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(packed_alus(&catalog).count(), 9);
+        assert_eq!(packed_alus(&catalog).count(), 18);
         assert_eq!(packed_conversions(&catalog).count(), 1);
 
         let dialect = render_dialect_packed_alu(&catalog, "test-hash");
@@ -4155,6 +4230,15 @@ mod tests {
             "MaxBf16x2Op",
             "NegBf16x2Op",
             "AbsBf16x2Op",
+            "FmaF16x2Op",
+            "FmaReluF16x2Op",
+            "AddF16x2Op",
+            "SubF16x2Op",
+            "MulF16x2Op",
+            "MinF16x2Op",
+            "MaxF16x2Op",
+            "NegF16x2Op",
+            "AbsF16x2Op",
         ] {
             assert!(dialect.contains(&format!("pub struct {op}")));
             assert!(dialect.contains(&format!("{op}::register(ctx)")));
@@ -4165,6 +4249,7 @@ mod tests {
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("cuda_device::bf16x2::fma_bf16x2"));
+        assert!(importer.contains("cuda_device::f16x2::fma_f16x2"));
         assert!(importer.contains("cuda_device::tcgen05::cvt_f32x2_bf16x2"));
         assert!(importer.contains("FmaBf16x2Op::build(ctx, arg0, arg1, arg2)"));
         assert!(importer.contains("CvtF32x2Bf16x2Op::build(ctx, arg0, arg1)"));
@@ -4180,6 +4265,15 @@ mod tests {
             "max.bf16x2",
             "neg.bf16x2",
             "abs.bf16x2",
+            "fma.rn.f16x2",
+            "fma.rn.relu.f16x2",
+            "add.rn.f16x2",
+            "sub.rn.f16x2",
+            "mul.rn.f16x2",
+            "min.f16x2",
+            "max.f16x2",
+            "neg.f16x2",
+            "abs.f16x2",
         ] {
             assert!(lowering.contains(&format!(
                 "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\")"
@@ -4209,12 +4303,31 @@ mod tests {
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("pub fn i0062(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
         assert!(raw.contains("pub fn i0071(_arg0: f32, _arg1: f32) -> u32"));
+        assert!(raw.contains("pub fn i0072(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
         assert!(!raw.contains("#[must_use]\n#[inline(never)]\npub fn i0062"));
+        let f16_raw = raw.find("pub fn i0072").unwrap();
+        assert!(raw[..f16_raw].ends_with("#[must_use]\n#[inline(never)]\n"));
 
-        let compatibility = render_compat_packed_alu(&catalog, "test-hash");
+        let compatibility =
+            render_compat_packed_alu(&catalog, "test-hash", PackedAluFormat::Bf16x2);
         assert!(compatibility.contains("pub fn fma_bf16x2(arg0: u32, arg1: u32, arg2: u32)"));
+        assert!(!compatibility.contains("fma_f16x2"));
         assert!(compatibility.contains("let _ = arg0;"));
         assert!(!compatibility.contains("let _ = (arg0);"));
+        let compatibility = render_compat_packed_alu(&catalog, "test-hash", PackedAluFormat::F16x2);
+        let f16_compat = compatibility.find("pub fn fma_f16x2").unwrap();
+        assert!(compatibility[..f16_compat].ends_with("#[must_use]\n#[inline(never)]\n"));
+        assert!(!compatibility.contains("fma_bf16x2"));
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("`fma_f16x2` carries one packed `f16x2` value in a `u32`"));
+        assert!(reference.contains(
+            "native instruction starts at PTX 4.2 / `sm_53`; cuda-oxide admits it from sm_70+"
+        ));
+        assert!(reference.contains("LLVM-NVPTX PTX 6.0 on sm_70+"));
+        assert!(reference.contains("libNVVM PTX 4.2 on sm_75+"));
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/bf16x2.rs")));
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/f16x2.rs")));
         let compatibility = render_compat_packed_conversion(&catalog, "test-hash");
         assert!(compatibility.contains("pub fn cvt_f32x2_bf16x2(a: f32, b: f32) -> u32"));
     }

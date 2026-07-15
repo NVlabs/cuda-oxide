@@ -504,3 +504,66 @@ status = "active"
 catalog_id = "cvt_f32x2_bf16x2"
 operation_key = "packed.convert.f32x2.bf16x2.nearest_even"
 raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0072"
+status = "active"
+catalog_id = "fma_f16x2"
+operation_key = "packed.alu.f16x2.fma"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0073"
+status = "active"
+catalog_id = "fma_relu_f16x2"
+operation_key = "packed.alu.f16x2.fma.relu"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0074"
+status = "active"
+catalog_id = "add_f16x2"
+operation_key = "packed.alu.f16x2.add"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0075"
+status = "active"
+catalog_id = "sub_f16x2"
+operation_key = "packed.alu.f16x2.sub"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0076"
+status = "active"
+catalog_id = "mul_f16x2"
+operation_key = "packed.alu.f16x2.mul"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0077"
+status = "active"
+catalog_id = "min_f16x2"
+operation_key = "packed.alu.f16x2.min"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0078"
+status = "active"
+catalog_id = "max_f16x2"
+operation_key = "packed.alu.f16x2.max"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0079"
+status = "active"
+catalog_id = "neg_f16x2"
+operation_key = "packed.alu.f16x2.neg"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0080"
+status = "active"
+catalog_id = "abs_f16x2"
+operation_key = "packed.alu.f16x2.abs"
+raw_rust_signature = { safe = true, arguments = ["u32"], result = "u32" }

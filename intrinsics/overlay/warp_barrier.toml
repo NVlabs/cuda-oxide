@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for masked warp synchronization.
 
-schema = 8
+schema = 9
 family = "warp_barrier"
 
 [[intrinsic]]

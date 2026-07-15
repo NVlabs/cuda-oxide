@@ -37,9 +37,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 12;
-const OVERLAY_SHARD_SCHEMA: u32 = 8;
-pub(crate) const CATALOG_SCHEMA: u32 = 11;
+const OVERLAY_SCHEMA: u32 = 13;
+const OVERLAY_SHARD_SCHEMA: u32 = 9;
+pub(crate) const CATALOG_SCHEMA: u32 = 12;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -301,6 +301,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
     let mut paths = BTreeSet::new();
     let mut op_variants = BTreeSet::new();
     let mut op_type_names = BTreeMap::new();
+    let mut symbol_bases = BTreeMap::new();
     let mut symbols = BTreeSet::new();
     let mut rust_items = BTreeSet::new();
     for record in records {
@@ -340,7 +341,18 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
-            insert_unique(&mut symbols, symbol, "LLVM symbol")?;
+            let is_resolved = record.resolved_llvm_symbol.is_some();
+            if let Some(previous_was_resolved) = symbol_bases.insert(symbol, is_resolved) {
+                ensure!(
+                    previous_was_resolved && is_resolved,
+                    "duplicate LLVM symbol {symbol} is reused without a resolved symbol"
+                );
+            }
+            insert_unique(
+                &mut symbols,
+                record.resolved_llvm_symbol.as_ref().unwrap_or(symbol),
+                "resolved LLVM symbol",
+            )?;
         }
         insert_unique(
             &mut rust_items,
@@ -2399,17 +2411,29 @@ fn validate_selected_target_predicates(
         );
     }
     if let Some(imported_sm) = imported_sm {
-        let overlay_target = parse_hardware_target(policy)?;
-        ensure!(
-            overlay_target
-                == CatalogHardwareTarget::AnyOf {
-                    alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm: imported_sm }]
-                },
-            "{} minimum SM {:?} disagrees with selected instruction predicate sm_{}",
-            policy.id,
-            policy.minimum_sm,
-            imported_sm
-        );
+        if let Some(packed) = &policy.packed_alu {
+            ensure!(
+                packed.native_minimum_sm == imported_sm,
+                "{} native minimum SM {} disagrees with selected instruction predicate sm_{}",
+                policy.id,
+                packed.native_minimum_sm,
+                imported_sm
+            );
+        } else {
+            let overlay_target = parse_hardware_target(policy)?;
+            ensure!(
+                overlay_target
+                    == CatalogHardwareTarget::AnyOf {
+                        alternatives: vec![CatalogHardwareAlternative::MinimumSm {
+                            sm: imported_sm
+                        }]
+                    },
+                "{} minimum SM {:?} disagrees with selected instruction predicate sm_{}",
+                policy.id,
+                policy.minimum_sm,
+                imported_sm
+            );
+        }
     }
     if policy.family == "ldmatrix" {
         ensure!(
@@ -3357,8 +3381,10 @@ struct PackedAluRecipe {
     dialect_op_type: &'static str,
     dialect_op_name: &'static str,
     arity: usize,
+    must_use: bool,
     ptx_mnemonic: &'static str,
     modifiers: &'static [&'static str],
+    native_minimum_sm: u16,
     minimum_ptx: &'static str,
     minimum_sm: &'static str,
     ptx_isa_section: &'static str,
@@ -3366,7 +3392,14 @@ struct PackedAluRecipe {
     source: PackedAluRecipeSource,
 }
 
-fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
+fn packed_alu_recipe(format: PackedAluFormat, operation: PackedAluOperation) -> PackedAluRecipe {
+    match format {
+        PackedAluFormat::Bf16x2 => packed_bf16x2_alu_recipe(operation),
+        PackedAluFormat::F16x2 => packed_f16x2_alu_recipe(operation),
+    }
+}
+
+fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
     const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
     const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
     match operation {
@@ -3378,8 +3411,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "FmaBf16x2Op",
             dialect_op_name: "nvvm.fma_bf16x2",
             arity: 3,
+            must_use: false,
             ptx_mnemonic: "fma.rn.bf16x2",
             modifiers: &["rn", "bf16x2"],
+            native_minimum_sm: 80,
             minimum_ptx: "7.0",
             minimum_sm: "sm_80",
             ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
@@ -3403,8 +3438,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "FmaReluBf16x2Op",
             dialect_op_name: "nvvm.fma_relu_bf16x2",
             arity: 3,
+            must_use: false,
             ptx_mnemonic: "fma.rn.relu.bf16x2",
             modifiers: &["rn", "relu", "bf16x2"],
+            native_minimum_sm: 80,
             minimum_ptx: "7.0",
             minimum_sm: "sm_80",
             ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
@@ -3428,8 +3465,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "AddBf16x2Op",
             dialect_op_name: "nvvm.add_bf16x2",
             arity: 2,
+            must_use: false,
             ptx_mnemonic: "add.rn.bf16x2",
             modifiers: &["rn", "bf16x2"],
+            native_minimum_sm: 90,
             minimum_ptx: "7.8",
             minimum_sm: "sm_90",
             ptx_isa_section: "9.7.4.1 Half Precision Floating Point Instructions: add",
@@ -3444,8 +3483,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "SubBf16x2Op",
             dialect_op_name: "nvvm.sub_bf16x2",
             arity: 2,
+            must_use: false,
             ptx_mnemonic: "sub.rn.bf16x2",
             modifiers: &["rn", "bf16x2"],
+            native_minimum_sm: 90,
             minimum_ptx: "7.8",
             minimum_sm: "sm_90",
             ptx_isa_section: "9.7.4.2 Half Precision Floating Point Instructions: sub",
@@ -3460,8 +3501,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "MulBf16x2Op",
             dialect_op_name: "nvvm.mul_bf16x2",
             arity: 2,
+            must_use: false,
             ptx_mnemonic: "mul.rn.bf16x2",
             modifiers: &["rn", "bf16x2"],
+            native_minimum_sm: 90,
             minimum_ptx: "7.8",
             minimum_sm: "sm_90",
             ptx_isa_section: "9.7.4.3 Half Precision Floating Point Instructions: mul",
@@ -3476,8 +3519,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "MinBf16x2Op",
             dialect_op_name: "nvvm.min_bf16x2",
             arity: 2,
+            must_use: false,
             ptx_mnemonic: "min.bf16x2",
             modifiers: &["bf16x2"],
+            native_minimum_sm: 80,
             minimum_ptx: "7.0",
             minimum_sm: "sm_80",
             ptx_isa_section: "9.7.4.7 Half Precision Floating Point Instructions: min",
@@ -3501,8 +3546,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "MaxBf16x2Op",
             dialect_op_name: "nvvm.max_bf16x2",
             arity: 2,
+            must_use: false,
             ptx_mnemonic: "max.bf16x2",
             modifiers: &["bf16x2"],
+            native_minimum_sm: 80,
             minimum_ptx: "7.0",
             minimum_sm: "sm_80",
             ptx_isa_section: "9.7.4.8 Half Precision Floating Point Instructions: max",
@@ -3526,8 +3573,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "NegBf16x2Op",
             dialect_op_name: "nvvm.neg_bf16x2",
             arity: 1,
+            must_use: false,
             ptx_mnemonic: "neg.bf16x2",
             modifiers: &["bf16x2"],
+            native_minimum_sm: 80,
             minimum_ptx: "7.0",
             minimum_sm: "sm_80",
             ptx_isa_section: "9.7.4.5 Half Precision Floating Point Instructions: neg",
@@ -3551,8 +3600,10 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
             dialect_op_type: "AbsBf16x2Op",
             dialect_op_name: "nvvm.abs_bf16x2",
             arity: 1,
+            must_use: false,
             ptx_mnemonic: "abs.bf16x2",
             modifiers: &["bf16x2"],
+            native_minimum_sm: 80,
             minimum_ptx: "7.0",
             minimum_sm: "sm_80",
             ptx_isa_section: "9.7.4.6 Half Precision Floating Point Instructions: abs",
@@ -3571,6 +3622,259 @@ fn packed_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
     }
 }
 
+fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
+    const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
+    const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
+    match operation {
+        PackedAluOperation::Fma => PackedAluRecipe {
+            id: "fma_f16x2",
+            abi_id: "i0072",
+            operation_key: "packed.alu.f16x2.fma",
+            rust_name: "fma_f16x2",
+            dialect_op_type: "FmaF16x2Op",
+            dialect_op_name: "nvvm.fma_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.f16x2",
+            modifiers: &["rn", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_f16x2",
+                symbol: "llvm.nvvm.fma.rn.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_f16x2",
+                selection_asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaRelu => PackedAluRecipe {
+            id: "fma_relu_f16x2",
+            abi_id: "i0073",
+            operation_key: "packed.alu.f16x2.fma.relu",
+            rust_name: "fma_relu_f16x2",
+            dialect_op_type: "FmaReluF16x2Op",
+            dialect_op_name: "nvvm.fma_relu_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.relu.f16x2",
+            modifiers: &["rn", "relu", "f16x2"],
+            native_minimum_sm: 80,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_relu_f16x2",
+                symbol: "llvm.nvvm.fma.rn.relu.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_relu_f16x2",
+                selection_asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::Add => PackedAluRecipe {
+            id: "add_f16x2",
+            abi_id: "i0074",
+            operation_key: "packed.alu.f16x2.add",
+            rust_name: "add_f16x2",
+            dialect_op_type: "AddF16x2Op",
+            dialect_op_name: "nvvm.add_f16x2",
+            arity: 2,
+            must_use: true,
+            ptx_mnemonic: "add.rn.f16x2",
+            modifiers: &["rn", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.1 Half Precision Floating Point Instructions: add",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-add",
+            source: PackedAluRecipeSource::PtxNative,
+        },
+        PackedAluOperation::Sub => PackedAluRecipe {
+            id: "sub_f16x2",
+            abi_id: "i0075",
+            operation_key: "packed.alu.f16x2.sub",
+            rust_name: "sub_f16x2",
+            dialect_op_type: "SubF16x2Op",
+            dialect_op_name: "nvvm.sub_f16x2",
+            arity: 2,
+            must_use: true,
+            ptx_mnemonic: "sub.rn.f16x2",
+            modifiers: &["rn", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.2 Half Precision Floating Point Instructions: sub",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-sub",
+            source: PackedAluRecipeSource::PtxNative,
+        },
+        PackedAluOperation::Mul => PackedAluRecipe {
+            id: "mul_f16x2",
+            abi_id: "i0076",
+            operation_key: "packed.alu.f16x2.mul",
+            rust_name: "mul_f16x2",
+            dialect_op_type: "MulF16x2Op",
+            dialect_op_name: "nvvm.mul_f16x2",
+            arity: 2,
+            must_use: true,
+            ptx_mnemonic: "mul.rn.f16x2",
+            modifiers: &["rn", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.3 Half Precision Floating Point Instructions: mul",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-mul",
+            source: PackedAluRecipeSource::PtxNative,
+        },
+        PackedAluOperation::Min => PackedAluRecipe {
+            id: "min_f16x2",
+            abi_id: "i0077",
+            operation_key: "packed.alu.f16x2.min",
+            rust_name: "min_f16x2",
+            dialect_op_type: "MinF16x2Op",
+            dialect_op_name: "nvvm.min_f16x2",
+            arity: 2,
+            must_use: true,
+            ptx_mnemonic: "min.f16x2",
+            modifiers: &["f16x2"],
+            native_minimum_sm: 80,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_isa_section: "9.7.4.7 Half Precision Floating Point Instructions: min",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-min",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fmin_f16x2",
+                symbol: "llvm.nvvm.fmin.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: COMMUTATIVE_PURE,
+                selection: "INT_NVVM_FMIN_f16x2",
+                selection_asm: "min.f16x2 \t$dst, $src0, $src1;",
+            },
+        },
+        PackedAluOperation::Max => PackedAluRecipe {
+            id: "max_f16x2",
+            abi_id: "i0078",
+            operation_key: "packed.alu.f16x2.max",
+            rust_name: "max_f16x2",
+            dialect_op_type: "MaxF16x2Op",
+            dialect_op_name: "nvvm.max_f16x2",
+            arity: 2,
+            must_use: true,
+            ptx_mnemonic: "max.f16x2",
+            modifiers: &["f16x2"],
+            native_minimum_sm: 80,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_isa_section: "9.7.4.8 Half Precision Floating Point Instructions: max",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-max",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fmax_f16x2",
+                symbol: "llvm.nvvm.fmax.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: COMMUTATIVE_PURE,
+                selection: "INT_NVVM_FMAN_f16x2",
+                selection_asm: "max.f16x2 \t$dst, $src0, $src1;",
+            },
+        },
+        PackedAluOperation::Neg => PackedAluRecipe {
+            id: "neg_f16x2",
+            abi_id: "i0079",
+            operation_key: "packed.alu.f16x2.neg",
+            rust_name: "neg_f16x2",
+            dialect_op_type: "NegF16x2Op",
+            dialect_op_name: "nvvm.neg_f16x2",
+            arity: 1,
+            must_use: true,
+            ptx_mnemonic: "neg.f16x2",
+            modifiers: &["f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "6.0",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.5 Half Precision Floating Point Instructions: neg",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-neg",
+            source: PackedAluRecipeSource::PtxNative,
+        },
+        PackedAluOperation::Abs => PackedAluRecipe {
+            id: "abs_f16x2",
+            abi_id: "i0080",
+            operation_key: "packed.alu.f16x2.abs",
+            rust_name: "abs_f16x2",
+            dialect_op_type: "AbsF16x2Op",
+            dialect_op_name: "nvvm.abs_f16x2",
+            arity: 1,
+            must_use: true,
+            ptx_mnemonic: "abs.f16x2",
+            modifiers: &["f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "6.5",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.6 Half Precision Floating Point Instructions: abs",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-abs",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fabs",
+                symbol: "llvm.nvvm.fabs",
+                resolved_symbol: Some("llvm.nvvm.fabs.v2f16"),
+                arguments: &["anonymous_14"],
+                results: &["anyfloat"],
+                properties: PURE,
+                selection: "ABS_F16X2",
+                selection_asm: "abs.f16x2 \t$dst, $src0;",
+            },
+        },
+    }
+}
+
+fn packed_alu_backend_floor(
+    format: PackedAluFormat,
+    operation: PackedAluOperation,
+    backend: IntrinsicBackend,
+) -> (&'static str, &'static str) {
+    let recipe = packed_alu_recipe(format, operation);
+    match (format, operation, backend) {
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::Fma
+            | PackedAluOperation::Add
+            | PackedAluOperation::Sub
+            | PackedAluOperation::Mul,
+            IntrinsicBackend::LlvmNvptx,
+        ) => ("6.0", "sm_70"),
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::Fma
+            | PackedAluOperation::Add
+            | PackedAluOperation::Sub
+            | PackedAluOperation::Mul,
+            IntrinsicBackend::LibNvvm,
+        ) => ("4.2", "sm_75"),
+        (PackedAluFormat::F16x2, PackedAluOperation::Neg, IntrinsicBackend::LlvmNvptx) => {
+            ("6.0", "sm_70")
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Neg, IntrinsicBackend::LibNvvm) => {
+            ("6.0", "sm_75")
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Abs, IntrinsicBackend::LlvmNvptx) => {
+            ("6.5", "sm_70")
+        }
+        (PackedAluFormat::F16x2, PackedAluOperation::Abs, IntrinsicBackend::LibNvvm) => {
+            ("6.5", "sm_75")
+        }
+        _ => (recipe.minimum_ptx, recipe.minimum_sm),
+    }
+}
+
 fn validate_packed_alu_policy(
     policy: &OverlayIntrinsic,
     source: &IntrinsicSource,
@@ -3581,12 +3885,15 @@ fn validate_packed_alu_policy(
         .as_ref()
         .with_context(|| format!("{} has no closed packed-ALU contract", policy.id))?;
     ensure!(
-        packed.format == PackedAluFormat::Bf16x2
-            && packed.adapter == PackedAluAdapter::DirectPackedU32,
-        "{} requests an unsupported packed-ALU format or adapter",
+        packed.adapter == PackedAluAdapter::DirectPackedU32,
+        "{} requests an unsupported packed-ALU adapter",
         policy.id
     );
-    let recipe = packed_alu_recipe(packed.operation);
+    let recipe = packed_alu_recipe(packed.format, packed.operation);
+    let rust_module = match packed.format {
+        PackedAluFormat::Bf16x2 => "bf16x2",
+        PackedAluFormat::F16x2 => "f16x2",
+    };
     let rust_arguments = vec!["u32"; recipe.arity];
     let dialect_operands = vec!["i32"; recipe.arity];
     ensure!(
@@ -3597,20 +3904,21 @@ fn validate_packed_alu_policy(
         policy.id
     );
     ensure!(
-        policy.rust_module == "bf16x2"
+        policy.rust_module == rust_module
             && policy.rust_name == recipe.rust_name
             && policy.rust_arguments == rust_arguments
             && policy.rust_result == "u32"
             && policy.safe
-            && !policy.must_use
+            && policy.must_use == recipe.must_use
             && policy
                 .safe_allowlist_reason
                 .as_deref()
                 .is_some_and(|reason| !reason.trim().is_empty())
-            && policy.public_rust_path == format!("cuda_intrinsics::bf16x2::{}", recipe.rust_name)
+            && policy.public_rust_path
+                == format!("cuda_intrinsics::{rust_module}::{}", recipe.rust_name)
             && policy.compatibility_rust_paths
-                == [format!("cuda_device::bf16x2::{}", recipe.rust_name)],
-        "{} must preserve its safe non-must-use packed-ALU API",
+                == [format!("cuda_device::{rust_module}::{}", recipe.rust_name)],
+        "{} must preserve its reviewed safe packed-ALU API",
         policy.id
     );
     ensure!(
@@ -3630,7 +3938,8 @@ fn validate_packed_alu_policy(
             && policy.minimum_ptx == recipe.minimum_ptx
             && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
             && policy.ptx_result == "u32"
-            && policy.targets == "all",
+            && policy.targets == "all"
+            && packed.native_minimum_sm == recipe.native_minimum_sm,
         "{} packed-ALU effects, carrier, or target floor disagree",
         policy.id
     );
@@ -3699,10 +4008,7 @@ fn validate_packed_alu_policy(
                     && matching_selections[0].asm == *selection_asm
                     && matching_selections[0].predicates
                         == [
-                            format!(
-                                "Subtarget->getSmVersion() >= {}",
-                                recipe.minimum_sm.trim_start_matches("sm_")
-                            ),
+                            format!("Subtarget->getSmVersion() >= {}", recipe.native_minimum_sm),
                             format!(
                                 "Subtarget->getPTXVersion() >= {}",
                                 recipe.minimum_ptx.replace('.', "")
@@ -3714,7 +4020,18 @@ fn validate_packed_alu_policy(
             );
         }
     }
-    ensure_exact_inline_ptx_backends(policy, recipe.minimum_ptx, recipe.minimum_sm, "packed-ALU")?;
+    let llvm_floor =
+        packed_alu_backend_floor(packed.format, packed.operation, IntrinsicBackend::LlvmNvptx);
+    let libnvvm_floor =
+        packed_alu_backend_floor(packed.format, packed.operation, IntrinsicBackend::LibNvvm);
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, llvm_floor.0, llvm_floor.1),
+            (IntrinsicBackend::LibNvvm, libnvvm_floor.0, libnvvm_floor.1),
+        ],
+        "packed-ALU",
+    )?;
     ensure_no_other_family_contract(policy, "packed-ALU")?;
     Ok(())
 }
@@ -3811,15 +4128,21 @@ fn validate_packed_conversion_policy(
         "{} expected PTX does not match the reversed high/low conversion recipe",
         policy.id
     );
-    ensure_exact_inline_ptx_backends(policy, "7.0", "sm_80", "packed conversion")?;
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, "7.0", "sm_80"),
+            (IntrinsicBackend::LibNvvm, "7.0", "sm_80"),
+        ],
+        "packed conversion",
+    )?;
     ensure_no_other_family_contract(policy, "packed conversion")?;
     Ok(())
 }
 
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
-    minimum_ptx: &str,
-    minimum_sm: &str,
+    requirements: [(IntrinsicBackend, &str, &str); 2],
     family: &str,
 ) -> Result<()> {
     let backend_pairs: BTreeSet<_> = policy
@@ -3843,7 +4166,12 @@ fn ensure_exact_inline_ptx_backends(
         "{} must define exactly two reviewed {family} inline-PTX routes",
         policy.id
     );
+    let requirements: BTreeMap<_, _> = requirements
+        .into_iter()
+        .map(|(backend, ptx, sm)| (backend, (ptx, sm)))
+        .collect();
     for lowering in &policy.backend_lowerings {
+        let (minimum_ptx, minimum_sm) = requirements[&lowering.backend];
         ensure!(
             lowering.minimum_ptx.as_deref() == Some(minimum_ptx)
                 && lowering.minimum_sm.as_deref() == Some(minimum_sm)
@@ -4853,8 +5181,15 @@ mod tests {
         .collect()
     }
 
-    fn packed_alu_policy(operation: PackedAluOperation) -> OverlayIntrinsic {
-        let recipe = packed_alu_recipe(operation);
+    fn packed_alu_policy(
+        format: PackedAluFormat,
+        operation: PackedAluOperation,
+    ) -> OverlayIntrinsic {
+        let recipe = packed_alu_recipe(format, operation);
+        let rust_module = match format {
+            PackedAluFormat::Bf16x2 => "bf16x2",
+            PackedAluFormat::F16x2 => "f16x2",
+        };
         let mut record = policy();
         record.id = recipe.id.into();
         record.abi_id = recipe.abi_id.into();
@@ -4887,16 +5222,16 @@ mod tests {
                 record.llvm_results.clear();
             }
         }
-        record.rust_module = "bf16x2".into();
+        record.rust_module = rust_module.into();
         record.rust_name = recipe.rust_name.into();
         record.rust_arguments = vec!["u32".into(); recipe.arity];
         record.rust_result = "u32".into();
         record.safe = true;
-        record.must_use = false;
+        record.must_use = recipe.must_use;
         record.safe_allowlist_reason = Some("the operation has no caller obligations".into());
-        record.public_rust_path = format!("cuda_intrinsics::bf16x2::{}", recipe.rust_name);
+        record.public_rust_path = format!("cuda_intrinsics::{rust_module}::{}", recipe.rust_name);
         record.compatibility_rust_paths =
-            vec![format!("cuda_device::bf16x2::{}", recipe.rust_name)];
+            vec![format!("cuda_device::{rust_module}::{}", recipe.rust_name)];
         record.dialect_op_type = recipe.dialect_op_type.into();
         record.dialect_op_name = recipe.dialect_op_name.into();
         record.dialect_operands = vec!["i32".into(); recipe.arity];
@@ -4911,9 +5246,23 @@ mod tests {
         record.ptx_isa_section = recipe.ptx_isa_section.into();
         record.ptx_isa_url = recipe.ptx_isa_url.into();
         record.lowering = "generated_packed_alu_inline_ptx".into();
-        record.backend_lowerings = packed_inline_backends(recipe.minimum_ptx, recipe.minimum_sm);
+        record.backend_lowerings = [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm]
+            .into_iter()
+            .map(|backend| {
+                let (minimum_ptx, minimum_sm) =
+                    packed_alu_backend_floor(format, operation, backend);
+                crate::model::OverlayBackendLowering {
+                    backend,
+                    mechanism: BackendLoweringMechanism::InlinePtx,
+                    evidence_profile: format!("{backend:?}-test"),
+                    minimum_ptx: Some(minimum_ptx.into()),
+                    minimum_sm: Some(minimum_sm.into()),
+                }
+            })
+            .collect();
         record.packed_alu = Some(crate::model::PackedAlu {
-            format: PackedAluFormat::Bf16x2,
+            format,
+            native_minimum_sm: recipe.native_minimum_sm,
             operation,
             adapter: PackedAluAdapter::DirectPackedU32,
         });
@@ -4922,12 +5271,15 @@ mod tests {
             recipe.modifiers,
             vec![OperandPattern::Register; recipe.arity + 1],
         );
-        record.summary = "packed bf16x2 arithmetic".into();
+        record.summary = format!("packed {rust_module} arithmetic");
         record
     }
 
-    fn packed_alu_declaration(operation: PackedAluOperation) -> Option<ImportedIntrinsic> {
-        let recipe = packed_alu_recipe(operation);
+    fn packed_alu_declaration(
+        format: PackedAluFormat,
+        operation: PackedAluOperation,
+    ) -> Option<ImportedIntrinsic> {
+        let recipe = packed_alu_recipe(format, operation);
         let PackedAluRecipeSource::Imported {
             record,
             symbol,
@@ -4950,10 +5302,7 @@ mod tests {
             source_record: selection.into(),
             asm: selection_asm.into(),
             predicates: vec![
-                format!(
-                    "Subtarget->getSmVersion() >= {}",
-                    recipe.minimum_sm.trim_start_matches("sm_")
-                ),
+                format!("Subtarget->getSmVersion() >= {}", recipe.native_minimum_sm),
                 format!(
                     "Subtarget->getPTXVersion() >= {}",
                     recipe.minimum_ptx.replace('.', "")
@@ -5553,20 +5902,37 @@ mod tests {
     }
 
     #[test]
+    fn overloaded_symbols_require_distinct_resolved_identities() {
+        let bf16 = packed_alu_policy(PackedAluFormat::Bf16x2, PackedAluOperation::Abs);
+        let f16 = packed_alu_policy(PackedAluFormat::F16x2, PackedAluOperation::Abs);
+        validate_unique_overlay(&[bf16.clone(), f16.clone()], 1).unwrap();
+
+        let mut unresolved = f16.clone();
+        unresolved.resolved_llvm_symbol = None;
+        let error = validate_unique_overlay(&[bf16.clone(), unresolved], 1).unwrap_err();
+        assert!(error.to_string().contains("without a resolved symbol"));
+
+        let mut duplicate = f16;
+        duplicate.resolved_llvm_symbol = bf16.resolved_llvm_symbol.clone();
+        let error = validate_unique_overlay(&[bf16, duplicate], 1).unwrap_err();
+        assert!(error.to_string().contains("duplicate resolved LLVM symbol"));
+    }
+
+    #[test]
     fn overlay_manifest_loads_sorted_family_shards() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 13);
-        assert_eq!(overlay.intrinsics.len(), 71);
+        assert_eq!(overlay.intrinsics.len(), 80);
         assert_eq!(
             overlay
                 .intrinsics
                 .iter()
                 .filter(|record| record.family == "packed_alu")
                 .count(),
-            9
+            18
         );
         assert_eq!(
             overlay
@@ -7541,28 +7907,31 @@ mod tests {
             PackedAluOperation::Neg,
             PackedAluOperation::Abs,
         ];
-        for operation in operations {
-            let policy = packed_alu_policy(operation);
-            match packed_alu_declaration(operation) {
-                Some(declaration) => validate_imported_policy(&policy, &declaration).unwrap(),
-                None => validate_ptx_native_policy(&policy).unwrap(),
+        for format in [PackedAluFormat::Bf16x2, PackedAluFormat::F16x2] {
+            for operation in operations {
+                let policy = packed_alu_policy(format, operation);
+                match packed_alu_declaration(format, operation) {
+                    Some(declaration) => validate_imported_policy(&policy, &declaration).unwrap(),
+                    None => validate_ptx_native_policy(&policy).unwrap(),
+                }
             }
         }
 
-        let declaration = packed_alu_declaration(PackedAluOperation::Fma).unwrap();
+        let declaration =
+            packed_alu_declaration(PackedAluFormat::Bf16x2, PackedAluOperation::Fma).unwrap();
         let reject_imported = |policy: &OverlayIntrinsic, message: &str| {
             let error = validate_imported_policy(policy, &declaration).unwrap_err();
             assert!(error.to_string().contains(message), "{error:#}");
         };
 
-        let valid = packed_alu_policy(PackedAluOperation::Fma);
+        let valid = packed_alu_policy(PackedAluFormat::Bf16x2, PackedAluOperation::Fma);
         let mut wrong_source = valid.clone();
         wrong_source.source_record = Some("int_nvvm_fma_rn_bf16".into());
         reject_imported(&wrong_source, "source");
 
         let mut wrong_format = valid.clone();
         wrong_format.packed_alu.as_mut().unwrap().format = PackedAluFormat::F16x2;
-        reject_imported(&wrong_format, "format or adapter");
+        reject_imported(&wrong_format, "identity");
 
         let mut wrong_operation = valid.clone();
         wrong_operation.packed_alu.as_mut().unwrap().operation = PackedAluOperation::Max;
@@ -7594,12 +7963,96 @@ mod tests {
         wrong_backend.backend_lowerings[0].mechanism = BackendLoweringMechanism::TypedNvvm;
         reject_imported(&wrong_backend, "inline-PTX routes");
 
-        let mut wrong_native = packed_alu_policy(PackedAluOperation::Add);
+        let mut wrong_native = packed_alu_policy(PackedAluFormat::Bf16x2, PackedAluOperation::Add);
         wrong_native.source = Some(IntrinsicSource::PtxNative {
             instruction: "add.bf16x2".into(),
         });
         let error = validate_ptx_native_policy(&wrong_native).unwrap_err();
         assert!(error.to_string().contains("PTX-native recipe"));
+
+        let mut invented_llvm = packed_alu_policy(PackedAluFormat::F16x2, PackedAluOperation::Add);
+        invented_llvm.llvm_symbol = Some("llvm.nvvm.add.rn.f16x2".into());
+        let error = validate_ptx_native_policy(&invented_llvm).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must not invent LLVM source facts")
+        );
+
+        let mut unreviewed_modifier =
+            packed_alu_policy(PackedAluFormat::F16x2, PackedAluOperation::Add);
+        unreviewed_modifier.expected_ptx.modifiers =
+            vec!["rn".into(), "ftz".into(), "f16x2".into()];
+        let error = validate_ptx_native_policy(&unreviewed_modifier).unwrap_err();
+        assert!(error.to_string().contains("exact packed-ALU instruction"));
+
+        let mut wrong_arity = packed_alu_policy(PackedAluFormat::F16x2, PackedAluOperation::Add);
+        wrong_arity.expected_ptx.operands.pop();
+        let error = validate_ptx_native_policy(&wrong_arity).unwrap_err();
+        assert!(error.to_string().contains("exact packed-ALU instruction"));
+
+        let f16_declaration =
+            packed_alu_declaration(PackedAluFormat::F16x2, PackedAluOperation::Fma).unwrap();
+        let reject_f16 = |policy: &OverlayIntrinsic, message: &str| {
+            let error = validate_imported_policy(policy, &f16_declaration).unwrap_err();
+            assert!(error.to_string().contains(message), "{error:#}");
+        };
+        let f16 = packed_alu_policy(PackedAluFormat::F16x2, PackedAluOperation::Fma);
+
+        let mut wrong_signature = f16.clone();
+        wrong_signature.llvm_arguments = vec!["v2bf16".into(); 3];
+        reject_f16(&wrong_signature, "LLVM argument signature mismatch");
+
+        let mut missing_must_use = f16.clone();
+        missing_must_use.must_use = false;
+        reject_f16(&missing_must_use, "reviewed safe packed-ALU API");
+
+        let mut wrong_native_floor = f16.clone();
+        wrong_native_floor
+            .packed_alu
+            .as_mut()
+            .unwrap()
+            .native_minimum_sm = 70;
+        reject_f16(&wrong_native_floor, "target floor");
+
+        let mut wrong_backend_floor = f16;
+        wrong_backend_floor.backend_lowerings[0].minimum_ptx = Some("4.2".into());
+        reject_f16(&wrong_backend_floor, "exact packed-ALU floor");
+
+        let abs_declaration =
+            packed_alu_declaration(PackedAluFormat::F16x2, PackedAluOperation::Abs).unwrap();
+        let mut wrong_abs = packed_alu_policy(PackedAluFormat::F16x2, PackedAluOperation::Abs);
+        wrong_abs.resolved_llvm_symbol = Some("llvm.nvvm.fabs.v2bf16".into());
+        let error = validate_imported_policy(&wrong_abs, &abs_declaration).unwrap_err();
+        assert!(error.to_string().contains("LLVM source or signature"));
+    }
+
+    #[test]
+    fn pinned_packed_alu_records_match_the_closed_recipes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let packed: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "packed_alu")
+            .collect();
+        assert_eq!(packed.len(), 18);
+        for policy in packed {
+            let source = resolve_policy_source(policy).unwrap();
+            let declaration = policy
+                .source_record
+                .as_deref()
+                .map(|record| declarations[record]);
+            validate_policy(policy, &source, declaration, 1).unwrap();
+        }
     }
 
     #[test]

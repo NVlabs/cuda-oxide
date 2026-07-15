@@ -770,6 +770,9 @@ pub enum DotProductAdapter {
 #[serde(deny_unknown_fields)]
 pub struct PackedAlu {
     pub format: PackedAluFormat,
+    /// Hardware floor of the native PTX instruction, independent of the
+    /// target floor admitted by cuda-oxide.
+    pub native_minimum_sm: u16,
     pub operation: PackedAluOperation,
     pub adapter: PackedAluAdapter,
 }
@@ -1336,12 +1339,15 @@ adapter = "mask_value_direct"
     fn packed_alu_contract_rejects_unknown_format_operation_and_adapter() {
         let valid = r#"
 format = "bf16x2"
+native_minimum_sm = 80
 operation = "fma"
 adapter = "direct_packed_u32"
 "#;
         toml::from_str::<PackedAlu>(valid).unwrap();
         for invalid in [
             valid.replace("format = \"bf16x2\"", "format = \"bf16\""),
+            valid.replace("native_minimum_sm = 80\n", ""),
+            valid.replace("native_minimum_sm = 80", "native_minimum_sm = \"80\""),
             valid.replace("operation = \"fma\"", "operation = \"mad\""),
             valid.replace(
                 "adapter = \"direct_packed_u32\"",

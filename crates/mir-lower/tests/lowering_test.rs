@@ -3268,11 +3268,11 @@ fn assert_cp_async_zfill_inline_asm_lowering(
 }
 
 // =============================================================================
-// Packed bf16x2 arithmetic lowering tests
+// Generated packed arithmetic lowering tests
 // =============================================================================
 
 #[test]
-fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow::Error> {
+fn test_generated_packed_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
@@ -3284,7 +3284,7 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
         fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
         std::any::TypeId,
     );
-    let cases: [(OpInfo, usize, &str, &str); 9] = [
+    let cases: [(OpInfo, usize, &str, &str); 18] = [
         (
             nvvm::FmaBf16x2Op::get_concrete_op_info(),
             3,
@@ -3339,6 +3339,60 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
             "abs.bf16x2 $0, $1;",
             "=r,r",
         ),
+        (
+            nvvm::FmaF16x2Op::get_concrete_op_info(),
+            3,
+            "fma.rn.f16x2 $0, $1, $2, $3;",
+            "=r,r,r,r",
+        ),
+        (
+            nvvm::FmaReluF16x2Op::get_concrete_op_info(),
+            3,
+            "fma.rn.relu.f16x2 $0, $1, $2, $3;",
+            "=r,r,r,r",
+        ),
+        (
+            nvvm::AddF16x2Op::get_concrete_op_info(),
+            2,
+            "add.rn.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::SubF16x2Op::get_concrete_op_info(),
+            2,
+            "sub.rn.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MulF16x2Op::get_concrete_op_info(),
+            2,
+            "mul.rn.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MinF16x2Op::get_concrete_op_info(),
+            2,
+            "min.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::MaxF16x2Op::get_concrete_op_info(),
+            2,
+            "max.f16x2 $0, $1, $2;",
+            "=r,r,r",
+        ),
+        (
+            nvvm::NegF16x2Op::get_concrete_op_info(),
+            1,
+            "neg.f16x2 $0, $1;",
+            "=r,r",
+        ),
+        (
+            nvvm::AbsF16x2Op::get_concrete_op_info(),
+            1,
+            "abs.f16x2 $0, $1;",
+            "=r,r",
+        ),
     ];
 
     let operands = [
@@ -3385,11 +3439,11 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
                     inline_asm
                         .get_attr_inline_asm_template(&ctx)
                         .map(|s| String::from((*s).clone()))
-                        .expect("bf16x2 inline asm must have a template"),
+                        .expect("packed inline asm must have a template"),
                     inline_asm
                         .get_attr_inline_asm_constraints(&ctx)
                         .map(|s| String::from((*s).clone()))
-                        .expect("bf16x2 inline asm must have constraints"),
+                        .expect("packed inline asm must have constraints"),
                     llvm::asm_kind_opt(&ctx, &inline_asm),
                     inline_asm
                         .get_attr_inline_asm_convergent(&ctx)
@@ -3404,7 +3458,7 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
     assert_eq!(
         lowered.len(),
         cases.len(),
-        "each bf16x2 operation must lower to exactly one inline-asm op"
+        "each packed operation must lower to exactly one inline-asm op"
     );
     for &(_, expected_operand_count, expected_template, expected_constraints) in &cases {
         let matches: Vec<_> = lowered

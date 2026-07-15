@@ -25,6 +25,7 @@ pub mod cusimd;
 pub mod debug;
 pub mod disjoint;
 pub mod dotprod;
+pub mod f16x2;
 pub mod fence;
 pub mod grid;
 pub mod ptx;

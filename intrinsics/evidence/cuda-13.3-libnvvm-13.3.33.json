@@ -2229,6 +2229,551 @@
           }
         ]
       }
+    },
+    {
+      "id": "fma_f16x2",
+      "source_record": "int_nvvm_fma_rn_f16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 4.2 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX fma.rn.f16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_75 as part of the combined four-form probe and produced 1,932-byte LTOIR (SHA-256 edb864f3999af5c06558f9dde87cd506ac0c2188cb6a71b19fbf8b33d6b5e5ae). The instruction floor is PTX 4.2/sm_53; compute_75 is this libNVVM profile's floor, and compute_70 is rejected as an unsupported profile option."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "retained combined four-form packed-f16x2 sm_75 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,368-byte sm_75 cubin (SHA-256 5ca3d1ca1d9c56802bb78bdad8f5e1138b17dc4dc9f96a7b1e9572eb4010d50c). cuobjdump SASS contains HFMA2, HADD2 add/sub forms, and HMUL2, matching the LLVM/ptxas path.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fma_relu_f16x2",
+      "source_record": "int_nvvm_fma_rn_relu_f16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.relu.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX fma.rn.relu.f16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_80 as part of the combined three-form upper probe and produced 1,860-byte LTOIR (SHA-256 54983753f6c883e98ddef424042a704c0e38f32fcff6620ef12cf4734543d549). The instruction floor is PTX 7.0/sm_80."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined three-form packed-f16x2 sm_80 upper kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 f70d50b154c66b2dc59909f29f449274a86d8300048982b8b1aa17b276193fe0). cuobjdump SASS contains HFMA2.MMA.RELU and both HMNMX2 predicate forms, matching the LLVM/ptxas path. A compute_75 LTOIR negative reached nvJitLink but failed terminal PTX compilation because all three forms require sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "relu",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "add_f16x2",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "add.rn.f16x2"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 4.2 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX add.rn.f16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_75 as part of the combined four-form probe and produced 1,932-byte LTOIR (SHA-256 edb864f3999af5c06558f9dde87cd506ac0c2188cb6a71b19fbf8b33d6b5e5ae). The instruction floor is PTX 4.2/sm_53; compute_75 is this libNVVM profile's floor, and compute_70 is rejected as an unsupported profile option."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "retained combined four-form packed-f16x2 sm_75 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,368-byte sm_75 cubin (SHA-256 5ca3d1ca1d9c56802bb78bdad8f5e1138b17dc4dc9f96a7b1e9572eb4010d50c). cuobjdump SASS contains HFMA2, HADD2 add/sub forms, and HMUL2, matching the LLVM/ptxas path.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "add",
+        "modifiers": [
+          "rn",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub_f16x2",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "sub.rn.f16x2"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 4.2 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX sub.rn.f16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_75 as part of the combined four-form probe and produced 1,932-byte LTOIR (SHA-256 edb864f3999af5c06558f9dde87cd506ac0c2188cb6a71b19fbf8b33d6b5e5ae). The instruction floor is PTX 4.2/sm_53; compute_75 is this libNVVM profile's floor, and compute_70 is rejected as an unsupported profile option."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "retained combined four-form packed-f16x2 sm_75 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,368-byte sm_75 cubin (SHA-256 5ca3d1ca1d9c56802bb78bdad8f5e1138b17dc4dc9f96a7b1e9572eb4010d50c). cuobjdump SASS contains HFMA2, HADD2 add/sub forms, and HMUL2, matching the LLVM/ptxas path.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "sub",
+        "modifiers": [
+          "rn",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mul_f16x2",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mul.rn.f16x2"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 4.2 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX mul.rn.f16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_75 as part of the combined four-form probe and produced 1,932-byte LTOIR (SHA-256 edb864f3999af5c06558f9dde87cd506ac0c2188cb6a71b19fbf8b33d6b5e5ae). The instruction floor is PTX 4.2/sm_53; compute_75 is this libNVVM profile's floor, and compute_70 is rejected as an unsupported profile option."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "retained combined four-form packed-f16x2 sm_75 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,368-byte sm_75 cubin (SHA-256 5ca3d1ca1d9c56802bb78bdad8f5e1138b17dc4dc9f96a7b1e9572eb4010d50c). cuobjdump SASS contains HFMA2, HADD2 add/sub forms, and HMUL2, matching the LLVM/ptxas path.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mul",
+        "modifiers": [
+          "rn",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "min_f16x2",
+      "source_record": "int_nvvm_fmin_f16x2",
+      "llvm_symbol": "llvm.nvvm.fmin.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX min.f16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_80 as part of the combined three-form upper probe and produced 1,860-byte LTOIR (SHA-256 54983753f6c883e98ddef424042a704c0e38f32fcff6620ef12cf4734543d549). The instruction floor is PTX 7.0/sm_80."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined three-form packed-f16x2 sm_80 upper kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 f70d50b154c66b2dc59909f29f449274a86d8300048982b8b1aa17b276193fe0). cuobjdump SASS contains HFMA2.MMA.RELU and both HMNMX2 predicate forms, matching the LLVM/ptxas path. A compute_75 LTOIR negative reached nvJitLink but failed terminal PTX compilation because all three forms require sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "min",
+        "modifiers": [
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "max_f16x2",
+      "source_record": "int_nvvm_fmax_f16x2",
+      "llvm_symbol": "llvm.nvvm.fmax.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX max.f16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact route at compute_80 as part of the combined three-form upper probe and produced 1,860-byte LTOIR (SHA-256 54983753f6c883e98ddef424042a704c0e38f32fcff6620ef12cf4734543d549). The instruction floor is PTX 7.0/sm_80."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined three-form packed-f16x2 sm_80 upper kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 f70d50b154c66b2dc59909f29f449274a86d8300048982b8b1aa17b276193fe0). cuobjdump SASS contains HFMA2.MMA.RELU and both HMNMX2 predicate forms, matching the LLVM/ptxas path. A compute_75 LTOIR negative reached nvJitLink but failed terminal PTX compilation because all three forms require sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "max",
+        "modifiers": [
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "neg_f16x2",
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX neg.f16x2 with =r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact neg.f16x2 at compute_75 and produced 1,648-byte LTOIR (SHA-256 6afc7e94d869c48c78e58d734543f97d19a18099fbe53a572c36b5c22563f10a). The instruction floor is PTX 6.0/sm_53; compute_75 is the CUDA 13.3 profile floor."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "retained neg.f16x2 sm_75 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,112-byte sm_75 cubin (SHA-256 3e27b5f25b07a5ef425ba7c3e545bacaf1625550ca047db62974c1fb5bf7abf1). cuobjdump shows the same packed-negation HADD2 form as the LLVM/ptxas path.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "neg",
+        "modifiers": [
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "neg.f16x2"
+      }
+    },
+    {
+      "id": "abs_f16x2",
+      "source_record": "int_nvvm_fabs",
+      "llvm_symbol": "llvm.nvvm.fabs",
+      "llvm_arguments": [
+        "anonymous_14"
+      ],
+      "llvm_results": [
+        "anyfloat"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX abs.f16x2 with =r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact abs.f16x2 at compute_75 and produced 1,648-byte LTOIR (SHA-256 e26755d764c7c6576f9bd387d573a868fa247ad1b2c900ad7ab8b8486f1fc79c). The instruction floor is PTX 6.5/sm_53; compute_75 is the CUDA 13.3 profile floor."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx93"
+          ],
+          "representation": "retained abs.f16x2 sm_75 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,112-byte sm_75 cubin (SHA-256 e780ddaee22735b1c97e35157fae73685685268a445eef4a890d805bb6958c37). cuobjdump shows the same absolute-source HADD2 form as the LLVM/ptxas path.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "abs",
+        "modifiers": [
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
     }
   ]
 }
