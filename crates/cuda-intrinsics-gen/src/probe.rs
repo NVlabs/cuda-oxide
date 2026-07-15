@@ -135,7 +135,22 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.warp_barrier.is_some() {
         validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
     }
+    if let Some(shuffle) = &record.warp_shuffle {
+        validate_warp_shuffle_forms(&record.expected_ptx, shuffle.clamp, ptx)?;
+    }
     Ok(())
+}
+
+fn validate_warp_shuffle_forms(expected: &InstructionPattern, clamp: u32, ptx: &str) -> Result<()> {
+    let clamp_operand = expected
+        .operands
+        .get(3)
+        .context("shuffle probe clamp operand index is out of range")?;
+    ensure!(
+        matches!(clamp_operand, OperandPattern::Exact { value } if value == &clamp.to_string()),
+        "shuffle probe clamp operand is not the exact catalog clamp {clamp}"
+    );
+    validate_two_register_and_immediate_forms(expected, 2, "1", 4, "-1", ptx)
 }
 
 fn validate_register_and_immediate_forms(
@@ -825,6 +840,63 @@ mod tests {
                 "{error:#}"
             );
         }
+    }
+
+    #[test]
+    fn warp_shuffle_probe_requires_lane_mask_forms_and_exact_clamp() {
+        let expected = InstructionPattern::new(
+            "shfl",
+            &["sync", "idx", "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+                OperandPattern::Exact { value: "31".into() },
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+        let forms = [
+            ("rr", "shfl.sync.idx.b32 %r1, %r2, %r3, 31, %r4;"),
+            ("ri", "shfl.sync.idx.b32 %r5, %r6, %r7, 31, -1;"),
+            ("ir", "shfl.sync.idx.b32 %r8, %r9, 1, 31, %r10;"),
+            ("ii", "shfl.sync.idx.b32 %r11, %r12, 1, 31, -1;"),
+        ];
+        let complete = forms
+            .iter()
+            .map(|(_, instruction)| *instruction)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        validate_warp_shuffle_forms(&expected, 31, &complete).unwrap();
+
+        for (missing_index, (name, _)) in forms.iter().enumerate() {
+            let incomplete = forms
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != missing_index)
+                .map(|(_, (_, instruction))| *instruction)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let error = validate_warp_shuffle_forms(&expected, 31, &incomplete).unwrap_err();
+            assert!(
+                error.to_string().contains(&format!("no {name} form")),
+                "{error:#}"
+            );
+        }
+
+        let wrong_clamp = InstructionPattern::new(
+            "shfl",
+            &["sync", "idx", "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+                OperandPattern::Exact { value: "0".into() },
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+        let error = validate_warp_shuffle_forms(&wrong_clamp, 31, &complete).unwrap_err();
+        assert!(error.to_string().contains("exact catalog clamp 31"));
     }
 
     fn identity() -> LlcIdentity {

@@ -22,7 +22,7 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::cooperative_groups::{
-    ThreadGroup, WarpCollective, block_reduce, block_scan,
+    ThreadGroup, WarpCollective, block_reduce, block_scan, coalesced_threads,
     ops::{BitAnd, BitOr, BitXor, Max, Min, Sum},
     this_grid, this_thread_block, warp_reduce, warp_scan,
 };
@@ -195,9 +195,8 @@ pub fn test_typed_warp16_ballot(mut out: DisjointSlice<u32>) {
     }
 }
 
-/// `WarpTile<16>::shfl(my_lane_id, 0)` broadcasts each tile's lane-0
-/// value to every lane in that tile. Tile 0 (lanes 0..16) should all
-/// see `0`; tile 1 (lanes 16..32) should all see `16`.
+/// Check tile-relative and sparse-group shuffle source handling. The stored
+/// value remains each 16-lane tile's lane-0 broadcast.
 #[kernel]
 pub fn test_typed_warp16_shfl(mut out: DisjointSlice<u32>) {
     let gid = thread::index_1d();
@@ -205,8 +204,44 @@ pub fn test_typed_warp16_shfl(mut out: DisjointSlice<u32>) {
     let lane = warp::lane_id();
     tile.sync();
     let broadcast = tile.shfl(lane, 0);
+    let rank = tile.thread_rank();
+    let tile_ok = (tile.shfl_xor(lane, 1) == (lane ^ 1))
+        & (tile.shfl_xor(lane, 16) == lane)
+        & (tile.shfl_down(lane, 1) == if rank < 15 { lane + 1 } else { lane })
+        & (tile.shfl_up(lane, 1) == if rank > 0 { lane - 1 } else { lane })
+        & (tile.shfl_xor_f32(lane as f32, 16) == lane as f32)
+        & (tile.shfl_down_f32(lane as f32, 1)
+            == if rank < 15 {
+                (lane + 1) as f32
+            } else {
+                lane as f32
+            })
+        & (tile.shfl_up_f32(lane as f32, 1)
+            == if rank > 0 {
+                (lane - 1) as f32
+            } else {
+                lane as f32
+            });
+    let coalesced_ok = if lane & 1 == 0 {
+        let group = coalesced_threads();
+        (group.shfl(lane, group.size()) == lane)
+            & (group.shfl_xor(lane, 1) == lane)
+            & (group.shfl_down(lane, 1) == lane)
+            & (group.shfl_up(lane, 1) == lane)
+            & (group.shfl_down(lane, 2) == if lane < 30 { lane + 2 } else { lane })
+            & (group.shfl_up(lane, 2) == if lane >= 2 { lane - 2 } else { lane })
+            & (group.shfl_xor_f32(lane as f32, 1) == lane as f32)
+            & (group.shfl_down_f32(lane as f32, 1) == lane as f32)
+            & (group.shfl_up_f32(lane as f32, 1) == lane as f32)
+    } else {
+        true
+    };
     if let Some(slot) = out.get_mut(gid) {
-        *slot = broadcast;
+        *slot = if tile_ok & coalesced_ok {
+            broadcast
+        } else {
+            u32::MAX
+        };
     }
 }
 

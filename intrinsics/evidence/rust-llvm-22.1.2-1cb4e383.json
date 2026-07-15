@@ -2078,6 +2078,750 @@
           }
         ]
       }
+    },
+    {
+      "id": "shuffle_sync",
+      "source_record": "int_nvvm_shfl_sync_idx_i32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.idx.i32",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.idx.i32(i32, i32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.idx.i32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.idx.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.idx.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "idx",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_xor_sync",
+      "source_record": "int_nvvm_shfl_sync_bfly_i32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.bfly.i32",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.bfly.i32(i32, i32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.bfly.i32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.bfly.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.bfly.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "bfly",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_down_sync",
+      "source_record": "int_nvvm_shfl_sync_down_i32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.down.i32",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.down.i32(i32, i32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.down.i32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.down.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.down.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "down",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_up_sync",
+      "source_record": "int_nvvm_shfl_sync_up_i32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.up.i32",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.up.i32(i32, i32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.up.i32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.up.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.up.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "up",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_f32_sync",
+      "source_record": "int_nvvm_shfl_sync_idx_f32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.idx.f32",
+      "llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "f32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "f32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.idx.f32(i32, f32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.idx.f32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.idx.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.idx.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "idx",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_xor_f32_sync",
+      "source_record": "int_nvvm_shfl_sync_bfly_f32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.bfly.f32",
+      "llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "f32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "f32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.bfly.f32(i32, f32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.bfly.f32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.bfly.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.bfly.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "bfly",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_down_f32_sync",
+      "source_record": "int_nvvm_shfl_sync_down_f32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.down.f32",
+      "llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "f32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "f32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.down.f32(i32, f32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.down.f32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.down.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.down.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "down",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_up_f32_sync",
+      "source_record": "int_nvvm_shfl_sync_up_f32",
+      "llvm_symbol": "llvm.nvvm.shfl.sync.up.f32",
+      "llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "f32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "f32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "f32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.up.f32(i32, f32, i32, i32) declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, and inaccessible-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed llvm.nvvm.shfl.sync.up.f32 calls with register and immediate lane and member-mask operands",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted all four reachable shfl.sync.up.b32 operand forms with the fixed clamp."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "PTX 6.0 containing all four reachable shfl.sync.up.b32 operand forms",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted every generated register and immediate form.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "up",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
     }
   ]
 }

@@ -135,19 +135,22 @@ pub trait WarpCollective: ThreadGroup {
     /// Butterfly exchange under this group's mask.
     ///
     /// PTX `shfl.sync.bfly.b32`. `lane_mask` is the XOR mask; for
-    /// pairwise swaps of size `2^k` use `lane_mask = 1 << k`.
+    /// pairwise swaps of size `2^k` use `lane_mask = 1 << k`. A missing
+    /// source in a sparse coalesced group returns the calling lane's value.
     fn shfl_xor(&self, var: u32, lane_mask: u32) -> u32;
 
     /// Read from `(my_rank + delta)` within this group.
     ///
     /// PTX `shfl.sync.down.b32`. Lanes near the high end of the group
-    /// receive their own value (no wraparound).
+    /// receive their own value (no wraparound). Coalesced groups apply the
+    /// delta to physical lanes and return self when that source is absent.
     fn shfl_down(&self, var: u32, delta: u32) -> u32;
 
     /// Read from `(my_rank - delta)` within this group.
     ///
     /// PTX `shfl.sync.up.b32`. Lanes near the low end of the group
-    /// receive their own value (no wraparound).
+    /// receive their own value (no wraparound). Coalesced groups apply the
+    /// delta to physical lanes and return self when that source is absent.
     fn shfl_up(&self, var: u32, delta: u32) -> u32;
 
     /// `f32` variant of [`shfl`](Self::shfl).
@@ -427,6 +430,33 @@ impl<const N: u32> WarpTile<N> {
     fn tile_base_lane(&self) -> u32 {
         warp::lane_id() & !(N - 1)
     }
+
+    #[inline(always)]
+    fn xor_operand_or_self(&self, lane_mask: u32) -> u32 {
+        if N == 32 || (self.thread_rank() ^ (lane_mask & 31)) < N {
+            lane_mask
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    fn down_operand_or_self(&self, delta: u32) -> u32 {
+        if N == 32 || (delta & 31) < N - self.thread_rank() {
+            delta
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    fn up_operand_or_self(&self, delta: u32) -> u32 {
+        if N == 32 || (delta & 31) <= self.thread_rank() {
+            delta
+        } else {
+            0
+        }
+    }
 }
 
 impl<const N: u32> ThreadGroup for WarpTile<N> {
@@ -479,17 +509,17 @@ impl<const N: u32> WarpCollective for WarpTile<N> {
 
     #[inline(always)]
     fn shfl_xor(&self, var: u32, lane_mask: u32) -> u32 {
-        warp::shuffle_xor_sync(self.mask(), var, lane_mask)
+        warp::shuffle_xor_sync(self.mask(), var, self.xor_operand_or_self(lane_mask))
     }
 
     #[inline(always)]
     fn shfl_down(&self, var: u32, delta: u32) -> u32 {
-        warp::shuffle_down_sync(self.mask(), var, delta)
+        warp::shuffle_down_sync(self.mask(), var, self.down_operand_or_self(delta))
     }
 
     #[inline(always)]
     fn shfl_up(&self, var: u32, delta: u32) -> u32 {
-        warp::shuffle_up_sync(self.mask(), var, delta)
+        warp::shuffle_up_sync(self.mask(), var, self.up_operand_or_self(delta))
     }
 
     #[inline(always)]
@@ -500,17 +530,17 @@ impl<const N: u32> WarpCollective for WarpTile<N> {
 
     #[inline(always)]
     fn shfl_xor_f32(&self, var: f32, lane_mask: u32) -> f32 {
-        warp::shuffle_xor_f32_sync(self.mask(), var, lane_mask)
+        warp::shuffle_xor_f32_sync(self.mask(), var, self.xor_operand_or_self(lane_mask))
     }
 
     #[inline(always)]
     fn shfl_down_f32(&self, var: f32, delta: u32) -> f32 {
-        warp::shuffle_down_f32_sync(self.mask(), var, delta)
+        warp::shuffle_down_f32_sync(self.mask(), var, self.down_operand_or_self(delta))
     }
 
     #[inline(always)]
     fn shfl_up_f32(&self, var: f32, delta: u32) -> f32 {
-        warp::shuffle_up_f32_sync(self.mask(), var, delta)
+        warp::shuffle_up_f32_sync(self.mask(), var, self.up_operand_or_self(delta))
     }
 
     #[inline(always)]
@@ -564,6 +594,38 @@ impl CoalescedThreads {
     pub fn raw_mask(&self) -> u32 {
         self.mask
     }
+
+    #[inline(always)]
+    fn xor_operand_or_self(&self, lane_mask: u32) -> u32 {
+        let source = warp::lane_id() ^ (lane_mask & 31);
+        if self.mask & (1u32 << source) != 0 {
+            lane_mask
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    fn down_operand_or_self(&self, delta: u32) -> u32 {
+        let lane = warp::lane_id();
+        let offset = delta & 31;
+        if offset <= 31 - lane && self.mask & (1u32 << (lane + offset)) != 0 {
+            delta
+        } else {
+            0
+        }
+    }
+
+    #[inline(always)]
+    fn up_operand_or_self(&self, delta: u32) -> u32 {
+        let lane = warp::lane_id();
+        let offset = delta & 31;
+        if offset <= lane && self.mask & (1u32 << (lane - offset)) != 0 {
+            delta
+        } else {
+            0
+        }
+    }
 }
 
 impl ThreadGroup for CoalescedThreads {
@@ -608,66 +670,70 @@ impl WarpCollective for CoalescedThreads {
     // value the loop survives as a small `popc`/branch sequence; when
     // it folds to a constant the loop unrolls.
     //
-    // `shfl_xor`/`shfl_down`/`shfl_up` forward `lane_mask`/`delta`
-    // straight to the hardware, which interprets them in **absolute
-    // warp-lane** terms — not relative to the coalesced group. For a
-    // sparse mask "shift my rank by k" has no clean cross-lane
-    // analogue, so callers wanting rank-relative semantics on
-    // `CoalescedThreads` should use `shfl` with an explicit target
-    // rank instead.
+    // The other shuffle modes use absolute warp lanes. When their computed
+    // source is absent from this sparse group, the wrapper substitutes a
+    // zero offset so the lane reads its own value.
 
     #[inline(always)]
     fn shfl(&self, var: u32, src_rank: u32) -> u32 {
         let mut m = self.mask;
         let mut k = src_rank;
-        while k > 0 {
+        while k > 0 && m != 0 {
             m &= m - 1;
             k -= 1;
         }
-        let abs_lane = m.trailing_zeros();
+        let abs_lane = if m == 0 {
+            warp::lane_id()
+        } else {
+            m.trailing_zeros()
+        };
         warp::shuffle_sync(self.mask, var, abs_lane)
     }
 
     #[inline(always)]
     fn shfl_xor(&self, var: u32, lane_mask: u32) -> u32 {
-        warp::shuffle_xor_sync(self.mask, var, lane_mask)
+        warp::shuffle_xor_sync(self.mask, var, self.xor_operand_or_self(lane_mask))
     }
 
     #[inline(always)]
     fn shfl_down(&self, var: u32, delta: u32) -> u32 {
-        warp::shuffle_down_sync(self.mask, var, delta)
+        warp::shuffle_down_sync(self.mask, var, self.down_operand_or_self(delta))
     }
 
     #[inline(always)]
     fn shfl_up(&self, var: u32, delta: u32) -> u32 {
-        warp::shuffle_up_sync(self.mask, var, delta)
+        warp::shuffle_up_sync(self.mask, var, self.up_operand_or_self(delta))
     }
 
     #[inline(always)]
     fn shfl_f32(&self, var: f32, src_rank: u32) -> f32 {
         let mut m = self.mask;
         let mut k = src_rank;
-        while k > 0 {
+        while k > 0 && m != 0 {
             m &= m - 1;
             k -= 1;
         }
-        let abs_lane = m.trailing_zeros();
+        let abs_lane = if m == 0 {
+            warp::lane_id()
+        } else {
+            m.trailing_zeros()
+        };
         warp::shuffle_f32_sync(self.mask, var, abs_lane)
     }
 
     #[inline(always)]
     fn shfl_xor_f32(&self, var: f32, lane_mask: u32) -> f32 {
-        warp::shuffle_xor_f32_sync(self.mask, var, lane_mask)
+        warp::shuffle_xor_f32_sync(self.mask, var, self.xor_operand_or_self(lane_mask))
     }
 
     #[inline(always)]
     fn shfl_down_f32(&self, var: f32, delta: u32) -> f32 {
-        warp::shuffle_down_f32_sync(self.mask, var, delta)
+        warp::shuffle_down_f32_sync(self.mask, var, self.down_operand_or_self(delta))
     }
 
     #[inline(always)]
     fn shfl_up_f32(&self, var: f32, delta: u32) -> f32 {
-        warp::shuffle_up_f32_sync(self.mask, var, delta)
+        warp::shuffle_up_f32_sync(self.mask, var, self.up_operand_or_self(delta))
     }
 
     #[inline(always)]
@@ -938,10 +1004,10 @@ impl WarpShuffle for f32 {
 /// # Convergence
 ///
 /// All lanes named in the tile's participation mask must reach this call.
-/// For sub-warp tiles the per-tile mask isolates each tile's reduction
-/// (lanes outside the mask resolve `shfl.sync` to "own value"), so two
-/// tiles inside the same warp may interleave their butterflies without
-/// interference.
+/// For sub-warp tiles the wrapper replaces an out-of-tile source with the
+/// calling lane, so two tiles inside the same warp remain independent on
+/// `sm_70` and newer. Older targets also require all active lanes to use the
+/// same member mask.
 ///
 /// # Example
 ///
@@ -973,9 +1039,10 @@ where
 ///
 /// Implemented as a `log2(N)`-step Kogge-Stone scan: at step `delta` each
 /// lane reads the value from rank `(my_rank - delta)` via `shfl.sync.up`,
-/// then combines if `my_rank >= delta`. The tile's participation mask
-/// keeps cross-tile pulls quiet (out-of-mask source ⇒ "own value"), so
-/// for `N < 32` two tiles in the same warp scan independently.
+/// then combines if `my_rank >= delta`. The wrapper replaces a cross-tile
+/// source with the calling lane, so sub-warp tiles scan independently on
+/// `sm_70` and newer. Older targets also require all active lanes to use the
+/// same member mask.
 ///
 /// `N` is the tile size (1, 2, 4, 8, 16, or 32).
 ///

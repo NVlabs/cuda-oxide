@@ -9,7 +9,8 @@ use crate::model::{
     DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind,
     ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
     LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter,
-    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode,
+    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
+    WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -89,6 +90,10 @@ pub fn all_outputs(
         render_dialect_warp_barrier(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/warp_shuffle.rs".into(),
+        render_dialect_warp_shuffle(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/mir-importer/src/translator/terminator/intrinsics/generated.rs".into(),
         render_importer(catalog, catalog_sha256),
     );
@@ -131,6 +136,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "vote" && record.vote.is_some())
                     || (record.family == "warp_match" && record.warp_match.is_some())
                     || (record.family == "warp_barrier" && record.warp_barrier.is_some())
+                    || (record.family == "warp_shuffle" && record.warp_shuffle.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -305,6 +311,52 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated bar.warp.sync recipe",
                 record.id
             ),
+            "warp_shuffle" => ensure!(
+                record.rust.module == "warp"
+                    && matches!(record.rust.arguments.as_slice(), [mask, value, lane]
+                        if mask == "u32"
+                            && lane == "u32"
+                            && matches!(value.as_str(), "u32" | "f32")
+                            && value == &record.rust.result)
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        matches!(llvm.arguments.as_slice(), [mask, value, lane, clamp]
+                            if mask == "i32"
+                                && lane == "i32"
+                                && clamp == "i32"
+                                && matches!(value.as_str(), "i32" | "f32"))
+                            && matches!(llvm.results.as_slice(), [result]
+                                if result == &llvm.arguments[1])
+                    })
+                    && matches!(record.dialect.operands.as_slice(), [mask, value, lane]
+                        if mask == "i32"
+                            && lane == "i32"
+                            && matches!(value.as_str(), "i32" | "f32"))
+                    && matches!(record.dialect.results.as_slice(), [result]
+                        if result == &record.dialect.operands[1])
+                    && record.lowering == "generated_warp_shuffle"
+                    && record.warp_shuffle.as_ref().is_some_and(|shuffle| {
+                        shuffle.adapter == WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+                            && matches!(
+                                (shuffle.value_kind, record.rust.result.as_str()),
+                                (WarpShuffleValueKind::I32, "u32")
+                                    | (WarpShuffleValueKind::F32, "f32")
+                            )
+                            && match shuffle.value_kind {
+                                WarpShuffleValueKind::I32 => {
+                                    record.llvm.as_ref().unwrap().arguments[1] == "i32"
+                                        && record.dialect.operands[1] == "i32"
+                                }
+                                WarpShuffleValueKind::F32 => {
+                                    record.llvm.as_ref().unwrap().arguments[1] == "f32"
+                                        && record.dialect.operands[1] == "f32"
+                                }
+                            }
+                    }),
+                "{} is outside the closed generated shfl.sync recipe",
+                record.id
+            ),
             family => ensure!(false, "{} has unrenderable family {family}", record.id),
         };
     }
@@ -415,6 +467,13 @@ fn warp_barriers(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsi
         .intrinsics
         .iter()
         .filter(|record| record.family == "warp_barrier")
+}
+
+fn warp_shuffles(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "warp_shuffle")
 }
 
 fn dot_product_ptx(record: &CatalogIntrinsic) -> &'static str {
@@ -672,6 +731,12 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                      /// On `sm_6x` and earlier, all lanes named in `mask` must execute the barrier in convergence, and no lane outside `mask` may be active when it executes.\n\
                      /// The barrier orders memory accesses among participating lanes; violating the participation contract makes the PTX operation undefined.\n",
                 );
+            } else if record.warp_shuffle.is_some() {
+                output.push_str(
+                    "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `shfl.sync` operation with the same qualifiers and mask.\n\
+                     /// On `sm_6x` and earlier, all lanes named in `mask` must execute in convergence, and no lane outside `mask` may be active.\n\
+                     /// If the computed source lane is in range, it must be active and named in `mask`; otherwise the result is undefined. An out-of-range source copies the calling lane's input.\n",
+                );
             } else if record.warp_match.is_some() {
                 output.push_str(
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `match.sync` operation with the same qualifiers and mask.\n\
@@ -680,6 +745,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
             } else if record.vote.is_some() {
                 output.push_str(
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `vote.sync` operation with the same qualifiers and mask.\n\
+                     /// On `sm_6x` and earlier, all lanes named in `mask` must execute in convergence, and no lane outside `mask` may be active.\n\
                      /// Violating this participation contract makes the PTX operation undefined.\n",
                 );
             } else if record.family == "sync" {
@@ -813,7 +879,7 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\n\npub use active_mask::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n}\n",
+        "mod active_mask;\nmod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -1072,6 +1138,65 @@ fn render_dialect_warp_barrier(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in warp_barriers(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_warp_shuffle(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operations for the generated `shfl.sync` family.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{FP32Type, IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\nfn is_f32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx).downcast_ref::<FP32Type>().is_some()\n}\n\n",
+    );
+    for record in warp_shuffles(catalog) {
+        let shuffle = record.warp_shuffle.as_ref().unwrap();
+        debug_assert_eq!(
+            shuffle.adapter,
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+        );
+        let (result_builder, value_check, value_label) = match shuffle.value_kind {
+            WarpShuffleValueKind::I32 => (
+                "IntegerType::get(ctx, 32, Signedness::Unsigned).into()",
+                "is_i32",
+                "i32",
+            ),
+            WarpShuffleValueKind::F32 => ("FP32Type::get(ctx).into()", "is_f32", "f32"),
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n/// Operands are `[member_mask, value, lane_or_delta]`. Generated lowering\n/// inserts the fixed clamp required by the selected shuffle mode.\n",
+        );
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(\n        ctx: &mut Context,\n        member_mask: Value,\n        value: Value,\n        lane_or_delta: Value,\n    ) -> Ptr<Operation> {{\n        let result_ty: pliron::r#type::TypeHandle = {result_builder};\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty],\n            vec![member_mask, value, lane_or_delta],\n            vec![],\n            0,\n        )\n    }}\n}}"
+        )
+        .unwrap();
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 3 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_i32(ctx, op.get_operand(0).get_type(ctx))\n            || !{value_check}(ctx, op.get_operand(1).get_type(ctx))\n            || !is_i32(ctx, op.get_operand(2).get_type(ctx))\n            || !{value_check}(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!(
+                "{} requires exactly [member_mask, value, lane_or_delta] and one result",
+                record.dialect.op_name
+            ),
+            format!(
+                "{} requires i32 mask/lane and {value_label} value/result",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in warp_shuffles(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -1607,6 +1732,15 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if warp_shuffles(catalog).next().is_some() {
+        output.push_str(", ");
+        for (index, record) in warp_shuffles(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     if dot_products(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
@@ -1984,6 +2118,50 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    for record in warp_shuffles(catalog) {
+        debug_assert_eq!(
+            record.warp_shuffle.as_ref().unwrap().adapter,
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+        );
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 3, &loc)?;\n");
+        output.push_str(
+            "            let (member_mask, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (value, last_op) = rvalue::translate_operand(\n                ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (lane_or_delta, last_op) = rvalue::translate_operand(\n                ctx, body, &args[2], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        writeln!(
+            output,
+            "            let shuffle = {}::build(ctx, member_mask, value, lane_or_delta);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            shuffle.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, shuffle, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, shuffle, block_ptr, last_op);\n            let result = shuffle.deref(ctx).get_result(0);\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, shuffle, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
     for record in dot_products(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -2125,7 +2303,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -2228,6 +2406,15 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         for (index, record) in sync_intrinsics(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if warp_shuffles(catalog).next().is_some() {
+        output.push_str(", ");
+        for (index, record) in warp_shuffles(catalog).enumerate() {
             if index != 0 {
                 output.push_str(", ");
             }
@@ -2399,6 +2586,34 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_bar_warp_sync(ctx, rewriter, self.get_operation(), operands_info)\n    }\n}\n\n",
         );
+    }
+    for record in warp_shuffles(catalog) {
+        let shuffle = record.warp_shuffle.as_ref().unwrap();
+        debug_assert_eq!(
+            shuffle.adapter,
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+        );
+        let helper = match shuffle.value_kind {
+            WarpShuffleValueKind::I32 => "convert_shuffle_i32",
+            WarpShuffleValueKind::F32 => "convert_shuffle_f32",
+        };
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        {helper}(ctx, rewriter, self.get_operation(), operands_info, {:?}, {})",
+            record.llvm_identifier(),
+            shuffle.clamp,
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
     }
     for record in dot_products(catalog) {
         let insert_low_half_selector = matches!(
@@ -2851,6 +3066,59 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             .unwrap();
             writeln!(output, "  ret {result_ty} %result\n}}").unwrap();
         }
+    } else if let Some(warp_shuffle) = &record.warp_shuffle {
+        debug_assert_eq!(
+            warp_shuffle.adapter,
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+        );
+        let value_ty = match warp_shuffle.value_kind {
+            WarpShuffleValueKind::I32 => "i32",
+            WarpShuffleValueKind::F32 => "float",
+        };
+        writeln!(
+            output,
+            "declare {value_ty} @{}(i32, {value_ty}, i32, i32)",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push('\n');
+        let forms = [
+            (
+                "rr",
+                format!("i32 %member_mask, {value_ty} %value, i32 %lane"),
+                "i32 %member_mask",
+                "i32 %lane",
+            ),
+            (
+                "ri",
+                format!("{value_ty} %value, i32 %lane"),
+                "i32 -1",
+                "i32 %lane",
+            ),
+            (
+                "ir",
+                format!("i32 %member_mask, {value_ty} %value"),
+                "i32 %member_mask",
+                "i32 1",
+            ),
+            ("ii", format!("{value_ty} %value"), "i32 -1", "i32 1"),
+        ];
+        for (suffix, parameters, member_mask, lane) in forms {
+            writeln!(
+                output,
+                "define {value_ty} @probe_{}_{suffix}({parameters}) {{",
+                record.id
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "  %result = call {value_ty} @{}({member_mask}, {value_ty} %value, {lane}, i32 {})",
+                llvm(record).symbol,
+                warp_shuffle.clamp,
+            )
+            .unwrap();
+            writeln!(output, "  ret {value_ty} %result\n}}").unwrap();
+        }
     } else if let Some(redux) = &record.redux {
         debug_assert_eq!(redux.adapter, ReduxAdapter::MaskValueToSourceMemberMask);
         writeln!(output, "declare i32 @{}(i32, i32)", llvm(record).symbol).unwrap();
@@ -2997,7 +3265,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     for record in vote_intrinsics(catalog) {
         writeln!(
             output,
-            "- `{}` keeps raw and dialect operands in `[member_mask, predicate]` order. The executing lane must be named in the mask, and every non-exited named lane must execute the same `vote.sync` instruction with the same qualifiers and mask. Both immediate and register member masks are admitted.",
+            "- `{}` keeps raw and dialect operands in `[member_mask, predicate]` order. The executing lane must be named in the mask, and every non-exited named lane must execute the same `vote.sync` instruction with the same qualifiers and mask. On `sm_6x` and earlier, all named lanes must execute in convergence and no unnamed lane may be active. Both immediate and register member masks are admitted.",
             record.id,
         )
         .unwrap();
@@ -3032,6 +3300,17 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             output,
             "- `{}` passes the 32-bit member mask directly to the typed LLVM intrinsic on both backends. The executing lane must be named in the mask, and every non-exited named lane must execute the same `bar.warp.sync` operation with the same mask. On `sm_6x` and earlier, all named lanes must execute the barrier in convergence, and no unnamed lane may be active when it executes. The barrier orders memory accesses among participating lanes. Both immediate and register masks are admitted.",
             record.id,
+        )
+        .unwrap();
+    }
+    output.push_str("\n## Warp-shuffle contracts\n\n");
+    for record in warp_shuffles(catalog) {
+        let shuffle = record.warp_shuffle.as_ref().unwrap();
+        writeln!(
+            output,
+            "- `{}` keeps raw and dialect operands in `[member_mask, value, lane_or_delta]` order and inserts clamp `{}` during lowering. The executing lane must be named in the mask, and every non-exited named lane must execute the same `shfl.sync` operation with the same qualifiers and mask. On `sm_6x` and earlier, all named lanes must execute in convergence and no unnamed lane may be active. An in-range source must be active and named; an out-of-range source copies the calling lane's input. Register and immediate lane/mask forms are admitted.",
+            record.id,
+            shuffle.clamp,
         )
         .unwrap();
     }
@@ -3526,6 +3805,77 @@ mod tests {
         assert!(reference.contains("## Warp-barrier contract"));
         assert!(reference.contains("no unnamed lane may be active"));
         assert!(reference.contains("Both immediate and register masks are admitted"));
+    }
+
+    #[test]
+    fn warp_shuffle_rendering_owns_all_i32_and_f32_modes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(warp_shuffles(&catalog).count(), 8);
+
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod warp_shuffle;"));
+        assert!(dialect_mod.contains("warp_shuffle::register(ctx)"));
+
+        let dialect = render_dialect_warp_shuffle(&catalog, "test-hash");
+        for op in [
+            "ShflSyncIdxI32Op",
+            "ShflSyncBflyI32Op",
+            "ShflSyncDownI32Op",
+            "ShflSyncUpI32Op",
+            "ShflSyncIdxF32Op",
+            "ShflSyncBflyF32Op",
+            "ShflSyncDownF32Op",
+            "ShflSyncUpF32Op",
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op}")));
+            assert!(dialect.contains(&format!("{op}::register(ctx)")));
+        }
+        assert!(dialect.contains("vec![member_mask, value, lane_or_delta]"));
+        assert!(dialect.contains("requires i32 mask/lane and i32 value/result"));
+        assert!(dialect.contains("requires i32 mask/lane and f32 value/result"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::warp::shuffle_sync"));
+        assert!(importer.contains("cuda_device::warp::shuffle_up_f32_sync"));
+        assert!(importer.contains(
+            "let shuffle = ShflSyncIdxI32Op::build(ctx, member_mask, value, lane_or_delta)"
+        ));
+        assert!(importer.contains("set_generated_intrinsic_marker(ctx, shuffle, \"v1:i0050\")"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("impl MirToLlvmConversion for ShflSyncIdxI32Op"));
+        assert!(lowering.contains("convert_shuffle_i32(ctx, rewriter"));
+        assert!(lowering.contains("\"llvm_nvvm_shfl_sync_idx_i32\", 31)"));
+        assert!(lowering.contains("impl MirToLlvmConversion for ShflSyncUpF32Op"));
+        assert!(lowering.contains("convert_shuffle_f32(ctx, rewriter"));
+        assert!(lowering.contains("\"llvm_nvvm_shfl_sync_up_f32\", 0)"));
+
+        for record in warp_shuffles(&catalog) {
+            let probe = render_probe(&catalog, record, "test-hash");
+            for suffix in ["rr", "ri", "ir", "ii"] {
+                assert!(probe.contains(&format!("@probe_{}_{suffix}", record.id)));
+            }
+            let shuffle = record.warp_shuffle.as_ref().unwrap();
+            assert!(probe.contains(&format!(", i32 {})", shuffle.clamp)));
+        }
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub unsafe fn i0050(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
+        assert!(raw.contains("pub unsafe fn i0057(_arg0: u32, _arg1: f32, _arg2: u32) -> f32"));
+        assert!(raw.contains("If the computed source lane is in range"));
+        assert!(raw.contains("An out-of-range source copies the calling lane's input"));
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## Warp-shuffle contracts"));
+        assert!(reference.contains("inserts clamp `31` during lowering"));
+        assert!(reference.contains("inserts clamp `0` during lowering"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/warp_shuffle.rs"
+        )));
     }
 
     #[test]

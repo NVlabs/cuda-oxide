@@ -17,7 +17,9 @@ use cuda_intrinsics::sreg::{
 };
 use cuda_intrinsics::warp::{
     active_mask, all_sync, any_sync, ballot_sync, match_all_i64_sync, match_all_sync,
-    match_any_i64_sync, match_any_sync, sync_mask, uni_sync,
+    match_any_i64_sync, match_any_sync, shuffle_down_f32_sync, shuffle_down_sync,
+    shuffle_f32_sync, shuffle_sync, shuffle_up_f32_sync, shuffle_up_sync,
+    shuffle_xor_f32_sync, shuffle_xor_sync, sync_mask, uni_sync,
 };
 
 #[cuda_module]
@@ -67,6 +69,31 @@ mod kernels {
             & (all32 == member_mask)
             & (all64 == 0);
 
+        let down_delta = if lane < 31 { 1 } else { 0 };
+        let up_delta = if lane > 0 { 1 } else { 0 };
+        // SAFETY: both full warps execute the same shuffle sequence and mask.
+        // Every computed source lane is active and named in `member_mask`.
+        let (idx, bfly, down, up, idx_f32, bfly_f32, down_f32, up_f32) = unsafe {
+            (
+                shuffle_sync(member_mask, lane, 0),
+                shuffle_xor_sync(member_mask, lane, 1),
+                shuffle_down_sync(member_mask, lane, down_delta),
+                shuffle_up_sync(member_mask, lane, up_delta),
+                shuffle_f32_sync(member_mask, lane as f32, 0),
+                shuffle_xor_f32_sync(member_mask, lane as f32, 1),
+                shuffle_down_f32_sync(member_mask, lane as f32, down_delta),
+                shuffle_up_f32_sync(member_mask, lane as f32, up_delta),
+            )
+        };
+        let shuffles_ok = (idx == 0)
+            & (bfly == (lane ^ 1))
+            & (down == lane + down_delta)
+            & (up == lane - up_delta)
+            & (idx_f32 == 0.0)
+            & (bfly_f32 == (lane ^ 1) as f32)
+            & (down_f32 == (lane + down_delta) as f32)
+            & (up_f32 == (lane - up_delta) as f32);
+
         let block_width = block_dim_x();
         let block_height = block_dim_y();
         let block_depth = block_dim_z();
@@ -80,6 +107,7 @@ mod kernels {
 
         if votes_ok
             && matches_ok
+            && shuffles_ok
             && column < grid_width
             && row < grid_height
             && plane < grid_depth

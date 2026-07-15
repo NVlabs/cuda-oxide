@@ -2,7 +2,12 @@
 
 ## Warp-Level Primitives - Shuffle Operations
 
-Demonstrates warp-level operations: `shuffle_xor`, `shuffle_down`, and `shuffle` (broadcast). These are the fastest way to communicate between threads without shared memory.
+Demonstrates warp-level `shuffle_xor`, `shuffle_down`, and `shuffle`
+(broadcast) operations without shared-memory storage.
+
+The i32/f32 synchronized shuffle leaves are generated as intrinsic records
+`i0050`-`i0057`. The friendly `cuda_device::warp` helpers and this example's
+output remain unchanged.
 
 ## What This Example Does
 
@@ -86,7 +91,8 @@ Warp sums: [496.0, 496.0, 496.0, 496.0, 496.0, 496.0, 496.0, 496.0]
 
 ## Hardware Requirements
 
-- **Minimum GPU**: Kepler (sm_30) or newer
+- **Instruction floor**: PTX 6.0 and sm_30
+- **Project target**: Ampere or newer
 - **CUDA Driver**: 11.0+
 
 ## Shuffle Functions
@@ -100,16 +106,14 @@ Warp sums: [496.0, 496.0, 496.0, 496.0, 496.0, 496.0, 496.0, 496.0]
 
 ## Why Warp Operations?
 
-| Communication   | Latency     | Synchronization              |
-|-----------------|-------------|------------------------------|
-| Shuffle         | ~1 cycle    | Implicit (warp-synchronous)  |
-| Shared Memory   | ~20 cycles  | Requires sync_threads()      |
-| Global Memory   | ~400 cycles | Requires barriers            |
+Shuffles move register values directly between lanes without shared-memory
+storage. They still have a participation contract: every named, non-exited
+lane must execute the same synchronized shuffle with the same member mask.
+The full-warp helpers in this example use `u32::MAX`, so all 32 lanes must
+reach each call. A shuffle is not a general memory barrier.
 
-Shuffles are:
-- **Lock-step**: All 32 lanes execute together
-- **No synchronization needed**: Warps are SIMD units
-- **Register-to-register**: No memory accesses
+On `sm_6x` and earlier, named lanes must be converged and no lane outside the
+mask may be active. Ampere and newer use the synchronized forms shown here.
 
 ## Common Patterns
 
@@ -158,3 +162,11 @@ shfl.sync.idx.b32 %f_result, %f_val, 0, 0x1f, 0xffffffff;
 // Lane ID
 mov.u32 %r_lane, %laneid;
 ```
+
+Generated code owns the raw APIs, importer dispatch, dialect operations,
+typed lowering, and target metadata. LLVM receives a fixed clamp of 31 for
+`idx`, `bfly`, and `down`, and 0 for `up`. The generated probes cover both
+register and immediate lane/member-mask operands.
+
+The generated-intrinsics migration passed this example's compile-only gate
+with the same host output contract. No GPU run was available for that batch.

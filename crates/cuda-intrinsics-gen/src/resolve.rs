@@ -19,11 +19,12 @@ use crate::model::{
     PackedAtomicAdapter, PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat,
     PackedAtomicOperation, PackedAtomicOrdering, PackedAtomicPointerContract,
     PackedAtomicReturnContract, PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract,
-    PackedAtomicStateSpace, PackedAtomicSubnormal, PtxVersion, ReduxAdapter, ReduxOperation,
-    ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation,
-    WarpBarrierAdapter, WarpBarrierLegacyParticipation, WarpBarrierMaskEncoding,
-    WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
-    WarpMatchParticipation, WarpMatchValueWidth,
+    PackedAtomicStateSpace, PackedAtomicSubnormal, PreSm70MemberMaskRule, PtxVersion, ReduxAdapter,
+    ReduxOperation, ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode,
+    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
+    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
+    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
+    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
 };
 #[cfg(test)]
 use crate::ptx::InstructionPattern;
@@ -34,9 +35,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 9;
-const OVERLAY_SHARD_SCHEMA: u32 = 5;
-pub(crate) const CATALOG_SCHEMA: u32 = 8;
+const OVERLAY_SCHEMA: u32 = 10;
+const OVERLAY_SHARD_SCHEMA: u32 = 6;
+pub(crate) const CATALOG_SCHEMA: u32 = 9;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -323,7 +324,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -331,6 +332,8 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.vote,
             record.active_mask,
             record.warp_match,
+            record.warp_barrier,
+            record.warp_shuffle,
             record.dot_product,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
@@ -646,6 +649,10 @@ fn validate_policy(
             policy,
             declaration.context("warp_barrier requires imported LLVM declaration")?,
         )?,
+        "warp_shuffle" => validate_warp_shuffle_policy(
+            policy,
+            declaration.context("warp_shuffle requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -717,6 +724,7 @@ fn validate_policy(
         let expected_selection_count = match policy.family.as_str() {
             "vote" | "warp_barrier" => 2,
             "warp_match" => 4,
+            "warp_shuffle" => 8,
             _ => 1,
         };
         ensure!(
@@ -774,6 +782,19 @@ fn selection_matches_policy(
             && ["INT_BAR_WARP_SYNC_I", "INT_BAR_WARP_SYNC_R"]
                 .contains(&selection.source_record.as_str())
             && policy.expected_ptx.matches(&selection.asm)
+            && selection.constraints.is_empty();
+    }
+
+    if policy.family == "warp_shuffle" {
+        let Some(shuffle) = &policy.warp_shuffle else {
+            return false;
+        };
+        let recipe = warp_shuffle_recipe(shuffle.mode, shuffle.value_kind);
+        return selection.asm
+            == format!(
+                "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                recipe.ptx_mode
+            )
             && selection.constraints.is_empty();
     }
 
@@ -879,6 +900,7 @@ fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with sync",
@@ -945,9 +967,11 @@ fn validate_vote_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
     ensure!(
         vote.participation
             == VoteParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask
+            && vote.legacy_pre_sm70
+                == PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive
             && vote.adapter == VoteAdapter::DirectMaskPredicate
             && vote.mask_encoding == MaskEncoding::RegisterOrImmediate,
-        "{} requests an unsupported vote participation, adapter, or mask encoding",
+        "{} requests an unsupported vote participation, pre-sm70 rule, adapter, or mask encoding",
         policy.id
     );
     ensure!(
@@ -1030,6 +1054,7 @@ fn validate_vote_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with vote",
@@ -1277,6 +1302,7 @@ fn validate_active_mask_policy(
             && policy.vote.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
@@ -1533,6 +1559,7 @@ fn validate_warp_match_policy(
             && policy.active_mask.is_none()
             && policy.dot_product.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -1604,7 +1631,7 @@ fn validate_warp_barrier_policy(
         barrier.participation
             == WarpBarrierParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask
             && barrier.legacy_pre_sm70
-                == WarpBarrierLegacyParticipation::AllNamedLanesConvergedAndOnlyNamedLanesActive
+                == PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive
             && barrier.adapter == WarpBarrierAdapter::DirectMemberMask
             && barrier.mask_encoding == WarpBarrierMaskEncoding::RegisterOrImmediate
             && barrier.memory_ordering == WarpBarrierMemoryOrdering::ParticipatingLanes,
@@ -1678,6 +1705,7 @@ fn validate_warp_barrier_policy(
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
@@ -1761,6 +1789,346 @@ fn validate_warp_barrier_policy(
         );
     }
     Ok(())
+}
+
+fn validate_warp_shuffle_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let shuffle = policy
+        .warp_shuffle
+        .as_ref()
+        .with_context(|| format!("{} has no closed warp-shuffle contract", policy.id))?;
+    let recipe = warp_shuffle_recipe(shuffle.mode, shuffle.value_kind);
+    ensure!(
+        shuffle.participation
+            == WarpShuffleParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask
+            && shuffle.legacy_pre_sm70
+                == PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive
+            && shuffle.source_lane
+                == WarpShuffleSourceLane::InRangeSourceActiveAndNamedOutOfRangeCopiesSelf
+            && shuffle.adapter == WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+            && shuffle.clamp == recipe.clamp
+            && shuffle.lane_encoding == WarpShuffleOperandEncoding::RegisterOrImmediate
+            && shuffle.mask_encoding == WarpShuffleOperandEncoding::RegisterOrImmediate,
+        "{} requests an unsupported warp-shuffle semantic or operand contract",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} warp-shuffle identity does not match its closed mode and value recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "warp"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == ["u32", recipe.rust_value, "u32"]
+            && policy.rust_result == recipe.rust_value
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::warp::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::warp::{}", recipe.rust_name)],
+        "{} must preserve its unsafe must-use warp-shuffle raw API and compatibility path",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == ["i32", recipe.llvm_value, "i32"]
+            && policy.dialect_results == [recipe.llvm_value]
+            && policy.llvm_arguments == ["i32", recipe.llvm_value, "i32", "i32"]
+            && policy.llvm_results == [recipe.llvm_value]
+            && policy.lowering == "generated_warp_shuffle",
+        "{} is outside the closed warp-shuffle clamp-insertion lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "inaccessible_read_write"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "6.0"
+            && policy.minimum_sm.as_deref() == Some("sm_30")
+            && policy.ptx_result == recipe.rust_value
+            && policy.targets == "all",
+        "{} warp-shuffle effects, carrier, or target floor disagree with its recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync",
+        "{} warp-shuffle PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.classes
+            == [
+                "ClangBuiltin",
+                "NVVMBuiltin",
+                "SDPatternOperator",
+                "Intrinsic"
+            ]
+            && declaration.properties
+                == [
+                    "IntrConvergent",
+                    "IntrInaccessibleMemOnly",
+                    "IntrNoCallback",
+                ],
+        "{} warp-shuffle class or effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
+            && policy.dot_product.is_none()
+            && policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with warp_shuffle",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "shfl"
+            && policy.expected_ptx.modifiers == ["sync", recipe.ptx_mode, "b32"]
+            && policy.expected_ptx.operands
+                == [
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::RegisterOrImmediate,
+                    OperandPattern::Exact {
+                        value: recipe.clamp.to_string(),
+                    },
+                    OperandPattern::RegisterOrImmediate,
+                ],
+        "{} expected PTX does not match its closed shfl.sync recipe",
+        policy.id
+    );
+
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                ]),
+        "{} must define exactly the reviewed typed LLVM and libNVVM routes",
+        policy.id
+    );
+    for lowering in &policy.backend_lowerings {
+        let floor_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.as_deref() == Some("6.0")
+                    && lowering.minimum_sm.as_deref() == Some("sm_30")
+            }
+            IntrinsicBackend::LibNvvm => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.as_deref() == Some("6.0")
+                    && lowering.minimum_sm.as_deref() == Some("sm_75")
+            }
+        };
+        ensure!(
+            floor_matches && !lowering.evidence_profile.trim().is_empty(),
+            "{} backend {:?} does not carry its reviewed warp-shuffle profile floor",
+            policy.id,
+            lowering.backend
+        );
+    }
+
+    let selection_records: BTreeSet<_> = declaration
+        .selections
+        .iter()
+        .map(|selection| selection.source_record.as_str())
+        .collect();
+    ensure!(
+        declaration.selections.len() == 8
+            && selection_records.len() == 8
+            && selection_records
+                .iter()
+                .all(|source_record| !source_record.trim().is_empty()),
+        "{} warp-shuffle declaration must contain exactly eight distinct operand-encoding selections",
+        policy.id
+    );
+    let expected_asm = format!(
+        "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+        recipe.ptx_mode
+    );
+    for selection in &declaration.selections {
+        ensure!(
+            selection.asm == expected_asm
+                && selection.predicates
+                    == [
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30",
+                    ]
+                && selection.constraints.is_empty(),
+            "{} warp-shuffle selections disagree on PTX shape, target predicates, or constraints",
+            policy.id
+        );
+    }
+    Ok(())
+}
+
+struct WarpShuffleRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_name: &'static str,
+    rust_value: &'static str,
+    llvm_value: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    ptx_mode: &'static str,
+    clamp: u32,
+}
+
+fn warp_shuffle_recipe(
+    mode: WarpShuffleMode,
+    value_kind: WarpShuffleValueKind,
+) -> WarpShuffleRecipe {
+    match (mode, value_kind) {
+        (WarpShuffleMode::Idx, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
+            id: "shuffle_sync",
+            abi_id: "i0050",
+            operation_key: "warp.shuffle.sync.idx.i32",
+            source_record: "int_nvvm_shfl_sync_idx_i32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.idx.i32",
+            rust_name: "shuffle_sync",
+            rust_value: "u32",
+            llvm_value: "i32",
+            dialect_op_type: "ShflSyncIdxI32Op",
+            dialect_op_name: "nvvm.shfl_sync_idx_i32",
+            ptx_mode: "idx",
+            clamp: 31,
+        },
+        (WarpShuffleMode::Bfly, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
+            id: "shuffle_xor_sync",
+            abi_id: "i0051",
+            operation_key: "warp.shuffle.sync.bfly.i32",
+            source_record: "int_nvvm_shfl_sync_bfly_i32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.bfly.i32",
+            rust_name: "shuffle_xor_sync",
+            rust_value: "u32",
+            llvm_value: "i32",
+            dialect_op_type: "ShflSyncBflyI32Op",
+            dialect_op_name: "nvvm.shfl_sync_bfly_i32",
+            ptx_mode: "bfly",
+            clamp: 31,
+        },
+        (WarpShuffleMode::Down, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
+            id: "shuffle_down_sync",
+            abi_id: "i0052",
+            operation_key: "warp.shuffle.sync.down.i32",
+            source_record: "int_nvvm_shfl_sync_down_i32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.down.i32",
+            rust_name: "shuffle_down_sync",
+            rust_value: "u32",
+            llvm_value: "i32",
+            dialect_op_type: "ShflSyncDownI32Op",
+            dialect_op_name: "nvvm.shfl_sync_down_i32",
+            ptx_mode: "down",
+            clamp: 31,
+        },
+        (WarpShuffleMode::Up, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
+            id: "shuffle_up_sync",
+            abi_id: "i0053",
+            operation_key: "warp.shuffle.sync.up.i32",
+            source_record: "int_nvvm_shfl_sync_up_i32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.up.i32",
+            rust_name: "shuffle_up_sync",
+            rust_value: "u32",
+            llvm_value: "i32",
+            dialect_op_type: "ShflSyncUpI32Op",
+            dialect_op_name: "nvvm.shfl_sync_up_i32",
+            ptx_mode: "up",
+            clamp: 0,
+        },
+        (WarpShuffleMode::Idx, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
+            id: "shuffle_f32_sync",
+            abi_id: "i0054",
+            operation_key: "warp.shuffle.sync.idx.f32",
+            source_record: "int_nvvm_shfl_sync_idx_f32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.idx.f32",
+            rust_name: "shuffle_f32_sync",
+            rust_value: "f32",
+            llvm_value: "f32",
+            dialect_op_type: "ShflSyncIdxF32Op",
+            dialect_op_name: "nvvm.shfl_sync_idx_f32",
+            ptx_mode: "idx",
+            clamp: 31,
+        },
+        (WarpShuffleMode::Bfly, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
+            id: "shuffle_xor_f32_sync",
+            abi_id: "i0055",
+            operation_key: "warp.shuffle.sync.bfly.f32",
+            source_record: "int_nvvm_shfl_sync_bfly_f32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.bfly.f32",
+            rust_name: "shuffle_xor_f32_sync",
+            rust_value: "f32",
+            llvm_value: "f32",
+            dialect_op_type: "ShflSyncBflyF32Op",
+            dialect_op_name: "nvvm.shfl_sync_bfly_f32",
+            ptx_mode: "bfly",
+            clamp: 31,
+        },
+        (WarpShuffleMode::Down, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
+            id: "shuffle_down_f32_sync",
+            abi_id: "i0056",
+            operation_key: "warp.shuffle.sync.down.f32",
+            source_record: "int_nvvm_shfl_sync_down_f32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.down.f32",
+            rust_name: "shuffle_down_f32_sync",
+            rust_value: "f32",
+            llvm_value: "f32",
+            dialect_op_type: "ShflSyncDownF32Op",
+            dialect_op_name: "nvvm.shfl_sync_down_f32",
+            ptx_mode: "down",
+            clamp: 31,
+        },
+        (WarpShuffleMode::Up, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
+            id: "shuffle_up_f32_sync",
+            abi_id: "i0057",
+            operation_key: "warp.shuffle.sync.up.f32",
+            source_record: "int_nvvm_shfl_sync_up_f32",
+            llvm_symbol: "llvm.nvvm.shfl.sync.up.f32",
+            rust_name: "shuffle_up_f32_sync",
+            rust_value: "f32",
+            llvm_value: "f32",
+            dialect_op_type: "ShflSyncUpF32Op",
+            dialect_op_name: "nvvm.shfl_sync_up_f32",
+            ptx_mode: "up",
+            clamp: 0,
+        },
+    }
 }
 
 fn validate_selected_target_predicates(
@@ -1847,7 +2215,7 @@ fn validate_selected_target_predicates(
         );
     } else if matches!(
         policy.family.as_str(),
-        "vote" | "active_mask" | "warp_match" | "warp_barrier"
+        "vote" | "active_mask" | "warp_match" | "warp_barrier" | "warp_shuffle"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -1894,6 +2262,7 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with an sreg",
@@ -2089,6 +2458,7 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with redux",
         policy.id
@@ -2301,6 +2671,7 @@ fn validate_dot_product_policy(
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with dotprod",
         policy.id
@@ -2597,6 +2968,7 @@ fn validate_ldmatrix_policy(
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none(),
         "{} mixes another generated-family contract with ldmatrix",
         policy.id
@@ -2687,6 +3059,7 @@ fn validate_packed_atomic_policy(
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
             && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
@@ -3436,6 +3809,7 @@ fn resolve_record(
         active_mask: policy.active_mask.clone(),
         warp_match: policy.warp_match.clone(),
         warp_barrier: policy.warp_barrier.clone(),
+        warp_shuffle: policy.warp_shuffle.clone(),
         dot_product: policy.dot_product.clone(),
         ldmatrix: policy
             .ldmatrix_variant
@@ -3545,6 +3919,7 @@ mod tests {
             active_mask: None,
             warp_match: None,
             warp_barrier: None,
+            warp_shuffle: None,
             dot_product: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
@@ -3785,6 +4160,7 @@ mod tests {
         record.vote = Some(crate::model::Vote {
             mode,
             participation: VoteParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+            legacy_pre_sm70: PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive,
             adapter: VoteAdapter::DirectMaskPredicate,
             mask_encoding: MaskEncoding::RegisterOrImmediate,
         });
@@ -3835,6 +4211,139 @@ mod tests {
                 selection(recipe.immediate_selection),
                 selection(recipe.register_selection),
             ],
+        }
+    }
+
+    fn warp_shuffle_policy(
+        mode: WarpShuffleMode,
+        value_kind: WarpShuffleValueKind,
+    ) -> OverlayIntrinsic {
+        let recipe = warp_shuffle_recipe(mode, value_kind);
+        let mut record = policy();
+        record.id = recipe.id.into();
+        record.abi_id = recipe.abi_id.into();
+        record.operation_key = recipe.operation_key.into();
+        record.family = "warp_shuffle".into();
+        record.source_record = Some(recipe.source_record.into());
+        record.rust_module = "warp".into();
+        record.rust_name = recipe.rust_name.into();
+        record.rust_arguments = vec!["u32".into(), recipe.rust_value.into(), "u32".into()];
+        record.rust_result = recipe.rust_value.into();
+        record.safe = false;
+        record.must_use = true;
+        record.safe_allowlist_reason = None;
+        record.public_rust_path = format!("cuda_intrinsics::warp::{}", recipe.rust_name);
+        record.compatibility_rust_paths = vec![format!("cuda_device::warp::{}", recipe.rust_name)];
+        record.dialect_op_type = recipe.dialect_op_type.into();
+        record.dialect_op_name = recipe.dialect_op_name.into();
+        record.dialect_operands = vec!["i32".into(), recipe.llvm_value.into(), "i32".into()];
+        record.dialect_results = vec![recipe.llvm_value.into()];
+        record.llvm_symbol = Some(recipe.llvm_symbol.into());
+        record.llvm_arguments = vec![
+            "i32".into(),
+            recipe.llvm_value.into(),
+            "i32".into(),
+            "i32".into(),
+        ];
+        record.llvm_results = vec![recipe.llvm_value.into()];
+        record.pure = false;
+        record.memory = "inaccessible_read_write".into();
+        record.convergent = true;
+        record.execution_scope = "warp".into();
+        record.minimum_ptx = "6.0".into();
+        record.minimum_sm = Some("sm_30".into());
+        record.ptx_result = recipe.rust_value.into();
+        record.targets = "all".into();
+        record.ptx_isa_section =
+            "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync".into();
+        record.ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync".into();
+        record.lowering = "generated_warp_shuffle".into();
+        record.backend_lowerings = vec![
+            crate::model::OverlayBackendLowering {
+                backend: IntrinsicBackend::LlvmNvptx,
+                mechanism: BackendLoweringMechanism::TypedNvvm,
+                evidence_profile: "llvm-test".into(),
+                minimum_ptx: Some("6.0".into()),
+                minimum_sm: Some("sm_30".into()),
+            },
+            crate::model::OverlayBackendLowering {
+                backend: IntrinsicBackend::LibNvvm,
+                mechanism: BackendLoweringMechanism::TypedNvvm,
+                evidence_profile: "libnvvm-test".into(),
+                minimum_ptx: Some("6.0".into()),
+                minimum_sm: Some("sm_75".into()),
+            },
+        ];
+        record.warp_shuffle = Some(crate::model::WarpShuffle {
+            mode,
+            value_kind,
+            participation:
+                WarpShuffleParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+            legacy_pre_sm70: PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive,
+            source_lane: WarpShuffleSourceLane::InRangeSourceActiveAndNamedOutOfRangeCopiesSelf,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            clamp: recipe.clamp,
+            lane_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            mask_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+        });
+        record.expected_ptx = InstructionPattern::new(
+            "shfl",
+            &["sync", recipe.ptx_mode, "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+                OperandPattern::Exact {
+                    value: recipe.clamp.to_string(),
+                },
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+        record.summary = "synchronized warp shuffle".into();
+        record
+    }
+
+    fn warp_shuffle_declaration(
+        mode: WarpShuffleMode,
+        value_kind: WarpShuffleValueKind,
+    ) -> ImportedIntrinsic {
+        let recipe = warp_shuffle_recipe(mode, value_kind);
+        let selections = (0..8)
+            .map(|index| ImportedSelection {
+                source_record: format!("anonymous_test_{index}"),
+                asm: format!(
+                    "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+                    recipe.ptx_mode
+                ),
+                predicates: vec![
+                    "Subtarget->getPTXVersion() >= 60".into(),
+                    "Subtarget->getSmVersion() >= 30".into(),
+                ],
+                constraints: Default::default(),
+            })
+            .collect();
+        ImportedIntrinsic {
+            source_record: recipe.source_record.into(),
+            llvm_name: recipe.llvm_symbol.into(),
+            arguments: vec![
+                "i32".into(),
+                recipe.llvm_value.into(),
+                "i32".into(),
+                "i32".into(),
+            ],
+            results: vec![recipe.llvm_value.into()],
+            classes: vec![
+                "ClangBuiltin".into(),
+                "NVVMBuiltin".into(),
+                "SDPatternOperator".into(),
+                "Intrinsic".into(),
+            ],
+            properties: vec![
+                "IntrConvergent".into(),
+                "IntrInaccessibleMemOnly".into(),
+                "IntrNoCallback".into(),
+            ],
+            selections,
         }
     }
 
@@ -4041,8 +4550,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 10);
-        assert_eq!(overlay.intrinsics.len(), 49);
+        assert_eq!(overlay.shards.len(), 11);
+        assert_eq!(overlay.intrinsics.len(), 57);
         assert_eq!(
             overlay
                 .intrinsics
@@ -4098,6 +4607,14 @@ mod tests {
                 .filter(|record| record.family == "warp_match")
                 .count(),
             4
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "warp_shuffle")
+                .count(),
+            8
         );
         assert_eq!(hash.len(), 64);
 
@@ -4362,6 +4879,10 @@ mod tests {
             let policy = vote_policy(mode);
             let declaration = vote_declaration(mode);
             validate_imported_policy(&policy, &declaration).unwrap();
+            assert_eq!(
+                policy.vote.as_ref().unwrap().legacy_pre_sm70,
+                PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive
+            );
 
             let selected: Vec<_> = declaration
                 .selections
@@ -4482,6 +5003,187 @@ mod tests {
             .to_string()
             .contains("reviewed compatibility path")
         );
+    }
+
+    #[test]
+    fn warp_shuffle_variants_keep_exact_identity_clamp_and_eight_selections() {
+        for (mode, value_kind, clamp) in [
+            (WarpShuffleMode::Idx, WarpShuffleValueKind::I32, 31),
+            (WarpShuffleMode::Bfly, WarpShuffleValueKind::I32, 31),
+            (WarpShuffleMode::Down, WarpShuffleValueKind::I32, 31),
+            (WarpShuffleMode::Up, WarpShuffleValueKind::I32, 0),
+            (WarpShuffleMode::Idx, WarpShuffleValueKind::F32, 31),
+            (WarpShuffleMode::Bfly, WarpShuffleValueKind::F32, 31),
+            (WarpShuffleMode::Down, WarpShuffleValueKind::F32, 31),
+            (WarpShuffleMode::Up, WarpShuffleValueKind::F32, 0),
+        ] {
+            let policy = warp_shuffle_policy(mode, value_kind);
+            let declaration = warp_shuffle_declaration(mode, value_kind);
+            validate_imported_policy(&policy, &declaration).unwrap();
+
+            assert_eq!(policy.warp_shuffle.as_ref().unwrap().clamp, clamp);
+            assert_eq!(
+                declaration
+                    .selections
+                    .iter()
+                    .filter(|selection| selection_matches_policy(&policy, selection))
+                    .count(),
+                8
+            );
+
+            let mut record = evidence();
+            record.id = policy.id.clone();
+            record.source_record = policy.source_record.clone();
+            record.llvm_symbol = policy.llvm_symbol.clone();
+            record.llvm_arguments = policy.llvm_arguments.clone();
+            record.llvm_results = policy.llvm_results.clone();
+            record.expected_ptx = policy.expected_ptx.clone();
+            let resolved = resolve_record(
+                &policy,
+                resolve_policy_source(&policy).unwrap(),
+                Some(&declaration),
+                &record,
+                "test",
+                "LLVM version test",
+                "0123456789abcdef",
+                vec![],
+                1,
+            )
+            .unwrap();
+            assert_eq!(resolved.selections.len(), 8);
+            assert_eq!(resolved.warp_shuffle, policy.warp_shuffle);
+        }
+    }
+
+    #[test]
+    fn pinned_warp_shuffle_records_match_the_closed_recipes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let policies: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "warp_shuffle")
+            .collect();
+        assert_eq!(policies.len(), 8);
+        for policy in policies {
+            let declaration = declarations[policy.source_record.as_deref().unwrap()];
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+    }
+
+    #[test]
+    fn warp_shuffle_contract_rejects_unreviewed_policy_changes() {
+        let valid = warp_shuffle_policy(WarpShuffleMode::Idx, WarpShuffleValueKind::I32);
+        let declaration = warp_shuffle_declaration(WarpShuffleMode::Idx, WarpShuffleValueKind::I32);
+
+        let reject_policy = |policy: &OverlayIntrinsic, expected: &str| {
+            let error = match validate_imported_policy(policy, &declaration) {
+                Ok(()) => panic!("{expected} mutation was accepted"),
+                Err(error) => error,
+            };
+            let message = error.to_string();
+            assert!(message.contains(expected), "unexpected error: {message}");
+        };
+
+        let mut wrong_identity = valid.clone();
+        wrong_identity.operation_key = "warp.shuffle.sync.idx.changed".into();
+        reject_policy(&wrong_identity, "warp-shuffle identity");
+
+        let mut safe = valid.clone();
+        safe.safe = true;
+        safe.safe_allowlist_reason = Some("incorrectly hides participation obligations".into());
+        reject_policy(&safe, "unsafe must-use warp-shuffle");
+
+        let mut wrong_signature = valid.clone();
+        wrong_signature.dialect_operands.pop();
+        reject_policy(&wrong_signature, "clamp-insertion lowering");
+
+        let mut wrong_clamp = valid.clone();
+        wrong_clamp.warp_shuffle.as_mut().unwrap().clamp = 0;
+        reject_policy(&wrong_clamp, "semantic or operand contract");
+
+        let mut missing_contract = valid.clone();
+        missing_contract.warp_shuffle = None;
+        reject_policy(&missing_contract, "closed warp-shuffle contract");
+
+        let mut mixed_contract = valid.clone();
+        mixed_contract.vote = vote_policy(VoteMode::All).vote;
+        reject_policy(&mixed_contract, "mixes another generated-family contract");
+
+        let mut wrong_backend_floor = valid.clone();
+        wrong_backend_floor
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap()
+            .minimum_sm = Some("sm_80".into());
+        reject_policy(&wrong_backend_floor, "profile floor");
+    }
+
+    #[test]
+    fn warp_shuffle_contract_rejects_selection_drift() {
+        let valid = warp_shuffle_policy(WarpShuffleMode::Down, WarpShuffleValueKind::F32);
+        let declaration =
+            warp_shuffle_declaration(WarpShuffleMode::Down, WarpShuffleValueKind::F32);
+        let reject = |declaration: &ImportedIntrinsic, expected: &str| {
+            let error = validate_imported_policy(&valid, declaration).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains(expected), "unexpected error: {message}");
+        };
+
+        let mut missing_selection = declaration.clone();
+        missing_selection.selections.pop();
+        reject(
+            &missing_selection,
+            "eight distinct operand-encoding selections",
+        );
+
+        let mut duplicate_selection = declaration.clone();
+        duplicate_selection.selections[7].source_record =
+            duplicate_selection.selections[0].source_record.clone();
+        reject(
+            &duplicate_selection,
+            "eight distinct operand-encoding selections",
+        );
+
+        let mut empty_selection_name = declaration.clone();
+        empty_selection_name.selections[7].source_record.clear();
+        reject(
+            &empty_selection_name,
+            "eight distinct operand-encoding selections",
+        );
+
+        let mut wrong_asm = declaration.clone();
+        wrong_asm.selections[0].asm =
+            "shfl.sync.up.b32 \t$dst, $src, $offset, $mask, $threadmask;".into();
+        reject(&wrong_asm, "selections disagree on PTX shape");
+
+        let mut wrong_predicate = declaration.clone();
+        wrong_predicate.selections[0].predicates[0] = "Subtarget->getPTXVersion() >= 61".into();
+        reject(&wrong_predicate, "selections disagree on PTX shape");
+
+        let mut constrained = declaration;
+        constrained.selections[0]
+            .constraints
+            .immediate_bindings
+            .push(crate::model::ImportedImmediateBinding {
+                argument_index: 2,
+                value: 1,
+            });
+        reject(&constrained, "selections disagree on PTX shape");
+
+        let mut wrong_classes =
+            warp_shuffle_declaration(WarpShuffleMode::Down, WarpShuffleValueKind::F32);
+        wrong_classes.classes.pop();
+        reject(&wrong_classes, "class or effects");
     }
 
     #[test]

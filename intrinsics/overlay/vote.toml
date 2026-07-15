@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for synchronized warp votes.
 
-schema = 5
+schema = 6
 family = "vote"
 
 [[intrinsic]]
@@ -36,7 +36,7 @@ ptx_isa_version = "9.3"
 ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
 ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
 lowering = "generated_vote"
-vote = { mode = "all", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+vote = { mode = "all", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
 expected_ptx = { mnemonic = "vote", modifiers = ["sync", "all", "pred"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
 summary = "Returns true when every named warp lane has a true predicate."
 
@@ -73,7 +73,7 @@ ptx_isa_version = "9.3"
 ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
 ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
 lowering = "generated_vote"
-vote = { mode = "any", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+vote = { mode = "any", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
 expected_ptx = { mnemonic = "vote", modifiers = ["sync", "any", "pred"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
 summary = "Returns true when at least one named warp lane has a true predicate."
 
@@ -110,7 +110,7 @@ ptx_isa_version = "9.3"
 ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
 ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
 lowering = "generated_vote"
-vote = { mode = "ballot", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+vote = { mode = "ballot", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
 expected_ptx = { mnemonic = "vote", modifiers = ["sync", "ballot", "b32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
 summary = "Returns a mask of named warp lanes whose predicates are true."
 
@@ -147,6 +147,6 @@ ptx_isa_version = "9.3"
 ptx_isa_section = "9.7.14.10 Warp Vote Instructions: vote.sync"
 ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
 lowering = "generated_vote"
-vote = { mode = "uni", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
+vote = { mode = "uni", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active", adapter = "direct_mask_predicate", mask_encoding = "register_or_immediate" }
 expected_ptx = { mnemonic = "vote", modifiers = ["sync", "uni", "pred"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register_or_immediate" }] }
 summary = "Returns true when every named warp lane has the same predicate."

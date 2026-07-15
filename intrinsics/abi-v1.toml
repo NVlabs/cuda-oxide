@@ -350,3 +350,59 @@ status = "active"
 catalog_id = "sync_mask"
 operation_key = "warp.barrier.sync.masked"
 raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0050"
+status = "active"
+catalog_id = "shuffle_sync"
+operation_key = "warp.shuffle.sync.idx.i32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0051"
+status = "active"
+catalog_id = "shuffle_xor_sync"
+operation_key = "warp.shuffle.sync.bfly.i32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0052"
+status = "active"
+catalog_id = "shuffle_down_sync"
+operation_key = "warp.shuffle.sync.down.i32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0053"
+status = "active"
+catalog_id = "shuffle_up_sync"
+operation_key = "warp.shuffle.sync.up.i32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0054"
+status = "active"
+catalog_id = "shuffle_f32_sync"
+operation_key = "warp.shuffle.sync.idx.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32", "u32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0055"
+status = "active"
+catalog_id = "shuffle_xor_f32_sync"
+operation_key = "warp.shuffle.sync.bfly.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32", "u32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0056"
+status = "active"
+catalog_id = "shuffle_down_f32_sync"
+operation_key = "warp.shuffle.sync.down.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32", "u32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0057"
+status = "active"
+catalog_id = "shuffle_up_f32_sync"
+operation_key = "warp.shuffle.sync.up.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32", "u32"], result = "f32" }

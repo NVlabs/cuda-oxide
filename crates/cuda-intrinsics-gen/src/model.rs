@@ -217,6 +217,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub warp_barrier: Option<WarpBarrier>,
     #[serde(default)]
+    pub warp_shuffle: Option<WarpShuffle>,
+    #[serde(default)]
     pub dot_product: Option<DotProduct>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
@@ -522,6 +524,7 @@ pub enum ReduxAdapter {
 pub struct Vote {
     pub mode: VoteMode,
     pub participation: VoteParticipation,
+    pub legacy_pre_sm70: PreSm70MemberMaskRule,
     pub adapter: VoteAdapter,
     pub mask_encoding: MaskEncoding,
 }
@@ -632,7 +635,7 @@ pub enum MatchOperandEncoding {
 #[serde(deny_unknown_fields)]
 pub struct WarpBarrier {
     pub participation: WarpBarrierParticipation,
-    pub legacy_pre_sm70: WarpBarrierLegacyParticipation,
+    pub legacy_pre_sm70: PreSm70MemberMaskRule,
     pub adapter: WarpBarrierAdapter,
     pub mask_encoding: WarpBarrierMaskEncoding,
     pub memory_ordering: WarpBarrierMemoryOrdering,
@@ -646,7 +649,7 @@ pub enum WarpBarrierParticipation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WarpBarrierLegacyParticipation {
+pub enum PreSm70MemberMaskRule {
     AllNamedLanesConvergedAndOnlyNamedLanesActive,
 }
 
@@ -666,6 +669,61 @@ pub enum WarpBarrierMaskEncoding {
 #[serde(rename_all = "snake_case")]
 pub enum WarpBarrierMemoryOrdering {
     ParticipatingLanes,
+}
+
+/// Closed semantic and lowering contract for `shfl.sync`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WarpShuffle {
+    pub mode: WarpShuffleMode,
+    pub value_kind: WarpShuffleValueKind,
+    pub participation: WarpShuffleParticipation,
+    pub legacy_pre_sm70: PreSm70MemberMaskRule,
+    pub source_lane: WarpShuffleSourceLane,
+    pub adapter: WarpShuffleAdapter,
+    pub clamp: u32,
+    pub lane_encoding: WarpShuffleOperandEncoding,
+    pub mask_encoding: WarpShuffleOperandEncoding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpShuffleMode {
+    Idx,
+    Bfly,
+    Down,
+    Up,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpShuffleValueKind {
+    I32,
+    F32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpShuffleParticipation {
+    ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpShuffleSourceLane {
+    InRangeSourceActiveAndNamedOutOfRangeCopiesSelf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpShuffleAdapter {
+    MaskValueLaneOrDeltaInsertClamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpShuffleOperandEncoding {
+    RegisterOrImmediate,
 }
 
 /// Closed identity and source adapter for generated packed integer dot products.
@@ -870,6 +928,8 @@ pub struct CatalogIntrinsic {
     pub warp_match: Option<WarpMatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warp_barrier: Option<WarpBarrier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warp_shuffle: Option<WarpShuffle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dot_product: Option<DotProduct>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1194,6 +1254,7 @@ adapter = "mask_value_direct"
         let valid = r#"
 mode = "all"
 participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active"
 adapter = "direct_mask_predicate"
 mask_encoding = "register_or_immediate"
 "#;
@@ -1205,9 +1266,48 @@ mask_encoding = "register_or_immediate"
                 "mask_encoding = \"register_or_immediate\"",
                 "mask_encoding = \"any_operand\"",
             ),
+            valid.replace(
+                "legacy_pre_sm70 = \"all_named_lanes_converged_and_only_named_lanes_active\"",
+                "legacy_pre_sm70 = \"independent_threads\"",
+            ),
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<Vote>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn warp_shuffle_contract_rejects_open_ended_policy() {
+        let valid = r#"
+mode = "idx"
+value_kind = "i32"
+participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active"
+source_lane = "in_range_source_active_and_named_out_of_range_copies_self"
+adapter = "mask_value_lane_or_delta_insert_clamp"
+clamp = 31
+lane_encoding = "register_or_immediate"
+mask_encoding = "register_or_immediate"
+"#;
+        toml::from_str::<WarpShuffle>(valid).unwrap();
+
+        for invalid in [
+            valid.replace("mode = \"idx\"", "mode = \"rotate\""),
+            valid.replace("value_kind = \"i32\"", "value_kind = \"b32\""),
+            valid.replace(
+                "source_lane = \"in_range_source_active_and_named_out_of_range_copies_self\"",
+                "source_lane = \"unchecked\"",
+            ),
+            valid.replace(
+                "lane_encoding = \"register_or_immediate\"",
+                "lane_encoding = \"anything\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<WarpShuffle>(&invalid).is_err(),
+                "{invalid}"
+            );
         }
     }
 
