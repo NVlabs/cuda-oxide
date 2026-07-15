@@ -15,6 +15,10 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
+use cuda_device::wmma::{
+    ldmatrix_x1, ldmatrix_x1_trans, ldmatrix_x2, ldmatrix_x2_trans, ldmatrix_x4,
+    ldmatrix_x4_trans,
+};
 use cuda_intrinsics::matrix::ldmatrix_m8n8_x4_b16;
 use cuda_intrinsics::sreg::thread_idx_x;
 
@@ -25,6 +29,7 @@ const COLUMNS: usize = 8;
 const WORDS_PER_ROW: usize = COLUMNS / 2;
 const SHARED_WORDS: usize = MATRICES * ROWS * WORDS_PER_ROW;
 const OUTPUT_WORDS: usize = LANES * MATRICES;
+const LEGACY_REGISTERS: usize = 14;
 
 /// A distinct nonzero value for every matrix element.
 ///
@@ -103,6 +108,53 @@ mod kernels {
             *output.get_unchecked_mut(output_word + 1) = registers[1];
             *output.get_unchecked_mut(output_word + 2) = registers[2];
             *output.get_unchecked_mut(output_word + 3) = registers[3];
+        }
+    }
+
+    /// Compile every stable `cuda_device::wmma::ldmatrix_*` entry point.
+    #[kernel]
+    pub fn legacy_ldmatrix_compile_oracle(mut output: DisjointSlice<u32>) {
+        static mut INPUT: SharedArray<u32, SHARED_WORDS, 16> = SharedArray::UNINIT;
+
+        let lane = thread_idx_x() as usize;
+        if lane >= LANES {
+            return;
+        }
+
+        let shared = core::ptr::addr_of_mut!(INPUT) as *mut u32;
+        let row_word = lane * WORDS_PER_ROW;
+        unsafe {
+            shared.add(row_word).write(lane as u32);
+            shared.add(row_word + 1).write(lane as u32);
+            shared.add(row_word + 2).write(lane as u32);
+            shared.add(row_word + 3).write(lane as u32);
+        }
+        thread::sync_threads();
+
+        let address = unsafe { shared.add(row_word).cast_const() };
+        let x1 = unsafe { ldmatrix_x1(address) };
+        let x1_trans = unsafe { ldmatrix_x1_trans(address) };
+        let x2 = unsafe { ldmatrix_x2(address) };
+        let x2_trans = unsafe { ldmatrix_x2_trans(address) };
+        let x4 = unsafe { ldmatrix_x4(address) };
+        let x4_trans = unsafe { ldmatrix_x4_trans(address) };
+
+        let base = lane * LEGACY_REGISTERS;
+        unsafe {
+            *output.get_unchecked_mut(base) = x1;
+            *output.get_unchecked_mut(base + 1) = x1_trans;
+            *output.get_unchecked_mut(base + 2) = x2[0];
+            *output.get_unchecked_mut(base + 3) = x2[1];
+            *output.get_unchecked_mut(base + 4) = x2_trans[0];
+            *output.get_unchecked_mut(base + 5) = x2_trans[1];
+            *output.get_unchecked_mut(base + 6) = x4[0];
+            *output.get_unchecked_mut(base + 7) = x4[1];
+            *output.get_unchecked_mut(base + 8) = x4[2];
+            *output.get_unchecked_mut(base + 9) = x4[3];
+            *output.get_unchecked_mut(base + 10) = x4_trans[0];
+            *output.get_unchecked_mut(base + 11) = x4_trans[1];
+            *output.get_unchecked_mut(base + 12) = x4_trans[2];
+            *output.get_unchecked_mut(base + 13) = x4_trans[3];
         }
     }
 }

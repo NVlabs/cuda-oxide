@@ -11,6 +11,216 @@
   "debug_ir_version": "3.2",
   "records": [
     {
+      "id": "ldmatrix_m8n8_x1_b16",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x1_b16",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16",
+      "llvm_arguments": ["anyptr"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x1.shared.b16",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route."
+        },
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x1.shared.b16",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": ["sync", "aligned", "m8n8", "x1", "shared", "b16"],
+        "operands": [
+          { "kind": "register_list", "length": 1 },
+          { "kind": "address" }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n8_x1_trans_b16",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x1_trans_b16",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16",
+      "llvm_arguments": ["anyptr"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route."
+        },
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": ["sync", "aligned", "m8n8", "x1", "trans", "shared", "b16"],
+        "operands": [
+          { "kind": "register_list", "length": 1 },
+          { "kind": "address" }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n8_x2_b16",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x2_b16",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16",
+      "llvm_arguments": ["anyptr"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x2.shared.b16",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route."
+        },
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x2.shared.b16",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": ["sync", "aligned", "m8n8", "x2", "shared", "b16"],
+        "operands": [
+          { "kind": "register_list", "length": 2 },
+          { "kind": "address" }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n8_x2_trans_b16",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16",
+      "llvm_arguments": ["anyptr"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route."
+        },
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": ["sync", "aligned", "m8n8", "x2", "trans", "shared", "b16"],
+        "operands": [
+          { "kind": "register_list", "length": 2 },
+          { "kind": "address" }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n8_x4_trans_b16",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x4_trans_b16",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16",
+      "llvm_arguments": ["anyptr"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.5 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route."
+        },
+        {
+          "targets": ["sm_75", "ptx65"],
+          "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": ["sync", "aligned", "m8n8", "x4", "trans", "shared", "b16"],
+        "operands": [
+          { "kind": "register_list", "length": 4 },
+          { "kind": "address" }
+        ]
+      }
+    },
+    {
       "id": "ldmatrix_m8n8_x4_b16",
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x4_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16",

@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_dialect_input_rejects_an_unlisted_ldmatrix_variant() {
+    fn direct_dialect_input_selects_exact_ldmatrix_variant() {
         use dialect_mir::types::MirPtrType;
         use dialect_nvvm::ops::{
             LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
@@ -353,12 +353,22 @@ mod tests {
             LdmatrixStateSpaceAttr::Shared,
         );
 
-        let error =
+        let requirements =
             collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Optional)
+                .unwrap();
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].id, "ldmatrix_m8n8_x2_b16");
+
+        op.deref_mut(&ctx).attributes.set(
+            Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+            StringAttr::new("v1:i0013".to_string()),
+        );
+        let error =
+            collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
                 .unwrap_err()
                 .to_string();
         assert!(
-            error.contains("matches 0 generated catalog variants"),
+            error.contains("does not match the exact variant attributes"),
             "{error}"
         );
     }

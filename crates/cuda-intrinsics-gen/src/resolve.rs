@@ -1050,10 +1050,25 @@ fn validate_ldmatrix_policy(
         LdmatrixLayout::Normal => "",
         LdmatrixLayout::Transposed => ".trans",
     };
+    let layout_name = match variant.layout {
+        LdmatrixLayout::Normal => "normal",
+        LdmatrixLayout::Transposed => "transposed",
+    };
     let expected_source =
         format!("int_nvvm_ldmatrix_sync_aligned_m8n8_{count_name}{trans_record}_b16");
     let expected_symbol =
         format!("llvm.nvvm.ldmatrix.sync.aligned.m8n8.{count_name}{trans_symbol}.b16");
+    let expected_name = format!("ldmatrix_m8n8_{count_name}{trans_record}_b16");
+    let expected_result = if count == 1 {
+        "u32".to_owned()
+    } else {
+        format!("[u32; {count}]")
+    };
+    let expected_adapter = if count == 1 {
+        LdmatrixAdapter::SingleResultDirect
+    } else {
+        LdmatrixAdapter::MultipleResultsToArray
+    };
     ensure!(
         policy.source_record.as_deref() == Some(expected_source.as_str())
             && policy.llvm_symbol.as_deref() == Some(expected_symbol.as_str()),
@@ -1067,7 +1082,7 @@ fn validate_ldmatrix_policy(
     );
     ensure!(
         policy.rust_arguments == ["*const u32"]
-            && policy.rust_result == format!("[u32; {count}]")
+            && policy.rust_result == expected_result
             && policy.llvm_arguments == ["anyptr"]
             && policy.llvm_results == vec!["i32"; count]
             && policy.ptx_result == policy.rust_result,
@@ -1075,13 +1090,22 @@ fn validate_ldmatrix_policy(
         policy.id
     );
     ensure!(
-        !policy.safe
+        policy.id == expected_name
+            && policy.operation_key
+                == format!("matrix.ldmatrix.m8n8.{count_name}.{layout_name}.b16.shared")
+            && policy.rust_module == "matrix"
+            && policy.rust_name == expected_name
+            && !policy.safe
+            && !policy.must_use
             && policy.safe_allowlist_reason.is_none()
-            && policy.compatibility_rust_paths.is_empty()
+            && policy.compatibility_rust_paths
+                == [format!(
+                    "cuda_device::wmma::ldmatrix_{count_name}{trans_record}"
+                )]
             && policy.lowering == "generated_ldmatrix"
-            && policy.ldmatrix_adapter == Some(LdmatrixAdapter::MultipleResultsToArray)
+            && policy.ldmatrix_adapter == Some(expected_adapter)
             && policy.selected_address_space == Some(ImportedAddressSpace::Shared),
-        "{} must use the unsafe canonical-only generated ldmatrix adapter and shared selection",
+        "{} must preserve the closed raw/compatibility ldmatrix API, result adapter, and shared selection",
         policy.id
     );
     ensure!(
@@ -2215,7 +2239,15 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, 5);
         assert_eq!(overlay.shards.len(), 4);
-        assert_eq!(overlay.intrinsics.len(), 24);
+        assert_eq!(overlay.intrinsics.len(), 29);
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "ldmatrix")
+                .count(),
+            6
+        );
         assert_eq!(hash.len(), 64);
 
         for invalid in [

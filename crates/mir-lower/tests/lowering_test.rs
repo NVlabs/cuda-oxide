@@ -3106,23 +3106,47 @@ fn lower_all_ldmatrix_forms(
 
     let mut ctx = make_test_ctx();
     let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let ptr_ty = MirPtrType::get(&mut ctx, i8_ty.into(), true, address_space);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
     let pointer = entry.deref(&ctx).get_argument(0);
     let cases = [
-        (nvvm::LdmatrixX1Op::get_concrete_op_info(), 1usize),
-        (nvvm::LdmatrixX1TransOp::get_concrete_op_info(), 1),
-        (nvvm::LdmatrixX2Op::get_concrete_op_info(), 2),
-        (nvvm::LdmatrixX2TransOp::get_concrete_op_info(), 2),
-        (nvvm::LdmatrixX4Op::get_concrete_op_info(), 4),
-        (nvvm::LdmatrixX4TransOp::get_concrete_op_info(), 4),
+        (
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Normal,
+        ),
+        (
+            nvvm::LdmatrixMultiplicityAttr::X1,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+        ),
+        (
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Normal,
+        ),
+        (
+            nvvm::LdmatrixMultiplicityAttr::X2,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+        ),
+        (
+            nvvm::LdmatrixMultiplicityAttr::X4,
+            nvvm::LdmatrixLayoutAttr::Normal,
+        ),
+        (
+            nvvm::LdmatrixMultiplicityAttr::X4,
+            nvvm::LdmatrixLayoutAttr::Transposed,
+        ),
     ];
 
-    for (op_info, result_count) in cases {
-        let results = (0..result_count).map(|_| i32_ty.into()).collect();
-        Operation::new(&mut ctx, op_info, results, vec![pointer], vec![], 0)
-            .insert_at_back(entry, &ctx);
+    for (multiplicity, layout) in cases {
+        nvvm::LdmatrixOp::build(
+            &mut ctx,
+            pointer,
+            nvvm::LdmatrixShapeAttr::M8n8,
+            multiplicity,
+            layout,
+            nvvm::LdmatrixElementAttr::B16,
+            nvvm::LdmatrixStateSpaceAttr::Shared,
+        )
+        .insert_at_back(entry, &ctx);
     }
     append_return(&mut ctx, entry);
 
@@ -3372,17 +3396,17 @@ fn test_ldmatrix_rejects_non_shared_pointer_spaces() {
         for address_space in [1, 4, 5] {
             let mut ctx = make_test_ctx();
             let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-            let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
             let ptr_ty = MirPtrType::get(&mut ctx, i8_ty.into(), false, address_space);
             let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
             let pointer = entry.deref(&ctx).get_argument(0);
-            Operation::new(
+            nvvm::LdmatrixOp::build(
                 &mut ctx,
-                nvvm::LdmatrixX1Op::get_concrete_op_info(),
-                vec![i32_ty.into()],
-                vec![pointer],
-                vec![],
-                0,
+                pointer,
+                nvvm::LdmatrixShapeAttr::M8n8,
+                nvvm::LdmatrixMultiplicityAttr::X1,
+                nvvm::LdmatrixLayoutAttr::Normal,
+                nvvm::LdmatrixElementAttr::B16,
+                nvvm::LdmatrixStateSpaceAttr::Shared,
             )
             .insert_at_back(entry, &ctx);
             append_return(&mut ctx, entry);
@@ -3413,13 +3437,14 @@ fn test_ldmatrix_rejects_non_pointer_operand() {
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
     let not_a_pointer = entry.deref(&ctx).get_argument(0);
-    Operation::new(
+    nvvm::LdmatrixOp::build(
         &mut ctx,
-        nvvm::LdmatrixX1Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![not_a_pointer],
-        vec![],
-        0,
+        not_a_pointer,
+        nvvm::LdmatrixShapeAttr::M8n8,
+        nvvm::LdmatrixMultiplicityAttr::X1,
+        nvvm::LdmatrixLayoutAttr::Normal,
+        nvvm::LdmatrixElementAttr::B16,
+        nvvm::LdmatrixStateSpaceAttr::Shared,
     )
     .insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
@@ -3444,15 +3469,21 @@ fn test_ldmatrix_rejects_wrong_result_arity() {
     let ptr_ty = MirPtrType::get_shared(&mut ctx, i8_ty.into(), false);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
     let pointer = entry.deref(&ctx).get_argument(0);
-    Operation::new(
+    let op = Operation::new(
         &mut ctx,
-        nvvm::LdmatrixX1Op::get_concrete_op_info(),
+        nvvm::LdmatrixOp::get_concrete_op_info(),
         vec![i32_ty.into(), i32_ty.into()],
         vec![pointer],
         vec![],
         0,
-    )
-    .insert_at_back(entry, &ctx);
+    );
+    let ldmatrix = nvvm::LdmatrixOp::new(op);
+    ldmatrix.set_attr_nvvm_ldmatrix_shape(&mut ctx, nvvm::LdmatrixShapeAttr::M8n8);
+    ldmatrix.set_attr_nvvm_ldmatrix_multiplicity(&mut ctx, nvvm::LdmatrixMultiplicityAttr::X1);
+    ldmatrix.set_attr_nvvm_ldmatrix_layout(&mut ctx, nvvm::LdmatrixLayoutAttr::Normal);
+    ldmatrix.set_attr_nvvm_ldmatrix_element(&mut ctx, nvvm::LdmatrixElementAttr::B16);
+    ldmatrix.set_attr_nvvm_ldmatrix_state_space(&mut ctx, nvvm::LdmatrixStateSpaceAttr::Shared);
+    op.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 
     let error = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)

@@ -6,7 +6,7 @@
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
     Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr,
-    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX2Op,
+    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr,
     MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
     MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
     PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
@@ -132,20 +132,42 @@ fn test_movmatrix_requires_one_i32_operand_and_result() {
     }
 }
 
+fn make_ldmatrix_x2(
+    ctx: &mut Context,
+    pointer: pliron::value::Value,
+    result_types: Vec<pliron::r#type::TypeHandle>,
+) -> LdmatrixOp {
+    let operation = Operation::new(
+        ctx,
+        LdmatrixOp::get_concrete_op_info(),
+        result_types,
+        vec![pointer],
+        vec![],
+        0,
+    );
+    let ldmatrix = LdmatrixOp::new(operation);
+    ldmatrix.set_attr_nvvm_ldmatrix_shape(ctx, LdmatrixShapeAttr::M8n8);
+    ldmatrix.set_attr_nvvm_ldmatrix_multiplicity(ctx, LdmatrixMultiplicityAttr::X2);
+    ldmatrix.set_attr_nvvm_ldmatrix_layout(ctx, LdmatrixLayoutAttr::Normal);
+    ldmatrix.set_attr_nvvm_ldmatrix_element(ctx, LdmatrixElementAttr::B16);
+    ldmatrix.set_attr_nvvm_ldmatrix_state_space(ctx, LdmatrixStateSpaceAttr::Shared);
+    ldmatrix
+}
+
 #[test]
 fn test_ldmatrix_accepts_only_generic_or_shared_u32_pointers() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
-    let i16_ty = IntegerType::get(&ctx, 16, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let u16_ty = IntegerType::get(&ctx, 16, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let pointer_types = [
-        MirPtrType::get_generic(&mut ctx, i32_ty.into(), false),
-        MirPtrType::get_shared(&mut ctx, i32_ty.into(), false),
-        MirPtrType::get_global(&mut ctx, i32_ty.into(), false),
-        MirPtrType::get_constant(&mut ctx, i32_ty.into(), false),
-        MirPtrType::get(&mut ctx, i32_ty.into(), false, address_space::LOCAL),
-        MirPtrType::get_generic(&mut ctx, i16_ty.into(), false),
+        MirPtrType::get_generic(&mut ctx, u32_ty.into(), false),
+        MirPtrType::get_shared(&mut ctx, u32_ty.into(), false),
+        MirPtrType::get_global(&mut ctx, u32_ty.into(), false),
+        MirPtrType::get_constant(&mut ctx, u32_ty.into(), false),
+        MirPtrType::get(&mut ctx, u32_ty.into(), false, address_space::LOCAL),
+        MirPtrType::get_generic(&mut ctx, u16_ty.into(), false),
     ];
     let block = BasicBlock::new(
         &mut ctx,
@@ -158,15 +180,8 @@ fn test_ldmatrix_accepts_only_generic_or_shared_u32_pointers() {
 
     for index in 0..pointer_types.len() {
         let pointer = block.deref(&ctx).get_argument(index);
-        let operation = Operation::new(
-            &mut ctx,
-            LdmatrixX2Op::get_concrete_op_info(),
-            vec![i32_ty.into(), i32_ty.into()],
-            vec![pointer],
-            vec![],
-            0,
-        );
-        let verified = verify_op(&LdmatrixX2Op::new(operation), &ctx);
+        let operation = make_ldmatrix_x2(&mut ctx, pointer, vec![u32_ty.into(), u32_ty.into()]);
+        let verified = verify_op(&operation, &ctx);
         if index < 2 {
             assert!(verified.is_ok(), "pointer case {index} should be accepted");
         } else {
@@ -581,43 +596,26 @@ fn test_matrix_memory_ops_verify_pointer_and_packed_register_types() {
     dialect_nvvm::register(&mut ctx);
 
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     let f32_ty = FP32Type::get(&ctx);
     let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let load_ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
 
-    let load_block = BasicBlock::new(&mut ctx, None, vec![ptr_ty.into()]);
+    let load_block = BasicBlock::new(&mut ctx, None, vec![load_ptr_ty.into()]);
     let load_pointer = load_block.deref(&ctx).get_argument(0);
-    let load = Operation::new(
-        &mut ctx,
-        LdmatrixX2Op::get_concrete_op_info(),
-        vec![i32_ty.into(), i32_ty.into()],
-        vec![load_pointer],
-        vec![],
-        0,
-    );
-    assert!(LdmatrixX2Op::new(load).verify(&ctx).is_ok());
+    let load = make_ldmatrix_x2(&mut ctx, load_pointer, vec![u32_ty.into(), u32_ty.into()]);
+    assert!(load.verify(&ctx).is_ok());
 
     let bad_load_pointer_block = BasicBlock::new(&mut ctx, None, vec![i64_ty.into()]);
     let bad_pointer = bad_load_pointer_block.deref(&ctx).get_argument(0);
-    let bad_load_pointer = Operation::new(
-        &mut ctx,
-        LdmatrixX2Op::get_concrete_op_info(),
-        vec![i32_ty.into(), i32_ty.into()],
-        vec![bad_pointer],
-        vec![],
-        0,
-    );
-    assert!(LdmatrixX2Op::new(bad_load_pointer).verify(&ctx).is_err());
+    let bad_load_pointer =
+        make_ldmatrix_x2(&mut ctx, bad_pointer, vec![u32_ty.into(), u32_ty.into()]);
+    assert!(bad_load_pointer.verify(&ctx).is_err());
 
-    let bad_load_result = Operation::new(
-        &mut ctx,
-        LdmatrixX2Op::get_concrete_op_info(),
-        vec![i32_ty.into(), f32_ty.into()],
-        vec![load_pointer],
-        vec![],
-        0,
-    );
-    assert!(LdmatrixX2Op::new(bad_load_result).verify(&ctx).is_err());
+    let bad_load_result =
+        make_ldmatrix_x2(&mut ctx, load_pointer, vec![u32_ty.into(), f32_ty.into()]);
+    assert!(bad_load_result.verify(&ctx).is_err());
 
     let store_block = BasicBlock::new(
         &mut ctx,

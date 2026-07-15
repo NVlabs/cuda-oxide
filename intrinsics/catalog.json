@@ -11,11 +11,11 @@
   },
   "inputs": {
     "imported_sha256": "af01e769cd916c902bf6b26b1fb723516b58c5a842fe482142402fdeda9ab487",
-    "overlay_sha256": "3bd05a55bf02d1c93ff012f256a88817e686d37a4a70c5e0802cb8307f82b84e",
-    "abi_ledger_sha256": "bdc9e81588656b983f709cb73e5294fb2b05a6a3afb90993d54833af70a587f3",
+    "overlay_sha256": "8ba0671794306132aa3870d7a4727e5c9df1da93e596f1fda96071cc8a11b449",
+    "abi_ledger_sha256": "eea2b8dd3843df0bc66e37fc2cb0a0e4e46ca15825de3f08dfcdc028698e4f3c",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:41138415f91fdcde3be04d417f38d3f0609754533e700dcaa9d460afb4c1ffeb",
-      "rust-llvm-22.1.2-1cb4e383.json:140133198b49f22a9ee3ac84e5d082fab15139cf68ef84c39d48789d898e0489"
+      "cuda-13.3-libnvvm-13.3.33.json:30b0b8f7d30800784a646e110f273a91fb1fde3a3672175372bef9ba8d9645e4",
+      "rust-llvm-22.1.2-1cb4e383.json:a9ed64f2d02abba0d383702592a0b0a4f8c346babe67e5ec00ec1f34835861bc"
     ]
   },
   "intrinsics": [
@@ -1049,6 +1049,1076 @@
       "summary": "Returns this thread's lane identifier within its warp."
     },
     {
+      "id": "ldmatrix_m8n8_x1_b16",
+      "operation_key": "matrix.ldmatrix.m8n8.x1.normal.b16.shared",
+      "family": "ldmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x1_b16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_20675",
+          "asm": "ldmatrix.sync.aligned.m8n8.x1.shared.b16 {{$rx10}}, [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75"
+          ],
+          "constraints": {
+            "address_space": "shared"
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0025",
+        "module": "matrix",
+        "name": "ldmatrix_m8n8_x1_b16",
+        "arguments": [
+          "*const u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0025",
+        "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x1_b16",
+        "compatibility_paths": [
+          "cuda_device::wmma::ldmatrix_x1"
+        ]
+      },
+      "dialect": {
+        "op_type": "LdmatrixOp",
+        "op_name": "nvvm.ldmatrix",
+        "operands": [
+          "anyptr"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16",
+        "resolved_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3",
+        "arguments": [
+          "anyptr"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrReadMem",
+          "NoCapture<arg0>",
+          "ReadOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.15 Warp-level matrix load instruction: ldmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-ldmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3(ptr addrspace(3))",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x1.shared.b16 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x1.shared.b16",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x1.shared.b16",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "ldmatrix": {
+        "variant": {
+          "shape": "m8n8",
+          "multiplicity": "x1",
+          "layout": "normal",
+          "element": "b16",
+          "state_space": "shared"
+        },
+        "safety": {
+          "participation": "all_warp_lanes_same_instruction",
+          "address_contract": "warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable_with_sm75_replication",
+          "memory_order": "weak",
+          "runtime_validation": "unexecuted"
+        },
+        "adapter": "single_result_direct",
+        "selected_address_space": "shared"
+      },
+      "lowering": "generated_ldmatrix",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x1",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Loads one 8×8 b16 matrix cooperatively from shared memory and returns this lane's packed register fragment."
+    },
+    {
+      "id": "ldmatrix_m8n8_x1_trans_b16",
+      "operation_key": "matrix.ldmatrix.m8n8.x1.transposed.b16.shared",
+      "family": "ldmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x1_trans_b16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_20758",
+          "asm": "ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {{$rx10}}, [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75"
+          ],
+          "constraints": {
+            "address_space": "shared"
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0026",
+        "module": "matrix",
+        "name": "ldmatrix_m8n8_x1_trans_b16",
+        "arguments": [
+          "*const u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0026",
+        "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x1_trans_b16",
+        "compatibility_paths": [
+          "cuda_device::wmma::ldmatrix_x1_trans"
+        ]
+      },
+      "dialect": {
+        "op_type": "LdmatrixOp",
+        "op_name": "nvvm.ldmatrix",
+        "operands": [
+          "anyptr"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16",
+        "resolved_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16.p3",
+        "arguments": [
+          "anyptr"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrReadMem",
+          "NoCapture<arg0>",
+          "ReadOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.15 Warp-level matrix load instruction: ldmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-ldmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16.p3(ptr addrspace(3))",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "ldmatrix": {
+        "variant": {
+          "shape": "m8n8",
+          "multiplicity": "x1",
+          "layout": "transposed",
+          "element": "b16",
+          "state_space": "shared"
+        },
+        "safety": {
+          "participation": "all_warp_lanes_same_instruction",
+          "address_contract": "warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable_with_sm75_replication",
+          "memory_order": "weak",
+          "runtime_validation": "unexecuted"
+        },
+        "adapter": "single_result_direct",
+        "selected_address_space": "shared"
+      },
+      "lowering": "generated_ldmatrix",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x1",
+          "trans",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Loads one transposed 8×8 b16 matrix cooperatively from shared memory and returns this lane's packed register fragment."
+    },
+    {
+      "id": "ldmatrix_m8n8_x2_b16",
+      "operation_key": "matrix.ldmatrix.m8n8.x2.normal.b16.shared",
+      "family": "ldmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x2_b16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_20687",
+          "asm": "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {{$rx20, $rx21}}, [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75"
+          ],
+          "constraints": {
+            "address_space": "shared"
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0027",
+        "module": "matrix",
+        "name": "ldmatrix_m8n8_x2_b16",
+        "arguments": [
+          "*const u32"
+        ],
+        "result": "[u32; 2]",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0027",
+        "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x2_b16",
+        "compatibility_paths": [
+          "cuda_device::wmma::ldmatrix_x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "LdmatrixOp",
+        "op_name": "nvvm.ldmatrix",
+        "operands": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16",
+        "resolved_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16.p3",
+        "arguments": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrReadMem",
+          "NoCapture<arg0>",
+          "ReadOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[u32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.15 Warp-level matrix load instruction: ldmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-ldmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16.p3(ptr addrspace(3))",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x2.shared.b16 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x2.shared.b16",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x2.shared.b16",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "ldmatrix": {
+        "variant": {
+          "shape": "m8n8",
+          "multiplicity": "x2",
+          "layout": "normal",
+          "element": "b16",
+          "state_space": "shared"
+        },
+        "safety": {
+          "participation": "all_warp_lanes_same_instruction",
+          "address_contract": "warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable_with_sm75_replication",
+          "memory_order": "weak",
+          "runtime_validation": "unexecuted"
+        },
+        "adapter": "multiple_results_to_array",
+        "selected_address_space": "shared"
+      },
+      "lowering": "generated_ldmatrix",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x2",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Loads two 8×8 b16 matrices cooperatively from shared memory and returns this lane's two packed register fragments."
+    },
+    {
+      "id": "ldmatrix_m8n8_x2_trans_b16",
+      "operation_key": "matrix.ldmatrix.m8n8.x2.transposed.b16.shared",
+      "family": "ldmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_20762",
+          "asm": "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {{$rx20, $rx21}}, [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75"
+          ],
+          "constraints": {
+            "address_space": "shared"
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0028",
+        "module": "matrix",
+        "name": "ldmatrix_m8n8_x2_trans_b16",
+        "arguments": [
+          "*const u32"
+        ],
+        "result": "[u32; 2]",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0028",
+        "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x2_trans_b16",
+        "compatibility_paths": [
+          "cuda_device::wmma::ldmatrix_x2_trans"
+        ]
+      },
+      "dialect": {
+        "op_type": "LdmatrixOp",
+        "op_name": "nvvm.ldmatrix",
+        "operands": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16",
+        "resolved_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3",
+        "arguments": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrReadMem",
+          "NoCapture<arg0>",
+          "ReadOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[u32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.15 Warp-level matrix load instruction: ldmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-ldmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3(ptr addrspace(3))",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "ldmatrix": {
+        "variant": {
+          "shape": "m8n8",
+          "multiplicity": "x2",
+          "layout": "transposed",
+          "element": "b16",
+          "state_space": "shared"
+        },
+        "safety": {
+          "participation": "all_warp_lanes_same_instruction",
+          "address_contract": "warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable_with_sm75_replication",
+          "memory_order": "weak",
+          "runtime_validation": "unexecuted"
+        },
+        "adapter": "multiple_results_to_array",
+        "selected_address_space": "shared"
+      },
+      "lowering": "generated_ldmatrix",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x2",
+          "trans",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Loads two transposed 8×8 b16 matrices cooperatively from shared memory and returns this lane's two packed register fragments."
+    },
+    {
       "id": "ldmatrix_m8n8_x4_b16",
       "operation_key": "matrix.ldmatrix.m8n8.x4.normal.b16.shared",
       "family": "ldmatrix",
@@ -1082,7 +2152,9 @@
         "safe_allowlist_reason": null,
         "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0013",
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x4_b16",
-        "compatibility_paths": []
+        "compatibility_paths": [
+          "cuda_device::wmma::ldmatrix_x4"
+        ]
       },
       "dialect": {
         "op_type": "LdmatrixOp",
@@ -1370,6 +2442,279 @@
         ]
       },
       "summary": "Loads four 8×8 b16 matrices cooperatively from shared memory and returns this lane's four packed register fragments."
+    },
+    {
+      "id": "ldmatrix_m8n8_x4_trans_b16",
+      "operation_key": "matrix.ldmatrix.m8n8.x4.transposed.b16.shared",
+      "family": "ldmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x4_trans_b16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_20766",
+          "asm": "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75"
+          ],
+          "constraints": {
+            "address_space": "shared"
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0029",
+        "module": "matrix",
+        "name": "ldmatrix_m8n8_x4_trans_b16",
+        "arguments": [
+          "*const u32"
+        ],
+        "result": "[u32; 4]",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0029",
+        "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x4_trans_b16",
+        "compatibility_paths": [
+          "cuda_device::wmma::ldmatrix_x4_trans"
+        ]
+      },
+      "dialect": {
+        "op_type": "LdmatrixOp",
+        "op_name": "nvvm.ldmatrix",
+        "operands": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16",
+        "resolved_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16.p3",
+        "arguments": [
+          "anyptr"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrReadMem",
+          "NoCapture<arg0>",
+          "ReadOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[u32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.15 Warp-level matrix load instruction: ldmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-ldmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx65"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16.p3(ptr addrspace(3))",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16.p3(ptr addrspace(3))",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "legacy NVVM IR convergent inline PTX ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact shared-memory inline-PTX route.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx65"
+              ],
+              "representation": "retained generated_ldmatrix kernel containing ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink completed the combined six-form ldmatrix LTOIR route to a device binary.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "ldmatrix": {
+        "variant": {
+          "shape": "m8n8",
+          "multiplicity": "x4",
+          "layout": "transposed",
+          "element": "b16",
+          "state_space": "shared"
+        },
+        "safety": {
+          "participation": "all_warp_lanes_same_instruction",
+          "address_contract": "warp_lane_addresses_mapped_by_multiplicity_sixteen_byte_aligned_sixteen_bytes_readable_with_sm75_replication",
+          "memory_order": "weak",
+          "runtime_validation": "unexecuted"
+        },
+        "adapter": "multiple_results_to_array",
+        "selected_address_space": "shared"
+      },
+      "lowering": "generated_ldmatrix",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x4",
+          "trans",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Loads four transposed 8×8 b16 matrices cooperatively from shared memory and returns this lane's four packed register fragments."
     },
     {
       "id": "packed_atomic_add_bf16x2",

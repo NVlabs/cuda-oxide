@@ -175,3 +175,38 @@ status = "active"
 catalog_id = "redux_sync_xor"
 operation_key = "warp.redux.sync.xor.b32"
 raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0025"
+status = "active"
+catalog_id = "ldmatrix_m8n8_x1_b16"
+operation_key = "matrix.ldmatrix.m8n8.x1.normal.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0026"
+status = "active"
+catalog_id = "ldmatrix_m8n8_x1_trans_b16"
+operation_key = "matrix.ldmatrix.m8n8.x1.transposed.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0027"
+status = "active"
+catalog_id = "ldmatrix_m8n8_x2_b16"
+operation_key = "matrix.ldmatrix.m8n8.x2.normal.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0028"
+status = "active"
+catalog_id = "ldmatrix_m8n8_x2_trans_b16"
+operation_key = "matrix.ldmatrix.m8n8.x2.transposed.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0029"
+status = "active"
+catalog_id = "ldmatrix_m8n8_x4_trans_b16"
+operation_key = "matrix.ldmatrix.m8n8.x4.transposed.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "[u32; 4]" }

@@ -1087,7 +1087,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             .multiplicity
             .register_count();
         output.push_str("        ");
-        render_inline_patterns(&mut output, &[record.rust.canonical_path.as_str()]);
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        render_inline_patterns(&mut output, &path_refs);
         output.push_str(" => {\n");
         output.push_str("            require_arity(name, args.len(), 1, &loc)?;\n");
         output.push_str(
@@ -1106,14 +1108,19 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("            helpers::insert_op(ctx, load, block_ptr, last_op);\n");
+        if register_count == 1 {
+            output.push_str("            let value = load.deref(ctx).get_result(0);\n");
+            output.push_str("            let last_op = load;\n");
+        } else {
+            writeln!(
+                output,
+                "            let (value, last_op) = helpers::bundle_generated_u32_results_as_array(ctx, load, {register_count}, loc.clone());"
+            )
+            .unwrap();
+        }
         writeln!(
             output,
-            "            let (value, array) = helpers::bundle_generated_u32_results_as_array(ctx, load, {register_count}, loc.clone());"
-        )
-        .unwrap();
-        writeln!(
-            output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, array, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1637,31 +1644,18 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %result\n}\n");
-    } else if let Some(width) = record.scalar_width() {
-        writeln!(output, "declare i{width} @{}()", llvm(record).symbol).unwrap();
-        output.push('\n');
-        writeln!(output, "define i{width} @probe_{}() {{", record.id).unwrap();
-        writeln!(
-            output,
-            "  %result = call i{width} @{}()",
-            llvm(record).symbol
-        )
-        .unwrap();
-        writeln!(output, "  ret i{width} %result\n}}\n").unwrap();
-    } else {
-        let register_count = record
-            .ldmatrix
-            .as_ref()
-            .expect("non-scalar generated recipe")
-            .variant
-            .multiplicity
-            .register_count();
-        let result_ty = format!(
-            "{{ {} }}",
-            std::iter::repeat_n("i32", register_count)
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+    } else if let Some(ldmatrix) = &record.ldmatrix {
+        let register_count = ldmatrix.variant.multiplicity.register_count();
+        let result_ty = if register_count == 1 {
+            "i32".to_owned()
+        } else {
+            format!(
+                "{{ {} }}",
+                std::iter::repeat_n("i32", register_count)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         let symbol = record
             .llvm
             .as_ref()
@@ -1684,6 +1678,19 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         writeln!(output, "  ret {result_ty} %result\n}}\n").unwrap();
+    } else if let Some(width) = record.scalar_width() {
+        writeln!(output, "declare i{width} @{}()", llvm(record).symbol).unwrap();
+        output.push('\n');
+        writeln!(output, "define i{width} @probe_{}() {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call i{width} @{}()",
+            llvm(record).symbol
+        )
+        .unwrap();
+        writeln!(output, "  ret i{width} %result\n}}\n").unwrap();
+    } else {
+        unreachable!("generated intrinsic has no probe renderer: {}", record.id);
     }
     output
 }
@@ -1967,20 +1974,7 @@ mod tests {
     #[test]
     fn ldmatrix_family_lowering_uses_one_attribute_dispatch_impl() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let mut catalog = crate::resolve::resolve(&repo_root).unwrap();
-        let mut sibling = catalog
-            .intrinsics
-            .iter()
-            .find(|record| record.family == "ldmatrix")
-            .unwrap()
-            .clone();
-        sibling.id = "ldmatrix_m8n8_x2_trans_b16_test".into();
-        sibling.rust.abi_id = "i9998".into();
-        sibling.ldmatrix.as_mut().unwrap().variant.multiplicity = LdmatrixMultiplicity::X2;
-        sibling.ldmatrix.as_mut().unwrap().variant.layout = LdmatrixLayout::Transposed;
-        sibling.llvm.as_mut().unwrap().resolved_symbol =
-            Some("llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3".into());
-        catalog.intrinsics.push(sibling);
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
 
         let rendered = render_lowering(&catalog, "test-hash");
         assert_eq!(
@@ -1991,8 +1985,27 @@ mod tests {
         );
         assert!(rendered.contains("LdmatrixMultiplicityAttr::X4"));
         assert!(rendered.contains("LdmatrixMultiplicityAttr::X2"));
+        assert!(rendered.contains("LdmatrixMultiplicityAttr::X1"));
         assert!(rendered.contains("LdmatrixLayoutAttr::Transposed"));
         assert!(rendered.contains("llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16_p3"));
+    }
+
+    #[test]
+    fn ldmatrix_x1_probe_keeps_its_pointer_operand() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let record = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == "ldmatrix_m8n8_x1_b16")
+            .unwrap();
+
+        let rendered = render_probe(&catalog, record, "test-hash");
+        assert!(rendered.contains(
+            "declare i32 @llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3(ptr addrspace(3))"
+        ));
+        assert!(rendered.contains("define i32 @probe_ldmatrix_m8n8_x1_b16(ptr %generic)"));
+        assert!(!rendered.contains("@llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3()"));
     }
 
     #[test]

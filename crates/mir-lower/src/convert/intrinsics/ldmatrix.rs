@@ -16,7 +16,7 @@ use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::{ops as llvm, types as llvm_types};
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
-use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
+use pliron::irbuild::dialect_conversion::DialectConversionRewriter;
 use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
@@ -25,104 +25,7 @@ use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 
-pub(crate) fn convert_ldmatrix_x1(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_generated_ldmatrix(
-        ctx,
-        rewriter,
-        op,
-        1,
-        false,
-        "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x1_b16_p3",
-    )
-}
-
-pub(crate) fn convert_ldmatrix_x1_trans(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_generated_ldmatrix(
-        ctx,
-        rewriter,
-        op,
-        1,
-        true,
-        "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x1_trans_b16_p3",
-    )
-}
-
-pub(crate) fn convert_ldmatrix_x2(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_generated_ldmatrix(
-        ctx,
-        rewriter,
-        op,
-        2,
-        false,
-        "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_b16_p3",
-    )
-}
-
-pub(crate) fn convert_ldmatrix_x2_trans(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_generated_ldmatrix(
-        ctx,
-        rewriter,
-        op,
-        2,
-        true,
-        "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16_p3",
-    )
-}
-
-pub(crate) fn convert_ldmatrix_x4(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_generated_ldmatrix(
-        ctx,
-        rewriter,
-        op,
-        4,
-        false,
-        "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x4_b16_p3",
-    )
-}
-
-pub(crate) fn convert_ldmatrix_x4_trans(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_generated_ldmatrix(
-        ctx,
-        rewriter,
-        op,
-        4,
-        true,
-        "llvm_nvvm_ldmatrix_sync_aligned_m8n8_x4_trans_b16_p3",
-    )
-}
-
-/// Shared lowering entry point used by handwritten and generated `ldmatrix`
-/// conversion interfaces.
+/// Lower one generated `ldmatrix` variant.
 pub(crate) fn convert_generated_ldmatrix(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,

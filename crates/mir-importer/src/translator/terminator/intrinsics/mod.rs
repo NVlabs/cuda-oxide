@@ -49,7 +49,6 @@ pub mod dotprod;
 pub mod float_math;
 pub mod generated;
 pub mod indexing;
-pub mod ldmatrix;
 pub mod memory;
 pub mod saturating;
 pub mod sync;
