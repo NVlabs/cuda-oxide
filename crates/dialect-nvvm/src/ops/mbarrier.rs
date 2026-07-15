@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Async barrier (mbarrier) operations for Hopper+ GPUs.
+//! Extended mbarrier and async-proxy operations for Hopper+ GPUs.
+//!
+//! Basic Ampere operations are generated in `ops::generated`.
 //!
 //! Memory barriers (mbarriers) are hardware-accelerated synchronization primitives
 //! that enable efficient coordination between threads, particularly for async
@@ -44,100 +46,8 @@ use pliron::{
 use pliron_derive::pliron_op;
 
 // =============================================================================
-// Barrier Initialization and Invalidation
-// =============================================================================
-
-/// Initialize an mbarrier in shared memory.
-///
-/// Sets up the barrier with an expected arrival count. All threads that will
-/// participate must be counted.
-///
-/// Corresponds to `llvm.nvvm.mbarrier.init.shared`.
-///
-/// # Operands
-///
-/// - `bar_ptr` (ptr addrspace(3)): pointer to barrier in shared memory
-/// - `count` (i32): expected number of arrivals
-///
-/// # Results
-///
-/// - None
-#[pliron_op(
-    name = "nvvm.mbarrier_init_shared",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<0>],
-)]
-pub struct MbarrierInitSharedOp;
-
-impl MbarrierInitSharedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierInitSharedOp { op }
-    }
-}
-
-/// Invalidate an mbarrier in shared memory.
-///
-/// Must be called when the barrier is no longer needed. After invalidation,
-/// the barrier memory can be reused.
-///
-/// Corresponds to `llvm.nvvm.mbarrier.inval.shared`.
-///
-/// # Operands
-///
-/// - `bar_ptr` (ptr addrspace(3)): pointer to barrier in shared memory
-///
-/// # Results
-///
-/// - None
-#[pliron_op(
-    name = "nvvm.mbarrier_inval_shared",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
-)]
-pub struct MbarrierInvalSharedOp;
-
-impl MbarrierInvalSharedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierInvalSharedOp { op }
-    }
-}
-
-// =============================================================================
 // Arrival Operations
 // =============================================================================
-
-/// Arrive at an mbarrier in shared memory.
-///
-/// Signals that this thread has reached the barrier. Returns a phase token
-/// that must be used with wait operations.
-///
-/// Corresponds to `llvm.nvvm.mbarrier.arrive.shared`.
-///
-/// # Operands
-///
-/// - `bar_ptr` (ptr addrspace(3)): pointer to barrier in shared memory
-///
-/// # Results
-///
-/// - `token` (i64): phase token for wait operations
-#[pliron_op(
-    name = "nvvm.mbarrier_arrive_shared",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
-)]
-pub struct MbarrierArriveSharedOp;
-
-impl MbarrierArriveSharedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierArriveSharedOp { op }
-    }
-}
 
 /// Arrive at an mbarrier with expected transaction byte count.
 ///
@@ -232,36 +142,6 @@ impl MbarrierArriveClusterOp {
 // =============================================================================
 // Wait Operations
 // =============================================================================
-
-/// Test if an mbarrier phase is complete (non-blocking).
-///
-/// Performs a single check without waiting. Returns immediately with the
-/// completion status.
-///
-/// Corresponds to `llvm.nvvm.mbarrier.test_wait.shared`.
-///
-/// # Operands
-///
-/// - `bar_ptr` (ptr addrspace(3)): pointer to barrier in shared memory
-/// - `token` (i64): phase token from arrive operation
-///
-/// # Results
-///
-/// - `complete` (i1): true if the phase is complete
-#[pliron_op(
-    name = "nvvm.mbarrier_test_wait_shared",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct MbarrierTestWaitSharedOp;
-
-impl MbarrierTestWaitSharedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MbarrierTestWaitSharedOp { op }
-    }
-}
 
 /// Try to wait for an mbarrier phase to complete (with scheduling hints).
 ///
@@ -488,16 +368,12 @@ impl NanosleepOp {
 
 /// Register mbarrier operations with the context.
 pub(super) fn register(ctx: &mut Context) {
-    MbarrierInitSharedOp::register(ctx);
-    MbarrierArriveSharedOp::register(ctx);
     MbarrierArriveExpectTxSharedOp::register(ctx);
     MbarrierArriveExpectTxClusterOp::register(ctx);
     MbarrierArriveClusterOp::register(ctx);
-    MbarrierTestWaitSharedOp::register(ctx);
     MbarrierTryWaitSharedOp::register(ctx);
     MbarrierTryWaitParitySharedOp::register(ctx);
     MbarrierTryWaitParityClusterOp::register(ctx);
-    MbarrierInvalSharedOp::register(ctx);
     FenceProxyAsyncSharedCtaOp::register(ctx);
     FenceMbarrierInitReleaseClusterOp::register(ctx);
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp::register(ctx);

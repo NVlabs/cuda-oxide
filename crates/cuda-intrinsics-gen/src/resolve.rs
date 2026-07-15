@@ -16,19 +16,19 @@ use crate::model::{
     ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource,
     LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
     LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
-    MatchOperandEncoding, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
-    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
-    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
-    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
-    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
-    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
-    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
-    PreSm70MemberMaskRule, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation,
-    RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter,
-    WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
-    WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
-    WarpShuffleValueKind,
+    MatchOperandEncoding, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierStateSpace,
+    OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat,
+    PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
+    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
+    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
+    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
+    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
+    PackedConversionSaturation, PackedConversionSourceFormat, PreSm70MemberMaskRule, PtxVersion,
+    ReduxAdapter, ReduxOperation, ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode,
+    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
+    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
+    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
+    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
 };
 #[cfg(test)]
 use crate::ptx::InstructionPattern;
@@ -39,9 +39,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 15;
-const OVERLAY_SHARD_SCHEMA: u32 = 11;
-pub(crate) const CATALOG_SCHEMA: u32 = 14;
+const OVERLAY_SCHEMA: u32 = 16;
+const OVERLAY_SHARD_SCHEMA: u32 = 12;
+pub(crate) const CATALOG_SCHEMA: u32 = 15;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -329,7 +329,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -342,6 +342,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.dot_product,
             record.cp_async_copy,
             record.cp_async_control,
+            record.mbarrier_basic,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -678,6 +679,10 @@ fn validate_policy(
             policy,
             declaration.context("cp_async_control requires imported LLVM declaration")?,
         )?,
+        "mbarrier_basic" => validate_mbarrier_basic_policy(
+            policy,
+            declaration.context("mbarrier_basic requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -872,6 +877,16 @@ fn selection_matches_policy(
             && selection.constraints.is_empty();
     }
 
+    if policy.family == "mbarrier_basic" {
+        let Some(mbarrier) = &policy.mbarrier_basic else {
+            return false;
+        };
+        let recipe = mbarrier_basic_recipe(mbarrier.operation);
+        return selection.source_record == recipe.selection
+            && policy.expected_ptx.matches(&selection.asm)
+            && selection.constraints.is_empty();
+    }
+
     if !policy.expected_ptx.matches(&selection.asm)
         || policy
             .selected_address_space
@@ -980,6 +995,7 @@ fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with sync",
         policy.id
@@ -1138,6 +1154,7 @@ fn validate_vote_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with vote",
         policy.id
@@ -1390,6 +1407,7 @@ fn validate_active_mask_policy(
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -1648,6 +1666,7 @@ fn validate_warp_match_policy(
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.warp_barrier.is_none()
             && policy.warp_shuffle.is_none()
             && policy.ldmatrix_variant.is_none()
@@ -1801,6 +1820,7 @@ fn validate_warp_barrier_policy(
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -2030,6 +2050,7 @@ fn validate_warp_shuffle_policy(
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -2517,6 +2538,7 @@ fn validate_selected_target_predicates(
             | "warp_shuffle"
             | "cp_async_copy"
             | "cp_async_control"
+            | "mbarrier_basic"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -2569,6 +2591,7 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with an sreg",
         policy.id
@@ -2763,6 +2786,7 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
@@ -2985,6 +3009,7 @@ fn validate_dot_product_policy(
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with dotprod",
         policy.id
@@ -3286,7 +3311,8 @@ fn validate_ldmatrix_policy(
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
-            && policy.cp_async_control.is_none(),
+            && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none(),
         "{} mixes another generated-family contract with ldmatrix",
         policy.id
     );
@@ -3382,6 +3408,7 @@ fn validate_packed_atomic_policy(
             && policy.packed_conversion.is_none()
             && policy.cp_async_copy.is_none()
             && policy.cp_async_control.is_none()
+            && policy.mbarrier_basic.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
         policy.id
@@ -4674,6 +4701,327 @@ fn validate_cp_async_control_policy(
     Ok(())
 }
 
+struct MbarrierBasicRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    rust_arguments: &'static [&'static str],
+    rust_result: &'static str,
+    must_use: bool,
+    adapter: MbarrierBasicAdapter,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    dialect_results: &'static [&'static str],
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    llvm_arguments: &'static [&'static str],
+    llvm_results: &'static [&'static str],
+    memory: &'static str,
+    ptx_result: &'static str,
+    selection: &'static str,
+    selection_asm: &'static str,
+    ptx_modifier: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+    llvm_nvptx_mechanism: BackendLoweringMechanism,
+    lib_nvvm_mechanism: BackendLoweringMechanism,
+    properties: &'static [&'static str],
+    summary: &'static str,
+}
+
+fn mbarrier_basic_recipe(operation: MbarrierBasicOperation) -> MbarrierBasicRecipe {
+    match operation {
+        MbarrierBasicOperation::Init => MbarrierBasicRecipe {
+            id: "mbarrier_init",
+            abi_id: "i0097",
+            operation_key: "barrier.mbarrier.init.shared.cta",
+            rust_arguments: &["*mut u64", "u32"],
+            rust_result: "()",
+            must_use: false,
+            adapter: MbarrierBasicAdapter::PointerCountToVoid,
+            dialect_op_type: "MbarrierInitSharedOp",
+            dialect_op_name: "nvvm.mbarrier_init_shared",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &[],
+            source_record: "int_nvvm_mbarrier_init_shared",
+            llvm_symbol: "llvm.nvvm.mbarrier.init.shared",
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &[],
+            memory: "read_write",
+            ptx_result: "()",
+            selection: "MBARRIER_INIT_SHARED",
+            selection_asm: "mbarrier.init.shared.b64 \t[$addr], $count;",
+            ptx_modifier: "init",
+            ptx_isa_section: "9.7.14.16.12 Parallel Synchronization and Communication Instructions: mbarrier.init",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-init",
+            llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
+            lib_nvvm_mechanism: BackendLoweringMechanism::InlinePtx,
+            properties: &["IntrConvergent", "IntrNoCallback"],
+            summary: "Initializes a CTA shared-memory barrier with the expected arrival count.",
+        },
+        MbarrierBasicOperation::Arrive => MbarrierBasicRecipe {
+            id: "mbarrier_arrive",
+            abi_id: "i0098",
+            operation_key: "barrier.mbarrier.arrive.shared.cta",
+            rust_arguments: &["*const u64"],
+            rust_result: "u64",
+            must_use: true,
+            adapter: MbarrierBasicAdapter::PointerToToken,
+            dialect_op_type: "MbarrierArriveSharedOp",
+            dialect_op_name: "nvvm.mbarrier_arrive_shared",
+            dialect_operands: &["ptr"],
+            dialect_results: &["i64"],
+            source_record: "int_nvvm_mbarrier_arrive_shared",
+            llvm_symbol: "llvm.nvvm.mbarrier.arrive.shared",
+            llvm_arguments: &["shared_ptr"],
+            llvm_results: &["i64"],
+            memory: "read_write",
+            ptx_result: "u64",
+            selection: "MBARRIER_ARRIVE_SHARED",
+            selection_asm: "mbarrier.arrive.shared.b64 \t$state, [$addr];",
+            ptx_modifier: "arrive",
+            ptx_isa_section: "9.7.14.16.16 Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive",
+            llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
+            lib_nvvm_mechanism: BackendLoweringMechanism::InlinePtx,
+            properties: &["IntrConvergent", "IntrNoCallback"],
+            summary: "Arrives at a CTA shared-memory barrier and returns its phase token.",
+        },
+        MbarrierBasicOperation::TestWait => MbarrierBasicRecipe {
+            id: "mbarrier_test_wait",
+            abi_id: "i0099",
+            operation_key: "barrier.mbarrier.test_wait.shared.cta",
+            rust_arguments: &["*const u64", "u64"],
+            rust_result: "bool",
+            must_use: true,
+            adapter: MbarrierBasicAdapter::PointerTokenToPredicate,
+            dialect_op_type: "MbarrierTestWaitSharedOp",
+            dialect_op_name: "nvvm.mbarrier_test_wait_shared",
+            dialect_operands: &["ptr", "i64"],
+            dialect_results: &["i1"],
+            source_record: "int_nvvm_mbarrier_test_wait_shared",
+            llvm_symbol: "llvm.nvvm.mbarrier.test.wait.shared",
+            llvm_arguments: &["shared_ptr", "i64"],
+            llvm_results: &["i1"],
+            memory: "read_write",
+            ptx_result: "bool",
+            selection: "MBARRIER_TEST_WAIT_SHARED",
+            selection_asm: "mbarrier.test_wait.shared.b64 \t$res, [$addr], $state;",
+            ptx_modifier: "test_wait",
+            ptx_isa_section: "9.7.14.16.19 Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait",
+            llvm_nvptx_mechanism: BackendLoweringMechanism::InlinePtx,
+            lib_nvvm_mechanism: BackendLoweringMechanism::InlinePtx,
+            properties: &["IntrConvergent", "IntrNoCallback"],
+            summary: "Tests whether the CTA shared-memory barrier phase for a token is complete.",
+        },
+        MbarrierBasicOperation::Inval => MbarrierBasicRecipe {
+            id: "mbarrier_inval",
+            abi_id: "i0100",
+            operation_key: "barrier.mbarrier.inval.shared.cta",
+            rust_arguments: &["*mut u64"],
+            rust_result: "()",
+            must_use: false,
+            adapter: MbarrierBasicAdapter::PointerToVoid,
+            dialect_op_type: "MbarrierInvalSharedOp",
+            dialect_op_name: "nvvm.mbarrier_inval_shared",
+            dialect_operands: &["ptr"],
+            dialect_results: &[],
+            source_record: "int_nvvm_mbarrier_inval_shared",
+            llvm_symbol: "llvm.nvvm.mbarrier.inval.shared",
+            llvm_arguments: &["shared_ptr"],
+            llvm_results: &[],
+            memory: "write",
+            ptx_result: "()",
+            selection: "MBARRIER_INVAL_SHARED",
+            selection_asm: "mbarrier.inval.shared.b64 \t[$addr];",
+            ptx_modifier: "inval",
+            ptx_isa_section: "9.7.14.16.13 Parallel Synchronization and Communication Instructions: mbarrier.inval",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-inval",
+            llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
+            lib_nvvm_mechanism: BackendLoweringMechanism::InlinePtx,
+            properties: &[
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrWriteMem",
+                "NoCapture<arg0>",
+                "WriteOnly<arg0>",
+            ],
+            summary: "Invalidates a CTA shared-memory barrier after its users have finished.",
+        },
+    }
+}
+
+fn mbarrier_expected_operands(operation: MbarrierBasicOperation) -> Vec<OperandPattern> {
+    match operation {
+        MbarrierBasicOperation::Init => {
+            vec![OperandPattern::Address, OperandPattern::RegisterOrImmediate]
+        }
+        MbarrierBasicOperation::Arrive => {
+            vec![OperandPattern::Register, OperandPattern::Address]
+        }
+        MbarrierBasicOperation::TestWait => vec![
+            OperandPattern::Register,
+            OperandPattern::Address,
+            OperandPattern::Register,
+        ],
+        MbarrierBasicOperation::Inval => vec![OperandPattern::Address],
+    }
+}
+
+fn validate_mbarrier_basic_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let mbarrier = policy
+        .mbarrier_basic
+        .as_ref()
+        .with_context(|| format!("{} has no closed basic mbarrier contract", policy.id))?;
+    let recipe = mbarrier_basic_recipe(mbarrier.operation);
+    ensure!(
+        mbarrier.state_space == MbarrierStateSpace::Shared && mbarrier.adapter == recipe.adapter,
+        "{} mbarrier operation, state space, and adapter disagree",
+        policy.id
+    );
+    ensure!(
+        mbarrier.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} cannot claim unrecorded mbarrier runtime validation",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} mbarrier identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "barrier"
+            && policy.rust_name == recipe.id
+            && policy
+                .rust_arguments
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.rust_arguments.iter().copied())
+            && policy.rust_result == recipe.rust_result
+            && !policy.safe
+            && policy.must_use == recipe.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::barrier::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::barrier::{}", recipe.id)],
+        "{} must preserve its unsafe mbarrier raw and compatibility API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy
+                .dialect_operands
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.dialect_operands.iter().copied())
+            && policy
+                .dialect_results
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.dialect_results.iter().copied())
+            && policy
+                .llvm_arguments
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.llvm_arguments.iter().copied())
+            && policy
+                .llvm_results
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.llvm_results.iter().copied())
+            && policy.lowering == "generated_mbarrier_basic",
+        "{} is outside the closed mbarrier signature and lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == recipe.memory
+            && policy.convergent
+            && policy.execution_scope == "cta"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.ptx_result == recipe.ptx_result
+            && policy.targets == "all",
+        "{} mbarrier effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url,
+        "{} mbarrier PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.summary == recipe.summary,
+        "{} mbarrier summary does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration
+            .properties
+            .iter()
+            .map(String::as_str)
+            .eq(recipe.properties.iter().copied()),
+        "{} mbarrier properties disagree with the imported LLVM declaration",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "mbarrier"
+            && policy.expected_ptx.modifiers == [recipe.ptx_modifier, "shared", "b64"]
+            && policy.expected_ptx.operands == mbarrier_expected_operands(mbarrier.operation),
+        "{} expected PTX does not match its mbarrier recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.selections.len() == 1
+            && declaration.selections[0].source_record == recipe.selection
+            && declaration.selections[0].asm == recipe.selection_asm
+            && declaration.selections[0].predicates
+                == [
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70",
+                ]
+            && declaration.selections[0].constraints.is_empty(),
+        "{} imported mbarrier selection changed",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (IntrinsicBackend::LlvmNvptx, recipe.llvm_nvptx_mechanism),
+                    (IntrinsicBackend::LibNvvm, recipe.lib_nvvm_mechanism),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must define exactly the reviewed mbarrier backend routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "mbarrier_basic")?;
+    Ok(())
+}
+
 fn packed_conversion_recipe(
     conversion: &crate::model::PackedConversion,
 ) -> Option<PackedConversionRecipe> {
@@ -4981,7 +5329,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "packed_alu") == policy.packed_alu.is_some()
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
             && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
-            && (policy.family == "cp_async_control") == policy.cp_async_control.is_some(),
+            && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
+            && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -5632,6 +5981,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(mbarrier) = &policy.mbarrier_basic {
+        match mbarrier.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} mbarrier runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} mbarrier runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -5749,6 +6114,7 @@ fn resolve_record(
         packed_conversion: policy.packed_conversion.clone(),
         cp_async_copy: policy.cp_async_copy.clone(),
         cp_async_control: policy.cp_async_control.clone(),
+        mbarrier_basic: policy.mbarrier_basic.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -5863,6 +6229,7 @@ mod tests {
             packed_conversion: None,
             cp_async_copy: None,
             cp_async_control: None,
+            mbarrier_basic: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -5991,6 +6358,29 @@ mod tests {
             .intrinsics
             .into_iter()
             .filter(|record| matches!(record.family.as_str(), "active_mask" | "warp_match"))
+            .map(|policy| {
+                let declaration = declarations[policy.source_record.as_deref().unwrap()].clone();
+                (policy.id.clone(), (policy, declaration))
+            })
+            .collect()
+    }
+
+    fn pinned_mbarrier_basic_records() -> BTreeMap<String, (OverlayIntrinsic, ImportedIntrinsic)> {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .into_iter()
+            .map(|record| (record.source_record.clone(), record))
+            .collect();
+
+        overlay
+            .intrinsics
+            .into_iter()
+            .filter(|record| record.family == "mbarrier_basic")
             .map(|policy| {
                 let declaration = declarations[policy.source_record.as_deref().unwrap()].clone();
                 (policy.id.clone(), (policy, declaration))
@@ -6791,8 +7181,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 15);
-        assert_eq!(overlay.intrinsics.len(), 96);
+        assert_eq!(overlay.shards.len(), 16);
+        assert_eq!(overlay.intrinsics.len(), 100);
         assert_eq!(
             overlay
                 .intrinsics
@@ -6848,6 +7238,14 @@ mod tests {
                 .filter(|record| record.family == "cp_async_control")
                 .count(),
             3
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "mbarrier_basic")
+                .count(),
+            4
         );
         assert_eq!(
             overlay
@@ -7021,6 +7419,139 @@ mod tests {
             let declaration = declarations[policy.source_record.as_deref().unwrap()];
             validate_imported_policy(policy, declaration).unwrap();
         }
+    }
+
+    #[test]
+    fn pinned_mbarrier_basic_records_match_the_closed_recipes() {
+        let records = pinned_mbarrier_basic_records();
+        assert_eq!(records.len(), 4);
+
+        for (policy, declaration) in records.values() {
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+    }
+
+    #[test]
+    fn mbarrier_basic_recipes_fail_closed() {
+        let records = pinned_mbarrier_basic_records();
+        let (init, init_declaration) = &records["mbarrier_init"];
+        let reject =
+            |policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic, expected: &str| {
+                let error = validate_imported_policy(policy, declaration).unwrap_err();
+                let message = error.to_string();
+                assert!(message.contains(expected), "unexpected error: {message}");
+            };
+
+        let mut wrong_symbol = init.clone();
+        wrong_symbol.llvm_symbol = Some("llvm.nvvm.mbarrier.init.changed".into());
+        reject(&wrong_symbol, init_declaration, "LLVM symbol mismatch");
+
+        let mut wrong_signature = init.clone();
+        wrong_signature.rust_arguments = vec!["*mut u32".into(), "u32".into()];
+        reject(
+            &wrong_signature,
+            init_declaration,
+            "unsafe mbarrier raw and compatibility API",
+        );
+
+        let mut wrong_operation = init.clone();
+        wrong_operation.mbarrier_basic.as_mut().unwrap().operation = MbarrierBasicOperation::Arrive;
+        reject(
+            &wrong_operation,
+            init_declaration,
+            "operation, state space, and adapter disagree",
+        );
+
+        let mut wrong_adapter = init.clone();
+        wrong_adapter.mbarrier_basic.as_mut().unwrap().adapter =
+            MbarrierBasicAdapter::PointerToVoid;
+        reject(
+            &wrong_adapter,
+            init_declaration,
+            "operation, state space, and adapter disagree",
+        );
+
+        let mut executed_without_evidence = init.clone();
+        executed_without_evidence
+            .mbarrier_basic
+            .as_mut()
+            .unwrap()
+            .runtime_validation = RuntimeValidation::Executed;
+        reject(
+            &executed_without_evidence,
+            init_declaration,
+            "unrecorded mbarrier runtime validation",
+        );
+
+        let mut wrong_properties = init_declaration.clone();
+        wrong_properties.properties.pop();
+        reject(init, &wrong_properties, "mbarrier properties");
+
+        let mut wrong_selection = init_declaration.clone();
+        wrong_selection.selections[0].source_record = "MBARRIER_INIT_CHANGED".into();
+        reject(
+            init,
+            &wrong_selection,
+            "imported mbarrier selection changed",
+        );
+
+        let mut wrong_ptx_floor = init.clone();
+        wrong_ptx_floor.minimum_ptx = "7.1".into();
+        reject(
+            &wrong_ptx_floor,
+            init_declaration,
+            "effects or target floor",
+        );
+
+        let mut wrong_sm_floor = init.clone();
+        wrong_sm_floor.minimum_sm = Some("sm_90".into());
+        reject(&wrong_sm_floor, init_declaration, "effects or target floor");
+
+        let mut wrong_llvm_route = init.clone();
+        wrong_llvm_route
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+            .unwrap()
+            .mechanism = BackendLoweringMechanism::InlinePtx;
+        reject(
+            &wrong_llvm_route,
+            init_declaration,
+            "reviewed mbarrier backend routes",
+        );
+
+        let mut wrong_lib_nvvm_route = init.clone();
+        wrong_lib_nvvm_route
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap()
+            .mechanism = BackendLoweringMechanism::TypedNvvm;
+        reject(
+            &wrong_lib_nvvm_route,
+            init_declaration,
+            "reviewed mbarrier backend routes",
+        );
+
+        let mut route_with_unreviewed_floor = init.clone();
+        route_with_unreviewed_floor.backend_lowerings[0].minimum_sm = Some("sm_90".into());
+        reject(
+            &route_with_unreviewed_floor,
+            init_declaration,
+            "reviewed mbarrier backend routes",
+        );
+
+        let mut mixed_family = init.clone();
+        mixed_family.cp_async_control = Some(crate::model::CpAsyncControl {
+            operation: CpAsyncControlOperation::CommitGroup,
+            adapter: CpAsyncControlAdapter::NoOperands,
+            runtime_validation: RuntimeValidation::Unexecuted,
+        });
+        reject(
+            &mixed_family,
+            init_declaration,
+            "mixes another generated-family contract",
+        );
     }
 
     #[test]

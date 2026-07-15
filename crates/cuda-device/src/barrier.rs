@@ -102,90 +102,11 @@ impl Barrier {
     pub const UNINIT: Self = Self { _state: 0 };
 }
 
-// =============================================================================
-// Barrier Initialization
-// =============================================================================
-
-/// Initialize a barrier with the expected number of arrivals.
-///
-/// Must be called by exactly ONE thread before any other barrier operations.
-/// Typically thread 0 initializes, then `sync_threads()` before use.
-///
-/// # Parameters
-///
-/// - `bar`: Pointer to barrier in shared memory
-/// - `expected_count`: Number of threads/transactions that will arrive
-///
-/// # Safety
-///
-/// - `bar` must point to valid shared memory
-/// - Must be called exactly once per barrier phase
-/// - Other threads must not access barrier until init completes
-///
-/// # Example
-///
-/// ```rust,ignore
-/// static mut BAR: Barrier = Barrier::UNINIT;
-///
-/// if thread::threadIdx_x() == 0 {
-///     unsafe { mbarrier_init(&mut BAR, 128); }  // 128 threads will arrive
-/// }
-/// thread::sync_threads();
-/// ```
-///
-/// # PTX
-///
-/// ```ptx
-/// mbarrier.init.shared.b64 [addr], count;
-/// ```
-#[inline(never)]
-pub unsafe fn mbarrier_init(bar: *mut Barrier, expected_count: u32) {
-    let _ = (bar, expected_count);
-    // Lowered to: call void @llvm.nvvm.mbarrier.init.shared(ptr %bar, i32 %count)
-    unreachable!("mbarrier_init called outside CUDA kernel context")
-}
+include!("generated/mbarrier_basic.rs");
 
 // =============================================================================
 // Barrier Arrive Operations
 // =============================================================================
-
-/// Arrive at barrier, signaling this thread's participation.
-///
-/// Returns a token (phase) that must be passed to `mbarrier_wait`.
-/// The barrier completes when all expected arrivals have occurred.
-///
-/// # Parameters
-///
-/// - `bar`: Pointer to barrier in shared memory
-///
-/// # Returns
-///
-/// A 64-bit token representing the current barrier phase.
-///
-/// # Safety
-///
-/// - `bar` must be initialized
-/// - Must be paired with a `mbarrier_wait` call
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let token = unsafe { mbarrier_arrive(&BAR) };
-/// // ... do independent work ...
-/// unsafe { mbarrier_wait(&BAR, token); }
-/// ```
-///
-/// # PTX
-///
-/// ```ptx
-/// mbarrier.arrive.shared.b64 token, [addr];
-/// ```
-#[inline(never)]
-pub unsafe fn mbarrier_arrive(bar: *const Barrier) -> u64 {
-    let _ = bar;
-    // Lowered to: call i64 @llvm.nvvm.mbarrier.arrive.shared(ptr %bar)
-    unreachable!("mbarrier_arrive called outside CUDA kernel context")
-}
 
 /// Arrive at barrier without returning a token (fire-and-forget).
 ///
@@ -212,37 +133,6 @@ pub unsafe fn mbarrier_arrive_no_complete(bar: *const Barrier) {
 // =============================================================================
 // Barrier Wait Operations
 // =============================================================================
-
-/// Test if barrier phase is complete (non-blocking).
-///
-/// Returns `true` if all expected arrivals have occurred for the given phase.
-/// Use this for polling-style waits or to check completion without blocking.
-///
-/// # Parameters
-///
-/// - `bar`: Pointer to barrier in shared memory
-/// - `token`: Phase token from `mbarrier_arrive`
-///
-/// # Returns
-///
-/// `true` if the barrier phase is complete, `false` otherwise.
-///
-/// # Safety
-///
-/// - `bar` must be initialized
-/// - `token` must be from a matching `mbarrier_arrive` call
-///
-/// # PTX
-///
-/// ```ptx
-/// mbarrier.test_wait.shared.b64 pred, [addr], token;
-/// ```
-#[inline(never)]
-pub unsafe fn mbarrier_test_wait(bar: *const Barrier, token: u64) -> bool {
-    let _ = (bar, token);
-    // Lowered to: call i1 @llvm.nvvm.mbarrier.test_wait.shared(ptr %bar, i64 %token)
-    unreachable!("mbarrier_test_wait called outside CUDA kernel context")
-}
 
 /// Try to wait for barrier phase to complete (with scheduling hints).
 ///
@@ -356,10 +246,8 @@ pub unsafe fn mbarrier_try_wait_parity_cluster(bar: *const Barrier, parity: u32)
 /// ```
 #[inline(always)]
 pub unsafe fn mbarrier_wait(bar: *const Barrier, token: u64) {
-    // Implemented as a spin loop on try_wait.
-    // try_wait provides scheduling hints to the hardware, making it
-    // more efficient than test_wait for actual waiting.
-    while !unsafe { mbarrier_try_wait(bar, token) } {
+    // test_wait keeps this helper available on Ampere.
+    while !unsafe { mbarrier_test_wait(bar, token) } {
         // spin
     }
 }
@@ -490,32 +378,6 @@ pub unsafe fn mbarrier_arrive_expect_tx_cluster(
 pub unsafe fn mbarrier_arrive_cluster(remote_bar_addr: u64) {
     let _ = remote_bar_addr;
     unreachable!("mbarrier_arrive_cluster called outside CUDA kernel context")
-}
-
-// =============================================================================
-// Barrier Invalidation
-// =============================================================================
-
-/// Invalidate a barrier, releasing its resources.
-///
-/// Call this when done with a barrier to allow reinitialization.
-/// Typically used when reusing barriers across kernel phases.
-///
-/// # Safety
-///
-/// - All threads must have completed their wait operations
-/// - No threads should be using the barrier after invalidation
-///
-/// # PTX
-///
-/// ```ptx
-/// mbarrier.inval.shared.b64 [addr];
-/// ```
-#[inline(never)]
-pub unsafe fn mbarrier_inval(bar: *mut Barrier) {
-    let _ = bar;
-    // Lowered to: call void @llvm.nvvm.mbarrier.inval.shared(ptr %bar)
-    unreachable!("mbarrier_inval called outside CUDA kernel context")
 }
 
 // =============================================================================

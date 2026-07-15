@@ -20,7 +20,7 @@
 //! │ thread      │ Thread/block/grid indexing         │ All        │ 7    │
 //! │ warp        │ Warp shuffle and vote operations   │ All        │ 12   │
 //! │ cluster     │ Thread Block Cluster ops + DSMEM   │ Hopper+    │ 10   │
-//! │ mbarrier    │ Async barrier (mbarrier) ops       │ Hopper+    │ 9    │
+//! │ mbarrier    │ Async barrier (mbarrier) ops       │ Ampere+    │ 15   │
 //! │ tma         │ Tensor Memory Accelerator ops      │ Hopper+    │ 13   │
 //! │ wgmma       │ Warpgroup Matrix Multiply-Acc      │ Hopper+    │ 5    │
 //! │ tcgen05     │ Tensor Core Gen 5 operations       │ Blackwell+ │ 25+  │
@@ -32,13 +32,14 @@
 //! # Architecture Requirements
 //!
 //! - **All GPUs**: `thread`, basic `warp` operations
-//! - **Hopper+ (sm_90+)**: `cluster`, `mbarrier`, `tma`, `wgmma`
+//! - **Ampere+ (sm_80+)**: Basic `mbarrier` operations
+//! - **Hopper+ (sm_90+)**: `cluster`, extended `mbarrier`, `tma`, `wgmma`
 //! - **Blackwell+ (sm_100+)**: `tcgen05`
 //!
 //! # Verification Strategy
 //!
-//! NVVM operations use **minimal structural verification** (operand/result counts only),
-//! deliberately omitting detailed type verification. This is a conscious design decision:
+//! Most handwritten NVVM operations use minimal structural verification.
+//! Generated operations can enforce reviewed type and address-space contracts.
 //!
 //! ## Why Minimal Verification?
 //!
@@ -72,11 +73,12 @@
 //! - **Thread indexing ops**: Verify result is `i32` (these are the simplest and
 //!   most commonly used, so the extra check is worthwhile).
 //! - **Tcgen05 pure loads**: Verify exact result count (32 or 4 results).
+//! - **Generated families**: Verify the exact shapes defined by their closed recipes.
 //!
 //! ## What is NOT Verified (by design)
 //!
-//! - Operand types (e.g., that shuffle value is i32/f32)
-//! - Pointer address spaces (e.g., that mbarrier ptr is addrspace(3))
+//! - Operand types for handwritten operations without a type verifier
+//! - Pointer address spaces for handwritten operations without an address verifier
 //! - Descriptor types (e.g., that TMA descriptor is i64)
 //!
 //! These are validated at LLVM lowering time when the intrinsic calls are generated.

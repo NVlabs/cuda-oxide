@@ -679,3 +679,31 @@ status = "active"
 catalog_id = "cp_async_wait_group"
 operation_key = "memory.copy.async.group.wait_max_pending"
 raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0097"
+status = "active"
+catalog_id = "mbarrier_init"
+operation_key = "barrier.mbarrier.init.shared.cta"
+raw_rust_signature = { safe = false, arguments = ["*mut u64", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0098"
+status = "active"
+catalog_id = "mbarrier_arrive"
+operation_key = "barrier.mbarrier.arrive.shared.cta"
+raw_rust_signature = { safe = false, arguments = ["*const u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i0099"
+status = "active"
+catalog_id = "mbarrier_test_wait"
+operation_key = "barrier.mbarrier.test_wait.shared.cta"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u64"], result = "bool" }
+
+[[entry]]
+abi_id = "i0100"
+status = "active"
+catalog_id = "mbarrier_inval"
+operation_key = "barrier.mbarrier.inval.shared.cta"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }

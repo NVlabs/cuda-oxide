@@ -1,0 +1,170 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "mbarrier_init",
+      "source_record": "int_nvvm_mbarrier_init_shared",
+      "llvm_symbol": "llvm.nvvm.mbarrier.init.shared",
+      "llvm_arguments": ["shared_ptr", "i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX mbarrier.init.shared.b64 with l,r,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the production barrier example to 4,616-byte LTOIR (SHA-256 63f7ec756a55d4fc813edda5424f2ec599969a2f96bca81c4260414a5f20049c)."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained production barrier example",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 6,816-byte sm_80 cubin (SHA-256 7fc77da879df04e4ab109d1a74e5504ccb3e78afb2518eb6b1b74e06fb1dbcb5); cuobjdump and an isolated attribution kernel showed mbarrier.init as MOV/MOV plus STS.64.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": ["init", "shared", "b64"],
+        "operands": [{ "kind": "address" }, { "kind": "register_or_immediate" }]
+      }
+    },
+    {
+      "id": "mbarrier_arrive",
+      "source_record": "int_nvvm_mbarrier_arrive_shared",
+      "llvm_symbol": "llvm.nvvm.mbarrier.arrive.shared",
+      "llvm_arguments": ["shared_ptr"],
+      "llvm_results": ["i64"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX mbarrier.arrive.shared.b64 with =l,l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the production barrier example to 4,616-byte LTOIR (SHA-256 63f7ec756a55d4fc813edda5424f2ec599969a2f96bca81c4260414a5f20049c)."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained production barrier example",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 6,816-byte sm_80 cubin (SHA-256 7fc77da879df04e4ab109d1a74e5504ccb3e78afb2518eb6b1b74e06fb1dbcb5); cuobjdump and an isolated attribution kernel showed mbarrier.arrive as MEMBAR.ALL.CTA plus ATOMS.ARRIVE.64.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": ["arrive", "shared", "b64"],
+        "operands": [{ "kind": "register" }, { "kind": "address" }]
+      }
+    },
+    {
+      "id": "mbarrier_test_wait",
+      "source_record": "int_nvvm_mbarrier_test_wait_shared",
+      "llvm_symbol": "llvm.nvvm.mbarrier.test.wait.shared",
+      "llvm_arguments": ["shared_ptr", "i64"],
+      "llvm_results": ["i1"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX mbarrier.test_wait.shared.b64 with =r,l,l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the production barrier example and retained the predicate-to-i32 adapter in 4,616-byte LTOIR (SHA-256 63f7ec756a55d4fc813edda5424f2ec599969a2f96bca81c4260414a5f20049c)."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained production barrier example",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 6,816-byte sm_80 cubin (SHA-256 7fc77da879df04e4ab109d1a74e5504ccb3e78afb2518eb6b1b74e06fb1dbcb5); cuobjdump and an isolated attribution kernel showed mbarrier.test_wait as LDS.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": ["test_wait", "shared", "b64"],
+        "operands": [{ "kind": "register" }, { "kind": "address" }, { "kind": "register" }]
+      }
+    },
+    {
+      "id": "mbarrier_inval",
+      "source_record": "int_nvvm_mbarrier_inval_shared",
+      "llvm_symbol": "llvm.nvvm.mbarrier.inval.shared",
+      "llvm_arguments": ["shared_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX mbarrier.inval.shared.b64 with l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the production barrier example to 4,616-byte LTOIR (SHA-256 63f7ec756a55d4fc813edda5424f2ec599969a2f96bca81c4260414a5f20049c)."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained production barrier example",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 6,816-byte sm_80 cubin (SHA-256 7fc77da879df04e4ab109d1a74e5504ccb3e78afb2518eb6b1b74e06fb1dbcb5); cuobjdump and an isolated attribution kernel showed mbarrier.inval as NOP.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": ["inval", "shared", "b64"],
+        "operands": [{ "kind": "address" }]
+      }
+    }
+  ]
+}

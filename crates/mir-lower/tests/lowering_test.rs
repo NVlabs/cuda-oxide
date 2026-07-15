@@ -1830,6 +1830,174 @@ fn append_return(ctx: &mut Context, block: pliron::context::Ptr<pliron::basic_bl
     ret.insert_at_back(block, ctx);
 }
 
+fn lower_basic_mbarrier(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let bar_ptr_ty = MirPtrType::get_shared(&mut ctx, u64_ty.into(), false);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![bar_ptr_ty.into(), u32_ty.into()]);
+    let barrier = entry.deref(&ctx).get_argument(0);
+    let count = entry.deref(&ctx).get_argument(1);
+
+    nvvm::MbarrierInitSharedOp::build(&mut ctx, barrier, count).insert_at_back(entry, &ctx);
+    let arrive = nvvm::MbarrierArriveSharedOp::build(&mut ctx, barrier);
+    let token = arrive.deref(&ctx).get_result(0);
+    arrive.insert_at_back(entry, &ctx);
+    nvvm::MbarrierTestWaitSharedOp::build(&mut ctx, barrier, token).insert_at_back(entry, &ctx);
+    nvvm::MbarrierInvalSharedOp::build(&mut ctx, barrier).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_generated_basic_mbarrier_uses_shared_lowering_on_both_backends() -> Result<(), anyhow::Error>
+{
+    let expected_calls = [
+        ("llvm_nvvm_mbarrier_init_shared", 2),
+        ("llvm_nvvm_mbarrier_arrive_shared", 1),
+        ("llvm_nvvm_mbarrier_inval_shared", 1),
+    ];
+    let init_template = "mbarrier.init.shared.b64 [$0], $1;";
+    let arrive_template = "mbarrier.arrive.shared.b64 $0, [$1];";
+    let test_wait_template =
+        "{ .reg .pred %p0; mbarrier.test_wait.shared.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }";
+    let inval_template = "mbarrier.inval.shared.b64 [$0];";
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let (ctx, module_ptr) = lower_basic_mbarrier(backend)?;
+        let mut call_counts = [0usize; 3];
+        let expected_asm = match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => {
+                vec![(test_wait_template, "=r,l,l,~{memory}", 2)]
+            }
+            mir_lower::IntrinsicBackend::LibNvvm => vec![
+                (init_template, "l,r,~{memory}", 2),
+                (arrive_template, "=l,l,~{memory}", 1),
+                (test_wait_template, "=r,l,l,~{memory}", 2),
+                (inval_template, "l,~{memory}", 1),
+            ],
+        };
+        let mut asm_counts = vec![0usize; expected_asm.len()];
+        let mut trunc_count = 0;
+
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) {
+                let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+                    continue;
+                };
+                let callee = callee.to_string();
+                let Some(index) = expected_calls
+                    .iter()
+                    .position(|(expected, _)| callee == *expected)
+                else {
+                    assert_ne!(callee, "llvm_nvvm_mbarrier_test_wait_shared");
+                    continue;
+                };
+                call_counts[index] += 1;
+                assert_eq!(op.deref(&ctx).get_num_operands(), expected_calls[index].1);
+            }
+
+            if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                let index = expected_asm
+                    .iter()
+                    .position(|(expected, _, _)| template.as_deref() == Some(*expected))
+                    .unwrap_or_else(|| panic!("unexpected {backend:?} inline PTX: {template:?}"));
+                let (_, constraints, operand_count) = expected_asm[index];
+                asm_counts[index] += 1;
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some(constraints)
+                );
+                assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Convergent);
+                let asm = op.deref(&ctx);
+                assert_eq!(asm.get_num_operands(), operand_count);
+                assert_eq!(asm.get_num_results(), 1);
+            }
+
+            if Operation::get_op::<llvm::TruncOp>(op, &ctx).is_some() {
+                trunc_count += 1;
+            }
+        }
+
+        match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => assert_eq!(call_counts, [1; 3]),
+            mir_lower::IntrinsicBackend::LibNvvm => assert_eq!(call_counts, [0; 3]),
+        }
+        assert_eq!(asm_counts, vec![1; expected_asm.len()]);
+        assert_eq!(
+            trunc_count, 1,
+            "test-wait must adapt its i32 predicate to i1"
+        );
+
+        let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => {
+                assert!(
+                    ir.contains("call void @llvm.nvvm.mbarrier.init.shared(ptr addrspace(3)"),
+                    "{ir}"
+                );
+                assert!(
+                    ir.contains("call i64 @llvm.nvvm.mbarrier.arrive.shared(ptr addrspace(3)"),
+                    "{ir}"
+                );
+                assert!(
+                    ir.contains("call void @llvm.nvvm.mbarrier.inval.shared(ptr addrspace(3)"),
+                    "{ir}"
+                );
+                assert!(!ir.contains(init_template), "{ir}");
+                assert!(!ir.contains(arrive_template), "{ir}");
+                assert!(!ir.contains(inval_template), "{ir}");
+            }
+            mir_lower::IntrinsicBackend::LibNvvm => {
+                for symbol in [
+                    "@llvm.nvvm.mbarrier.init.shared",
+                    "@llvm.nvvm.mbarrier.arrive.shared",
+                    "@llvm.nvvm.mbarrier.inval.shared",
+                ] {
+                    assert!(
+                        !ir.contains(symbol),
+                        "libNVVM route retained {symbol}:\n{ir}"
+                    );
+                }
+                for template in [init_template, arrive_template, inval_template] {
+                    assert!(ir.contains(template), "{ir}");
+                }
+            }
+        }
+        assert!(ir.contains(test_wait_template), "{ir}");
+        assert!(ir.contains("asm sideeffect"), "{ir}");
+        assert!(ir.contains("trunc i32") && ir.contains("to i1"), "{ir}");
+        assert!(ir.contains("attributes #0 = { convergent }"), "{ir}");
+    }
+    Ok(())
+}
+
 #[test]
 fn test_cluster_mbarrier_and_fences_lower_to_exact_inline_ptx() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;

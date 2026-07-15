@@ -9,7 +9,8 @@ use dialect_nvvm::ops::{
     Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr,
     LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
     LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
-    MatchAnySyncI64Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
+    MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
+    MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
     MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op,
     NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr,
     PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr,
@@ -83,6 +84,108 @@ fn test_generated_cp_async_accepts_pointer_shapes_and_both_constant_kinds() {
 
     let dynamic_wait = CpAsyncWaitGroupOp::build(&mut ctx, dynamic);
     assert!(verify_op(&CpAsyncWaitGroupOp::new(dynamic_wait), &ctx).is_err());
+}
+
+#[test]
+fn generated_mbarrier_builders_and_verifiers_are_closed_over_their_shapes() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u1_ty = IntegerType::get(&ctx, 1, Signedness::Unsigned);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let generic_ptr = MirPtrType::get_generic(&mut ctx, u64_ty.into(), false);
+    let shared_ptr = MirPtrType::get_shared(&mut ctx, u64_ty.into(), false);
+    let global_ptr = MirPtrType::get_global(&mut ctx, u64_ty.into(), false);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            generic_ptr.into(),
+            shared_ptr.into(),
+            global_ptr.into(),
+            i32_ty.into(),
+            u32_ty.into(),
+            u64_ty.into(),
+        ],
+    );
+    let generic = block.deref(&ctx).get_argument(0);
+    let shared = block.deref(&ctx).get_argument(1);
+    let global = block.deref(&ctx).get_argument(2);
+    let signless_i32 = block.deref(&ctx).get_argument(3);
+    let count = block.deref(&ctx).get_argument(4);
+    let token = block.deref(&ctx).get_argument(5);
+
+    for barrier in [generic, shared] {
+        let init = MbarrierInitSharedOp::build(&mut ctx, barrier, count);
+        assert!(MbarrierInitSharedOp::new(init).verify(&ctx).is_ok());
+        let arrive = MbarrierArriveSharedOp::build(&mut ctx, barrier);
+        assert!(MbarrierArriveSharedOp::new(arrive).verify(&ctx).is_ok());
+        let test_wait = MbarrierTestWaitSharedOp::build(&mut ctx, barrier, token);
+        assert!(
+            MbarrierTestWaitSharedOp::new(test_wait)
+                .verify(&ctx)
+                .is_ok()
+        );
+        let inval = MbarrierInvalSharedOp::build(&mut ctx, barrier);
+        assert!(MbarrierInvalSharedOp::new(inval).verify(&ctx).is_ok());
+    }
+
+    for barrier in [token, global] {
+        let inval = MbarrierInvalSharedOp::build(&mut ctx, barrier);
+        assert!(MbarrierInvalSharedOp::new(inval).verify(&ctx).is_err());
+    }
+
+    let bad_count = MbarrierInitSharedOp::build(&mut ctx, shared, signless_i32);
+    assert!(MbarrierInitSharedOp::new(bad_count).verify(&ctx).is_err());
+    let bad_arrive_result = Operation::new(
+        &mut ctx,
+        MbarrierArriveSharedOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![shared],
+        vec![],
+        0,
+    );
+    assert!(
+        MbarrierArriveSharedOp::new(bad_arrive_result)
+            .verify(&ctx)
+            .is_err()
+    );
+    let bad_token = MbarrierTestWaitSharedOp::build(&mut ctx, shared, count);
+    assert!(
+        MbarrierTestWaitSharedOp::new(bad_token)
+            .verify(&ctx)
+            .is_err()
+    );
+    let bad_predicate = Operation::new(
+        &mut ctx,
+        MbarrierTestWaitSharedOp::get_concrete_op_info(),
+        vec![u1_ty.into()],
+        vec![shared, token],
+        vec![],
+        0,
+    );
+    assert!(
+        MbarrierTestWaitSharedOp::new(bad_predicate)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let missing_operands = Operation::new(
+        &mut ctx,
+        MbarrierInitSharedOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(
+        MbarrierInitSharedOp::new(missing_operands)
+            .verify(&ctx)
+            .is_err()
+    );
 }
 use pliron::{
     basic_block::BasicBlock,

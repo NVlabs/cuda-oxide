@@ -50,28 +50,26 @@ use dialect_nvvm::ops::{
     FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, InlinePtxOp,
     MapaSharedClusterOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
-    MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp, MbarrierInitSharedOp,
-    MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MbarrierTryWaitParityClusterOp,
-    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
-    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
-    NanosleepOp, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
-    NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp,
-    ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp,
-    ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp,
-    ReadPtxSregClusterNctaidZOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregEnvReg1Op,
-    ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregNclusterIdOp,
-    ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp,
-    ReadPtxSregWarpIdOp, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
-    Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
-    Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
-    Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
-    Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
-    Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
-    Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
-    Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, TrapOp, VprintfOp,
-    WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    MbarrierArriveExpectTxSharedOp, MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp,
+    MbarrierTryWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
+    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NanosleepOp, NvvmAtomAddBf16x2Op,
+    NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
+    PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp, ReadPtxSregClusterCtaidXOp,
+    ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp, ReadPtxSregClusterIdxOp,
+    ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp, ReadPtxSregClusterNctaidZOp,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregEnvReg1Op, ReadPtxSregEnvReg2Op,
+    ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregNclusterIdOp, ReadPtxSregNsmIdOp,
+    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp,
+    Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op,
+    Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp,
+    Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp,
+    Tcgen05FenceAfterThreadSyncOp, Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp,
+    Tcgen05Ld16x256bX8PureOp, Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op,
+    Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op, Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op,
+    Tcgen05RelinquishAllocPermitOp, Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp,
+    ThreadfenceSystemOp, TrapOp, VprintfOp, WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp,
+    WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -1487,40 +1485,6 @@ impl MirToLlvmConversion for ElectSyncOp {
 // ---- NVVM Mbarrier ops -----------------------------------------------------
 
 #[op_interface_impl]
-impl MirToLlvmConversion for MbarrierInitSharedOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::mbarrier::convert_init(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MbarrierArriveSharedOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::mbarrier::convert_arrive(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
 impl MirToLlvmConversion for MbarrierArriveExpectTxSharedOp {
     fn convert(
         &self,
@@ -1546,23 +1510,6 @@ impl MirToLlvmConversion for MbarrierArriveExpectTxClusterOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::mbarrier::convert_arrive_expect_tx_cluster(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MbarrierTestWaitSharedOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::mbarrier::convert_test_wait(
             ctx,
             rewriter,
             self.get_operation(),
@@ -1614,23 +1561,6 @@ impl MirToLlvmConversion for MbarrierTryWaitParityClusterOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::mbarrier::convert_try_wait_parity_cluster(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MbarrierInvalSharedOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::mbarrier::convert_inval(
             ctx,
             rewriter,
             self.get_operation(),

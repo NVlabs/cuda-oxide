@@ -229,6 +229,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub cp_async_control: Option<CpAsyncControl>,
     #[serde(default)]
+    pub mbarrier_basic: Option<MbarrierBasic>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -926,6 +928,40 @@ pub enum CpAsyncControlAdapter {
     CompileTimeConstantMaxPending,
 }
 
+/// Closed contract for the basic shared-memory mbarrier lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MbarrierBasic {
+    pub operation: MbarrierBasicOperation,
+    pub state_space: MbarrierStateSpace,
+    pub adapter: MbarrierBasicAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MbarrierBasicOperation {
+    Init,
+    Arrive,
+    TestWait,
+    Inval,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MbarrierStateSpace {
+    Shared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MbarrierBasicAdapter {
+    PointerCountToVoid,
+    PointerToToken,
+    PointerTokenToPredicate,
+    PointerToVoid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiLedgerFile {
@@ -1110,6 +1146,8 @@ pub struct CatalogIntrinsic {
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp_async_control: Option<CpAsyncControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
@@ -1640,6 +1678,37 @@ memory_ordering = "participating_lanes"
         ] {
             assert!(
                 toml::from_str::<WarpBarrier>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn mbarrier_basic_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "test_wait"
+state_space = "shared"
+adapter = "pointer_token_to_predicate"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<MbarrierBasic>(valid).unwrap();
+        assert_eq!(parsed.operation, MbarrierBasicOperation::TestWait);
+        assert_eq!(
+            parsed.adapter,
+            MbarrierBasicAdapter::PointerTokenToPredicate
+        );
+
+        for invalid in [
+            valid.replace("operation = \"test_wait\"", "operation = \"wait\""),
+            valid.replace("state_space = \"shared\"", "state_space = \"global\""),
+            valid.replace(
+                "adapter = \"pointer_token_to_predicate\"",
+                "adapter = \"direct\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<MbarrierBasic>(&invalid).is_err(),
                 "{invalid}"
             );
         }

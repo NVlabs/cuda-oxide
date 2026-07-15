@@ -2481,23 +2481,6 @@ fn try_dispatch_intrinsic(
                 ctx, target, block_ptr, prev_op, block_map, loc,
             )?))
         }
-        "cuda_device::barrier::mbarrier_init" => Ok(Some(intrinsics::sync::emit_mbarrier_init(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-        )?)),
-        "cuda_device::barrier::mbarrier_arrive" => {
-            Ok(Some(intrinsics::sync::emit_mbarrier_arrive(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
         "cuda_device::barrier::mbarrier_arrive_expect_tx" => {
             Ok(Some(intrinsics::sync::emit_mbarrier_arrive_expect_tx(
                 ctx,
@@ -2552,20 +2535,6 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
-        "cuda_device::barrier::mbarrier_test_wait" => {
-            Ok(Some(intrinsics::sync::emit_mbarrier_test_wait(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
         "cuda_device::barrier::mbarrier_try_wait" => {
             Ok(Some(intrinsics::sync::emit_mbarrier_try_wait(
                 ctx,
@@ -2608,9 +2577,6 @@ fn try_dispatch_intrinsic(
                 loc,
             )?,
         )),
-        "cuda_device::barrier::mbarrier_inval" => Ok(Some(intrinsics::sync::emit_mbarrier_inval(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-        )?)),
         "cuda_device::barrier::fence_proxy_async_shared_cta" => {
             Ok(Some(intrinsics::sync::emit_fence_proxy_async_shared_cta(
                 ctx, args, target, block_ptr, prev_op, block_map, loc,
