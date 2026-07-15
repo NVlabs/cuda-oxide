@@ -1,5 +1,5 @@
 {
-  "schema": 21,
+  "schema": 22,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,12 +11,13 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "2a022a8e39a1e2c02a0e6db50eda26d23ca1a5518d329dba8830edeff06c0650",
-    "abi_ledger_sha256": "91dafd11b61a68031ecd4db5ec6c8518fb8e6be1886a8012c7e0f635be0a6076",
+    "overlay_sha256": "6f566c240a210395253476602b03d61fa1ba898524282ac800dcf5f1819e3bee",
+    "abi_ledger_sha256": "9c14bae0ef235ca731f18ede4b0e970412b3703ef5c8815d775fdc1dc25e423c",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
+      "cuda-13.3-libnvvm-13.3.33-register-mma-b1.json:e7974bf639d1957d7115ebb74308611d130daa814f13a408d440e953bc466bee",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int4-m16.json:2db40fe5bd2964185ef622f307d37d5c14a0766554d6051bb3e219ad4097e1e7",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int4-m8.json:c64d20e835ef405cb9d5d4448ca5d3f76c40fbb8679572b7fd8bcbf8f227fe42",
       "cuda-13.3-libnvvm-13.3.33-register-mma-int8-m8.json:6fe0e1040e0bf4e65dfa703c13bef620576dfa5918168d2a8c0c5010fbd0845a",
@@ -26,6 +27,7 @@
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
+      "rust-llvm-22.1.2-1cb4e383-register-mma-b1.json:4c0b0a1a42db6f8b563e87b9d7f405ea9714a0ff48919cec1514ab0c0aa8b5eb",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int4-m16.json:61c4f096e61755b69c5c08b28aa1d31280b222fd3cdf7a56d6c2660f8d46b0c0",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int4-m8.json:fdddc37e76fb5e60fcd7d6cb0a395539b7665f8ea5882b97cde735d7f0407f29",
       "rust-llvm-22.1.2-1cb4e383-register-mma-int8-m8.json:1e296485b0355fd6034d91454ebdf3eb713745fc2219d08c180bf3ea2470047c",
@@ -14698,6 +14700,538 @@
       "summary": "Selects the minimum in each packed f16x2 lane."
     },
     {
+      "id": "mma_m16n8k128_s32_b1_and_popc",
+      "operation_key": "matrix.mma.m16n8k128.row.col.s32.b1.b1.s32.and.popc",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_and_popc_m16n8k128_row_col_b1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0161",
+        "module": "matrix",
+        "name": "mma_m16n8k128_s32_b1_and_popc",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0161",
+        "public_path": "cuda_intrinsics::matrix::mma_m16n8k128_s32_b1_and_popc",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m16n8k128_s32_b1_and_popc"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.and.popc.m16n8k128.row.col.b1",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.1",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx71"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx71"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k128 B1 AND-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM 22 probe retained the exact instruction in C, A, B API order as convergent side-effecting inline assembly.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx71"
+              ],
+              "representation": "exact-floor PTX for m16n8k128 B1 AND-popcount MMA",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact instruction at the PTX 7.1 and sm_80 floors.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k128 B1 AND-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "production generated_intrinsics B1 register-MMA kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m16n8k128",
+        "operation": "and_popc",
+        "accumulator": "s32",
+        "a_element": "b1",
+        "b_element": "b1",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b1_u32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n8k128",
+          "row",
+          "col",
+          "s32",
+          "b1",
+          "b1",
+          "s32",
+          "and",
+          "popc"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          }
+        ]
+      },
+      "summary": "Computes warp-distributed binary matrix products with AND and population count, then adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m16n8k128_s32_b1_xor_popc",
+      "operation_key": "matrix.mma.m16n8k128.row.col.s32.b1.b1.s32.xor.popc",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_xor_popc_m16n8k128_row_col_b1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0158",
+        "module": "matrix",
+        "name": "mma_m16n8k128_s32_b1_xor_popc",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 2]",
+          "u32"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0158",
+        "public_path": "cuda_intrinsics::matrix::mma_m16n8k128_s32_b1_xor_popc",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m16n8k128_s32_b1_xor_popc"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.xor.popc.m16n8k128.row.col.b1",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k128 B1 XOR-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM 22 probe retained the exact instruction in C, A, B API order as convergent side-effecting inline assembly.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "exact-floor PTX for m16n8k128 B1 XOR-popcount MMA",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact instruction at the PTX 7.0 and sm_80 floors.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k128 B1 XOR-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "production generated_intrinsics B1 register-MMA kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m16n8k128",
+        "operation": "xor_popc",
+        "accumulator": "s32",
+        "a_element": "b1",
+        "b_element": "b1",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a2_u32_b1_u32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n8k128",
+          "row",
+          "col",
+          "s32",
+          "b1",
+          "b1",
+          "s32",
+          "xor",
+          "popc"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          }
+        ]
+      },
+      "summary": "Computes warp-distributed binary matrix products with XOR and population count, then adds a wrapping s32 accumulator."
+    },
+    {
       "id": "mma_m16n8k16_f32_bf16",
       "operation_key": "matrix.mma.m16n8k16.row.col.f32.bf16.bf16.f32",
       "family": "register_mma",
@@ -14920,6 +15454,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "f32",
         "a_element": "bf16",
         "b_element": "bf16",
@@ -15189,6 +15724,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "f32",
         "a_element": "f16",
         "b_element": "f16",
@@ -15452,6 +15988,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "s8",
@@ -15715,6 +16252,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "s8",
@@ -15979,6 +16517,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "u8",
@@ -16242,6 +16781,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "u8",
@@ -16506,6 +17046,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "u8",
@@ -16769,6 +17310,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "s8",
@@ -17032,6 +17574,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "s8",
@@ -17296,6 +17839,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "u8",
@@ -17342,6 +17886,550 @@
         ]
       },
       "summary": "Multiplies warp-distributed unsigned A and unsigned B INT8 fragments and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_m16n8k256_s32_b1_and_popc",
+      "operation_key": "matrix.mma.m16n8k256.row.col.s32.b1.b1.s32.and.popc",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_and_popc_m16n8k256_row_col_b1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0162",
+        "module": "matrix",
+        "name": "mma_m16n8k256_s32_b1_and_popc",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 4]",
+          "[u32; 2]"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0162",
+        "public_path": "cuda_intrinsics::matrix::mma_m16n8k256_s32_b1_and_popc",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m16n8k256_s32_b1_and_popc"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.and.popc.m16n8k256.row.col.b1",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.1",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx71"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx71"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k256 B1 AND-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM 22 probe retained the exact instruction in C, A, B API order as convergent side-effecting inline assembly.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx71"
+              ],
+              "representation": "exact-floor PTX for m16n8k256 B1 AND-popcount MMA",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact instruction at the PTX 7.1 and sm_80 floors.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k256 B1 AND-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "production generated_intrinsics B1 register-MMA kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m16n8k256",
+        "operation": "and_popc",
+        "accumulator": "s32",
+        "a_element": "b1",
+        "b_element": "b1",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a4_u32_b2_u32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n8k256",
+          "row",
+          "col",
+          "s32",
+          "b1",
+          "b1",
+          "s32",
+          "and",
+          "popc"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          }
+        ]
+      },
+      "summary": "Computes warp-distributed binary matrix products with AND and population count, then adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m16n8k256_s32_b1_xor_popc",
+      "operation_key": "matrix.mma.m16n8k256.row.col.s32.b1.b1.s32.xor.popc",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_xor_popc_m16n8k256_row_col_b1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0159",
+        "module": "matrix",
+        "name": "mma_m16n8k256_s32_b1_xor_popc",
+        "arguments": [
+          "[i32; 4]",
+          "[u32; 4]",
+          "[u32; 2]"
+        ],
+        "result": "[i32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0159",
+        "public_path": "cuda_intrinsics::matrix::mma_m16n8k256_s32_b1_xor_popc",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m16n8k256_s32_b1_xor_popc"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.xor.popc.m16n8k256.row.col.b1",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k256 B1 XOR-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM 22 probe retained the exact instruction in C, A, B API order as convergent side-effecting inline assembly.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "exact-floor PTX for m16n8k256 B1 XOR-popcount MMA",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact instruction at the PTX 7.0 and sm_80 floors.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m16n8k256 B1 XOR-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "production generated_intrinsics B1 register-MMA kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m16n8k256",
+        "operation": "xor_popc",
+        "accumulator": "s32",
+        "a_element": "b1",
+        "b_element": "b1",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_i32_a4_u32_b2_u32_to_d4_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n8k256",
+          "row",
+          "col",
+          "s32",
+          "b1",
+          "b1",
+          "s32",
+          "xor",
+          "popc"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          }
+        ]
+      },
+      "summary": "Computes warp-distributed binary matrix products with XOR and population count, then adds a wrapping s32 accumulator."
     },
     {
       "id": "mma_m16n8k32_s32_s4",
@@ -17560,6 +18648,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "s4",
@@ -17823,6 +18912,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "s4",
@@ -18087,6 +19177,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "u4",
@@ -18350,6 +19441,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "u4",
@@ -18620,6 +19712,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "s8",
@@ -18889,6 +19982,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "s8",
@@ -19159,6 +20253,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "u8",
@@ -19428,6 +20523,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "u8",
@@ -19692,6 +20788,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "u4",
@@ -19955,6 +21052,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "s4",
@@ -20218,6 +21316,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "s4",
@@ -20482,6 +21581,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "u4",
@@ -20752,6 +21852,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "u8",
@@ -21021,6 +22122,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "s8",
@@ -21290,6 +22392,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "s8",
@@ -21560,6 +22663,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "u8",
@@ -21830,6 +22934,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "s4",
@@ -22099,6 +23204,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "s4",
@@ -22369,6 +23475,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "u4",
@@ -22638,6 +23745,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "u4",
@@ -22908,6 +24016,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "u4",
@@ -23177,6 +24286,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "s4",
@@ -23446,6 +24556,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "s4",
@@ -23716,6 +24827,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k64",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "u4",
@@ -23986,6 +25098,7 @@
       ],
       "register_mma": {
         "shape": "m16n8k8",
+        "operation": "multiply",
         "accumulator": "f32",
         "a_element": "tf32",
         "b_element": "tf32",
@@ -24031,6 +25144,518 @@
         ]
       },
       "summary": "Multiplies warp-distributed TF32 fragments and adds an f32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k128_s32_b1_and_popc",
+      "operation_key": "matrix.mma.m8n8k128.row.col.s32.b1.b1.s32.and.popc",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_and_popc_m8n8k128_row_col_b1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0160",
+        "module": "matrix",
+        "name": "mma_m8n8k128_s32_b1_and_popc",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0160",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k128_s32_b1_and_popc",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k128_s32_b1_and_popc"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.and.popc.m8n8k128.row.col.b1",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.1",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx71"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx71"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k128 B1 AND-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM 22 probe retained the exact instruction in C, A, B API order as convergent side-effecting inline assembly.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx71"
+              ],
+              "representation": "exact-floor PTX for m8n8k128 B1 AND-popcount MMA",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact instruction at the PTX 7.1 and sm_80 floors.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.1",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k128 B1 AND-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "production generated_intrinsics B1 register-MMA kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k128",
+        "operation": "and_popc",
+        "accumulator": "s32",
+        "a_element": "b1",
+        "b_element": "b1",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k128",
+          "row",
+          "col",
+          "s32",
+          "b1",
+          "b1",
+          "s32",
+          "and",
+          "popc"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Computes warp-distributed binary matrix products with AND and population count, then adds a wrapping s32 accumulator."
+    },
+    {
+      "id": "mma_m8n8k128_s32_b1_xor_popc",
+      "operation_key": "matrix.mma.m8n8k128.row.col.s32.b1.b1.s32.xor.popc",
+      "family": "register_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_xor_popc_m8n8k128_row_col_b1"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0157",
+        "module": "matrix",
+        "name": "mma_m8n8k128_s32_b1_xor_popc",
+        "arguments": [
+          "[i32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[i32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0157",
+        "public_path": "cuda_intrinsics::matrix::mma_m8n8k128_s32_b1_xor_popc",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_m8n8k128_s32_b1_xor_popc"
+        ]
+      },
+      "dialect": {
+        "op_type": "RegisterMmaOp",
+        "op_name": "nvvm.register_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.xor.popc.m8n8k128.row.col.b1",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ],
+        "properties": [
+          "IntrNoCallback",
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "[i32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx70"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k128 B1 XOR-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned LLVM 22 probe retained the exact instruction in C, A, B API order as convergent side-effecting inline assembly.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx70"
+              ],
+              "representation": "exact-floor PTX for m8n8k128 B1 XOR-popcount MMA",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact instruction at the PTX 7.0 and sm_75 floors.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx93"
+              ],
+              "representation": "convergent register-only inline PTX for m8n8k128 B1 XOR-popcount MMA",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The isolated exact-floor route produced 2,613-byte compute_75 NVVM IR with SHA-256 c834c251fc1e95e0eaec0f8e60a572e9daa5c8e3d6ce80ff7eaf6d2757786871 and 2,336-byte LTOIR with SHA-256 90f5d4bd0fa9d90e8226eb99a588cb5d65d6eff6d07443d59905cda845f2a846.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "isolated m8n8k128 B1 XOR-popcount MMA floor kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,112-byte cubin with SHA-256 85c259e08b117762519d418f29d9756e089f123aafa163bda467c62504049d51; cuobjdump contains BMMA.88128.XOR.POPC.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "register_mma": {
+        "shape": "m8n8k128",
+        "operation": "xor_popc",
+        "accumulator": "s32",
+        "a_element": "b1",
+        "b_element": "b1",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "wrapping",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_i32_a1_u32_b1_u32_to_d2_i32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_register_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8k128",
+          "row",
+          "col",
+          "s32",
+          "b1",
+          "b1",
+          "s32",
+          "xor",
+          "popc"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Computes warp-distributed binary matrix products with XOR and population count, then adds a wrapping s32 accumulator."
     },
     {
       "id": "mma_m8n8k16_s32_s8",
@@ -24239,6 +25864,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "s8",
@@ -24492,6 +26118,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "s8",
@@ -24746,6 +26373,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "u8",
@@ -24999,6 +26627,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s8",
         "b_element": "u8",
@@ -25253,6 +26882,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "u8",
@@ -25506,6 +27136,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "s8",
@@ -25759,6 +27390,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "s8",
@@ -26013,6 +27645,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k16",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u8",
         "b_element": "u8",
@@ -26267,6 +27900,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "s4",
@@ -26520,6 +28154,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "s4",
@@ -26774,6 +28409,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "u4",
@@ -27027,6 +28663,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "s4",
         "b_element": "u4",
@@ -27281,6 +28918,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "u4",
@@ -27534,6 +29172,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "s4",
@@ -27787,6 +29426,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "s4",
@@ -28041,6 +29681,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k32",
+        "operation": "multiply",
         "accumulator": "s32",
         "a_element": "u4",
         "b_element": "u4",
@@ -28295,6 +29936,7 @@
       ],
       "register_mma": {
         "shape": "m8n8k4",
+        "operation": "multiply",
         "accumulator": "f64",
         "a_element": "f64",
         "b_element": "f64",

@@ -1,0 +1,278 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "mma_m8n8k128_s32_b1_xor_popc",
+      "source_record": "int_nvvm_mma_xor_popc_m8n8k128_row_col_b1",
+      "llvm_symbol": "llvm.nvvm.mma.xor.popc.m8n8k128.row.col.b1",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_75", "ptx93"],
+          "representation": "convergent register-only inline PTX for m8n8k128 B1 XOR-popcount MMA",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The isolated exact-floor route produced 2,613-byte compute_75 NVVM IR with SHA-256 c834c251fc1e95e0eaec0f8e60a572e9daa5c8e3d6ce80ff7eaf6d2757786871 and 2,336-byte LTOIR with SHA-256 90f5d4bd0fa9d90e8226eb99a588cb5d65d6eff6d07443d59905cda845f2a846."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "isolated m8n8k128 B1 XOR-popcount MMA floor kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,112-byte cubin with SHA-256 85c259e08b117762519d418f29d9756e089f123aafa163bda467c62504049d51; cuobjdump contains BMMA.88128.XOR.POPC.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": ["sync", "aligned", "m8n8k128", "row", "col", "s32", "b1", "b1", "s32", "xor", "popc"],
+        "operands": [
+          {"kind": "register_list", "length": 2},
+          {"kind": "register_list", "length": 1},
+          {"kind": "register_list", "length": 1},
+          {"kind": "register_list", "length": 2}
+        ]
+      }
+    },
+    {
+      "id": "mma_m16n8k128_s32_b1_xor_popc",
+      "source_record": "int_nvvm_mma_xor_popc_m16n8k128_row_col_b1",
+      "llvm_symbol": "llvm.nvvm.mma.xor.popc.m16n8k128.row.col.b1",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "convergent register-only inline PTX for m16n8k128 B1 XOR-popcount MMA",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "production generated_intrinsics B1 register-MMA kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": ["sync", "aligned", "m16n8k128", "row", "col", "s32", "b1", "b1", "s32", "xor", "popc"],
+        "operands": [
+          {"kind": "register_list", "length": 4},
+          {"kind": "register_list", "length": 2},
+          {"kind": "register_list", "length": 1},
+          {"kind": "register_list", "length": 4}
+        ]
+      }
+    },
+    {
+      "id": "mma_m16n8k256_s32_b1_xor_popc",
+      "source_record": "int_nvvm_mma_xor_popc_m16n8k256_row_col_b1",
+      "llvm_symbol": "llvm.nvvm.mma.xor.popc.m16n8k256.row.col.b1",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "convergent register-only inline PTX for m16n8k256 B1 XOR-popcount MMA",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "production generated_intrinsics B1 register-MMA kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": ["sync", "aligned", "m16n8k256", "row", "col", "s32", "b1", "b1", "s32", "xor", "popc"],
+        "operands": [
+          {"kind": "register_list", "length": 4},
+          {"kind": "register_list", "length": 4},
+          {"kind": "register_list", "length": 2},
+          {"kind": "register_list", "length": 4}
+        ]
+      }
+    },
+    {
+      "id": "mma_m8n8k128_s32_b1_and_popc",
+      "source_record": "int_nvvm_mma_and_popc_m8n8k128_row_col_b1",
+      "llvm_symbol": "llvm.nvvm.mma.and.popc.m8n8k128.row.col.b1",
+      "llvm_arguments": ["i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "convergent register-only inline PTX for m8n8k128 B1 AND-popcount MMA",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "production generated_intrinsics B1 register-MMA kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": ["sync", "aligned", "m8n8k128", "row", "col", "s32", "b1", "b1", "s32", "and", "popc"],
+        "operands": [
+          {"kind": "register_list", "length": 2},
+          {"kind": "register_list", "length": 1},
+          {"kind": "register_list", "length": 1},
+          {"kind": "register_list", "length": 2}
+        ]
+      }
+    },
+    {
+      "id": "mma_m16n8k128_s32_b1_and_popc",
+      "source_record": "int_nvvm_mma_and_popc_m16n8k128_row_col_b1",
+      "llvm_symbol": "llvm.nvvm.mma.and.popc.m16n8k128.row.col.b1",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "convergent register-only inline PTX for m16n8k128 B1 AND-popcount MMA",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "production generated_intrinsics B1 register-MMA kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": ["sync", "aligned", "m16n8k128", "row", "col", "s32", "b1", "b1", "s32", "and", "popc"],
+        "operands": [
+          {"kind": "register_list", "length": 4},
+          {"kind": "register_list", "length": 2},
+          {"kind": "register_list", "length": 1},
+          {"kind": "register_list", "length": 4}
+        ]
+      }
+    },
+    {
+      "id": "mma_m16n8k256_s32_b1_and_popc",
+      "source_record": "int_nvvm_mma_and_popc_m16n8k256_row_col_b1",
+      "llvm_symbol": "llvm.nvvm.mma.and.popc.m16n8k256.row.col.b1",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.1 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "convergent register-only inline PTX for m16n8k256 B1 AND-popcount MMA",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The production generated_intrinsics route produced 165,143-byte compute_80 NVVM IR with SHA-256 50e40ba550994145a6c57741b22786e09252da4d786c0e296d8de14cfe44d30e and 47,744-byte LTOIR with SHA-256 060d4347bb268f38e14ebe8c5ad9db64fbf1781d578f14c8799f3d8f54f2db71."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "production generated_intrinsics B1 register-MMA kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 20,456-byte cubin with SHA-256 aa2ce30ecae34abe738c760e7d3f2b20d35744652afdae0b6abb29b4bf10d8a8; cuobjdump contains all six distinct BMMA shape and AND/XOR heads.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": ["sync", "aligned", "m16n8k256", "row", "col", "s32", "b1", "b1", "s32", "and", "popc"],
+        "operands": [
+          {"kind": "register_list", "length": 4},
+          {"kind": "register_list", "length": 4},
+          {"kind": "register_list", "length": 2},
+          {"kind": "register_list", "length": 4}
+        ]
+      }
+    }
+  ]
+}

@@ -153,6 +153,8 @@ pub struct OverlayShardFile {
     pub register_mma_int4: Option<RegisterMmaIntegerAdmission>,
     #[serde(default)]
     pub register_mma_int8: Option<RegisterMmaIntegerAdmission>,
+    #[serde(default)]
+    pub register_mma_b1: Option<RegisterMmaBinaryAdmission>,
 }
 
 /// Compact admission for a closed dense integer register-MMA family.
@@ -174,6 +176,25 @@ pub struct RegisterMmaIntegerVariant {
     pub a_element: RegisterMmaElement,
     pub b_element: RegisterMmaElement,
     pub overflow: RegisterMmaOverflow,
+}
+
+/// Compact admission for the closed dense binary register-MMA family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaBinaryAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<RegisterMmaBinaryVariant>,
+}
+
+/// One reviewed member of the dense binary register-MMA family.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaBinaryVariant {
+    pub shape: RegisterMmaShape,
+    pub operation: RegisterMmaOperation,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -403,6 +424,7 @@ pub enum RuntimeValidation {
 #[serde(deny_unknown_fields)]
 pub struct RegisterMma {
     pub shape: RegisterMmaShape,
+    pub operation: RegisterMmaOperation,
     pub accumulator: RegisterMmaAccumulator,
     pub a_element: RegisterMmaElement,
     pub b_element: RegisterMmaElement,
@@ -425,6 +447,17 @@ pub enum RegisterMmaShape {
     M16n8k16,
     M16n8k32,
     M16n8k64,
+    M8n8k128,
+    M16n8k128,
+    M16n8k256,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaOperation {
+    Multiply,
+    AndPopc,
+    XorPopc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -438,6 +471,7 @@ pub enum RegisterMmaAccumulator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisterMmaElement {
+    B1,
     Bf16,
     F16,
     Tf32,
@@ -1872,6 +1906,7 @@ runtime_validation = "unexecuted"
     fn register_mma_contract_parses_unsigned_k16_generated_stub() {
         let valid = r#"
 shape = "m16n8k16"
+operation = "multiply"
 accumulator = "s32"
 a_element = "s8"
 b_element = "u8"

@@ -254,6 +254,44 @@ fn contains_dense_int4_mma_features(contents: &str) -> bool {
         .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
 }
 
+const B1_XOR_MMA_MNEMONICS: &[&str] = &[
+    "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc",
+    "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popc",
+    "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc",
+];
+
+const B1_AND_MMA_MNEMONICS: &[&str] = &[
+    "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc",
+    "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.and.popc",
+    "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc",
+];
+
+/// Checks the three dense binary XOR/POPC MMA forms (PTX 7.0).
+fn contains_b1_xor_mma_features(contents: &str) -> bool {
+    B1_XOR_MMA_MNEMONICS
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
+/// Checks the three dense binary AND/POPC MMA forms (PTX 7.1, sm_80+).
+fn contains_b1_and_mma_features(contents: &str) -> bool {
+    B1_AND_MMA_MNEMONICS
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
+/// Checks the only dense binary MMA form that can run below sm_80.
+fn contains_mma_m8n8k128_b1_xor_features(contents: &str) -> bool {
+    contains_instruction_mnemonic(contents, B1_XOR_MMA_MNEMONICS[0])
+}
+
+fn contains_sm80_b1_mma_features(contents: &str) -> bool {
+    contains_b1_and_mma_features(contents)
+        || B1_XOR_MMA_MNEMONICS[1..]
+            .iter()
+            .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
 /// Checks for the Ampere FP64 tensor-core MMA operation (PTX 7.0, sm_80+).
 fn contains_mma_m8n8k4_f64_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64")
@@ -363,6 +401,7 @@ fn contains_sm80_features(contents: &str) -> bool {
         || contains_mma_m16n8k8_f32_tf32_features(contents)
         || contains_dense_int8_mma_features(contents)
         || contains_dense_int4_mma_features(contents)
+        || contains_sm80_b1_mma_features(contents)
 }
 
 /// Checks for TMA/mbarrier instructions (Hopper+ compatible with Blackwell).
@@ -811,7 +850,8 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
         (contains_sm80_features(contents), DetectedFeatures::Sm80),
         (
             contains_mma_m8n8k16_int8_features(contents)
-                || contains_mma_m8n8k32_int4_features(contents),
+                || contains_mma_m8n8k32_int4_features(contents)
+                || contains_mma_m8n8k128_b1_xor_features(contents),
             DetectedFeatures::Sm75,
         ),
         (
@@ -855,11 +895,15 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_mma_m16n8k8_f32_tf32_features(contents)
         || contains_dense_int8_mma_features(contents)
         || contains_dense_int4_mma_features(contents)
+        || contains_b1_xor_mma_features(contents)
         || contains_mma_m8n8k4_f64_features(contents)
     {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx70);
     }
     if contains_mbarrier_ptx71_features(contents) {
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
+    }
+    if contains_b1_and_mma_features(contents) {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
     }
     if contains_movmatrix_features(contents)
@@ -2315,6 +2359,167 @@ mod tests {
                 !contains_dense_int4_mma_features(near_miss),
                 "matched {near_miss:?}"
             );
+        }
+    }
+
+    #[test]
+    fn dense_b1_mma_detection_applies_exact_operation_floors() {
+        let cases = [
+            (
+                "m8n8k128",
+                "xor",
+                DetectedFeatures::Sm75,
+                PtxIsaRequirement::Ptx70,
+            ),
+            (
+                "m16n8k128",
+                "xor",
+                DetectedFeatures::Sm80,
+                PtxIsaRequirement::Ptx70,
+            ),
+            (
+                "m16n8k256",
+                "xor",
+                DetectedFeatures::Sm80,
+                PtxIsaRequirement::Ptx70,
+            ),
+            (
+                "m8n8k128",
+                "and",
+                DetectedFeatures::Sm80,
+                PtxIsaRequirement::Ptx71,
+            ),
+            (
+                "m16n8k128",
+                "and",
+                DetectedFeatures::Sm80,
+                PtxIsaRequirement::Ptx71,
+            ),
+            (
+                "m16n8k256",
+                "and",
+                DetectedFeatures::Sm80,
+                PtxIsaRequirement::Ptx71,
+            ),
+        ];
+
+        for (shape, operation, features, ptx_isa) in cases {
+            let spelling = format!(
+                "mma.sync.aligned.{shape}.row.col.s32.b1.b1.s32.{operation}.popc {{$0}}, {{$1}}, {{$2}}, {{$3}};"
+            );
+            assert_eq!(contains_b1_xor_mma_features(&spelling), operation == "xor");
+            assert_eq!(contains_b1_and_mma_features(&spelling), operation == "and");
+            assert_eq!(
+                contains_mma_m8n8k128_b1_xor_features(&spelling),
+                shape == "m8n8k128" && operation == "xor"
+            );
+            assert_eq!(
+                detect_module_requirements_in_llvm_text(&spelling),
+                ModuleRequirements { features, ptx_isa },
+                "{spelling}"
+            );
+        }
+
+        let m8_xor = concat!(
+            "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc ",
+            "{$0, $1}, {$4}, {$5}, {$2, $3};"
+        );
+        let m8_requirements = detect_module_requirements_in_llvm_text(m8_xor);
+        assert_eq!(select_target(m8_requirements.features).unwrap(), "sm_75");
+        assert_eq!(
+            required_ptx_feature("sm_75", m8_requirements.ptx_isa),
+            Some("+ptx70")
+        );
+
+        let m16_and = concat!(
+            "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc ",
+            "{$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};"
+        );
+        let and_requirements = detect_module_requirements_in_llvm_text(m16_and);
+        assert_eq!(select_target(and_requirements.features).unwrap(), "sm_80");
+        assert_eq!(
+            required_ptx_feature("sm_80", and_requirements.ptx_isa),
+            Some("+ptx71")
+        );
+        let sm_75: CudaArch = "sm_75".parse().unwrap();
+        let sm_80: CudaArch = "sm_80".parse().unwrap();
+        assert!(validate_target_features(&sm_75, and_requirements.features).is_err());
+        assert!(validate_target_features(&sm_80, and_requirements.features).is_ok());
+
+        let combined = format!("{m8_xor}\n{m16_and}");
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&combined),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
+                ptx_isa: PtxIsaRequirement::Ptx71,
+            }
+        );
+    }
+
+    #[test]
+    fn dense_b1_mma_detection_rejects_other_families_and_near_misses() {
+        for near_miss in [
+            "wmma.mma.xor.popc.sync.aligned.row.col.m8n8k128.s32.b1.b1.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.s32.b1.b1.s32.xor.popc {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.col.row.s32.b1.b1.s32.xor.popc {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.or.popc {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.popc.xor {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popcx {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popc.satfinite {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.u32.xor.popc {$0}, {$1}, {$2}, {$3};",
+            "not_mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popc {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popc {$0}, {$1}, {$2}, {$3};",
+            "%mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.and.popc {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                !contains_b1_xor_mma_features(near_miss),
+                "matched {near_miss:?}"
+            );
+            assert!(
+                !contains_b1_and_mma_features(near_miss),
+                "matched {near_miss:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_b1_floors_match_text_detection_on_both_backends() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,
+        };
+
+        for (marker, mnemonic) in [
+            ("v1:i0157", B1_XOR_MMA_MNEMONICS[0]),
+            ("v1:i0158", B1_XOR_MMA_MNEMONICS[1]),
+            ("v1:i0159", B1_XOR_MMA_MNEMONICS[2]),
+            ("v1:i0160", B1_AND_MMA_MNEMONICS[0]),
+            ("v1:i0161", B1_AND_MMA_MNEMONICS[1]),
+            ("v1:i0162", B1_AND_MMA_MNEMONICS[2]),
+        ] {
+            let instruction = format!("{mnemonic} {{$0}}, {{$1}}, {{$2}}, {{$3}};");
+            let detected = detect_module_requirements_in_llvm_text(&instruction);
+            let target = generated_intrinsic_target_by_marker(marker).unwrap();
+            for backend in [
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                GeneratedIntrinsicBackend::LibNvvm,
+            ] {
+                let generated =
+                    GeneratedModuleRequirements::from_targets(vec![target]).for_backend(backend);
+                assert_eq!(
+                    generated_ptx_isa_requirement(&generated).unwrap(),
+                    detected.ptx_isa,
+                    "{marker} {backend:?}"
+                );
+                for arch in ["sm_70", "sm_75", "sm_80", "sm_90"] {
+                    assert_eq!(
+                        generated_target_satisfied(arch, &generated),
+                        arch_satisfies(arch, detected.features),
+                        "{marker} {backend:?} {arch}"
+                    );
+                }
+            }
         }
     }
 

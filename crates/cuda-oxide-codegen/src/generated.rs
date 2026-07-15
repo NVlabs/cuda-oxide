@@ -377,7 +377,7 @@ mod tests {
     fn register_mma_markers_and_attributes_select_one_exact_variant() {
         use dialect_nvvm::ops::{
             RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
-            RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+            RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
         };
         use pliron::basic_block::BasicBlock;
         use pliron::builtin::types::FP32Type;
@@ -385,6 +385,7 @@ mod tests {
         fn register_mma(
             ctx: &mut Context,
             element: RegisterMmaElementAttr,
+            set_operation: bool,
             marker: Option<&str>,
         ) -> Ptr<Operation> {
             let f32_ty = FP32Type::get(ctx);
@@ -407,6 +408,9 @@ mod tests {
             );
             let mma = RegisterMmaOp::new(operation);
             mma.set_attr_nvvm_register_mma_shape(ctx, RegisterMmaShapeAttr::M16n8k16);
+            if set_operation {
+                mma.set_attr_nvvm_register_mma_operation(ctx, RegisterMmaOperationAttr::Multiply);
+            }
             mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::F32);
             mma.set_attr_nvvm_register_mma_a_element(ctx, element.clone());
             mma.set_attr_nvvm_register_mma_b_element(ctx, element);
@@ -425,7 +429,7 @@ mod tests {
         let mut ctx = Context::new();
         register_dialects(&mut ctx);
 
-        let bf16 = register_mma(&mut ctx, RegisterMmaElementAttr::Bf16, None);
+        let bf16 = register_mma(&mut ctx, RegisterMmaElementAttr::Bf16, false, None);
         let requirements =
             collect_generated_intrinsic_requirements(&ctx, bf16, GeneratedMarkerPolicy::Optional)
                 .unwrap();
@@ -445,14 +449,19 @@ mod tests {
             "{error}"
         );
 
-        let f16 = register_mma(&mut ctx, RegisterMmaElementAttr::F16, Some("v1:i0106"));
+        let f16 = register_mma(
+            &mut ctx,
+            RegisterMmaElementAttr::F16,
+            true,
+            Some("v1:i0106"),
+        );
         let requirements =
             collect_generated_intrinsic_requirements(&ctx, f16, GeneratedMarkerPolicy::Required)
                 .unwrap();
         assert_eq!(requirements.targets.len(), 1);
         assert_eq!(requirements.targets[0].marker, "v1:i0106");
 
-        let crossed = register_mma(&mut ctx, RegisterMmaElementAttr::F16, None);
+        let crossed = register_mma(&mut ctx, RegisterMmaElementAttr::F16, true, None);
         RegisterMmaOp::new(crossed)
             .set_attr_nvvm_register_mma_b_element(&ctx, RegisterMmaElementAttr::Bf16);
         let error = collect_generated_intrinsic_requirements(
@@ -472,7 +481,7 @@ mod tests {
     fn integer_register_mma_markers_require_exact_variant_attributes() {
         use dialect_nvvm::ops::{
             RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
-            RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+            RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
         };
         use pliron::basic_block::BasicBlock;
 
@@ -509,6 +518,7 @@ mod tests {
             );
             let mma = RegisterMmaOp::new(operation);
             mma.set_attr_nvvm_register_mma_shape(ctx, shape);
+            mma.set_attr_nvvm_register_mma_operation(ctx, RegisterMmaOperationAttr::Multiply);
             mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::S32);
             mma.set_attr_nvvm_register_mma_a_element(ctx, a_element);
             mma.set_attr_nvvm_register_mma_b_element(ctx, b_element);
@@ -599,6 +609,132 @@ mod tests {
             "v1:i0118",
         );
         reject_marker(&ctx, wrong_shape);
+    }
+
+    #[test]
+    fn b1_register_mma_markers_require_exact_operation_and_shape() {
+        use dialect_nvvm::ops::{
+            RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
+            RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+        };
+        use pliron::basic_block::BasicBlock;
+
+        fn register_mma(
+            ctx: &mut Context,
+            shape: RegisterMmaShapeAttr,
+            operation: Option<RegisterMmaOperationAttr>,
+            marker: &str,
+        ) -> Ptr<Operation> {
+            let (accumulator_count, a_count, b_count, result_count) = match shape {
+                RegisterMmaShapeAttr::M8n8k128 => (2, 1, 1, 2),
+                RegisterMmaShapeAttr::M16n8k128 => (4, 2, 1, 4),
+                RegisterMmaShapeAttr::M16n8k256 => (4, 4, 2, 4),
+                _ => panic!("unsupported B1 MMA shape"),
+            };
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+            let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..accumulator_count)
+                .map(|_| i32_ty.into())
+                .chain((0..a_count + b_count).map(|_| u32_ty.into()))
+                .collect();
+            let block = BasicBlock::new(ctx, None, argument_types);
+            let operands = (0..accumulator_count + a_count + b_count)
+                .map(|index| block.deref(ctx).get_argument(index))
+                .collect();
+            let op = Operation::new(
+                ctx,
+                RegisterMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); result_count],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = RegisterMmaOp::new(op);
+            mma.set_attr_nvvm_register_mma_shape(ctx, shape);
+            if let Some(operation) = operation {
+                mma.set_attr_nvvm_register_mma_operation(ctx, operation);
+            }
+            mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_register_mma_a_element(ctx, RegisterMmaElementAttr::B1);
+            mma.set_attr_nvvm_register_mma_b_element(ctx, RegisterMmaElementAttr::B1);
+            mma.set_attr_nvvm_register_mma_a_layout(ctx, RegisterMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_register_mma_b_layout(ctx, RegisterMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
+            op.deref_mut(ctx).attributes.set(
+                Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                StringAttr::new(marker.to_string()),
+            );
+            op
+        }
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+
+        for (shape, operation, marker, id) in [
+            (
+                RegisterMmaShapeAttr::M8n8k128,
+                RegisterMmaOperationAttr::XorPopc,
+                "v1:i0157",
+                "mma_m8n8k128_s32_b1_xor_popc",
+            ),
+            (
+                RegisterMmaShapeAttr::M16n8k128,
+                RegisterMmaOperationAttr::XorPopc,
+                "v1:i0158",
+                "mma_m16n8k128_s32_b1_xor_popc",
+            ),
+            (
+                RegisterMmaShapeAttr::M16n8k256,
+                RegisterMmaOperationAttr::XorPopc,
+                "v1:i0159",
+                "mma_m16n8k256_s32_b1_xor_popc",
+            ),
+            (
+                RegisterMmaShapeAttr::M8n8k128,
+                RegisterMmaOperationAttr::AndPopc,
+                "v1:i0160",
+                "mma_m8n8k128_s32_b1_and_popc",
+            ),
+            (
+                RegisterMmaShapeAttr::M16n8k128,
+                RegisterMmaOperationAttr::AndPopc,
+                "v1:i0161",
+                "mma_m16n8k128_s32_b1_and_popc",
+            ),
+            (
+                RegisterMmaShapeAttr::M16n8k256,
+                RegisterMmaOperationAttr::AndPopc,
+                "v1:i0162",
+                "mma_m16n8k256_s32_b1_and_popc",
+            ),
+        ] {
+            let op = register_mma(&mut ctx, shape, Some(operation), marker);
+            let requirements =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            assert_eq!(requirements.targets[0].marker, marker);
+            assert_eq!(requirements.targets[0].id, id);
+        }
+
+        for op in [
+            register_mma(
+                &mut ctx,
+                RegisterMmaShapeAttr::M8n8k128,
+                Some(RegisterMmaOperationAttr::AndPopc),
+                "v1:i0157",
+            ),
+            register_mma(&mut ctx, RegisterMmaShapeAttr::M8n8k128, None, "v1:i0157"),
+        ] {
+            let error =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap_err()
+                    .to_string();
+            assert!(
+                error.contains("does not match the exact variant attributes"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

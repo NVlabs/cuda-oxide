@@ -22,10 +22,10 @@ use dialect_nvvm::ops::{
     ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
     ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
     ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr,
-    RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
-    ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op,
-    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp,
-    VoteSyncBallotOp, VoteSyncUniOp,
+    RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr,
+    RegisterMmaShapeAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op,
+    StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp,
+    VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
 
 #[test]
@@ -864,6 +864,7 @@ fn generated_register_mma_verifier_rejects_crossed_variants_and_carriers() {
         RegisterMmaElementAttr::Bf16,
         RegisterMmaOverflowAttr::NotApplicable
     );
+    assert!(bf16.get_attr_nvvm_register_mma_operation(&ctx).is_none());
     assert!(verify_op(&bf16, &ctx).is_ok());
     bf16.set_attr_nvvm_register_mma_b_element(&ctx, RegisterMmaElementAttr::F16);
     assert!(verify_op(&bf16, &ctx).is_err());
@@ -965,6 +966,7 @@ fn generated_register_mma_verifies_dense_integer_families() {
             );
             let mma = RegisterMmaOp::new(operation);
             mma.set_attr_nvvm_register_mma_shape(&ctx, $shape);
+            mma.set_attr_nvvm_register_mma_operation(&ctx, RegisterMmaOperationAttr::Multiply);
             mma.set_attr_nvvm_register_mma_accumulator(&ctx, RegisterMmaAccumulatorAttr::S32);
             mma.set_attr_nvvm_register_mma_a_element(&ctx, $a);
             mma.set_attr_nvvm_register_mma_b_element(&ctx, $b);
@@ -1385,6 +1387,90 @@ fn generated_register_mma_verifies_dense_integer_families() {
         vec![i32_ty.into(); 4]
     );
     assert!(verify_op(&crossed_shape, &ctx).is_err());
+}
+
+#[test]
+fn generated_register_mma_verifies_dense_b1_families() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    fn b1_mma(
+        ctx: &mut Context,
+        shape: RegisterMmaShapeAttr,
+        operation: Option<RegisterMmaOperationAttr>,
+    ) -> RegisterMmaOp {
+        let (accumulator_count, a_count, b_count, result_count) = match shape {
+            RegisterMmaShapeAttr::M8n8k128 => (2, 1, 1, 2),
+            RegisterMmaShapeAttr::M16n8k128 => (4, 2, 1, 4),
+            RegisterMmaShapeAttr::M16n8k256 => (4, 4, 2, 4),
+            _ => panic!("unsupported B1 MMA shape"),
+        };
+        let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+        let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        let argument_types = (0..accumulator_count)
+            .map(|_| i32_ty.into())
+            .chain((0..a_count + b_count).map(|_| u32_ty.into()))
+            .collect();
+        let block = BasicBlock::new(ctx, None, argument_types);
+        let operands = (0..accumulator_count + a_count + b_count)
+            .map(|index| block.deref(ctx).get_argument(index))
+            .collect();
+        let op = Operation::new(
+            ctx,
+            RegisterMmaOp::get_concrete_op_info(),
+            vec![i32_ty.into(); result_count],
+            operands,
+            vec![],
+            0,
+        );
+        let mma = RegisterMmaOp::new(op);
+        mma.set_attr_nvvm_register_mma_shape(ctx, shape);
+        if let Some(operation) = operation {
+            mma.set_attr_nvvm_register_mma_operation(ctx, operation);
+        }
+        mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::S32);
+        mma.set_attr_nvvm_register_mma_a_element(ctx, RegisterMmaElementAttr::B1);
+        mma.set_attr_nvvm_register_mma_b_element(ctx, RegisterMmaElementAttr::B1);
+        mma.set_attr_nvvm_register_mma_a_layout(ctx, RegisterMmaLayoutAttr::Row);
+        mma.set_attr_nvvm_register_mma_b_layout(ctx, RegisterMmaLayoutAttr::Col);
+        mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
+        mma
+    }
+
+    let mut accepted = 0;
+    for shape in [
+        RegisterMmaShapeAttr::M8n8k128,
+        RegisterMmaShapeAttr::M16n8k128,
+        RegisterMmaShapeAttr::M16n8k256,
+    ] {
+        for operation in [
+            RegisterMmaOperationAttr::XorPopc,
+            RegisterMmaOperationAttr::AndPopc,
+        ] {
+            let mma = b1_mma(&mut ctx, shape.clone(), Some(operation));
+            assert!(verify_op(&mma, &ctx).is_ok(), "rejected {shape:?}");
+            accepted += 1;
+        }
+    }
+    assert_eq!(accepted, 6);
+
+    let multiply = b1_mma(
+        &mut ctx,
+        RegisterMmaShapeAttr::M8n8k128,
+        Some(RegisterMmaOperationAttr::Multiply),
+    );
+    assert!(verify_op(&multiply, &ctx).is_err());
+
+    let wrong_shape = b1_mma(
+        &mut ctx,
+        RegisterMmaShapeAttr::M16n8k128,
+        Some(RegisterMmaOperationAttr::XorPopc),
+    );
+    wrong_shape.set_attr_nvvm_register_mma_shape(&ctx, RegisterMmaShapeAttr::M16n8k64);
+    assert!(verify_op(&wrong_shape, &ctx).is_err());
+
+    let missing_operation = b1_mma(&mut ctx, RegisterMmaShapeAttr::M8n8k128, None);
+    assert!(verify_op(&missing_operation, &ctx).is_err());
 }
 
 #[test]

@@ -15,9 +15,9 @@ use crate::model::{
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
     PackedConversionSaturation, PackedConversionSourceFormat, ReduxAdapter, RegisterMmaAccumulator,
     RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
-    RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, VoteAdapter, VoteMode,
-    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, VoteAdapter,
+    VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1025,16 +1025,25 @@ fn register_mma_attr_variants(
     &'static str,
     &'static str,
     &'static str,
+    &'static str,
 ) {
     let mma = record.register_mma.as_ref().expect("register-MMA record");
     let shape = match mma.shape {
         RegisterMmaShape::M8n8k4 => "RegisterMmaShapeAttr::M8n8k4",
         RegisterMmaShape::M8n8k16 => "RegisterMmaShapeAttr::M8n8k16",
         RegisterMmaShape::M8n8k32 => "RegisterMmaShapeAttr::M8n8k32",
+        RegisterMmaShape::M8n8k128 => "RegisterMmaShapeAttr::M8n8k128",
         RegisterMmaShape::M16n8k8 => "RegisterMmaShapeAttr::M16n8k8",
         RegisterMmaShape::M16n8k16 => "RegisterMmaShapeAttr::M16n8k16",
         RegisterMmaShape::M16n8k32 => "RegisterMmaShapeAttr::M16n8k32",
         RegisterMmaShape::M16n8k64 => "RegisterMmaShapeAttr::M16n8k64",
+        RegisterMmaShape::M16n8k128 => "RegisterMmaShapeAttr::M16n8k128",
+        RegisterMmaShape::M16n8k256 => "RegisterMmaShapeAttr::M16n8k256",
+    };
+    let operation = match mma.operation {
+        RegisterMmaOperation::Multiply => "RegisterMmaOperationAttr::Multiply",
+        RegisterMmaOperation::AndPopc => "RegisterMmaOperationAttr::AndPopc",
+        RegisterMmaOperation::XorPopc => "RegisterMmaOperationAttr::XorPopc",
     };
     let accumulator = match mma.accumulator {
         RegisterMmaAccumulator::F32 => "RegisterMmaAccumulatorAttr::F32",
@@ -1046,6 +1055,7 @@ fn register_mma_attr_variants(
         RegisterMmaElement::F16 => "RegisterMmaElementAttr::F16",
         RegisterMmaElement::Tf32 => "RegisterMmaElementAttr::Tf32",
         RegisterMmaElement::F64 => "RegisterMmaElementAttr::F64",
+        RegisterMmaElement::B1 => "RegisterMmaElementAttr::B1",
         RegisterMmaElement::S4 => "RegisterMmaElementAttr::S4",
         RegisterMmaElement::U4 => "RegisterMmaElementAttr::U4",
         RegisterMmaElement::S8 => "RegisterMmaElementAttr::S8",
@@ -1062,6 +1072,7 @@ fn register_mma_attr_variants(
     };
     (
         shape,
+        operation,
         accumulator,
         element(mma.a_element),
         element(mma.b_element),
@@ -3188,7 +3199,11 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 #[pliron_attr(name = "nvvm.register_mma_shape", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaShapeAttr { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32, M16n8k64 }
+pub enum RegisterMmaShapeAttr { M8n8k4, M8n8k16, M8n8k32, M8n8k128, M16n8k8, M16n8k16, M16n8k32, M16n8k64, M16n8k128, M16n8k256 }
+
+#[pliron_attr(name = "nvvm.register_mma_operation", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RegisterMmaOperationAttr { Multiply, AndPopc, XorPopc }
 
 #[pliron_attr(name = "nvvm.register_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -3196,7 +3211,7 @@ pub enum RegisterMmaAccumulatorAttr { F32, F64, S32 }
 
 #[pliron_attr(name = "nvvm.register_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaElementAttr { Bf16, F16, Tf32, F64, S4, U4, S8, U8 }
+pub enum RegisterMmaElementAttr { Bf16, F16, Tf32, F64, B1, S4, U4, S8, U8 }
 
 #[pliron_attr(name = "nvvm.register_mma_layout", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -3211,6 +3226,7 @@ pub enum RegisterMmaOverflowAttr { NotApplicable, Wrapping, Satfinite }
     format,
     attributes = (
         nvvm_register_mma_shape: RegisterMmaShapeAttr,
+        nvvm_register_mma_operation: RegisterMmaOperationAttr,
         nvvm_register_mma_accumulator: RegisterMmaAccumulatorAttr,
         nvvm_register_mma_a_element: RegisterMmaElementAttr,
         nvvm_register_mma_b_element: RegisterMmaElementAttr,
@@ -3223,6 +3239,14 @@ pub struct RegisterMmaOp;
 
 impl RegisterMmaOp {
     pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    /// Defaults older multiply-only IR to multiply.
+    pub fn operation_or_multiply(&self, ctx: &Context) -> RegisterMmaOperationAttr {
+        self.get_attr_nvvm_register_mma_operation(ctx)
+            .as_deref()
+            .cloned()
+            .unwrap_or(RegisterMmaOperationAttr::Multiply)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3248,8 +3272,10 @@ fn is_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool {
 impl Verify for RegisterMmaOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
+        let operation = self.operation_or_multiply(ctx);
         let recipe: (&[MmaCarrier], &[MmaCarrier]) = match (
             self.get_attr_nvvm_register_mma_shape(ctx).as_deref(),
+            operation,
             self.get_attr_nvvm_register_mma_accumulator(ctx).as_deref(),
             self.get_attr_nvvm_register_mma_a_element(ctx).as_deref(),
             self.get_attr_nvvm_register_mma_b_element(ctx).as_deref(),
@@ -3260,12 +3286,12 @@ impl Verify for RegisterMmaOp {
 "#,
     );
     for record in register_mmas(catalog) {
-        let (shape, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
+        let (shape, operation, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
             register_mma_attr_variants(record);
         let (operands, results) = register_mma_carriers(record);
         writeln!(
             output,
-            "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({operands}, {results}),"
+            "            (Some(&{shape}), {operation}, Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({operands}, {results}),"
         )
         .unwrap();
     }
@@ -3292,6 +3318,7 @@ impl Verify for RegisterMmaOp {
 
 pub(super) fn register(ctx: &mut Context) {
     RegisterMmaShapeAttr::register(ctx);
+    RegisterMmaOperationAttr::register(ctx);
     RegisterMmaAccumulatorAttr::register(ctx);
     RegisterMmaElementAttr::register(ctx);
     RegisterMmaLayoutAttr::register(ctx);
@@ -3630,7 +3657,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
     }
     if register_mmas(catalog).next().is_some() {
-        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
+        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -3983,7 +4010,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
                 "GeneratedMmaImportAdapter::C4I32A2U32B1U32ToD4I32"
             }
         };
-        let (shape, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
+        let (shape, operation, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
             register_mma_attr_variants(record);
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -4001,7 +4028,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         );
         writeln!(
             output,
-            "            mma.set_attr_nvvm_register_mma_shape(ctx, {shape});\n            mma.set_attr_nvvm_register_mma_accumulator(ctx, {accumulator});\n            mma.set_attr_nvvm_register_mma_a_element(ctx, {a_element});\n            mma.set_attr_nvvm_register_mma_b_element(ctx, {b_element});\n            mma.set_attr_nvvm_register_mma_a_layout(ctx, {a_layout});\n            mma.set_attr_nvvm_register_mma_b_layout(ctx, {b_layout});\n            mma.set_attr_nvvm_register_mma_overflow(ctx, {overflow});"
+            "            mma.set_attr_nvvm_register_mma_shape(ctx, {shape});\n            mma.set_attr_nvvm_register_mma_operation(ctx, {operation});\n            mma.set_attr_nvvm_register_mma_accumulator(ctx, {accumulator});\n            mma.set_attr_nvvm_register_mma_a_element(ctx, {a_element});\n            mma.set_attr_nvvm_register_mma_b_element(ctx, {b_element});\n            mma.set_attr_nvvm_register_mma_a_layout(ctx, {a_layout});\n            mma.set_attr_nvvm_register_mma_b_layout(ctx, {b_layout});\n            mma.set_attr_nvvm_register_mma_overflow(ctx, {overflow});"
         )
         .unwrap();
         output.push_str("            let mma = mma.get_operation();\n");
@@ -4796,7 +4823,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
     }
     if register_mmas(catalog).next().is_some() {
-        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
+        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -5014,16 +5041,16 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if register_mmas(catalog).next().is_some() {
         output.push_str(
-            "#[op_interface_impl]\nimpl MirToLlvmConversion for RegisterMmaOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_register_mma_shape(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_accumulator(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_overflow(ctx).as_deref(),\n        ) {\n",
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for RegisterMmaOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let operation = self.operation_or_multiply(ctx);\n        let recipe = match (\n            self.get_attr_nvvm_register_mma_shape(ctx).as_deref(),\n            operation,\n            self.get_attr_nvvm_register_mma_accumulator(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_overflow(ctx).as_deref(),\n        ) {\n",
         );
         for record in register_mmas(catalog) {
-            let (shape, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
+            let (shape, operation, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
                 register_mma_attr_variants(record);
             let (c_count, a_count, b_count, result_count) = register_mma_fragment_counts(record);
             let expected_operands = c_count + a_count + b_count;
             writeln!(
                 output,
-                "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({}, {result_count}, {expected_operands}, {:?}, {:?}),",
+                "            (Some(&{shape}), {operation}, Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({}, {result_count}, {expected_operands}, {:?}, {:?}),",
                 register_mma_result_variant(record),
                 register_mma_template(record),
                 register_mma_constraints(record),
@@ -5482,10 +5509,18 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             RegisterMmaShape::M8n8k4 => "GeneratedRegisterMmaShape::M8n8k4",
             RegisterMmaShape::M8n8k16 => "GeneratedRegisterMmaShape::M8n8k16",
             RegisterMmaShape::M8n8k32 => "GeneratedRegisterMmaShape::M8n8k32",
+            RegisterMmaShape::M8n8k128 => "GeneratedRegisterMmaShape::M8n8k128",
             RegisterMmaShape::M16n8k8 => "GeneratedRegisterMmaShape::M16n8k8",
             RegisterMmaShape::M16n8k16 => "GeneratedRegisterMmaShape::M16n8k16",
             RegisterMmaShape::M16n8k32 => "GeneratedRegisterMmaShape::M16n8k32",
             RegisterMmaShape::M16n8k64 => "GeneratedRegisterMmaShape::M16n8k64",
+            RegisterMmaShape::M16n8k128 => "GeneratedRegisterMmaShape::M16n8k128",
+            RegisterMmaShape::M16n8k256 => "GeneratedRegisterMmaShape::M16n8k256",
+        };
+        let operation = match mma.operation {
+            RegisterMmaOperation::Multiply => "GeneratedRegisterMmaOperation::Multiply",
+            RegisterMmaOperation::AndPopc => "GeneratedRegisterMmaOperation::AndPopc",
+            RegisterMmaOperation::XorPopc => "GeneratedRegisterMmaOperation::XorPopc",
         };
         let accumulator = match mma.accumulator {
             RegisterMmaAccumulator::F32 => "GeneratedRegisterMmaAccumulator::F32",
@@ -5497,6 +5532,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             RegisterMmaElement::F16 => "GeneratedRegisterMmaElement::F16",
             RegisterMmaElement::Tf32 => "GeneratedRegisterMmaElement::Tf32",
             RegisterMmaElement::F64 => "GeneratedRegisterMmaElement::F64",
+            RegisterMmaElement::B1 => "GeneratedRegisterMmaElement::B1",
             RegisterMmaElement::S4 => "GeneratedRegisterMmaElement::S4",
             RegisterMmaElement::U4 => "GeneratedRegisterMmaElement::U4",
             RegisterMmaElement::S8 => "GeneratedRegisterMmaElement::S8",
@@ -5512,7 +5548,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             RegisterMmaOverflow::Satfinite => "GeneratedRegisterMmaOverflow::Satfinite",
         };
         return format!(
-            "GeneratedIntrinsicVariant::RegisterMma {{ shape: {shape}, accumulator: {accumulator}, a_element: {}, b_element: {}, a_layout: {}, b_layout: {}, overflow: {overflow} }}",
+            "GeneratedIntrinsicVariant::RegisterMma {{ shape: {shape}, operation: {operation}, accumulator: {accumulator}, a_element: {}, b_element: {}, a_layout: {}, b_layout: {}, overflow: {overflow} }}",
             element(mma.a_element),
             element(mma.b_element),
             layout(mma.a_layout),
@@ -5580,12 +5616,22 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }",
-        "GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32, M16n8k64 }",
+        "GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M8n8k128, M16n8k8, M16n8k16, M16n8k32, M16n8k64, M16n8k128, M16n8k256 }",
     );
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }",
-        "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S4, U4, S8, U8 }",
+        "GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, B1, S4, U4, S8, U8 }",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "pub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }",
+        "pub enum GeneratedRegisterMmaOperation { Multiply, AndPopc, XorPopc }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator,",
+        "RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator,",
     );
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -5625,21 +5671,36 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     );
     replace_exact_render_fragment(
         &mut output,
+        "GeneratedIntrinsicVariant::RegisterMma { shape, accumulator,",
+        "GeneratedIntrinsicVariant::RegisterMma { shape, operation: mma_operation, accumulator,",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "            };\n            let accumulator_matches = match accumulator {",
+        "            };\n            let operation_matches = match mma_operation {\n                GeneratedRegisterMmaOperation::Multiply => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::Multiply,\n                GeneratedRegisterMmaOperation::AndPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::AndPopc,\n                GeneratedRegisterMmaOperation::XorPopc => op.operation_or_multiply(ctx) == RegisterMmaOperationAttr::XorPopc,\n            };\n            let accumulator_matches = match accumulator {",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "            shape_matches && accumulator_matches",
+        "            shape_matches && operation_matches && accumulator_matches",
+    );
+    replace_exact_render_fragment(
+        &mut output,
         "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8",
-        "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16),\n                GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32),\n                GeneratedRegisterMmaShape::M16n8k8",
+        "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16),\n                GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32),\n                GeneratedRegisterMmaShape::M8n8k128 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k128),\n                GeneratedRegisterMmaShape::M16n8k8",
     );
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };",
-        "GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n                GeneratedRegisterMmaShape::M16n8k64 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k64),\n            };",
+        "GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n                GeneratedRegisterMmaShape::M16n8k64 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k64),\n                GeneratedRegisterMmaShape::M16n8k128 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k128),\n                GeneratedRegisterMmaShape::M16n8k256 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k256),\n            };",
     );
     replace_exact_render_fragment(
         &mut output,
         "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8",
-        "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S4 => actual == Some(&RegisterMmaElementAttr::S4),\n                GeneratedRegisterMmaElement::U4 => actual == Some(&RegisterMmaElementAttr::U4),\n                GeneratedRegisterMmaElement::S8",
+        "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::B1 => actual == Some(&RegisterMmaElementAttr::B1),\n                GeneratedRegisterMmaElement::S4 => actual == Some(&RegisterMmaElementAttr::S4),\n                GeneratedRegisterMmaElement::U4 => actual == Some(&RegisterMmaElementAttr::U4),\n                GeneratedRegisterMmaElement::S8",
     );
     output.push_str(
-        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
+        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
@@ -6355,6 +6416,11 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str("\n## Register-MMA contracts\n\n");
     for record in register_mmas(catalog) {
         let mma = record.register_mma.as_ref().unwrap();
+        let operation = match mma.operation {
+            RegisterMmaOperation::Multiply => "multiply-accumulate",
+            RegisterMmaOperation::AndPopc => "AND, population count, and accumulate",
+            RegisterMmaOperation::XorPopc => "XOR, population count, and accumulate",
+        };
         let overflow = match mma.overflow {
             RegisterMmaOverflow::NotApplicable => "not applicable",
             RegisterMmaOverflow::Wrapping => "wrapping",
@@ -6366,7 +6432,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         };
         writeln!(
             output,
-            "- `{}` takes fragments in C, A, B order and lowers to one convergent, register-only `{}` instruction. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+            "- `{}` takes fragments in C, A, B order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
             record.id,
             register_mma_ptx_head(record),
         )
@@ -7823,9 +7889,9 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 156);
+        assert_eq!(catalog.intrinsics.len(), 162);
         let records: Vec<_> = register_mmas(&catalog).collect();
-        assert_eq!(records.len(), 52);
+        assert_eq!(records.len(), 58);
         let generated_records = records
             .iter()
             .copied()
@@ -7842,7 +7908,7 @@ mod tests {
                     == RegisterMmaCompatibilitySource::ExistingStub
             })
             .collect::<Vec<_>>();
-        assert_eq!(generated_records.len(), 47);
+        assert_eq!(generated_records.len(), 53);
         assert_eq!(existing_records.len(), 5);
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -7854,7 +7920,7 @@ mod tests {
         assert!(raw.contains("Signed accumulator overflow clamps"));
 
         let compatibility = render_compat_register_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 47);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 53);
         for record in generated_records {
             let arguments = ["c", "a", "b"]
                 .into_iter()
@@ -7877,8 +7943,16 @@ mod tests {
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k4"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k16"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k32"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k128"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k32"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k64"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k128"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k256"));
+        assert!(dialect.contains("RegisterMmaOperationAttr::Multiply"));
+        assert!(dialect.contains("RegisterMmaOperationAttr::AndPopc"));
+        assert!(dialect.contains("RegisterMmaOperationAttr::XorPopc"));
+        assert!(dialect.contains("operation_or_multiply"));
+        assert!(dialect.contains("RegisterMmaElementAttr::B1"));
         assert!(dialect.contains("RegisterMmaElementAttr::S4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U8"));
@@ -7893,6 +7967,7 @@ mod tests {
         assert!(importer.contains("(i32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, i32_ty, 4)"));
         assert!(importer.contains("import_generated_mma_operands"));
         assert!(importer.contains("bundle_generated_mma_results"));
+        assert!(importer.contains("set_attr_nvvm_register_mma_operation"));
         for record in &records {
             assert!(importer.contains(&record.rust.canonical_path));
             assert!(importer.contains(&record.rust.compatibility_paths[0]));
@@ -7910,6 +7985,7 @@ mod tests {
             1
         );
         assert!(lowering.contains("convert_generated_register_mma"));
+        assert!(lowering.contains("operation_or_multiply"));
         assert!(lowering.contains("=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r"));
         assert!(lowering.contains("=d,=d,d,d,d,d"));
         assert!(lowering.contains("=r,=r,=r,=r,r,r,r,r,r,r,r"));
@@ -7925,18 +8001,33 @@ mod tests {
         assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u4.s4.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k64.row.col.s32.s4.u4.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.s4.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc"));
+        assert!(lowering.contains("mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.xor.popc"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.and.popc"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc"));
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::I32, 4, 7, "mma.sync.aligned.m16n8k32.row.col.s32.s4.u4.s32 {$0, $1, $2, $3}, {$8, $9}, {$10}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r")"#
         ));
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::I32, 4, 10, "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.s4.s32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r")"#
         ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 2, 4, "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc {$0, $1}, {$4}, {$5}, {$2, $3};", "=r,=r,r,r,r,r")"#
+        ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 4, 7, "mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.and.popc {$0, $1, $2, $3}, {$8, $9}, {$10}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r")"#
+        ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 4, 10, "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r")"#
+        ));
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
         assert!(targets.contains("GeneratedRegisterMmaShape::M8n8k4"));
         assert!(targets.contains(
-            "pub enum GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32, M16n8k64 }"
+            "pub enum GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M8n8k128, M16n8k8, M16n8k16, M16n8k32, M16n8k64, M16n8k128, M16n8k256 }"
         ));
         assert!(targets.contains(
             "GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16)"
@@ -7944,10 +8035,27 @@ mod tests {
         assert!(targets.contains(
             "GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32)"
         ));
+        assert!(targets.contains(
+            "GeneratedRegisterMmaShape::M8n8k128 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k128)"
+        ));
         assert!(targets.contains("GeneratedRegisterMmaShape::M16n8k32"));
         assert!(targets.contains(
             "GeneratedRegisterMmaShape::M16n8k64 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k64)"
         ));
+        assert!(targets.contains(
+            "GeneratedRegisterMmaShape::M16n8k128 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k128)"
+        ));
+        assert!(targets.contains(
+            "GeneratedRegisterMmaShape::M16n8k256 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k256)"
+        ));
+        assert!(targets.contains("GeneratedRegisterMmaOperation::Multiply"));
+        assert!(targets.contains("GeneratedRegisterMmaOperation::AndPopc"));
+        assert!(targets.contains("GeneratedRegisterMmaOperation::XorPopc"));
+        assert!(targets.contains("operation: GeneratedRegisterMmaOperation::AndPopc"));
+        assert!(targets.contains("operation: GeneratedRegisterMmaOperation::XorPopc"));
+        assert!(targets.contains("operation: mma_operation"));
+        assert!(targets.contains("operation_or_multiply"));
+        assert!(targets.contains("GeneratedRegisterMmaElement::B1"));
         assert!(targets.contains("GeneratedRegisterMmaElement::S4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U8"));
@@ -7976,6 +8084,8 @@ mod tests {
 
         let reference = render_reference(&catalog, "test-hash");
         assert!(reference.contains("## Register-MMA contracts"));
+        assert!(reference.contains("performs XOR, population count, and accumulate"));
+        assert!(reference.contains("performs AND, population count, and accumulate"));
         assert!(reference.contains("runtime validation is not executed on a GPU"));
         for record in &records {
             assert!(reference.contains(&format!("- `{}`: runtime `unexecuted`", record.id)));
