@@ -55,7 +55,7 @@ pub(crate) fn convert_generated_packed_f32x2(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    ptx_type: &str,
+    ptx_mnemonic: &str,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     if operands.len() != 2 {
@@ -69,7 +69,7 @@ pub(crate) fn convert_generated_packed_f32x2(
         ctx,
         result_ty.into(),
         operands,
-        &format!("cvt.rn.{ptx_type}.f32 $0, $2, $1;"),
+        &format!("{ptx_mnemonic} $0, $2, $1;"),
         "=r,f,f",
         AsmKind::Pure,
     );

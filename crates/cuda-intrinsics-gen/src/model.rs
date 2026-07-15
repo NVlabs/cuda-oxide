@@ -811,6 +811,7 @@ pub struct PackedConversion {
     pub source_format: PackedConversionSourceFormat,
     pub destination_format: PackedConversionDestinationFormat,
     pub rounding: PackedConversionRounding,
+    pub saturation: PackedConversionSaturation,
     pub adapter: PackedConversionAdapter,
 }
 
@@ -824,12 +825,21 @@ pub enum PackedConversionSourceFormat {
 #[serde(rename_all = "snake_case")]
 pub enum PackedConversionDestinationFormat {
     Bf16x2,
+    F16x2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackedConversionRounding {
     NearestEven,
+    TowardZero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionSaturation {
+    None,
+    Relu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1365,6 +1375,7 @@ adapter = "direct_packed_u32"
 source_format = "f32x2"
 destination_format = "bf16x2"
 rounding = "nearest_even"
+saturation = "none"
 adapter = "reverse_high_low_operands"
 "#;
         toml::from_str::<PackedConversion>(valid).unwrap();
@@ -1372,9 +1383,10 @@ adapter = "reverse_high_low_operands"
             valid.replace("source_format = \"f32x2\"", "source_format = \"f16x2\""),
             valid.replace(
                 "destination_format = \"bf16x2\"",
-                "destination_format = \"f16x2\"",
+                "destination_format = \"f8x2\"",
             ),
             valid.replace("rounding = \"nearest_even\"", "rounding = \"zero\""),
+            valid.replace("saturation = \"none\"", "saturation = \"finite\""),
             valid.replace(
                 "adapter = \"reverse_high_low_operands\"",
                 "adapter = \"direct\"",

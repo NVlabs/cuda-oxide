@@ -10,9 +10,10 @@ use crate::model::{
     ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
     LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAluAdapter, PackedAluFormat,
     PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
-    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSourceFormat,
-    ReduxAdapter, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode,
-    WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, ReduxAdapter, VoteAdapter, VoteMode, WarpBarrierAdapter,
+    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,7 +58,23 @@ pub fn all_outputs(
     );
     outputs.insert(
         "crates/cuda-device/src/generated/tcgen05_conversion.rs".into(),
-        render_compat_packed_conversion(catalog, catalog_sha256),
+        render_compat_packed_conversion(
+            catalog,
+            catalog_sha256,
+            "cuda_device::tcgen05::",
+            "tcgen05",
+            ("a", "b"),
+        ),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/convert.rs".into(),
+        render_compat_packed_conversion(
+            catalog,
+            catalog_sha256,
+            "cuda_device::convert::",
+            "convert",
+            ("lo", "hi"),
+        ),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/mod.rs".into(),
@@ -262,11 +279,40 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_packed_conversion_inline_ptx"
                     && record.packed_conversion.as_ref().is_some_and(|conversion| {
                         conversion.source_format == PackedConversionSourceFormat::F32x2
-                            && conversion.destination_format
-                                == PackedConversionDestinationFormat::Bf16x2
-                            && conversion.rounding == PackedConversionRounding::NearestEven
                             && conversion.adapter
                                 == PackedConversionAdapter::ReverseHighLowOperands
+                            && matches!(
+                                (
+                                    conversion.destination_format,
+                                    conversion.rounding,
+                                    conversion.saturation,
+                                ),
+                                (
+                                    PackedConversionDestinationFormat::Bf16x2,
+                                    PackedConversionRounding::NearestEven,
+                                    PackedConversionSaturation::None,
+                                ) | (
+                                    PackedConversionDestinationFormat::F16x2,
+                                    PackedConversionRounding::NearestEven,
+                                    PackedConversionSaturation::None,
+                                ) | (
+                                    PackedConversionDestinationFormat::F16x2,
+                                    PackedConversionRounding::TowardZero,
+                                    PackedConversionSaturation::None,
+                                ) | (
+                                    PackedConversionDestinationFormat::F16x2,
+                                    PackedConversionRounding::NearestEven,
+                                    PackedConversionSaturation::Relu,
+                                ) | (
+                                    PackedConversionDestinationFormat::Bf16x2,
+                                    PackedConversionRounding::NearestEven,
+                                    PackedConversionSaturation::Relu,
+                                ) | (
+                                    PackedConversionDestinationFormat::Bf16x2,
+                                    PackedConversionRounding::TowardZero,
+                                    PackedConversionSaturation::None,
+                                )
+                            )
                     }),
                 "{} is outside the closed generated packed-conversion recipe",
                 record.id
@@ -656,6 +702,57 @@ fn packed_alu_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
             "abs.f16x2"
         }
     }
+}
+
+fn packed_conversion_destination(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .packed_conversion
+        .as_ref()
+        .expect("packed-conversion record")
+        .destination_format
+    {
+        PackedConversionDestinationFormat::Bf16x2 => "bf16x2",
+        PackedConversionDestinationFormat::F16x2 => "f16x2",
+    }
+}
+
+fn packed_conversion_element(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .packed_conversion
+        .as_ref()
+        .expect("packed-conversion record")
+        .destination_format
+    {
+        PackedConversionDestinationFormat::Bf16x2 => "bf16",
+        PackedConversionDestinationFormat::F16x2 => "f16",
+    }
+}
+
+fn packed_conversion_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
+    let conversion = record
+        .packed_conversion
+        .as_ref()
+        .expect("packed-conversion record");
+    debug_assert_eq!(
+        conversion.source_format,
+        PackedConversionSourceFormat::F32x2
+    );
+    debug_assert_eq!(
+        conversion.adapter,
+        PackedConversionAdapter::ReverseHighLowOperands
+    );
+    let rounding = match conversion.rounding {
+        PackedConversionRounding::NearestEven => "rn",
+        PackedConversionRounding::TowardZero => "rz",
+    };
+    let saturation = match conversion.saturation {
+        PackedConversionSaturation::None => "",
+        PackedConversionSaturation::Relu => ".relu",
+    };
+    format!(
+        "cvt.{rounding}{saturation}.{}.f32",
+        packed_conversion_destination(record)
+    )
 }
 
 fn llvm(record: &CatalogIntrinsic) -> &CatalogLlvm {
@@ -1100,27 +1197,46 @@ fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAlu
     output
 }
 
-fn render_compat_packed_conversion(catalog: &CatalogFile, hash: &str) -> String {
+fn render_compat_packed_conversion(
+    catalog: &CatalogFile,
+    hash: &str,
+    path_prefix: &str,
+    containing_module: &str,
+    argument_names: (&str, &str),
+) -> String {
     let mut output = rust_header(catalog, hash);
-    output.push_str(
-        "// Included inside `cuda_device::tcgen05` to keep the existing path stable.\n\n",
-    );
-    for record in packed_conversions(catalog) {
+    writeln!(
+        output,
+        "// Included inside `cuda_device::{containing_module}` to keep the existing path stable.\n"
+    )
+    .unwrap();
+    for record in packed_conversions(catalog).filter(|record| {
+        record
+            .rust
+            .compatibility_paths
+            .iter()
+            .any(|path| path.starts_with(path_prefix))
+    }) {
         let path = record
             .rust
             .compatibility_paths
             .iter()
-            .find(|path| path.starts_with("cuda_device::tcgen05::"))
+            .find(|path| path.starts_with(path_prefix))
             .expect("packed-conversion compatibility path");
         writeln!(output, "/// {}", record.summary).unwrap();
         output.push_str("#[inline(never)]\n");
         writeln!(
             output,
-            "pub fn {}(a: f32, b: f32) -> u32 {{",
-            record.rust.name
+            "pub fn {}({}: f32, {}: f32) -> u32 {{",
+            record.rust.name, argument_names.0, argument_names.1
         )
         .unwrap();
-        output.push_str("    let _ = (a, b);\n");
+        writeln!(
+            output,
+            "    let _ = ({}, {});",
+            argument_names.0, argument_names.1
+        )
+        .unwrap();
         writeln!(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
@@ -1991,9 +2107,12 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
     );
     for record in packed_conversions(catalog) {
         writeln!(output, "/// {}", record.summary).unwrap();
-        output.push_str(
-            "///\n/// The first input becomes the low bf16 lane; the second becomes the high lane.\n",
-        );
+        writeln!(
+            output,
+            "///\n/// The first input becomes the low {} lane; the second becomes the high lane.",
+            packed_conversion_element(record)
+        )
+        .unwrap();
         writeln!(
             output,
             "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
@@ -3179,8 +3298,15 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str(
-            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), \"bf16x2\")\n    }\n}\n\n",
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
         );
+        writeln!(
+            output,
+            "        convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), {:?})",
+            packed_conversion_ptx_mnemonic(record)
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
     }
     for record in dot_products(catalog) {
         let insert_low_half_selector = matches!(
@@ -3487,9 +3613,13 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             record.id
         )
         .unwrap();
-        output.push_str(
-            "  %result = call i32 asm \"cvt.rn.bf16x2.f32 $0, $2, $1;\", \"=r,f,f\"(float %low, float %high)\n  ret i32 %result\n}\n",
-        );
+        writeln!(
+            output,
+            "  %result = call i32 asm \"{} $0, $2, $1;\", \"=r,f,f\"(float %low, float %high)",
+            packed_conversion_ptx_mnemonic(record)
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n");
     } else if let Some(packed) = &record.packed_atomic {
         let format = match packed.format {
             PackedAtomicFormat::F16x2 => "f16x2",
@@ -3930,10 +4060,21 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str("\n## Packed-conversion contract\n\n");
     for record in packed_conversions(catalog) {
+        let conversion = record.packed_conversion.as_ref().unwrap();
+        let rounding = match conversion.rounding {
+            PackedConversionRounding::NearestEven => "nearest-even",
+            PackedConversionRounding::TowardZero => "toward-zero",
+        };
+        let saturation = match conversion.saturation {
+            PackedConversionSaturation::None => "without saturation",
+            PackedConversionSaturation::Relu => "with ReLU",
+        };
         writeln!(
             output,
-            "- `{}` converts two `f32` inputs to packed bf16x2. The first input becomes the low lane and the second becomes the high lane; generated inline PTX reverses their printed operand order.",
+            "- `{}` converts two `f32` inputs to packed `{}` using {rounding} rounding {saturation}. It lowers to pure `{}` inline PTX. The first input becomes the low lane and the second becomes the high lane, so PTX prints the inputs in reverse order.",
             record.id,
+            packed_conversion_destination(record),
+            packed_conversion_ptx_mnemonic(record),
         )
         .unwrap();
     }
@@ -4217,7 +4358,7 @@ mod tests {
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         assert_eq!(packed_alus(&catalog).count(), 18);
-        assert_eq!(packed_conversions(&catalog).count(), 1);
+        assert_eq!(packed_conversions(&catalog).count(), 6);
 
         let dialect = render_dialect_packed_alu(&catalog, "test-hash");
         for op in [
@@ -4244,13 +4385,27 @@ mod tests {
             assert!(dialect.contains(&format!("{op}::register(ctx)")));
         }
         let conversion_dialect = render_dialect_packed_conversion(&catalog, "test-hash");
-        assert!(conversion_dialect.contains("pub struct CvtF32x2Bf16x2Op"));
+        for op in [
+            "CvtF32x2Bf16x2Op",
+            "CvtF16x2F32Op",
+            "CvtRzF16x2F32Op",
+            "CvtRnReluF16x2F32Op",
+            "CvtRnReluBf16x2F32Op",
+            "CvtRzBf16x2F32Op",
+        ] {
+            assert!(conversion_dialect.contains(&format!("pub struct {op}")));
+            assert!(conversion_dialect.contains(&format!("{op}::register(ctx)")));
+        }
+        assert!(conversion_dialect.contains("low f16 lane"));
+        assert!(conversion_dialect.contains("low bf16 lane"));
         assert!(conversion_dialect.contains("vec![low, high]"));
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("cuda_device::bf16x2::fma_bf16x2"));
         assert!(importer.contains("cuda_device::f16x2::fma_f16x2"));
         assert!(importer.contains("cuda_device::tcgen05::cvt_f32x2_bf16x2"));
+        assert!(importer.contains("cuda_device::convert::cvt_f16x2_f32"));
+        assert!(importer.contains("cuda_device::convert::cvt_rz_bf16x2_f32"));
         assert!(importer.contains("FmaBf16x2Op::build(ctx, arg0, arg1, arg2)"));
         assert!(importer.contains("CvtF32x2Bf16x2Op::build(ctx, arg0, arg1)"));
 
@@ -4279,9 +4434,18 @@ mod tests {
                 "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\")"
             )));
         }
-        assert!(lowering.contains(
-            "convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), \"bf16x2\")"
-        ));
+        for mnemonic in [
+            "cvt.rn.bf16x2.f32",
+            "cvt.rn.f16x2.f32",
+            "cvt.rz.f16x2.f32",
+            "cvt.rn.relu.f16x2.f32",
+            "cvt.rn.relu.bf16x2.f32",
+            "cvt.rz.bf16x2.f32",
+        ] {
+            assert!(lowering.contains(&format!(
+                "convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), \"{mnemonic}\")"
+            )));
+        }
 
         for record in packed_alus(&catalog) {
             let probe = render_probe(&catalog, record, "test-hash");
@@ -4293,17 +4457,20 @@ mod tests {
             assert!(!probe.contains("asm sideeffect"));
             assert!(!probe.contains("~{memory}"));
         }
-        let conversion = packed_conversions(&catalog).next().unwrap();
-        let probe = render_probe(&catalog, conversion, "test-hash");
-        assert!(probe.contains(
-            "asm \"cvt.rn.bf16x2.f32 $0, $2, $1;\", \"=r,f,f\"(float %low, float %high)"
-        ));
-        assert!(!probe.contains("asm sideeffect"));
+        for conversion in packed_conversions(&catalog) {
+            let probe = render_probe(&catalog, conversion, "test-hash");
+            assert!(probe.contains(&format!(
+                "asm \"{} $0, $2, $1;\", \"=r,f,f\"(float %low, float %high)",
+                packed_conversion_ptx_mnemonic(conversion)
+            )));
+            assert!(!probe.contains("asm sideeffect"));
+        }
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("pub fn i0062(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
         assert!(raw.contains("pub fn i0071(_arg0: f32, _arg1: f32) -> u32"));
         assert!(raw.contains("pub fn i0072(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
+        assert!(raw.contains("pub fn i0085(_arg0: f32, _arg1: f32) -> u32"));
         assert!(!raw.contains("#[must_use]\n#[inline(never)]\npub fn i0062"));
         let f16_raw = raw.find("pub fn i0072").unwrap();
         assert!(raw[..f16_raw].ends_with("#[must_use]\n#[inline(never)]\n"));
@@ -4325,11 +4492,35 @@ mod tests {
         ));
         assert!(reference.contains("LLVM-NVPTX PTX 6.0 on sm_70+"));
         assert!(reference.contains("libNVVM PTX 4.2 on sm_75+"));
+        assert!(reference.contains(
+            "`cvt_rn_relu_f16x2_f32` converts two `f32` inputs to packed `f16x2` using nearest-even rounding with ReLU"
+        ));
+        assert!(reference.contains("pure `cvt.rz.bf16x2.f32` inline PTX"));
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
         assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/bf16x2.rs")));
         assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/f16x2.rs")));
-        let compatibility = render_compat_packed_conversion(&catalog, "test-hash");
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/convert.rs"
+        )));
+        let compatibility = render_compat_packed_conversion(
+            &catalog,
+            "test-hash",
+            "cuda_device::tcgen05::",
+            "tcgen05",
+            ("a", "b"),
+        );
         assert!(compatibility.contains("pub fn cvt_f32x2_bf16x2(a: f32, b: f32) -> u32"));
+        assert!(!compatibility.contains("cvt_f16x2_f32"));
+        let compatibility = render_compat_packed_conversion(
+            &catalog,
+            "test-hash",
+            "cuda_device::convert::",
+            "convert",
+            ("lo", "hi"),
+        );
+        assert!(compatibility.contains("pub fn cvt_f16x2_f32(lo: f32, hi: f32) -> u32"));
+        assert!(compatibility.contains("pub fn cvt_rz_bf16x2_f32(lo: f32, hi: f32) -> u32"));
+        assert!(!compatibility.contains("cvt_f32x2_bf16x2"));
     }
 
     #[test]

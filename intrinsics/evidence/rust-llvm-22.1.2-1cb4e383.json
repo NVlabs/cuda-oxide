@@ -3550,6 +3550,13 @@
       "llvm_results": [
         "v2bf16"
       ],
+      "concrete_llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "concrete_llvm_results": [
+        "v2bf16"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_80",
       "ptx_feature": "+ptx70",
@@ -3557,30 +3564,67 @@
       "stages": [
         {
           "targets": [
-            "sm_80",
-            "ptx70"
+            "sm_80"
           ],
-          "representation": "pure inline PTX cvt.rn.bf16x2.f32 with =r,f,f",
-          "stage": "backend_codegen",
-          "mechanism": "inline_ptx",
+          "representation": "typed intrinsic llvm.nvvm.ff2bf16x2.rn(float, float) -> <2 x bfloat>",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
           "outcome": "succeeded",
-          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact cvt.rn.bf16x2.f32 instruction at its native floor as part of the combined packed-bf16x2 probe."
+          "detail": "The selected Rust LLVM 22.1.2 backend canonicalized this declaration to nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) in the combined 2,683-byte canonical IR artifact (SHA-256 172ae44a3b3f55425bb296f9f485ea08fe9f51dada6721d5a5fbf8b61cfd6d60)."
         },
         {
           "targets": [
             "sm_80",
             "ptx70"
           ],
-          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "representation": "typed call to llvm.nvvm.ff2bf16x2.rn(float high, float low) -> <2 x bfloat>",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted exact cvt.rn.bf16x2.f32 once in the combined 1,286-byte typed PTX artifact (SHA-256 263e8020dcdc7ccbb25baeefba06104abde3cac5100e98d40f9304746992ef97). Passing high then low preserves the public first-argument-low lane convention."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX 7.0 emitted by the combined six-form typed LLVM probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the combined 1,286-byte typed PTX module at sm_80 and produced a 3,624-byte cubin (SHA-256 f12457bfc7cc44d96014d876f4705a6ddee14db8471828df74dec91d060ff929). cuobjdump contains all six distinct F2FP packed-conversion forms.",
+          "artifact_kind": "cubin",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rn.bf16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend retained exact cvt.rn.bf16x2.f32 in the combined six-form production probe, with the public low/high arguments printed as PTX high/low. An independent typed call to llvm.nvvm.ff2bf16x2.rn, invoked with the kernel high value followed by the low value, emitted the same exact instruction and PTX operand order even though the normalized imported record has no named selections."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined six-form sm_80 packed-conversion probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
-          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "detail": "CUDA 13.3 ptxas accepted the 1,462-byte PTX 7.0 module at sm_80 and produced a 3,496-byte cubin (SHA-256 c92d92589eadec753288e74985a1775e3f822765bffb6a88746c4a31ccaf7b6d). cuobjdump contains all six distinct F2FP packed-conversion forms. PTX 6.5 rejected every form as requiring PTX 7.0; sm_75 rejected every form as requiring sm_80.",
           "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
           "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         }
       ],
+      "declaration_attributes_canonicalized": true,
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "cvt",
@@ -4145,6 +4189,543 @@
           }
         ]
       }
+    },
+    {
+      "id": "cvt_f16x2_f32",
+      "source_record": "int_nvvm_ff2f16x2_rn",
+      "llvm_symbol": "llvm.nvvm.ff2f16x2.rn",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "f16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "concrete_llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "concrete_llvm_results": [
+        "v2f16"
+      ],
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "stages": [
+        {
+          "targets": [
+            "sm_80"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.ff2f16x2.rn(float, float) -> <2 x half>",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend canonicalized this declaration to nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) in the combined 2,683-byte canonical IR artifact (SHA-256 172ae44a3b3f55425bb296f9f485ea08fe9f51dada6721d5a5fbf8b61cfd6d60)."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "typed call to llvm.nvvm.ff2f16x2.rn(float high, float low) -> <2 x half>",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted exact cvt.rn.f16x2.f32 once in the combined 1,286-byte typed PTX artifact (SHA-256 263e8020dcdc7ccbb25baeefba06104abde3cac5100e98d40f9304746992ef97). Passing high then low preserves the public first-argument-low lane convention."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX 7.0 emitted by the combined six-form typed LLVM probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the combined 1,286-byte typed PTX module at sm_80 and produced a 3,624-byte cubin (SHA-256 f12457bfc7cc44d96014d876f4705a6ddee14db8471828df74dec91d060ff929). cuobjdump contains all six distinct F2FP packed-conversion forms.",
+          "artifact_kind": "cubin",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rn.f16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend retained exact cvt.rn.f16x2.f32 in the combined six-form production probe, with the public low/high arguments printed as PTX high/low. An independent typed call to llvm.nvvm.ff2f16x2.rn, invoked with the kernel high value followed by the low value, emitted the same exact instruction and PTX operand order even though the normalized imported record has no named selections."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined six-form sm_80 packed-conversion probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,462-byte PTX 7.0 module at sm_80 and produced a 3,496-byte cubin (SHA-256 c92d92589eadec753288e74985a1775e3f822765bffb6a88746c4a31ccaf7b6d). cuobjdump contains all six distinct F2FP packed-conversion forms. PTX 6.5 rejected every form as requiring PTX 7.0; sm_75 rejected every form as requiring sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true
+    },
+    {
+      "id": "cvt_rz_f16x2_f32",
+      "source_record": "int_nvvm_ff2f16x2_rz",
+      "llvm_symbol": "llvm.nvvm.ff2f16x2.rz",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rz",
+          "f16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "concrete_llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "concrete_llvm_results": [
+        "v2f16"
+      ],
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "stages": [
+        {
+          "targets": [
+            "sm_80"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.ff2f16x2.rz(float, float) -> <2 x half>",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend canonicalized this declaration to nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) in the combined 2,683-byte canonical IR artifact (SHA-256 172ae44a3b3f55425bb296f9f485ea08fe9f51dada6721d5a5fbf8b61cfd6d60)."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "typed call to llvm.nvvm.ff2f16x2.rz(float high, float low) -> <2 x half>",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted exact cvt.rz.f16x2.f32 once in the combined 1,286-byte typed PTX artifact (SHA-256 263e8020dcdc7ccbb25baeefba06104abde3cac5100e98d40f9304746992ef97). Passing high then low preserves the public first-argument-low lane convention."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX 7.0 emitted by the combined six-form typed LLVM probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the combined 1,286-byte typed PTX module at sm_80 and produced a 3,624-byte cubin (SHA-256 f12457bfc7cc44d96014d876f4705a6ddee14db8471828df74dec91d060ff929). cuobjdump contains all six distinct F2FP packed-conversion forms.",
+          "artifact_kind": "cubin",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rz.f16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend retained exact cvt.rz.f16x2.f32 in the combined six-form production probe, with the public low/high arguments printed as PTX high/low. An independent typed call to llvm.nvvm.ff2f16x2.rz, invoked with the kernel high value followed by the low value, emitted the same exact instruction and PTX operand order even though the normalized imported record has no named selections."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined six-form sm_80 packed-conversion probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,462-byte PTX 7.0 module at sm_80 and produced a 3,496-byte cubin (SHA-256 c92d92589eadec753288e74985a1775e3f822765bffb6a88746c4a31ccaf7b6d). cuobjdump contains all six distinct F2FP packed-conversion forms. PTX 6.5 rejected every form as requiring PTX 7.0; sm_75 rejected every form as requiring sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true
+    },
+    {
+      "id": "cvt_rn_relu_f16x2_f32",
+      "source_record": "int_nvvm_ff2f16x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.ff2f16x2.rn.relu",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "relu",
+          "f16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "concrete_llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "concrete_llvm_results": [
+        "v2f16"
+      ],
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "stages": [
+        {
+          "targets": [
+            "sm_80"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.ff2f16x2.rn.relu(float, float) -> <2 x half>",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend canonicalized this declaration to nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) in the combined 2,683-byte canonical IR artifact (SHA-256 172ae44a3b3f55425bb296f9f485ea08fe9f51dada6721d5a5fbf8b61cfd6d60)."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "typed call to llvm.nvvm.ff2f16x2.rn.relu(float high, float low) -> <2 x half>",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted exact cvt.rn.relu.f16x2.f32 once in the combined 1,286-byte typed PTX artifact (SHA-256 263e8020dcdc7ccbb25baeefba06104abde3cac5100e98d40f9304746992ef97). Passing high then low preserves the public first-argument-low lane convention."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX 7.0 emitted by the combined six-form typed LLVM probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the combined 1,286-byte typed PTX module at sm_80 and produced a 3,624-byte cubin (SHA-256 f12457bfc7cc44d96014d876f4705a6ddee14db8471828df74dec91d060ff929). cuobjdump contains all six distinct F2FP packed-conversion forms.",
+          "artifact_kind": "cubin",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rn.relu.f16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend retained exact cvt.rn.relu.f16x2.f32 in the combined six-form production probe, with the public low/high arguments printed as PTX high/low. An independent typed call to llvm.nvvm.ff2f16x2.rn.relu, invoked with the kernel high value followed by the low value, emitted the same exact instruction and PTX operand order even though the normalized imported record has no named selections."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined six-form sm_80 packed-conversion probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,462-byte PTX 7.0 module at sm_80 and produced a 3,496-byte cubin (SHA-256 c92d92589eadec753288e74985a1775e3f822765bffb6a88746c4a31ccaf7b6d). cuobjdump contains all six distinct F2FP packed-conversion forms. PTX 6.5 rejected every form as requiring PTX 7.0; sm_75 rejected every form as requiring sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true
+    },
+    {
+      "id": "cvt_rn_relu_bf16x2_f32",
+      "source_record": "int_nvvm_ff2bf16x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.ff2bf16x2.rn.relu",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "relu",
+          "bf16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "concrete_llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "concrete_llvm_results": [
+        "v2bf16"
+      ],
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "stages": [
+        {
+          "targets": [
+            "sm_80"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.ff2bf16x2.rn.relu(float, float) -> <2 x bfloat>",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend canonicalized this declaration to nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) in the combined 2,683-byte canonical IR artifact (SHA-256 172ae44a3b3f55425bb296f9f485ea08fe9f51dada6721d5a5fbf8b61cfd6d60)."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "typed call to llvm.nvvm.ff2bf16x2.rn.relu(float high, float low) -> <2 x bfloat>",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted exact cvt.rn.relu.bf16x2.f32 once in the combined 1,286-byte typed PTX artifact (SHA-256 263e8020dcdc7ccbb25baeefba06104abde3cac5100e98d40f9304746992ef97). Passing high then low preserves the public first-argument-low lane convention."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX 7.0 emitted by the combined six-form typed LLVM probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the combined 1,286-byte typed PTX module at sm_80 and produced a 3,624-byte cubin (SHA-256 f12457bfc7cc44d96014d876f4705a6ddee14db8471828df74dec91d060ff929). cuobjdump contains all six distinct F2FP packed-conversion forms.",
+          "artifact_kind": "cubin",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rn.relu.bf16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend retained exact cvt.rn.relu.bf16x2.f32 in the combined six-form production probe, with the public low/high arguments printed as PTX high/low. An independent typed call to llvm.nvvm.ff2bf16x2.rn.relu, invoked with the kernel high value followed by the low value, emitted the same exact instruction and PTX operand order even though the normalized imported record has no named selections."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined six-form sm_80 packed-conversion probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,462-byte PTX 7.0 module at sm_80 and produced a 3,496-byte cubin (SHA-256 c92d92589eadec753288e74985a1775e3f822765bffb6a88746c4a31ccaf7b6d). cuobjdump contains all six distinct F2FP packed-conversion forms. PTX 6.5 rejected every form as requiring PTX 7.0; sm_75 rejected every form as requiring sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true
+    },
+    {
+      "id": "cvt_rz_bf16x2_f32",
+      "source_record": "int_nvvm_ff2bf16x2_rz",
+      "llvm_symbol": "llvm.nvvm.ff2bf16x2.rz",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rz",
+          "bf16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "concrete_llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "concrete_llvm_results": [
+        "v2bf16"
+      ],
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "stages": [
+        {
+          "targets": [
+            "sm_80"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.ff2bf16x2.rz(float, float) -> <2 x bfloat>",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend canonicalized this declaration to nocallback, nofree, nosync, nounwind, speculatable, willreturn, and memory(none) in the combined 2,683-byte canonical IR artifact (SHA-256 172ae44a3b3f55425bb296f9f485ea08fe9f51dada6721d5a5fbf8b61cfd6d60)."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "typed call to llvm.nvvm.ff2bf16x2.rz(float high, float low) -> <2 x bfloat>",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted exact cvt.rz.bf16x2.f32 once in the combined 1,286-byte typed PTX artifact (SHA-256 263e8020dcdc7ccbb25baeefba06104abde3cac5100e98d40f9304746992ef97). Passing high then low preserves the public first-argument-low lane convention."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX 7.0 emitted by the combined six-form typed LLVM probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the combined 1,286-byte typed PTX module at sm_80 and produced a 3,624-byte cubin (SHA-256 f12457bfc7cc44d96014d876f4705a6ddee14db8471828df74dec91d060ff929). cuobjdump contains all six distinct F2FP packed-conversion forms.",
+          "artifact_kind": "cubin",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rz.bf16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend retained exact cvt.rz.bf16x2.f32 in the combined six-form production probe, with the public low/high arguments printed as PTX high/low. An independent typed call to llvm.nvvm.ff2bf16x2.rz, invoked with the kernel high value followed by the low value, emitted the same exact instruction and PTX operand order even though the normalized imported record has no named selections."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined six-form sm_80 packed-conversion probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,462-byte PTX 7.0 module at sm_80 and produced a 3,496-byte cubin (SHA-256 c92d92589eadec753288e74985a1775e3f822765bffb6a88746c4a31ccaf7b6d). cuobjdump contains all six distinct F2FP packed-conversion forms. PTX 6.5 rejected every form as requiring PTX 7.0; sm_75 rejected every form as requiring sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true
     }
   ]
 }

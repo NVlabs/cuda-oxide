@@ -1367,6 +1367,36 @@ mod tests {
     }
 
     #[test]
+    fn generated_packed_conversion_floors_require_ampere() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,
+        };
+
+        for marker in [
+            "v1:i0071", "v1:i0081", "v1:i0082", "v1:i0083", "v1:i0084", "v1:i0085",
+        ] {
+            let target = generated_intrinsic_target_by_marker(marker).unwrap();
+            for backend in [
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                GeneratedIntrinsicBackend::LibNvvm,
+            ] {
+                let generated =
+                    GeneratedModuleRequirements::from_targets(vec![target]).for_backend(backend);
+                assert_eq!(
+                    generated_ptx_isa_requirement(&generated).unwrap(),
+                    PtxIsaRequirement::Ptx70,
+                    "{marker} {backend:?}"
+                );
+                assert!(!generated_target_satisfied("sm_75", &generated), "{marker}");
+                assert!(generated_target_satisfied("sm_80", &generated), "{marker}");
+                let error = validate_generated_target("sm_75", &generated).unwrap_err();
+                assert!(error.contains(target.id), "{error}");
+                assert!(error.contains("sm_80 or newer"), "{error}");
+            }
+        }
+    }
+
+    #[test]
     fn generated_dot_product_floors_record_sm61_and_split_backend_support() {
         use crate::generated_intrinsic_targets::{
             GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,

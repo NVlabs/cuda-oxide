@@ -1769,54 +1769,6 @@ fn test_cmp_predicate_lowering() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Helper: build a void-returning kernel with a single NVVM op, lower it, and
-// assert the kernel body contains an InlineAsmOp whose template includes the
-// given `expected_asm` substring.
-// ---------------------------------------------------------------------------
-
-/// Build a kernel whose entry block contains `op` + `mir.return`, lower to LLVM,
-/// and verify an `InlineAsmOp` with `expected_asm` in its template exists.
-fn assert_inline_asm_lowering(
-    ctx: &mut Context,
-    module_ptr: pliron::context::Ptr<Operation>,
-    expected_asm: &str,
-) -> Result<(), anyhow::Error> {
-    mir_lower::lower_mir_to_llvm(ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    let mut found = false;
-    let module_op = module_ptr.deref(ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(ctx).iter(ctx).next().unwrap();
-
-    for op in block.deref(ctx).iter(ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, ctx) else {
-            continue;
-        };
-        if func_op.get_symbol_name(ctx).to_string() != "kernel_func" {
-            continue;
-        }
-        let func_region = func_op.get_operation().deref(ctx).get_region(0);
-        for func_block in func_region.deref(ctx).iter(ctx) {
-            for body_op in func_block.deref(ctx).iter(ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, ctx)
-                    && inline_asm
-                        .get_attr_inline_asm_template(ctx)
-                        .is_some_and(|s| String::from((*s).clone()).contains(expected_asm))
-                {
-                    found = true;
-                }
-            }
-        }
-    }
-
-    assert!(
-        found,
-        "Expected inline asm containing `{expected_asm}` in lowered kernel"
-    );
-    Ok(())
-}
-
 /// Helper: fresh context with all dialects registered.
 fn make_test_ctx() -> Context {
     let mut ctx = Context::new();
@@ -2193,141 +2145,6 @@ fn test_fast_float_intrinsics_lower_to_explicit_fast_binops() -> Result<(), anyh
     assert_eq!(frem_counts, [1, 1], "frem_fast must lower for f32 and f64");
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// cvt.f16x2 intrinsic lowering test
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_cvt_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
-
-    let lo_val = entry.deref(&ctx).get_argument(0);
-    let hi_val = entry.deref(&ctx).get_argument(1);
-
-    // CvtF16x2F32Op: 2 f32 operands, 1 i32 result
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::CvtF16x2F32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![lo_val, hi_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rn.f16x2.f32")
-}
-
-#[test]
-fn test_cvt_rz_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
-
-    let lo_val = entry.deref(&ctx).get_argument(0);
-    let hi_val = entry.deref(&ctx).get_argument(1);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::CvtRzF16x2F32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![lo_val, hi_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rz.f16x2.f32")
-}
-
-#[test]
-fn test_cvt_rn_relu_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
-
-    let lo_val = entry.deref(&ctx).get_argument(0);
-    let hi_val = entry.deref(&ctx).get_argument(1);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::CvtRnReluF16x2F32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![lo_val, hi_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rn.relu.f16x2.f32")
-}
-
-#[test]
-fn test_cvt_rn_relu_bf16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
-
-    let lo_val = entry.deref(&ctx).get_argument(0);
-    let hi_val = entry.deref(&ctx).get_argument(1);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::CvtRnReluBf16x2F32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![lo_val, hi_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rn.relu.bf16x2.f32")
-}
-
-#[test]
-fn test_cvt_rz_bf16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
-
-    let lo_val = entry.deref(&ctx).get_argument(0);
-    let hi_val = entry.deref(&ctx).get_argument(1);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::CvtRzBf16x2F32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![lo_val, hi_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "cvt.rz.bf16x2.f32")
 }
 
 #[test]
@@ -3485,7 +3302,7 @@ fn test_generated_packed_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<
 }
 
 #[test]
-fn test_f32x2_bf16x2_conversion_keeps_lane_order() -> Result<(), anyhow::Error> {
+fn test_generated_packed_conversions_lower_to_exact_pure_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
@@ -3494,20 +3311,53 @@ fn test_f32x2_bf16x2_conversion_keeps_lane_order() -> Result<(), anyhow::Error> 
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
     let low = entry.deref(&ctx).get_argument(0);
     let high = entry.deref(&ctx).get_argument(1);
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::CvtF32x2Bf16x2Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![low, high],
-        vec![],
-        0,
+
+    type OpInfo = (
+        fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
+        std::any::TypeId,
     );
-    op.insert_at_back(entry, &ctx);
+    let cases: [(OpInfo, &str); 6] = [
+        (
+            nvvm::CvtF32x2Bf16x2Op::get_concrete_op_info(),
+            "cvt.rn.bf16x2.f32 $0, $2, $1;",
+        ),
+        (
+            nvvm::CvtF16x2F32Op::get_concrete_op_info(),
+            "cvt.rn.f16x2.f32 $0, $2, $1;",
+        ),
+        (
+            nvvm::CvtRzF16x2F32Op::get_concrete_op_info(),
+            "cvt.rz.f16x2.f32 $0, $2, $1;",
+        ),
+        (
+            nvvm::CvtRnReluF16x2F32Op::get_concrete_op_info(),
+            "cvt.rn.relu.f16x2.f32 $0, $2, $1;",
+        ),
+        (
+            nvvm::CvtRnReluBf16x2F32Op::get_concrete_op_info(),
+            "cvt.rn.relu.bf16x2.f32 $0, $2, $1;",
+        ),
+        (
+            nvvm::CvtRzBf16x2F32Op::get_concrete_op_info(),
+            "cvt.rz.bf16x2.f32 $0, $2, $1;",
+        ),
+    ];
+    for &(op_info, _) in &cases {
+        let op = Operation::new(
+            &mut ctx,
+            op_info,
+            vec![i32_ty.into()],
+            vec![low, high],
+            vec![],
+            0,
+        );
+        op.insert_at_back(entry, &ctx);
+    }
     append_return(&mut ctx, entry);
 
     mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let mut matches = 0;
+    let mut lowered = Vec::new();
     let module_region = module_ptr.deref(&ctx).get_region(0);
     let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
     for op in module_block.deref(&ctx).iter(&ctx) {
@@ -3525,30 +3375,52 @@ fn test_f32x2_bf16x2_conversion_keeps_lane_order() -> Result<(), anyhow::Error> 
                 };
                 let template = asm
                     .get_attr_inline_asm_template(&ctx)
-                    .map(|value| String::from((*value).clone()));
-                if template.as_deref() != Some("cvt.rn.bf16x2.f32 $0, $2, $1;") {
+                    .map(|value| String::from((*value).clone()))
+                    .expect("packed conversion must have an asm template");
+                if !template.starts_with("cvt.") {
                     continue;
                 }
-                matches += 1;
-                assert_eq!(
+                lowered.push((
+                    template,
                     asm.get_attr_inline_asm_constraints(&ctx)
-                        .map(|value| String::from((*value).clone()))
-                        .as_deref(),
-                    Some("=r,f,f")
-                );
-                assert_eq!(llvm::asm_kind_opt(&ctx, &asm), Some(llvm::AsmKind::Pure));
-                assert_eq!(
+                        .map(|value| String::from((*value).clone())),
                     asm.get_attr_inline_asm_convergent(&ctx)
                         .map(|value| bool::from((*value).clone())),
-                    Some(false)
-                );
-                assert_eq!(asm.get_operation().deref(&ctx).operands().count(), 2);
-                assert_eq!(asm.get_operation().deref(&ctx).get_num_results(), 1);
+                    llvm::asm_kind_opt(&ctx, &asm),
+                    asm.get_operation().deref(&ctx).operands().count(),
+                    asm.get_operation().deref(&ctx).get_num_results(),
+                ));
             }
         }
     }
 
-    assert_eq!(matches, 1, "conversion must lower to one reversed-lane asm");
+    assert_eq!(
+        lowered.len(),
+        cases.len(),
+        "each packed conversion must lower to one inline-asm op"
+    );
+    for &(_, expected_template) in &cases {
+        let matches: Vec<_> = lowered
+            .iter()
+            .filter(|(template, _, _, _, _, _)| template == expected_template)
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one exact `{expected_template}` lowering"
+        );
+        let (_, constraints, convergent, kind, operands, results) = matches[0];
+        assert_eq!(
+            constraints.as_deref(),
+            Some("=r,f,f"),
+            "{expected_template}"
+        );
+        assert_eq!(*convergent, Some(false), "{expected_template}");
+        assert_eq!(*kind, Some(llvm::AsmKind::Pure), "{expected_template}");
+        assert_eq!(*operands, 2, "{expected_template} input arity");
+        assert_eq!(*results, 1, "{expected_template} result arity");
+    }
+
     Ok(())
 }
 

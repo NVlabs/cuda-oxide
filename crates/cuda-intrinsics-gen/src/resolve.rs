@@ -21,9 +21,9 @@ use crate::model::{
     PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
     PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSourceFormat, PreSm70MemberMaskRule, PtxVersion, ReduxAdapter, ReduxOperation,
-    ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation,
-    WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
+    PackedConversionSaturation, PackedConversionSourceFormat, PreSm70MemberMaskRule, PtxVersion,
+    ReduxAdapter, ReduxOperation, ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode,
+    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
     WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
     WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
     WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
@@ -37,9 +37,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 13;
-const OVERLAY_SHARD_SCHEMA: u32 = 9;
-pub(crate) const CATALOG_SCHEMA: u32 = 12;
+const OVERLAY_SCHEMA: u32 = 14;
+const OVERLAY_SHARD_SCHEMA: u32 = 10;
+pub(crate) const CATALOG_SCHEMA: u32 = 13;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -4036,6 +4036,153 @@ fn validate_packed_alu_policy(
     Ok(())
 }
 
+struct PackedConversionRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    rust_name: &'static str,
+    compatibility_path: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    llvm_result: &'static str,
+    summary: &'static str,
+}
+
+fn packed_conversion_recipe(
+    conversion: &crate::model::PackedConversion,
+) -> Option<PackedConversionRecipe> {
+    match (
+        conversion.destination_format,
+        conversion.rounding,
+        conversion.saturation,
+    ) {
+        (
+            PackedConversionDestinationFormat::Bf16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::None,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_f32x2_bf16x2",
+            abi_id: "i0071",
+            operation_key: "packed.convert.f32x2.bf16x2.nearest_even",
+            rust_name: "cvt_f32x2_bf16x2",
+            compatibility_path: "cuda_device::tcgen05::cvt_f32x2_bf16x2",
+            dialect_op_type: "CvtF32x2Bf16x2Op",
+            dialect_op_name: "nvvm.cvt_f32x2_bf16x2",
+            source_record: "int_nvvm_ff2bf16x2_rn",
+            llvm_symbol: "llvm.nvvm.ff2bf16x2.rn",
+            llvm_result: "v2bf16",
+            summary: "Converts two f32 values to packed bf16x2 with the first argument in the low half.",
+        }),
+        (
+            PackedConversionDestinationFormat::F16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::None,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_f16x2_f32",
+            abi_id: "i0081",
+            operation_key: "packed.convert.f32x2.f16x2.nearest_even",
+            rust_name: "cvt_f16x2_f32",
+            compatibility_path: "cuda_device::convert::cvt_f16x2_f32",
+            dialect_op_type: "CvtF16x2F32Op",
+            dialect_op_name: "nvvm.cvt_f16x2_f32",
+            source_record: "int_nvvm_ff2f16x2_rn",
+            llvm_symbol: "llvm.nvvm.ff2f16x2.rn",
+            llvm_result: "v2f16",
+            summary: "Converts two f32 values to packed f16x2 with nearest-even rounding and the first argument in the low half.",
+        }),
+        (
+            PackedConversionDestinationFormat::F16x2,
+            PackedConversionRounding::TowardZero,
+            PackedConversionSaturation::None,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_rz_f16x2_f32",
+            abi_id: "i0082",
+            operation_key: "packed.convert.f32x2.f16x2.toward_zero",
+            rust_name: "cvt_rz_f16x2_f32",
+            compatibility_path: "cuda_device::convert::cvt_rz_f16x2_f32",
+            dialect_op_type: "CvtRzF16x2F32Op",
+            dialect_op_name: "nvvm.cvt_rz_f16x2_f32",
+            source_record: "int_nvvm_ff2f16x2_rz",
+            llvm_symbol: "llvm.nvvm.ff2f16x2.rz",
+            llvm_result: "v2f16",
+            summary: "Converts two f32 values to packed f16x2 with toward-zero rounding and the first argument in the low half.",
+        }),
+        (
+            PackedConversionDestinationFormat::F16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::Relu,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_rn_relu_f16x2_f32",
+            abi_id: "i0083",
+            operation_key: "packed.convert.f32x2.f16x2.nearest_even.relu",
+            rust_name: "cvt_rn_relu_f16x2_f32",
+            compatibility_path: "cuda_device::convert::cvt_rn_relu_f16x2_f32",
+            dialect_op_type: "CvtRnReluF16x2F32Op",
+            dialect_op_name: "nvvm.cvt_rn_relu_f16x2_f32",
+            source_record: "int_nvvm_ff2f16x2_rn_relu",
+            llvm_symbol: "llvm.nvvm.ff2f16x2.rn.relu",
+            llvm_result: "v2f16",
+            summary: "Converts two f32 values to packed f16x2 with nearest-even rounding, ReLU, and the first argument in the low half.",
+        }),
+        (
+            PackedConversionDestinationFormat::Bf16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::Relu,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_rn_relu_bf16x2_f32",
+            abi_id: "i0084",
+            operation_key: "packed.convert.f32x2.bf16x2.nearest_even.relu",
+            rust_name: "cvt_rn_relu_bf16x2_f32",
+            compatibility_path: "cuda_device::convert::cvt_rn_relu_bf16x2_f32",
+            dialect_op_type: "CvtRnReluBf16x2F32Op",
+            dialect_op_name: "nvvm.cvt_rn_relu_bf16x2_f32",
+            source_record: "int_nvvm_ff2bf16x2_rn_relu",
+            llvm_symbol: "llvm.nvvm.ff2bf16x2.rn.relu",
+            llvm_result: "v2bf16",
+            summary: "Converts two f32 values to packed bf16x2 with nearest-even rounding, ReLU, and the first argument in the low half.",
+        }),
+        (
+            PackedConversionDestinationFormat::Bf16x2,
+            PackedConversionRounding::TowardZero,
+            PackedConversionSaturation::None,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_rz_bf16x2_f32",
+            abi_id: "i0085",
+            operation_key: "packed.convert.f32x2.bf16x2.toward_zero",
+            rust_name: "cvt_rz_bf16x2_f32",
+            compatibility_path: "cuda_device::convert::cvt_rz_bf16x2_f32",
+            dialect_op_type: "CvtRzBf16x2F32Op",
+            dialect_op_name: "nvvm.cvt_rz_bf16x2_f32",
+            source_record: "int_nvvm_ff2bf16x2_rz",
+            llvm_symbol: "llvm.nvvm.ff2bf16x2.rz",
+            llvm_result: "v2bf16",
+            summary: "Converts two f32 values to packed bf16x2 with toward-zero rounding and the first argument in the low half.",
+        }),
+        _ => None,
+    }
+}
+
+fn packed_conversion_ptx_modifiers(
+    conversion: &crate::model::PackedConversion,
+) -> Vec<&'static str> {
+    let rounding = match conversion.rounding {
+        PackedConversionRounding::NearestEven => "rn",
+        PackedConversionRounding::TowardZero => "rz",
+    };
+    let format = match conversion.destination_format {
+        PackedConversionDestinationFormat::Bf16x2 => "bf16x2",
+        PackedConversionDestinationFormat::F16x2 => "f16x2",
+    };
+    let mut modifiers = vec![rounding];
+    if conversion.saturation == PackedConversionSaturation::Relu {
+        modifiers.push("relu");
+    }
+    modifiers.extend([format, "f32"]);
+    modifiers
+}
+
 fn validate_packed_conversion_policy(
     policy: &OverlayIntrinsic,
     source: &IntrinsicSource,
@@ -4047,24 +4194,28 @@ fn validate_packed_conversion_policy(
         .with_context(|| format!("{} has no closed packed-conversion contract", policy.id))?;
     ensure!(
         conversion.source_format == PackedConversionSourceFormat::F32x2
-            && conversion.destination_format == PackedConversionDestinationFormat::Bf16x2
-            && conversion.rounding == PackedConversionRounding::NearestEven
             && conversion.adapter == PackedConversionAdapter::ReverseHighLowOperands,
-        "{} requests an unsupported packed-conversion format, rounding, or adapter",
+        "{} requests an unsupported packed-conversion source or adapter",
         policy.id
     );
+    let recipe = packed_conversion_recipe(conversion).with_context(|| {
+        format!(
+            "{} requests an unsupported packed-conversion destination, rounding, or saturation combination",
+            policy.id
+        )
+    })?;
     ensure!(
-        policy.id == "cvt_f32x2_bf16x2"
-            && policy.abi_id == "i0071"
-            && policy.operation_key == "packed.convert.f32x2.bf16x2.nearest_even"
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
             && source
                 == &IntrinsicSource::LlvmImported {
-                    source_record: "int_nvvm_ff2bf16x2_rn".into(),
+                    source_record: recipe.source_record.into(),
                 }
-            && policy.llvm_symbol.as_deref() == Some("llvm.nvvm.ff2bf16x2.rn")
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
             && policy.resolved_llvm_symbol.is_none()
             && policy.llvm_arguments == ["f32", "f32"]
-            && policy.llvm_results == ["v2bf16"],
+            && policy.llvm_results == [recipe.llvm_result],
         "{} packed-conversion identity or LLVM source changed",
         policy.id
     );
@@ -4077,7 +4228,7 @@ fn validate_packed_conversion_policy(
     );
     ensure!(
         policy.rust_module == "convert"
-            && policy.rust_name == "cvt_f32x2_bf16x2"
+            && policy.rust_name == recipe.rust_name
             && policy.rust_arguments == ["f32", "f32"]
             && policy.rust_result == "u32"
             && policy.safe
@@ -4086,14 +4237,14 @@ fn validate_packed_conversion_policy(
                 .safe_allowlist_reason
                 .as_deref()
                 .is_some_and(|reason| !reason.trim().is_empty())
-            && policy.public_rust_path == "cuda_intrinsics::convert::cvt_f32x2_bf16x2"
-            && policy.compatibility_rust_paths == ["cuda_device::tcgen05::cvt_f32x2_bf16x2"],
+            && policy.public_rust_path == format!("cuda_intrinsics::convert::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths == [recipe.compatibility_path],
         "{} must preserve its safe non-must-use conversion API",
         policy.id
     );
     ensure!(
-        policy.dialect_op_type == "CvtF32x2Bf16x2Op"
-            && policy.dialect_op_name == "nvvm.cvt_f32x2_bf16x2"
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
             && policy.dialect_operands == ["f32", "f32"]
             && policy.dialect_results == ["i32"]
             && policy.lowering == "generated_packed_conversion_inline_ptx",
@@ -4118,7 +4269,7 @@ fn validate_packed_conversion_policy(
     );
     ensure!(
         policy.expected_ptx.mnemonic == "cvt"
-            && policy.expected_ptx.modifiers == ["rn", "bf16x2", "f32"]
+            && policy.expected_ptx.modifiers == packed_conversion_ptx_modifiers(conversion)
             && policy.expected_ptx.operands
                 == [
                     OperandPattern::Register,
@@ -4126,6 +4277,11 @@ fn validate_packed_conversion_policy(
                     OperandPattern::Register,
                 ],
         "{} expected PTX does not match the reversed high/low conversion recipe",
+        policy.id
+    );
+    ensure!(
+        policy.summary == recipe.summary,
+        "{} packed-conversion summary does not match its closed recipe",
         policy.id
     );
     ensure_exact_inline_ptx_backends(
@@ -4459,6 +4615,7 @@ fn validate_evidence(
         if lowering.mechanism == BackendLoweringMechanism::TypedNvvm {
             validate_typed_llvm_evidence(policy, record)?;
         }
+        validate_packed_conversion_backend_evidence(policy, record, lowering)?;
         if lowering.backend == IntrinsicBackend::LlvmNvptx
             && matches!(record.status.as_str(), "validated" | "executed")
         {
@@ -4489,6 +4646,62 @@ fn validate_evidence(
         }
     }
     Ok(())
+}
+
+fn validate_packed_conversion_backend_evidence(
+    policy: &OverlayIntrinsic,
+    record: &EvidenceRecord,
+    lowering: &crate::model::OverlayBackendLowering,
+) -> Result<()> {
+    if policy.family != "packed_conversion" {
+        return Ok(());
+    }
+    match lowering.backend {
+        IntrinsicBackend::LlvmNvptx => {
+            validate_typed_llvm_evidence(policy, record)?;
+            for stage in [
+                EvidenceStageKind::DeclarationCanonicalization,
+                EvidenceStageKind::BackendCodegen,
+            ] {
+                ensure!(
+                    successful_stage(record, BackendLoweringMechanism::TypedNvvm, stage).is_some(),
+                    "{} LLVM packed-conversion evidence requires a successful auxiliary typed-NVVM {:?} stage",
+                    policy.id,
+                    stage
+                );
+            }
+            ensure!(
+                has_valid_ptx_assembly_stage(record, BackendLoweringMechanism::TypedNvvm),
+                "{} LLVM packed-conversion evidence requires a successful auxiliary typed-NVVM PTX-assembly stage with exact tool identity",
+                policy.id
+            );
+            ensure!(
+                matches!(record.status.as_str(), "validated" | "executed"),
+                "{} LLVM packed-conversion evidence requires validated evidence status for its auxiliary typed-NVVM terminal stage",
+                policy.id
+            );
+            let typed_lowering = crate::model::OverlayBackendLowering {
+                mechanism: BackendLoweringMechanism::TypedNvvm,
+                ..lowering.clone()
+            };
+            validate_selected_stage_targets(policy, record, &typed_lowering)?;
+            Ok(())
+        }
+        IntrinsicBackend::LibNvvm => {
+            ensure!(
+                record.resolved_llvm_symbol.is_none()
+                    && record.concrete_llvm_arguments.is_empty()
+                    && record.concrete_llvm_results.is_empty()
+                    && record.declaration_attributes_canonicalized.is_none()
+                    && !record.stages.iter().any(|stage| {
+                        stage.mechanism == Some(BackendLoweringMechanism::TypedNvvm)
+                    }),
+                "{} libNVVM inline-PTX evidence must not claim typed LLVM support",
+                policy.id
+            );
+            Ok(())
+        }
+    }
 }
 
 fn validate_typed_llvm_evidence(policy: &OverlayIntrinsic, record: &EvidenceRecord) -> Result<()> {
@@ -5329,29 +5542,41 @@ mod tests {
         })
     }
 
-    fn packed_conversion_policy() -> OverlayIntrinsic {
+    fn packed_conversion_policy(
+        destination_format: PackedConversionDestinationFormat,
+        rounding: PackedConversionRounding,
+        saturation: PackedConversionSaturation,
+    ) -> OverlayIntrinsic {
+        let conversion = crate::model::PackedConversion {
+            source_format: PackedConversionSourceFormat::F32x2,
+            destination_format,
+            rounding,
+            saturation,
+            adapter: PackedConversionAdapter::ReverseHighLowOperands,
+        };
+        let recipe = packed_conversion_recipe(&conversion).expect("test packed-conversion recipe");
         let mut record = policy();
-        record.id = "cvt_f32x2_bf16x2".into();
-        record.abi_id = "i0071".into();
-        record.operation_key = "packed.convert.f32x2.bf16x2.nearest_even".into();
+        record.id = recipe.id.into();
+        record.abi_id = recipe.abi_id.into();
+        record.operation_key = recipe.operation_key.into();
         record.family = "packed_conversion".into();
-        record.source_record = Some("int_nvvm_ff2bf16x2_rn".into());
+        record.source_record = Some(recipe.source_record.into());
         record.rust_module = "convert".into();
-        record.rust_name = "cvt_f32x2_bf16x2".into();
+        record.rust_name = recipe.rust_name.into();
         record.rust_arguments = vec!["f32".into(), "f32".into()];
         record.rust_result = "u32".into();
         record.safe = true;
         record.must_use = false;
         record.safe_allowlist_reason = Some("the operation has no caller obligations".into());
-        record.public_rust_path = "cuda_intrinsics::convert::cvt_f32x2_bf16x2".into();
-        record.compatibility_rust_paths = vec!["cuda_device::tcgen05::cvt_f32x2_bf16x2".into()];
-        record.dialect_op_type = "CvtF32x2Bf16x2Op".into();
-        record.dialect_op_name = "nvvm.cvt_f32x2_bf16x2".into();
+        record.public_rust_path = format!("cuda_intrinsics::convert::{}", recipe.rust_name);
+        record.compatibility_rust_paths = vec![recipe.compatibility_path.into()];
+        record.dialect_op_type = recipe.dialect_op_type.into();
+        record.dialect_op_name = recipe.dialect_op_name.into();
         record.dialect_operands = vec!["f32".into(), "f32".into()];
         record.dialect_results = vec!["i32".into()];
-        record.llvm_symbol = Some("llvm.nvvm.ff2bf16x2.rn".into());
+        record.llvm_symbol = Some(recipe.llvm_symbol.into());
         record.llvm_arguments = vec!["f32".into(), "f32".into()];
-        record.llvm_results = vec!["v2bf16".into()];
+        record.llvm_results = vec![recipe.llvm_result.into()];
         record.pure = true;
         record.memory = "none".into();
         record.convergent = false;
@@ -5363,31 +5588,39 @@ mod tests {
         record.ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cvt".into();
         record.lowering = "generated_packed_conversion_inline_ptx".into();
         record.backend_lowerings = packed_inline_backends("7.0", "sm_80");
-        record.packed_conversion = Some(crate::model::PackedConversion {
-            source_format: PackedConversionSourceFormat::F32x2,
-            destination_format: PackedConversionDestinationFormat::Bf16x2,
-            rounding: PackedConversionRounding::NearestEven,
-            adapter: PackedConversionAdapter::ReverseHighLowOperands,
-        });
-        record.expected_ptx = InstructionPattern::new(
-            "cvt",
-            &["rn", "bf16x2", "f32"],
-            vec![OperandPattern::Register; 3],
-        );
-        record.summary = "packed bf16x2 conversion".into();
+        let modifiers = packed_conversion_ptx_modifiers(&conversion);
+        record.packed_conversion = Some(conversion);
+        record.expected_ptx =
+            InstructionPattern::new("cvt", &modifiers, vec![OperandPattern::Register; 3]);
+        record.summary = recipe.summary.into();
         record
     }
 
-    fn packed_conversion_declaration() -> ImportedIntrinsic {
+    fn packed_conversion_declaration(policy: &OverlayIntrinsic) -> ImportedIntrinsic {
         ImportedIntrinsic {
-            source_record: "int_nvvm_ff2bf16x2_rn".into(),
-            llvm_name: "llvm.nvvm.ff2bf16x2.rn".into(),
-            arguments: vec!["f32".into(), "f32".into()],
-            results: vec!["v2bf16".into()],
+            source_record: policy.source_record.clone().unwrap(),
+            llvm_name: policy.llvm_symbol.clone().unwrap(),
+            arguments: policy.llvm_arguments.clone(),
+            results: policy.llvm_results.clone(),
             classes: vec!["Intrinsic".into(), "NVVMPureIntrinsic".into()],
             properties: vec!["IntrNoMem".into(), "IntrSpeculatable".into()],
             selections: vec![],
         }
+    }
+
+    fn packed_conversion_evidence(policy: &OverlayIntrinsic) -> EvidenceRecord {
+        let mut record = evidence();
+        record.id = policy.id.clone();
+        record.source_record = policy.source_record.clone();
+        record.llvm_symbol = policy.llvm_symbol.clone();
+        record.resolved_llvm_symbol = policy.resolved_llvm_symbol.clone();
+        record.llvm_arguments = policy.llvm_arguments.clone();
+        record.llvm_results = policy.llvm_results.clone();
+        record.concrete_llvm_arguments = policy.llvm_arguments.clone();
+        record.concrete_llvm_results = policy.llvm_results.clone();
+        record.declaration_attributes_canonicalized = Some(true);
+        record.expected_ptx = policy.expected_ptx.clone();
+        record
     }
 
     fn redux_policy() -> OverlayIntrinsic {
@@ -5925,7 +6158,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 13);
-        assert_eq!(overlay.intrinsics.len(), 80);
+        assert_eq!(overlay.intrinsics.len(), 85);
         assert_eq!(
             overlay
                 .intrinsics
@@ -5940,7 +6173,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "packed_conversion")
                 .count(),
-            1
+            6
         );
         assert_eq!(
             overlay
@@ -7356,6 +7589,194 @@ mod tests {
     }
 
     #[test]
+    fn packed_conversion_evidence_separates_llvm_declaration_facts_from_libnvvm() {
+        for (destination, result) in [
+            (PackedConversionDestinationFormat::Bf16x2, "v2bf16"),
+            (PackedConversionDestinationFormat::F16x2, "v2f16"),
+        ] {
+            let policy = packed_conversion_policy(
+                destination,
+                PackedConversionRounding::NearestEven,
+                PackedConversionSaturation::None,
+            );
+            let llvm = policy
+                .backend_lowerings
+                .iter()
+                .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+                .unwrap();
+            let mut record = packed_conversion_evidence(&policy);
+            record.status = "validated".into();
+            record.stages = [
+                EvidenceStageKind::DeclarationCanonicalization,
+                EvidenceStageKind::BackendCodegen,
+                EvidenceStageKind::PtxAssembly,
+            ]
+            .into_iter()
+            .map(|stage| {
+                evidence_stage(
+                    stage,
+                    BackendLoweringMechanism::TypedNvvm,
+                    &["sm_80", "ptx70"],
+                )
+            })
+            .collect();
+            let assembly = record
+                .stages
+                .iter_mut()
+                .find(|stage| stage.stage == EvidenceStageKind::PtxAssembly)
+                .unwrap();
+            assembly.tool_path = Some("/usr/local/cuda/bin/ptxas".into());
+            assembly.tool_version = Some("CUDA 13.3 V13.3.33".into());
+            assembly.tool_sha256 =
+                Some("7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb".into());
+            assert_eq!(record.concrete_llvm_results, [result]);
+            validate_packed_conversion_backend_evidence(&policy, &record, llvm).unwrap();
+
+            let mut lowered = record.clone();
+            lowered.status = "lowered".into();
+            let error =
+                validate_packed_conversion_backend_evidence(&policy, &lowered, llvm).unwrap_err();
+            assert!(
+                error.to_string().contains("validated evidence status"),
+                "{error:#}"
+            );
+
+            for required in [
+                EvidenceStageKind::DeclarationCanonicalization,
+                EvidenceStageKind::BackendCodegen,
+                EvidenceStageKind::PtxAssembly,
+            ] {
+                let mut missing = record.clone();
+                missing.stages.retain(|stage| stage.stage != required);
+                let error = validate_packed_conversion_backend_evidence(&policy, &missing, llvm)
+                    .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("successful auxiliary typed-NVVM"),
+                    "{error:#}"
+                );
+
+                let mut failed = record.clone();
+                failed
+                    .stages
+                    .iter_mut()
+                    .find(|stage| stage.stage == required)
+                    .unwrap()
+                    .outcome = "failed".into();
+                let error = validate_packed_conversion_backend_evidence(&policy, &failed, llvm)
+                    .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("successful auxiliary typed-NVVM"),
+                    "{error:#}"
+                );
+
+                let mut wrong_mechanism = record.clone();
+                wrong_mechanism
+                    .stages
+                    .iter_mut()
+                    .find(|stage| stage.stage == required)
+                    .unwrap()
+                    .mechanism = Some(BackendLoweringMechanism::InlinePtx);
+                let error =
+                    validate_packed_conversion_backend_evidence(&policy, &wrong_mechanism, llvm)
+                        .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("successful auxiliary typed-NVVM"),
+                    "{error:#}"
+                );
+            }
+
+            let mut missing_tool_identity = record.clone();
+            missing_tool_identity
+                .stages
+                .iter_mut()
+                .find(|stage| stage.stage == EvidenceStageKind::PtxAssembly)
+                .unwrap()
+                .tool_sha256 = None;
+            let error =
+                validate_packed_conversion_backend_evidence(&policy, &missing_tool_identity, llvm)
+                    .unwrap_err();
+            assert!(
+                error.to_string().contains("exact tool identity"),
+                "{error:#}"
+            );
+
+            for stage_kind in [
+                EvidenceStageKind::BackendCodegen,
+                EvidenceStageKind::PtxAssembly,
+            ] {
+                let mut wrong_floor = record.clone();
+                wrong_floor
+                    .stages
+                    .iter_mut()
+                    .find(|stage| stage.stage == stage_kind)
+                    .unwrap()
+                    .targets = vec!["sm_75".into(), "ptx70".into()];
+                let error =
+                    validate_packed_conversion_backend_evidence(&policy, &wrong_floor, llvm)
+                        .unwrap_err();
+                assert!(
+                    error.to_string().contains("catalog floor sm_80"),
+                    "{error:#}"
+                );
+            }
+
+            record.declaration_attributes_canonicalized = None;
+            let error =
+                validate_packed_conversion_backend_evidence(&policy, &record, llvm).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("canonical declaration attributes")
+            );
+        }
+
+        let policy = packed_conversion_policy(
+            PackedConversionDestinationFormat::Bf16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::None,
+        );
+        let libnvvm = policy
+            .backend_lowerings
+            .iter()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap();
+        let mut record = packed_conversion_evidence(&policy);
+        record.concrete_llvm_arguments.clear();
+        record.concrete_llvm_results.clear();
+        record.declaration_attributes_canonicalized = None;
+        validate_packed_conversion_backend_evidence(&policy, &record, libnvvm).unwrap();
+
+        record.concrete_llvm_arguments = policy.llvm_arguments.clone();
+        let error =
+            validate_packed_conversion_backend_evidence(&policy, &record, libnvvm).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must not claim typed LLVM support")
+        );
+
+        record.concrete_llvm_arguments.clear();
+        record.stages.push(evidence_stage(
+            EvidenceStageKind::BackendCodegen,
+            BackendLoweringMechanism::TypedNvvm,
+            &["sm_80", "ptx70"],
+        ));
+        let error =
+            validate_packed_conversion_backend_evidence(&policy, &record, libnvvm).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must not claim typed LLVM support")
+        );
+    }
+
+    #[test]
     fn duplicate_identity_surfaces_are_rejected_independently() {
         let first = policy();
 
@@ -8056,10 +8477,79 @@ mod tests {
     }
 
     #[test]
+    fn pinned_packed_conversion_records_match_the_closed_recipes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let packed: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "packed_conversion")
+            .collect();
+        assert_eq!(packed.len(), 6);
+        for policy in packed {
+            let source = resolve_policy_source(policy).unwrap();
+            let declaration = policy
+                .source_record
+                .as_deref()
+                .map(|record| declarations[record]);
+            validate_policy(policy, &source, declaration, 1).unwrap();
+        }
+    }
+
+    #[test]
     fn selectionless_packed_conversion_is_admitted_only_by_its_closed_recipe() {
-        let valid = packed_conversion_policy();
-        let declaration = packed_conversion_declaration();
-        validate_imported_policy(&valid, &declaration).unwrap();
+        let cases = [
+            (
+                PackedConversionDestinationFormat::Bf16x2,
+                PackedConversionRounding::NearestEven,
+                PackedConversionSaturation::None,
+            ),
+            (
+                PackedConversionDestinationFormat::F16x2,
+                PackedConversionRounding::NearestEven,
+                PackedConversionSaturation::None,
+            ),
+            (
+                PackedConversionDestinationFormat::F16x2,
+                PackedConversionRounding::TowardZero,
+                PackedConversionSaturation::None,
+            ),
+            (
+                PackedConversionDestinationFormat::F16x2,
+                PackedConversionRounding::NearestEven,
+                PackedConversionSaturation::Relu,
+            ),
+            (
+                PackedConversionDestinationFormat::Bf16x2,
+                PackedConversionRounding::NearestEven,
+                PackedConversionSaturation::Relu,
+            ),
+            (
+                PackedConversionDestinationFormat::Bf16x2,
+                PackedConversionRounding::TowardZero,
+                PackedConversionSaturation::None,
+            ),
+        ];
+        for (destination, rounding, saturation) in cases {
+            let policy = packed_conversion_policy(destination, rounding, saturation);
+            let declaration = packed_conversion_declaration(&policy);
+            validate_imported_policy(&policy, &declaration).unwrap();
+        }
+
+        let valid = packed_conversion_policy(
+            PackedConversionDestinationFormat::Bf16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::None,
+        );
+        let declaration = packed_conversion_declaration(&valid);
 
         let reject = |policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic, message: &str| {
             let error = validate_imported_policy(policy, declaration).unwrap_err();
@@ -8091,6 +8581,29 @@ mod tests {
         let mut wrong_shape = valid.clone();
         wrong_shape.expected_ptx.modifiers.swap(1, 2);
         reject(&wrong_shape, &declaration, "reversed high/low");
+
+        let mut wrong_identity = valid.clone();
+        wrong_identity.id = "cvt_f16x2_f32".into();
+        reject(&wrong_identity, &declaration, "identity or LLVM source");
+
+        let mut unsupported = valid.clone();
+        let conversion = unsupported.packed_conversion.as_mut().unwrap();
+        conversion.rounding = PackedConversionRounding::TowardZero;
+        conversion.saturation = PackedConversionSaturation::Relu;
+        reject(
+            &unsupported,
+            &declaration,
+            "unsupported packed-conversion destination",
+        );
+
+        let mut wrong_compatibility = valid.clone();
+        wrong_compatibility.compatibility_rust_paths =
+            vec!["cuda_device::convert::cvt_f32x2_bf16x2".into()];
+        reject(&wrong_compatibility, &declaration, "conversion API");
+
+        let mut wrong_result = valid.clone();
+        wrong_result.llvm_results = vec!["v2f16".into()];
+        reject(&wrong_result, &declaration, "result signature mismatch");
 
         let mut selected = declaration.clone();
         selected.selections.push(ImportedSelection {

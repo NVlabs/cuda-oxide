@@ -567,3 +567,38 @@ status = "active"
 catalog_id = "abs_f16x2"
 operation_key = "packed.alu.f16x2.abs"
 raw_rust_signature = { safe = true, arguments = ["u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0081"
+status = "active"
+catalog_id = "cvt_f16x2_f32"
+operation_key = "packed.convert.f32x2.f16x2.nearest_even"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0082"
+status = "active"
+catalog_id = "cvt_rz_f16x2_f32"
+operation_key = "packed.convert.f32x2.f16x2.toward_zero"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0083"
+status = "active"
+catalog_id = "cvt_rn_relu_f16x2_f32"
+operation_key = "packed.convert.f32x2.f16x2.nearest_even.relu"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0084"
+status = "active"
+catalog_id = "cvt_rn_relu_bf16x2_f32"
+operation_key = "packed.convert.f32x2.bf16x2.nearest_even.relu"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0085"
+status = "active"
+catalog_id = "cvt_rz_bf16x2_f32"
+operation_key = "packed.convert.f32x2.bf16x2.toward_zero"
+raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }

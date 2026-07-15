@@ -2187,24 +2187,24 @@
             "sm_80",
             "ptx93"
           ],
-          "representation": "legacy NVVM IR pure inline PTX cvt.rn.bf16x2.f32 with =r,f,f",
+          "representation": "legacy NVVM IR pure inline PTX cvt.rn.bf16x2.f32 with `$0, $2, $1` and `=r,f,f`",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
-          "detail": "CUDA 13.3 libNVVM accepted the exact cvt.rn.bf16x2.f32 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d)."
+          "detail": "CUDA 13.3 libNVVM accepted exact cvt.rn.bf16x2.f32 at compute_80 as part of the combined six-form inline-PTX probe and produced 2,164-byte LTOIR (SHA-256 a0617e3e49b1df2beb5f575ae8750e0b62a57ef403db4b793dc77b5e1ef715f7). This proves only the production inline-PTX route; it does not claim typed libNVVM support."
         },
         {
           "targets": [
             "sm_80",
             "ptx93"
           ],
-          "representation": "retained combined packed-bf16x2 sm_80 kernel",
+          "representation": "retained combined six-form packed-conversion sm_80 kernel",
           "stage": "device_link",
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
           "artifact_kind": "cubin",
-          "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
-          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 95af39e283c3ad359158c7ed7dcca98a43ebfac1a6a7c49f7c10081224218726). cuobjdump shows the same six F2FP forms as the LLVM/ptxas path. A compute_75 LTOIR reached nvJitLink but failed terminal PTX compilation because every form requires sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
           "tool_version": "V13.3.33",
           "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
         }
@@ -2774,6 +2774,328 @@
           }
         ]
       }
+    },
+    {
+      "id": "cvt_f16x2_f32",
+      "source_record": "int_nvvm_ff2f16x2_rn",
+      "llvm_symbol": "llvm.nvvm.ff2f16x2.rn",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "f16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX cvt.rn.f16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact cvt.rn.f16x2.f32 at compute_80 as part of the combined six-form inline-PTX probe and produced 2,164-byte LTOIR (SHA-256 a0617e3e49b1df2beb5f575ae8750e0b62a57ef403db4b793dc77b5e1ef715f7). This proves only the production inline-PTX route; it does not claim typed libNVVM support."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined six-form packed-conversion sm_80 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 95af39e283c3ad359158c7ed7dcca98a43ebfac1a6a7c49f7c10081224218726). cuobjdump shows the same six F2FP forms as the LLVM/ptxas path. A compute_75 LTOIR reached nvJitLink but failed terminal PTX compilation because every form requires sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "cvt_rz_f16x2_f32",
+      "source_record": "int_nvvm_ff2f16x2_rz",
+      "llvm_symbol": "llvm.nvvm.ff2f16x2.rz",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rz",
+          "f16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX cvt.rz.f16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact cvt.rz.f16x2.f32 at compute_80 as part of the combined six-form inline-PTX probe and produced 2,164-byte LTOIR (SHA-256 a0617e3e49b1df2beb5f575ae8750e0b62a57ef403db4b793dc77b5e1ef715f7). This proves only the production inline-PTX route; it does not claim typed libNVVM support."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined six-form packed-conversion sm_80 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 95af39e283c3ad359158c7ed7dcca98a43ebfac1a6a7c49f7c10081224218726). cuobjdump shows the same six F2FP forms as the LLVM/ptxas path. A compute_75 LTOIR reached nvJitLink but failed terminal PTX compilation because every form requires sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "cvt_rn_relu_f16x2_f32",
+      "source_record": "int_nvvm_ff2f16x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.ff2f16x2.rn.relu",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "relu",
+          "f16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX cvt.rn.relu.f16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact cvt.rn.relu.f16x2.f32 at compute_80 as part of the combined six-form inline-PTX probe and produced 2,164-byte LTOIR (SHA-256 a0617e3e49b1df2beb5f575ae8750e0b62a57ef403db4b793dc77b5e1ef715f7). This proves only the production inline-PTX route; it does not claim typed libNVVM support."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined six-form packed-conversion sm_80 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 95af39e283c3ad359158c7ed7dcca98a43ebfac1a6a7c49f7c10081224218726). cuobjdump shows the same six F2FP forms as the LLVM/ptxas path. A compute_75 LTOIR reached nvJitLink but failed terminal PTX compilation because every form requires sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "cvt_rn_relu_bf16x2_f32",
+      "source_record": "int_nvvm_ff2bf16x2_rn_relu",
+      "llvm_symbol": "llvm.nvvm.ff2bf16x2.rn.relu",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "relu",
+          "bf16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX cvt.rn.relu.bf16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact cvt.rn.relu.bf16x2.f32 at compute_80 as part of the combined six-form inline-PTX probe and produced 2,164-byte LTOIR (SHA-256 a0617e3e49b1df2beb5f575ae8750e0b62a57ef403db4b793dc77b5e1ef715f7). This proves only the production inline-PTX route; it does not claim typed libNVVM support."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined six-form packed-conversion sm_80 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 95af39e283c3ad359158c7ed7dcca98a43ebfac1a6a7c49f7c10081224218726). cuobjdump shows the same six F2FP forms as the LLVM/ptxas path. A compute_75 LTOIR reached nvJitLink but failed terminal PTX compilation because every form requires sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    },
+    {
+      "id": "cvt_rz_bf16x2_f32",
+      "source_record": "int_nvvm_ff2bf16x2_rz",
+      "llvm_symbol": "llvm.nvvm.ff2bf16x2.rz",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rz",
+          "bf16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "legacy NVVM IR pure inline PTX cvt.rz.bf16x2.f32 with `$0, $2, $1` and `=r,f,f`",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted exact cvt.rz.bf16x2.f32 at compute_80 as part of the combined six-form inline-PTX probe and produced 2,164-byte LTOIR (SHA-256 a0617e3e49b1df2beb5f575ae8750e0b62a57ef403db4b793dc77b5e1ef715f7). This proves only the production inline-PTX route; it does not claim typed libNVVM support."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx93"
+          ],
+          "representation": "retained combined six-form packed-conversion sm_80 kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 3,496-byte sm_80 cubin (SHA-256 95af39e283c3ad359158c7ed7dcca98a43ebfac1a6a7c49f7c10081224218726). cuobjdump shows the same six F2FP forms as the LLVM/ptxas path. A compute_75 LTOIR reached nvJitLink but failed terminal PTX compilation because every form requires sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
     }
   ]
 }
