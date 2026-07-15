@@ -5,15 +5,15 @@
 
 use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
-    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, DotProductAdapter,
-    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind,
-    ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAluAdapter, PackedAluFormat,
-    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
-    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
-    PackedConversionSourceFormat, ReduxAdapter, VoteAdapter, VoteMode, WarpBarrierAdapter,
-    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, CpAsyncCachePolicy,
+    CpAsyncControlOperation, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
+    DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
+    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
+    LdmatrixShape, LdmatrixStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
+    PackedAtomicFormat, PackedConversionAdapter, PackedConversionDestinationFormat,
+    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
+    ReduxAdapter, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode,
+    WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,6 +51,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/cuda-device/src/generated/atomic.rs".into(),
         render_compat_packed_atomic(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/async_copy.rs".into(),
+        render_compat_cp_async_copy(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/cuda-device/src/generated/bf16x2.rs".into(),
@@ -125,6 +129,10 @@ pub fn all_outputs(
         render_dialect_active_mask(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/cp_async.rs".into(),
+        render_dialect_cp_async_copy(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/warp_match.rs".into(),
         render_dialect_warp_match(catalog, catalog_sha256),
     );
@@ -180,6 +188,8 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "warp_match" && record.warp_match.is_some())
                     || (record.family == "warp_barrier" && record.warp_barrier.is_some())
                     || (record.family == "warp_shuffle" && record.warp_shuffle.is_some())
+                    || (record.family == "cp_async_copy" && record.cp_async_copy.is_some())
+                    || (record.family == "cp_async_control" && record.cp_async_control.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -319,6 +329,39 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                             )
                     }),
                 "{} is outside the closed generated packed-conversion recipe",
+                record.id
+            ),
+            "cp_async_copy" => ensure!(
+                record.rust.module == "async_copy"
+                    && record.rust.result == "()"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        matches!(llvm.arguments.as_slice(), [dst, src]
+                            if dst == "shared_ptr" && src == "global_ptr")
+                            || matches!(llvm.arguments.as_slice(), [dst, src, size]
+                                if dst == "shared_ptr" && src == "global_ptr" && size == "i32")
+                    })
+                    && record.llvm.as_ref().is_some_and(|llvm| llvm.results.is_empty())
+                    && record.dialect.results.is_empty()
+                    && record.lowering == "generated_cp_async_copy"
+                    && record.cp_async_copy.is_some(),
+                "{} is outside the closed generated cp.async copy recipe",
+                record.id
+            ),
+            "cp_async_control" => ensure!(
+                record.rust.module == "async_copy"
+                    && record.rust.result == "()"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.results.is_empty()
+                            && (llvm.arguments.is_empty() || llvm.arguments == ["i32"])
+                    })
+                    && record.dialect.results.is_empty()
+                    && record.lowering == "generated_cp_async_control"
+                    && record.cp_async_control.is_some(),
+                "{} is outside the closed generated cp.async control recipe",
                 record.id
             ),
             "sync" => ensure!(
@@ -573,6 +616,20 @@ fn packed_conversions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .intrinsics
         .iter()
         .filter(|record| record.family == "packed_conversion")
+}
+
+fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "cp_async_copy")
+}
+
+fn cp_async_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "cp_async_control")
 }
 
 fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -1017,6 +1074,45 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// Every active thread in the CTA must reach the same barrier. Calling it from divergent control flow can deadlock the CTA.\n",
                 );
+            } else if let Some(copy) = &record.cp_async_copy {
+                let bytes = copy.copy_size.bytes();
+                writeln!(
+                    output,
+                    "/// `_arg0` must point to {bytes} writable bytes in shared memory and be aligned to {bytes} bytes."
+                )
+                .unwrap();
+                if copy.source_size == CpAsyncSourceSize::Runtime {
+                    writeln!(
+                        output,
+                        "/// `_arg2` must be at most {bytes}; `_arg1` must point to that many readable bytes in global memory and be aligned to {bytes} bytes."
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(
+                        output,
+                        "/// `_arg1` must point to {bytes} readable bytes in global memory and be aligned to {bytes} bytes."
+                    )
+                    .unwrap();
+                }
+                output.push_str(
+                    "/// Both ranges must remain valid, the source must remain unchanged, and the destination must not be accessed until this copy completes.\n\
+                     /// The issuing thread must use a matching `cp.async` completion operation. Synchronize threads after completion before another thread accesses the destination.\n\
+                     /// User-authored completion assembly must include a compiler memory clobber.\n",
+                );
+            } else if let Some(control) = &record.cp_async_control {
+                if control.operation == CpAsyncControlOperation::WaitGroup {
+                    output.push_str(
+                        "/// `_arg0` must be a compile-time constant. Access only destinations whose copy groups this wait completes.\n",
+                    );
+                } else if control.operation == CpAsyncControlOperation::WaitAll {
+                    output.push_str(
+                        "/// This waits only for copies issued by the executing thread. Synchronize threads before another thread accesses a completed destination.\n",
+                    );
+                } else {
+                    output.push_str(
+                        "/// This commits only copies issued by the executing thread and does not wait for completion.\n",
+                    );
+                }
             } else {
                 output.push_str(
                     "/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.\n\
@@ -1216,6 +1312,119 @@ fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_cp_async_copy(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "// Included inside `cuda_device::async_copy` to keep existing paths stable.\n\n",
+    );
+    for record in cp_async_copies(catalog) {
+        let copy = record.cp_async_copy.as_ref().expect("cp.async semantics");
+        let bytes = copy.copy_size.bytes();
+        let cache = match copy.cache_policy {
+            CpAsyncCachePolicy::Ca => "cache-all",
+            CpAsyncCachePolicy::Cg => "cache-global",
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "/// Uses the {cache} policy and copies {bytes} bytes."
+        )
+        .unwrap();
+        if copy.source_size == CpAsyncSourceSize::Runtime {
+            writeln!(
+                output,
+                "/// Bytes after `src_size` are filled with zero; `src_size` must be at most {bytes}."
+            )
+            .unwrap();
+        }
+        output.push_str("///\n/// # Safety\n");
+        writeln!(
+            output,
+            "/// `shared_dst` must point to {bytes} writable bytes in shared memory and be aligned to {bytes} bytes."
+        )
+        .unwrap();
+        if copy.source_size == CpAsyncSourceSize::Runtime {
+            writeln!(
+                output,
+                "/// `global_src` must point to `src_size` readable bytes in global memory and be aligned to {bytes} bytes."
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "/// `global_src` must point to {bytes} readable bytes in global memory and be aligned to {bytes} bytes."
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "/// Both ranges must remain valid, the source must remain unchanged, and the destination must not be accessed until this copy completes.\n\
+             /// The issuing thread must complete the copy. Synchronize threads afterward before another thread accesses the destination.\n\
+             /// User-authored completion assembly must include a compiler memory clobber.\n",
+        );
+        output.push_str("#[inline(never)]\n");
+        if copy.source_size == CpAsyncSourceSize::Runtime {
+            writeln!(
+                output,
+                "pub unsafe fn {}(_shared_dst: *mut u32, _global_src: *const u8, _src_size: u32) {{",
+                record.rust.name
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "pub unsafe fn {}(_shared_dst: *mut u32, _global_src: *const u32) {{",
+                record.rust.name
+            )
+            .unwrap();
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    for record in cp_async_controls(catalog) {
+        let control = record
+            .cp_async_control
+            .as_ref()
+            .expect("cp.async control semantics");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        match control.operation {
+            CpAsyncControlOperation::CommitGroup => output.push_str(
+                "/// This commits only copies issued by the executing thread and does not wait for completion.\n",
+            ),
+            CpAsyncControlOperation::WaitAll => output.push_str(
+                "/// This waits only for copies issued by this thread. Synchronize threads before another thread accesses a completed destination.\n",
+            ),
+            CpAsyncControlOperation::WaitGroup => output.push_str(
+                "/// `max_pending` must be a compile-time constant. Access only destinations whose copy groups this wait completes.\n",
+            ),
+        }
+        output.push_str("#[inline(never)]\n");
+        if control.operation == CpAsyncControlOperation::WaitGroup {
+            writeln!(
+                output,
+                "pub unsafe fn {}(_max_pending: u32) {{",
+                record.rust.name
+            )
+            .unwrap();
+        } else {
+            writeln!(output, "pub unsafe fn {}() {{", record.rust.name).unwrap();
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAluFormat) -> String {
     let mut output = rust_header(catalog, hash);
     let module = match format {
@@ -1325,7 +1534,7 @@ fn render_compat_packed_conversion(
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod dotprod;\nmod ldmatrix;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -1490,6 +1699,196 @@ fn render_dialect_active_mask(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
     for record in active_masks(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_cp_async_copy(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r#"//! Structural operations for classic global-to-shared `cp.async` copies.
+
+use dialect_mir::{ops::MirConstantOp, types::{MirPtrType, address_space}};
+use pliron::{
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        ops::ConstantOp,
+        types::{IntegerType, Signedness},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::pliron_op;
+
+fn verify_pointer(
+    ctx: &Context,
+    op: &Operation,
+    value: Value,
+    role: &str,
+    allowed_address_spaces: &[u32],
+) -> Result<(), Error> {
+    let ty = value.get_type(ctx);
+    let ty = ty.deref(ctx);
+    let Some(pointer) = ty.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{role} must be a MIR pointer");
+    };
+    if !allowed_address_spaces.contains(&pointer.address_space) {
+        return verify_err!(op.loc(), "{role} has the wrong address space");
+    }
+    Ok(())
+}
+
+fn verify_cp_async_copy(
+    ctx: &Context,
+    operation: Ptr<Operation>,
+    name: &str,
+    has_source_size: bool,
+) -> Result<(), Error> {
+    let op = operation.deref(ctx);
+    let expected_operands = if has_source_size { 3 } else { 2 };
+    if op.get_num_operands() != expected_operands || op.get_num_results() != 0 {
+        return verify_err!(op.loc(), "{name} has the wrong operand or result count");
+    }
+    verify_pointer(
+        ctx,
+        &op,
+        op.get_operand(0),
+        "shared destination",
+        &[address_space::GENERIC, address_space::SHARED],
+    )?;
+    verify_pointer(
+        ctx,
+        &op,
+        op.get_operand(1),
+        "global source",
+        &[address_space::GENERIC, address_space::GLOBAL],
+    )?;
+    if has_source_size {
+        let ty = op.get_operand(2).get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(integer) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "source size must be u32");
+        };
+        if integer.width() != 32 || integer.signedness() != Signedness::Unsigned {
+            return verify_err!(op.loc(), "source size must be u32");
+        }
+    }
+    Ok(())
+}
+
+fn verify_cp_async_control(
+    ctx: &Context,
+    operation: Ptr<Operation>,
+    name: &str,
+    has_immediate: bool,
+) -> Result<(), Error> {
+    let op = operation.deref(ctx);
+    let expected_operands = usize::from(has_immediate);
+    if op.get_num_operands() != expected_operands || op.get_num_results() != 0 {
+        return verify_err!(op.loc(), "{name} has the wrong operand or result count");
+    }
+    if has_immediate {
+        let value = op.get_operand(0);
+        let ty = value.get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(integer) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(op.loc(), "maximum pending group count must be u32");
+        };
+        if integer.width() != 32 || integer.signedness() != Signedness::Unsigned {
+            return verify_err!(op.loc(), "maximum pending group count must be u32");
+        }
+        let Some(defining_op) = value.defining_op() else {
+            return verify_err!(op.loc(), "maximum pending group count must be a compile-time constant");
+        };
+        if Operation::get_op::<MirConstantOp>(defining_op, ctx).is_none()
+            && Operation::get_op::<ConstantOp>(defining_op, ctx).is_none()
+        {
+            return verify_err!(op.loc(), "maximum pending group count must be a compile-time constant");
+        }
+    }
+    Ok(())
+}
+
+"#,
+    );
+    for record in cp_async_copies(catalog) {
+        let copy = record.cp_async_copy.as_ref().unwrap();
+        let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
+        let operand_count = if dynamic { 3 } else { 2 };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]\npub struct {};",
+            record.dialect.op_name, record.dialect.op_type
+        )
+        .unwrap();
+        writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
+        if dynamic {
+            output.push_str(
+                "    pub fn build(ctx: &mut Context, shared_dst: Value, global_src: Value, source_size: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![shared_dst, global_src, source_size], vec![], 0)\n    }\n",
+            );
+        } else {
+            output.push_str(
+                "    pub fn build(ctx: &mut Context, shared_dst: Value, global_src: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![shared_dst, global_src], vec![], 0)\n    }\n",
+            );
+        }
+        output.push_str("}\n\n");
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_cp_async_copy(ctx, self.get_operation(), {:?}, {dynamic})\n    }}\n}}\n",
+            record.dialect.op_name
+        )
+        .unwrap();
+    }
+    for record in cp_async_controls(catalog) {
+        let control = record.cp_async_control.as_ref().unwrap();
+        let has_immediate = control.operation == CpAsyncControlOperation::WaitGroup;
+        let operand_count = usize::from(has_immediate);
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<0>],\n)]\npub struct {};",
+            record.dialect.op_name, record.dialect.op_type
+        )
+        .unwrap();
+        writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
+        output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n");
+        if has_immediate {
+            output.push_str(
+                "    pub fn build(ctx: &mut Context, max_pending: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![max_pending], vec![], 0)\n    }\n",
+            );
+        } else {
+            output.push_str(
+                "    pub fn build(ctx: &mut Context) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0)\n    }\n",
+            );
+        }
+        output.push_str("}\n\n");
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_cp_async_control(ctx, self.get_operation(), {:?}, {has_immediate})\n    }}\n}}\n",
+            record.dialect.op_name
+        )
+        .unwrap();
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in cp_async_copies(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    for record in cp_async_controls(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -2401,6 +2800,24 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if cp_async_copies(catalog).next().is_some() {
+        output.push_str(", ");
+        for (index, record) in cp_async_copies(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if cp_async_controls(catalog).next().is_some() {
+        output.push_str(", ");
+        for (index, record) in cp_async_controls(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     if dot_products(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
@@ -2873,6 +3290,116 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     for record in packed_conversions(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
+    for record in cp_async_copies(catalog) {
+        let copy = record.cp_async_copy.as_ref().unwrap();
+        let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
+        let arity = if dynamic { 3 } else { 2 };
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {arity}, &loc)?;"
+        )
+        .unwrap();
+        output.push_str(
+            "            let (shared_dst, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (global_src, last_op) = rvalue::translate_operand(\n                ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        if dynamic {
+            output.push_str(
+                "            let (source_size, last_op) = rvalue::translate_operand(\n                ctx, body, &args[2], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+            );
+            writeln!(
+                output,
+                "            let copy = {}::build(ctx, shared_dst, global_src, source_size);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "            let copy = {}::build(ctx, shared_dst, global_src);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        }
+        output.push_str("            copy.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, copy, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, copy, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, copy, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
+    for record in cp_async_controls(catalog) {
+        let control = record.cp_async_control.as_ref().unwrap();
+        let has_immediate = control.operation == CpAsyncControlOperation::WaitGroup;
+        let arity = usize::from(has_immediate);
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {arity}, &loc)?;"
+        )
+        .unwrap();
+        if has_immediate {
+            output.push_str(
+                "            if !matches!(&args[0], mir::Operand::Constant(_)) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"cp_async_wait_group requires a compile-time constant max_pending value\".to_owned()\n                    )\n                );\n            }\n",
+            );
+            output.push_str(
+                "            let (max_pending, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+            );
+            writeln!(
+                output,
+                "            let control = {}::build(ctx, max_pending);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        } else {
+            output.push_str("            let last_op = prev_op;\n");
+            writeln!(
+                output,
+                "            let control = {}::build(ctx);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        }
+        output.push_str("            control.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, control, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, control, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, control, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
     for record in sync_intrinsics(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -2974,7 +3501,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -3121,6 +3648,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             }
             output.push_str(&record.dialect.op_type);
         }
+    }
+    for record in cp_async_copies(catalog).chain(cp_async_controls(catalog)) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     output.push_str(
         "};\nuse llvm_export::types as llvm_types;\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
@@ -3383,6 +3914,54 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    for record in cp_async_copies(catalog) {
+        let copy = record.cp_async_copy.as_ref().unwrap();
+        let cache_policy = match copy.cache_policy {
+            CpAsyncCachePolicy::Ca => "ca",
+            CpAsyncCachePolicy::Cg => "cg",
+        };
+        let has_source_size = copy.source_size == CpAsyncSourceSize::Runtime;
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_generated_cp_async_copy(ctx, rewriter, self.get_operation(), {cache_policy:?}, {}, {has_source_size}, {:?})",
+            copy.copy_size.bytes(),
+            record.llvm_identifier(),
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
+    for record in cp_async_controls(catalog) {
+        let operation = match record.cp_async_control.as_ref().unwrap().operation {
+            CpAsyncControlOperation::CommitGroup => "commit_group",
+            CpAsyncControlOperation::WaitAll => "wait_all",
+            CpAsyncControlOperation::WaitGroup => "wait_group",
+        };
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_generated_cp_async_control(ctx, rewriter, self.get_operation(), {operation:?}, {:?})",
+            record.llvm_identifier(),
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
     for record in dot_products(catalog) {
         let insert_low_half_selector = matches!(
             record.dot_product.as_ref().unwrap().adapter,
@@ -3640,7 +4219,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             Some(llvm) => {
                 writeln!(
                     output,
-                    "        assert_eq!(target.llvm.unwrap().properties, &{:?});",
+                    "        assert_eq!(target.llvm.unwrap().properties, &{:?} as &[&str]);",
                     llvm.properties
                 )
                 .unwrap();
@@ -3712,6 +4291,88 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %old\n}\n");
+    } else if let Some(copy) = &record.cp_async_copy {
+        let dynamic_source_size = copy.source_size == CpAsyncSourceSize::Runtime;
+        let declaration_arguments = if dynamic_source_size {
+            "ptr addrspace(3), ptr addrspace(1), i32"
+        } else {
+            "ptr addrspace(3), ptr addrspace(1)"
+        };
+        writeln!(
+            output,
+            "declare void @{}({declaration_arguments})",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push('\n');
+        if dynamic_source_size {
+            writeln!(
+                output,
+                "define void @probe_{}_register(ptr %shared_generic, ptr %global_generic, i32 %source_size) {{",
+                record.id
+            )
+            .unwrap();
+            output.push_str(
+                "  %shared = addrspacecast ptr %shared_generic to ptr addrspace(3)\n  %global = addrspacecast ptr %global_generic to ptr addrspace(1)\n",
+            );
+            writeln!(
+                output,
+                "  call void @{}(ptr addrspace(3) %shared, ptr addrspace(1) %global, i32 %source_size)",
+                llvm(record).symbol
+            )
+            .unwrap();
+            output.push_str("  ret void\n}\n");
+            writeln!(
+                output,
+                "define void @probe_{}_immediate(ptr %shared_generic, ptr %global_generic) {{",
+                record.id
+            )
+            .unwrap();
+            output.push_str(
+                "  %shared = addrspacecast ptr %shared_generic to ptr addrspace(3)\n  %global = addrspacecast ptr %global_generic to ptr addrspace(1)\n",
+            );
+            writeln!(
+                output,
+                "  call void @{}(ptr addrspace(3) %shared, ptr addrspace(1) %global, i32 3)",
+                llvm(record).symbol
+            )
+            .unwrap();
+            output.push_str("  ret void\n}\n");
+        } else {
+            writeln!(
+                output,
+                "define void @probe_{}(ptr %shared_generic, ptr %global_generic) {{",
+                record.id
+            )
+            .unwrap();
+            output.push_str(
+                "  %shared = addrspacecast ptr %shared_generic to ptr addrspace(3)\n  %global = addrspacecast ptr %global_generic to ptr addrspace(1)\n",
+            );
+            writeln!(
+                output,
+                "  call void @{}(ptr addrspace(3) %shared, ptr addrspace(1) %global)",
+                llvm(record).symbol
+            )
+            .unwrap();
+            output.push_str("  ret void\n}\n");
+        }
+    } else if let Some(control) = &record.cp_async_control {
+        let has_immediate = control.operation == CpAsyncControlOperation::WaitGroup;
+        let declaration_arguments = if has_immediate { "i32" } else { "" };
+        writeln!(
+            output,
+            "declare void @{}({declaration_arguments})",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push('\n');
+        writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
+        if has_immediate {
+            writeln!(output, "  call void @{}(i32 3)", llvm(record).symbol).unwrap();
+        } else {
+            writeln!(output, "  call void @{}()", llvm(record).symbol).unwrap();
+        }
+        output.push_str("  ret void\n}\n");
     } else if record.family == "sync" {
         writeln!(output, "declare void @{}(i32)", llvm(record).symbol).unwrap();
         output.push('\n');
@@ -4696,6 +5357,67 @@ mod tests {
             outputs.get(&PathBuf::from("crates/cuda-device/src/generated/atomic.rs")),
             Some(&rendered)
         );
+    }
+
+    #[test]
+    fn cp_async_rendering_preserves_compatibility_dispatch_and_backend_routes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(cp_async_copies(&catalog).count(), 8);
+        assert_eq!(cp_async_controls(&catalog).count(), 3);
+
+        let compatibility = render_compat_cp_async_copy(&catalog, "test-hash");
+        for signature in [
+            "pub unsafe fn cp_async_ca_4(_shared_dst: *mut u32, _global_src: *const u32)",
+            "pub unsafe fn cp_async_ca_8(_shared_dst: *mut u32, _global_src: *const u32)",
+            "pub unsafe fn cp_async_ca_16(_shared_dst: *mut u32, _global_src: *const u32)",
+            "pub unsafe fn cp_async_ca_zfill_4(_shared_dst: *mut u32, _global_src: *const u8, _src_size: u32)",
+            "pub unsafe fn cp_async_ca_zfill_8(_shared_dst: *mut u32, _global_src: *const u8, _src_size: u32)",
+            "pub unsafe fn cp_async_ca_zfill_16(_shared_dst: *mut u32, _global_src: *const u8, _src_size: u32)",
+            "pub unsafe fn cp_async_cg_16(_shared_dst: *mut u32, _global_src: *const u32)",
+            "pub unsafe fn cp_async_cg_zfill_16(_shared_dst: *mut u32, _global_src: *const u8, _src_size: u32)",
+            "pub unsafe fn cp_async_commit_group()",
+            "pub unsafe fn cp_async_wait_all()",
+            "pub unsafe fn cp_async_wait_group(_max_pending: u32)",
+        ] {
+            assert!(compatibility.contains(signature));
+        }
+
+        let dialect = render_dialect_cp_async_copy(&catalog, "test-hash");
+        let importer = render_importer(&catalog, "test-hash");
+        let lowering = render_lowering(&catalog, "test-hash");
+        let targets = render_targets(&catalog, "test-hash");
+        for record in cp_async_copies(&catalog).chain(cp_async_controls(&catalog)) {
+            assert!(dialect.contains(&format!("pub struct {}", record.dialect.op_type)));
+            assert!(dialect.contains(&format!("{}::register(ctx)", record.dialect.op_type)));
+            assert!(importer.contains(&record.rust.canonical_path));
+            for path in &record.rust.compatibility_paths {
+                assert!(importer.contains(path));
+            }
+            assert!(importer.contains(&intrinsic_marker(&catalog, record)));
+            assert!(lowering.contains(&format!(
+                "impl MirToLlvmConversion for {}",
+                record.dialect.op_type
+            )));
+            assert!(lowering.contains(&record.llvm_identifier()));
+            assert!(
+                record
+                    .backend_lowerings
+                    .iter()
+                    .any(|entry| entry.backend == IntrinsicBackend::LlvmNvptx)
+            );
+            assert!(
+                record
+                    .backend_lowerings
+                    .iter()
+                    .any(|entry| entry.backend == IntrinsicBackend::LibNvvm)
+            );
+            assert!(targets.contains(&format!("id: {:?}", record.id)));
+        }
+        assert_eq!(dialect.matches("::register(ctx);").count(), 11);
+        assert!(lowering.contains("convert_generated_cp_async_copy"));
+        assert!(lowering.contains("convert_generated_cp_async_control"));
     }
 
     #[test]

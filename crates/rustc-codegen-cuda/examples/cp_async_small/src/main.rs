@@ -6,8 +6,8 @@
 //! End-to-end test for `cp.async` 4-byte and 8-byte copy intrinsics.
 //!
 //! Demonstrates asynchronous global-to-shared memory copies using
-//! `cp_async_ca_4` (4 bytes) and `cp_async_ca_8` (8 bytes), with
-//! `cp.async.commit_group` / `cp.async.wait_all` issued via inline PTX.
+//! `cp_async_ca_4` (4 bytes) and `cp_async_ca_8` (8 bytes), including their
+//! generated commit and wait operations.
 //!
 //! Requires **sm_80+** (Ampere or later).
 //!
@@ -15,8 +15,12 @@
 //!   cargo oxide run cp_async_small
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::async_copy::{cp_async_ca_4, cp_async_ca_8};
-use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, ptx_asm, thread};
+use cuda_device::async_copy::{
+    cp_async_ca_4, cp_async_ca_8, cp_async_ca_16, cp_async_ca_zfill_4,
+    cp_async_ca_zfill_8, cp_async_ca_zfill_16, cp_async_cg_16, cp_async_cg_zfill_16,
+    cp_async_commit_group, cp_async_wait_all, cp_async_wait_group,
+};
+use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 
 // =============================================================================
 // KERNELS
@@ -42,8 +46,8 @@ mod kernels {
         // Initiate the 4-byte async copy, commit, and wait.
         unsafe {
             cp_async_ca_4(dst_ptr, src_ptr);
-            ptx_asm!("cp.async.commit_group;", clobber("memory"));
-            ptx_asm!("cp.async.wait_all;", clobber("memory"));
+            cp_async_commit_group();
+            cp_async_wait_all();
         }
 
         // Ensure every thread's copy has landed before reading.
@@ -76,8 +80,8 @@ mod kernels {
         // Initiate the 8-byte async copy, commit, and wait.
         unsafe {
             cp_async_ca_8(dst_ptr, src_ptr);
-            ptx_asm!("cp.async.commit_group;", clobber("memory"));
-            ptx_asm!("cp.async.wait_all;", clobber("memory"));
+            cp_async_commit_group();
+            cp_async_wait_all();
         }
 
         thread::sync_threads();
@@ -90,6 +94,31 @@ mod kernels {
             let base = gid * 2;
             *out.get_unchecked_mut(base) = lo;
             *out.get_unchecked_mut(base + 1) = hi;
+        }
+    }
+
+    /// Exercises every classic `cp.async` form without changing host output.
+    #[kernel]
+    pub fn compile_all_classic_cp_async(input: &[u32]) {
+        static mut SMEM: SharedArray<u32, 24, 16> = SharedArray::UNINIT;
+
+        if thread::threadIdx_x() == 0 {
+            let dst = core::ptr::addr_of_mut!(SMEM) as *mut u32;
+            let src = input.as_ptr();
+
+            unsafe {
+                cp_async_ca_4(dst, src);
+                cp_async_ca_8(dst.add(2), src.add(2));
+                cp_async_ca_16(dst.add(4), src.add(4));
+                cp_async_ca_zfill_4(dst.add(8), src.add(8).cast(), 3);
+                cp_async_ca_zfill_8(dst.add(10), src.add(10).cast(), 3);
+                cp_async_ca_zfill_16(dst.add(12), src.add(12).cast(), 3);
+                cp_async_cg_16(dst.add(16), src.add(16));
+                cp_async_cg_zfill_16(dst.add(20), src.add(20).cast(), 3);
+                cp_async_commit_group();
+                cp_async_wait_group(0);
+                cp_async_wait_all();
+            }
         }
     }
 }
@@ -121,6 +150,11 @@ fn main() {
         block_dim: (32, 1, 1),
         shared_mem_bytes: 0,
     };
+
+    let coverage_input_dev = DeviceBuffer::from_host(&stream, &[0u32; 24]).unwrap();
+    // SAFETY: thread zero owns every copy and all source and destination ranges are valid.
+    unsafe { module.compile_all_classic_cp_async(&stream, cfg32, &coverage_input_dev) }
+        .expect("classic cp.async coverage launch failed");
 
     // ===== Test 1: cp.async.ca 4-byte copy =====
     println!("--- Test 1: cp.async.ca 4-byte copy ---");

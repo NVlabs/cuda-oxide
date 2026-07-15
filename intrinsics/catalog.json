@@ -1,5 +1,5 @@
 {
-  "schema": 13,
+  "schema": 14,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,10 +11,12 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "13fe64e0247a345e6a4e7ecd1063e4eed005fb1a1e6303384af814d6341946e4",
-    "abi_ledger_sha256": "53d8724945c0421408e7b6266cf5532956400e86c387d6a2bb8509b0955efbe6",
+    "overlay_sha256": "845bf1ce93c065708ac681c0ce273525a2d149c3f230eb04725149bff5350632",
+    "abi_ledger_sha256": "267c82b9e670389c9650f055b122a1937034bf98101522ec6fea792384a7d213",
     "evidence_sha256": [
+      "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
+      "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383.json:618de5e9edb60f43a8b00d2923ddff6e5a373fc0e9f4ea6f525dca03c4e9bde5"
     ]
   },
@@ -2129,6 +2131,2753 @@
         ]
       },
       "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "cp_async_ca_16",
+      "operation_key": "memory.copy.async.global_to_shared.ca.16.full",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_ca_shared_global_16"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_16",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 16;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0090",
+        "module": "async_copy",
+        "name": "cp_async_ca_16",
+        "arguments": [
+          "*mut u32",
+          "*const u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0090",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_ca_16",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_ca_16"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCa16Op",
+        "op_name": "nvvm.cp_async_ca_16",
+        "operands": [
+          "ptr",
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.ca.shared.global.16",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.ca.shared.global.16 declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-all sixteen-byte call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.ca.shared.global with copy size 16.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact sixteen-byte cache-all copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "ca",
+        "copy_size": "b16",
+        "source_size": "full",
+        "adapter": "direct_pointers",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "ca",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "16"
+          }
+        ]
+      },
+      "summary": "Starts a sixteen-byte cache-all asynchronous copy from global to shared memory."
+    },
+    {
+      "id": "cp_async_ca_4",
+      "operation_key": "memory.copy.async.global_to_shared.ca.4.full",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_ca_shared_global_4"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_4",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 4;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0086",
+        "module": "async_copy",
+        "name": "cp_async_ca_4",
+        "arguments": [
+          "*mut u32",
+          "*const u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0086",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_ca_4",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_ca_4"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCa4Op",
+        "op_name": "nvvm.cp_async_ca_4",
+        "operands": [
+          "ptr",
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.ca.shared.global.4",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.ca.shared.global.4 declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-all four-byte call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.ca.shared.global with copy size 4.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact four-byte cache-all copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "ca",
+        "copy_size": "b4",
+        "source_size": "full",
+        "adapter": "direct_pointers",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "ca",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "4"
+          }
+        ]
+      },
+      "summary": "Starts a four-byte cache-all asynchronous copy from global to shared memory."
+    },
+    {
+      "id": "cp_async_ca_8",
+      "operation_key": "memory.copy.async.global_to_shared.ca.8.full",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_ca_shared_global_8"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_8",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 8;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0088",
+        "module": "async_copy",
+        "name": "cp_async_ca_8",
+        "arguments": [
+          "*mut u32",
+          "*const u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0088",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_ca_8",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_ca_8"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCa8Op",
+        "op_name": "nvvm.cp_async_ca_8",
+        "operands": [
+          "ptr",
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.ca.shared.global.8",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.ca.shared.global.8 declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-all eight-byte call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.ca.shared.global with copy size 8.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact eight-byte cache-all copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "ca",
+        "copy_size": "b8",
+        "source_size": "full",
+        "adapter": "direct_pointers",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "ca",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "8"
+          }
+        ]
+      },
+      "summary": "Starts an eight-byte cache-all asynchronous copy from global to shared memory."
+    },
+    {
+      "id": "cp_async_ca_zfill_16",
+      "operation_key": "memory.copy.async.global_to_shared.ca.16.runtime_source_size",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_ca_shared_global_16_s"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_16_s",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_16_si",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 16, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0091",
+        "module": "async_copy",
+        "name": "cp_async_ca_zfill_16",
+        "arguments": [
+          "*mut u32",
+          "*const u8",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0091",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_ca_zfill_16",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_ca_zfill_16"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCaZfill16Op",
+        "op_name": "nvvm.cp_async_ca_zfill_16",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.ca.shared.global.16.s",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.ca.shared.global.16.s declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1/i32 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-all sixteen-byte source-size calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted both register and immediate source-size forms.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact sixteen-byte cache-all source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "ca",
+        "copy_size": "b16",
+        "source_size": "runtime",
+        "adapter": "direct_pointers_and_source_size",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "ca",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "16"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Starts a sixteen-byte cache-all asynchronous copy and zero-fills bytes beyond the runtime source size."
+    },
+    {
+      "id": "cp_async_ca_zfill_4",
+      "operation_key": "memory.copy.async.global_to_shared.ca.4.runtime_source_size",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_ca_shared_global_4_s"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_4_s",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 4, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_4_si",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 4, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0087",
+        "module": "async_copy",
+        "name": "cp_async_ca_zfill_4",
+        "arguments": [
+          "*mut u32",
+          "*const u8",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0087",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_ca_zfill_4",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_ca_zfill_4"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCaZfill4Op",
+        "op_name": "nvvm.cp_async_ca_zfill_4",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.ca.shared.global.4.s",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.ca.shared.global.4.s declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1/i32 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-all four-byte source-size calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted both register and immediate source-size forms.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact four-byte cache-all source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "ca",
+        "copy_size": "b4",
+        "source_size": "runtime",
+        "adapter": "direct_pointers_and_source_size",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "ca",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "4"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Starts a four-byte cache-all asynchronous copy and zero-fills bytes beyond the runtime source size."
+    },
+    {
+      "id": "cp_async_ca_zfill_8",
+      "operation_key": "memory.copy.async.global_to_shared.ca.8.runtime_source_size",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_ca_shared_global_8_s"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_8_s",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 8, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "CP_ASYNC_CA_SHARED_GLOBAL_8_si",
+          "asm": "cp.async.ca.shared.global [$dst], [$src], 8, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0089",
+        "module": "async_copy",
+        "name": "cp_async_ca_zfill_8",
+        "arguments": [
+          "*mut u32",
+          "*const u8",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0089",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_ca_zfill_8",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_ca_zfill_8"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCaZfill8Op",
+        "op_name": "nvvm.cp_async_ca_zfill_8",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.ca.shared.global.8.s",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.ca.shared.global.8.s declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1/i32 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-all eight-byte source-size calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted both register and immediate source-size forms.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.ca.shared.global with l,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact eight-byte cache-all source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "ca",
+        "copy_size": "b8",
+        "source_size": "runtime",
+        "adapter": "direct_pointers_and_source_size",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "ca",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "8"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Starts an eight-byte cache-all asynchronous copy and zero-fills bytes beyond the runtime source size."
+    },
+    {
+      "id": "cp_async_cg_16",
+      "operation_key": "memory.copy.async.global_to_shared.cg.16.full",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_cg_shared_global_16"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CG_SHARED_GLOBAL_16",
+          "asm": "cp.async.cg.shared.global [$dst], [$src], 16;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0092",
+        "module": "async_copy",
+        "name": "cp_async_cg_16",
+        "arguments": [
+          "*mut u32",
+          "*const u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0092",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_cg_16",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_cg_16"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCg16Op",
+        "op_name": "nvvm.cp_async_cg_16",
+        "operands": [
+          "ptr",
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.cg.shared.global.16",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.cg.shared.global.16 declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-global sixteen-byte call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.cg.shared.global with copy size 16.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.cg.shared.global with l,l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact sixteen-byte cache-global copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "cg",
+        "copy_size": "b16",
+        "source_size": "full",
+        "adapter": "direct_pointers",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "cg",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "16"
+          }
+        ]
+      },
+      "summary": "Starts a sixteen-byte cache-global asynchronous copy from global to shared memory."
+    },
+    {
+      "id": "cp_async_cg_zfill_16",
+      "operation_key": "memory.copy.async.global_to_shared.cg.16.runtime_source_size",
+      "family": "cp_async_copy",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_cg_shared_global_16_s"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_CG_SHARED_GLOBAL_16_s",
+          "asm": "cp.async.cg.shared.global [$dst], [$src], 16, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "CP_ASYNC_CG_SHARED_GLOBAL_16_si",
+          "asm": "cp.async.cg.shared.global [$dst], [$src], 16, $src_size;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0093",
+        "module": "async_copy",
+        "name": "cp_async_cg_zfill_16",
+        "arguments": [
+          "*mut u32",
+          "*const u8",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0093",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_cg_zfill_16",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_cg_zfill_16"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCgZfill16Op",
+        "op_name": "nvvm.cp_async_cg_zfill_16",
+        "operands": [
+          "ptr",
+          "ptr",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.cg.shared.global.16.s",
+        "arguments": [
+          "shared_ptr",
+          "global_ptr",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrNoCallback",
+          "NoAlias<arg0>",
+          "NoAlias<arg1>",
+          "ReadOnly<arg1>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.cg.shared.global.16.s declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the typed AS3/AS1/i32 declaration and canonicalized its argument-memory and pointer attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed AS3/AS1 cp.async cache-global sixteen-byte source-size calls",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted both register and immediate source-size forms.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.cg.shared.global with l,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact sixteen-byte cache-global source-size copy in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_copy": {
+        "cache_policy": "cg",
+        "copy_size": "b16",
+        "source_size": "runtime",
+        "adapter": "direct_pointers_and_source_size",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_copy",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "cg",
+          "shared",
+          "global"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "exact",
+            "value": "16"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Starts a sixteen-byte cache-global asynchronous copy and zero-fills bytes beyond the runtime source size."
+    },
+    {
+      "id": "cp_async_commit_group",
+      "operation_key": "memory.copy.async.group.commit",
+      "family": "cp_async_control",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_commit_group"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_COMMIT_GROUP",
+          "asm": "cp.async.commit_group;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0094",
+        "module": "async_copy",
+        "name": "cp_async_commit_group",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0094",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_commit_group",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_commit_group"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncCommitGroupOp",
+        "op_name": "nvvm.cp_async_commit_group",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.commit.group",
+        "arguments": [],
+        "results": [],
+        "properties": [],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.2 Data Movement and Conversion Instructions: cp.async.commit_group",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-commit-group"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.commit.group declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the zero-operand declaration and canonicalized it as nounwind.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed zero-operand cp.async commit-group call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.commit_group.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.commit_group with ~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact commit-group instruction in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_control": {
+        "operation": "commit_group",
+        "adapter": "no_operands",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_control",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "commit_group"
+        ],
+        "operands": []
+      },
+      "summary": "Commits this thread's uncommitted asynchronous copies as one group."
+    },
+    {
+      "id": "cp_async_wait_all",
+      "operation_key": "memory.copy.async.group.wait_all",
+      "family": "cp_async_control",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_wait_all"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_WAIT_ALL",
+          "asm": "cp.async.wait_all;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0095",
+        "module": "async_copy",
+        "name": "cp_async_wait_all",
+        "arguments": [],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0095",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_wait_all",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_wait_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncWaitAllOp",
+        "op_name": "nvvm.cp_async_wait_all",
+        "operands": [],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.wait.all",
+        "arguments": [],
+        "results": [],
+        "properties": [],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.3 Data Movement and Conversion Instructions: cp.async.wait_group / cp.async.wait_all",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-wait-group-cp-async-wait-all"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.wait.all declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the zero-operand declaration and canonicalized it as nounwind.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed zero-operand cp.async wait-all call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.wait_all.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.wait_all with ~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact wait-all instruction in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_control": {
+        "operation": "wait_all",
+        "adapter": "no_operands",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_control",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "wait_all"
+        ],
+        "operands": []
+      },
+      "summary": "Waits for all asynchronous copy groups issued by this thread."
+    },
+    {
+      "id": "cp_async_wait_group",
+      "operation_key": "memory.copy.async.group.wait_max_pending",
+      "family": "cp_async_control",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_wait_group"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_WAIT_GROUP",
+          "asm": "cp.async.wait_group \t$n;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0096",
+        "module": "async_copy",
+        "name": "cp_async_wait_group",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0096",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_wait_group",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_wait_group"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncWaitGroupOp",
+        "op_name": "nvvm.cp_async_wait_group",
+        "operands": [
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.wait.group",
+        "arguments": [
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "ImmArg<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.26.3.3 Data Movement and Conversion Instructions: cp.async.wait_group / cp.async.wait_all",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-wait-group-cp-async-wait-all"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.wait.group(i32 immarg) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration and canonicalized its operand as immarg and the function as nounwind.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed constant cp.async wait-group call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.wait_group with an integer literal.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM cp.async probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR side-effecting inline PTX cp.async.wait_group with n,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained the exact constant wait-group instruction in the combined classic cp.async production example and produced 8,052-byte LTOIR (SHA-256 e048104e8dac3507a23165041436116c2d0a696f0939df71663c5c6dbced1199).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined classic cp.async kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 7,712-byte sm_80 cubin (SHA-256 91e7704506ae29972952a49c14621ef1246e4144619066b489c622fb6782d5ae); cuobjdump showed all eight LDGSTS copy forms and the LDGDEPBAR/DEPBAR control sequence.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_control": {
+        "operation": "wait_group",
+        "adapter": "compile_time_constant_max_pending",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_control",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "wait_group"
+        ],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Waits until at most the compile-time constant number of recent asynchronous copy groups remain pending."
     },
     {
       "id": "cvt_f16x2_f32",

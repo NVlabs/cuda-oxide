@@ -225,6 +225,10 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub packed_conversion: Option<PackedConversion>,
     #[serde(default)]
+    pub cp_async_copy: Option<CpAsyncCopy>,
+    #[serde(default)]
+    pub cp_async_control: Option<CpAsyncControl>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -848,6 +852,80 @@ pub enum PackedConversionAdapter {
     ReverseHighLowOperands,
 }
 
+/// Closed contract for classic global-to-shared `cp.async` copies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpAsyncCopy {
+    pub cache_policy: CpAsyncCachePolicy,
+    pub copy_size: CpAsyncCopySize,
+    pub source_size: CpAsyncSourceSize,
+    pub adapter: CpAsyncAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncCachePolicy {
+    Ca,
+    Cg,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncCopySize {
+    B4,
+    B8,
+    B16,
+}
+
+impl CpAsyncCopySize {
+    pub const fn bytes(self) -> u32 {
+        match self {
+            Self::B4 => 4,
+            Self::B8 => 8,
+            Self::B16 => 16,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncSourceSize {
+    Full,
+    Runtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncAdapter {
+    DirectPointers,
+    DirectPointersAndSourceSize,
+}
+
+/// Closed contract for classic `cp.async` group controls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpAsyncControl {
+    pub operation: CpAsyncControlOperation,
+    pub adapter: CpAsyncControlAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncControlOperation {
+    CommitGroup,
+    WaitAll,
+    WaitGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncControlAdapter {
+    NoOperands,
+    CompileTimeConstantMaxPending,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiLedgerFile {
@@ -1028,6 +1106,10 @@ pub struct CatalogIntrinsic {
     pub packed_alu: Option<PackedAlu>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packed_conversion: Option<PackedConversion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cp_async_copy: Option<CpAsyncCopy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cp_async_control: Option<CpAsyncControl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,

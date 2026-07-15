@@ -5,23 +5,85 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
-    ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
-    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
-    MatchAnySyncI32Op, MatchAnySyncI64Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
-    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
-    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
-    PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr,
-    PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr,
-    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
-    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
-    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
-    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
-    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
-    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
+    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, CpAsyncCa4Op, CpAsyncCaZfill4Op, CpAsyncWaitGroupOp,
+    Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr,
+    LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
+    LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
+    MatchAnySyncI64Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
+    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op,
+    NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr,
+    PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr,
+    PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, ReadPtxSregDynamicSmemSizeOp,
+    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
+    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
+    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
+    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
+    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
+    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp,
+    ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
+    VoteSyncUniOp,
 };
+
+#[test]
+fn test_generated_cp_async_accepts_pointer_shapes_and_both_constant_kinds() {
+    use dialect_mir::ops::MirConstantOp;
+    use pliron::builtin::{attributes::IntegerAttr, ops::ConstantOp};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let dst_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let src_ty = MirPtrType::get(&mut ctx, u8_ty.into(), true, address_space::GLOBAL);
+    let wrong_dst_ty = MirPtrType::get(&mut ctx, u8_ty.into(), true, address_space::GLOBAL);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            dst_ty.into(),
+            src_ty.into(),
+            wrong_dst_ty.into(),
+            u32_ty.into(),
+        ],
+    );
+    let dst = block.deref(&ctx).get_argument(0);
+    let src = block.deref(&ctx).get_argument(1);
+    let wrong_dst = block.deref(&ctx).get_argument(2);
+    let dynamic = block.deref(&ctx).get_argument(3);
+
+    let copy = CpAsyncCa4Op::build(&mut ctx, dst, src);
+    assert!(verify_op(&CpAsyncCa4Op::new(copy), &ctx).is_ok());
+    let zfill = CpAsyncCaZfill4Op::build(&mut ctx, dst, src, dynamic);
+    assert!(verify_op(&CpAsyncCaZfill4Op::new(zfill), &ctx).is_ok());
+    let wrong_space = CpAsyncCa4Op::build(&mut ctx, wrong_dst, src);
+    assert!(verify_op(&CpAsyncCa4Op::new(wrong_space), &ctx).is_err());
+
+    let value = IntegerAttr::new(u32_ty, APInt::from_u32(0, NonZeroUsize::new(32).unwrap()));
+    let builtin = ConstantOp::new(&mut ctx, value.clone().into());
+    let builtin_value = builtin.get_operation().deref(&ctx).get_result(0);
+    let builtin_wait = CpAsyncWaitGroupOp::build(&mut ctx, builtin_value);
+    assert!(verify_op(&CpAsyncWaitGroupOp::new(builtin_wait), &ctx).is_ok());
+
+    let mir_constant = Operation::new(
+        &mut ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    MirConstantOp::new(mir_constant).set_attr_value(&ctx, value);
+    let mir_value = mir_constant.deref(&ctx).get_result(0);
+    let mir_wait = CpAsyncWaitGroupOp::build(&mut ctx, mir_value);
+    assert!(verify_op(&CpAsyncWaitGroupOp::new(mir_wait), &ctx).is_ok());
+
+    let dynamic_wait = CpAsyncWaitGroupOp::build(&mut ctx, dynamic);
+    assert!(verify_op(&CpAsyncWaitGroupOp::new(dynamic_wait), &ctx).is_err());
+}
 use pliron::{
     basic_block::BasicBlock,
     builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},

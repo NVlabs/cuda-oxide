@@ -1,9 +1,11 @@
-schema = 14
+schema = 15
 catalog_version = "0.1.0"
 intrinsic_abi = 1
 backend_profile = "rust-llvm-22.1.2-1cb4e383"
 shards = [
     "overlay/active_mask.toml",
+    "overlay/cp_async_control.toml",
+    "overlay/cp_async_copy.toml",
     "overlay/dotprod.toml",
     "overlay/ldmatrix.toml",
     "overlay/packed_alu.toml",

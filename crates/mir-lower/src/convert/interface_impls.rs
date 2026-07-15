@@ -46,8 +46,7 @@ use dialect_nvvm::ops::{
     CpAsyncBulkTensorG2sTile2dOp, CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp,
     CpAsyncBulkTensorG2sTile5dOp, CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp,
     CpAsyncBulkTensorS2gTile3dOp, CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp,
-    CpAsyncBulkWaitGroupOp, CpAsyncBulkWaitGroupReadOp, CpAsyncCa4Op, CpAsyncCa8Op,
-    CpAsyncCaZfill4Op, CpAsyncCaZfill8Op, CpAsyncCaZfill16Op, DsmemReadU32Op, ElectSyncOp,
+    CpAsyncBulkWaitGroupOp, CpAsyncBulkWaitGroupReadOp, DsmemReadU32Op, ElectSyncOp,
     FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, InlinePtxOp,
     MapaSharedClusterOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
@@ -2548,95 +2547,6 @@ impl MirToLlvmConversion for CpAsyncBulkWaitGroupReadOp {
             self.get_operation(),
             operands_info,
             true,
-        )
-    }
-}
-
-// ---- NVVM cp.async ops -----------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for CpAsyncCa4Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cp_async::convert_cp_async_ca_4(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for CpAsyncCa8Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cp_async::convert_cp_async_ca_8(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-// ---- NVVM cp.async zero-fill ops -------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for CpAsyncCaZfill4Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cp_async::convert_cp_async_ca_zfill_4(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for CpAsyncCaZfill8Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cp_async::convert_cp_async_ca_zfill_8(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for CpAsyncCaZfill16Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cp_async::convert_cp_async_ca_zfill_16(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
         )
     }
 }

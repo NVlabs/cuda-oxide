@@ -4,8 +4,8 @@
  */
 
 use crate::model::{
-    BackendLoweringMechanism, CatalogIntrinsic, CatalogLlvm, EvidenceStageKind, IntrinsicBackend,
-    WarpShuffleAdapter,
+    BackendLoweringMechanism, CatalogIntrinsic, CatalogLlvm, CpAsyncSourceSize, EvidenceStageKind,
+    IntrinsicBackend, WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
@@ -142,6 +142,13 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     }
     if record.warp_barrier.is_some() {
         validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
+    }
+    if record
+        .cp_async_copy
+        .as_ref()
+        .is_some_and(|copy| copy.source_size == CpAsyncSourceSize::Runtime)
+    {
+        validate_register_and_immediate_forms(&record.expected_ptx, 3, "3", ptx)?;
     }
     if let Some(shuffle) = &record.warp_shuffle {
         match shuffle.adapter {
@@ -512,6 +519,13 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
                     format!("@{symbol} has no argument {index} required by {property}")
                 })?;
                 require_attribute_fragment(argument, "captures(none)", symbol, "argument")?;
+            }
+            property if property.starts_with("NoAlias<") => {
+                let index = property_argument_index(property, "NoAlias")?;
+                let argument = arguments.get(index).with_context(|| {
+                    format!("@{symbol} has no argument {index} required by {property}")
+                })?;
+                require_attribute_token(argument, "noalias", symbol, "argument")?;
             }
             property if property.starts_with("ReadOnly<") => {
                 let index = property_argument_index(property, "ReadOnly")?;

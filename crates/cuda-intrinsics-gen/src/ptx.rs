@@ -17,6 +17,7 @@ use std::fmt;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperandPattern {
     Register,
+    Immediate,
     RegisterOrImmediate,
     RegisterPredicatePair,
     Exact { value: String },
@@ -33,6 +34,7 @@ impl<'de> Deserialize<'de> for OperandPattern {
         #[serde(rename_all = "snake_case")]
         enum Kind {
             Register,
+            Immediate,
             RegisterOrImmediate,
             RegisterPredicatePair,
             Exact,
@@ -55,6 +57,7 @@ impl<'de> Deserialize<'de> for OperandPattern {
             representation.length,
         ) {
             (Kind::Register, None, None) => Ok(Self::Register),
+            (Kind::Immediate, None, None) => Ok(Self::Immediate),
             (Kind::RegisterOrImmediate, None, None) => Ok(Self::RegisterOrImmediate),
             (Kind::RegisterPredicatePair, None, None) => Ok(Self::RegisterPredicatePair),
             (Kind::Exact, Some(value), None) => Ok(Self::Exact { value }),
@@ -62,6 +65,9 @@ impl<'de> Deserialize<'de> for OperandPattern {
             (Kind::Address, None, None) => Ok(Self::Address),
             (Kind::Register, _, _) => Err(serde::de::Error::custom(
                 "register operand accepts only the `kind` field",
+            )),
+            (Kind::Immediate, _, _) => Err(serde::de::Error::custom(
+                "immediate operand accepts only the `kind` field",
             )),
             (Kind::RegisterOrImmediate, _, _) => Err(serde::de::Error::custom(
                 "register_or_immediate operand accepts only the `kind` field",
@@ -121,6 +127,7 @@ impl InstructionPattern {
         for operand in &self.operands {
             match operand {
                 OperandPattern::Register
+                | OperandPattern::Immediate
                 | OperandPattern::RegisterOrImmediate
                 | OperandPattern::RegisterPredicatePair
                 | OperandPattern::Address => {}
@@ -174,6 +181,7 @@ impl fmt::Display for InstructionPattern {
             }
             match operand {
                 OperandPattern::Register => formatter.write_str("<register>")?,
+                OperandPattern::Immediate => formatter.write_str("<immediate>")?,
                 OperandPattern::RegisterOrImmediate => {
                     formatter.write_str("<register-or-immediate>")?
                 }
@@ -356,6 +364,7 @@ fn split_top_level(source: &str) -> Option<Vec<&str>> {
 fn operand_matches(operand: &str, pattern: &OperandPattern) -> bool {
     match pattern {
         OperandPattern::Register => is_register(operand),
+        OperandPattern::Immediate => is_integer_literal(operand),
         OperandPattern::RegisterOrImmediate => is_register(operand) || is_integer_literal(operand),
         OperandPattern::RegisterPredicatePair => is_register_predicate_pair(operand),
         OperandPattern::Exact { value } => operand.trim() == value,
@@ -767,6 +776,42 @@ mod tests {
         assert!(
             serde_json::from_str::<InstructionPattern>(
                 r#"{"mnemonic":"vote","modifiers":[],"operands":[{"kind":"register_or_immediate","value":"-1"}]}"#,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn immediate_accepts_only_integer_literals() {
+        let wait_group = InstructionPattern::new(
+            "cp",
+            &["async", "wait_group"],
+            vec![OperandPattern::Immediate],
+        );
+
+        for operand in ["0", "3", "-1", "+42", "0x7"] {
+            assert!(
+                wait_group.matches(&format!("cp.async.wait_group {operand};")),
+                "immediate {operand:?}"
+            );
+        }
+        for operand in ["$n", "%r1", "1.0", "0x", "-"] {
+            assert!(
+                !wait_group.matches(&format!("cp.async.wait_group {operand};")),
+                "non-immediate {operand:?}"
+            );
+        }
+
+        assert_eq!(wait_group.to_string(), "cp.async.wait_group <immediate>;");
+        let encoded = serde_json::to_string(&wait_group).unwrap();
+        assert!(encoded.contains(r#""kind":"immediate""#));
+        assert_eq!(
+            serde_json::from_str::<InstructionPattern>(&encoded).unwrap(),
+            wait_group
+        );
+        assert!(
+            serde_json::from_str::<InstructionPattern>(
+                r#"{"mnemonic":"cp","modifiers":[],"operands":[{"kind":"immediate","value":"3"}]}"#,
             )
             .is_err()
         );

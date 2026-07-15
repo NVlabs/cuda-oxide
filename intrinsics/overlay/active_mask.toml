@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for the dynamic warp mask.
 
-schema = 10
+schema = 11
 family = "active_mask"
 
 [[intrinsic]]

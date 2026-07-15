@@ -602,3 +602,80 @@ status = "active"
 catalog_id = "cvt_rz_bf16x2_f32"
 operation_key = "packed.convert.f32x2.bf16x2.toward_zero"
 raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0086"
+status = "active"
+catalog_id = "cp_async_ca_4"
+operation_key = "memory.copy.async.global_to_shared.ca.4.full"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0087"
+status = "active"
+catalog_id = "cp_async_ca_zfill_4"
+operation_key = "memory.copy.async.global_to_shared.ca.4.runtime_source_size"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0088"
+status = "active"
+catalog_id = "cp_async_ca_8"
+operation_key = "memory.copy.async.global_to_shared.ca.8.full"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0089"
+status = "active"
+catalog_id = "cp_async_ca_zfill_8"
+operation_key = "memory.copy.async.global_to_shared.ca.8.runtime_source_size"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0090"
+status = "active"
+catalog_id = "cp_async_ca_16"
+operation_key = "memory.copy.async.global_to_shared.ca.16.full"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0091"
+status = "active"
+catalog_id = "cp_async_ca_zfill_16"
+operation_key = "memory.copy.async.global_to_shared.ca.16.runtime_source_size"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0092"
+status = "active"
+catalog_id = "cp_async_cg_16"
+operation_key = "memory.copy.async.global_to_shared.cg.16.full"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0093"
+status = "active"
+catalog_id = "cp_async_cg_zfill_16"
+operation_key = "memory.copy.async.global_to_shared.cg.16.runtime_source_size"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "*const u8", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0094"
+status = "active"
+catalog_id = "cp_async_commit_group"
+operation_key = "memory.copy.async.group.commit"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0095"
+status = "active"
+catalog_id = "cp_async_wait_all"
+operation_key = "memory.copy.async.group.wait_all"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0096"
+status = "active"
+catalog_id = "cp_async_wait_group"
+operation_key = "memory.copy.async.group.wait_max_pending"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }

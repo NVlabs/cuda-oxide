@@ -10,23 +10,25 @@ use crate::model::{
     CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
-    DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
-    EvidenceFile, EvidenceRecord, EvidenceStageKind, ImportedAddressSpace, ImportedFile,
-    ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract,
-    LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder, LdmatrixMultiplicity,
-    LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding,
-    OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat,
-    PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
-    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
-    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
-    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSaturation, PackedConversionSourceFormat, PreSm70MemberMaskRule, PtxVersion,
-    ReduxAdapter, ReduxOperation, ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode,
-    VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
-    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
-    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
-    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
+    CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter, CpAsyncControlOperation,
+    CpAsyncCopySize, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
+    DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceRecord, EvidenceStageKind,
+    ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource,
+    LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
+    LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
+    MatchOperandEncoding, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
+    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
+    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
+    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
+    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
+    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
+    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
+    PreSm70MemberMaskRule, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation,
+    RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter,
+    WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
+    WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
+    WarpShuffleValueKind,
 };
 #[cfg(test)]
 use crate::ptx::InstructionPattern;
@@ -37,9 +39,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 14;
-const OVERLAY_SHARD_SCHEMA: u32 = 10;
-pub(crate) const CATALOG_SCHEMA: u32 = 13;
+const OVERLAY_SCHEMA: u32 = 15;
+const OVERLAY_SHARD_SCHEMA: u32 = 11;
+pub(crate) const CATALOG_SCHEMA: u32 = 14;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -327,7 +329,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -338,6 +340,8 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.warp_barrier,
             record.warp_shuffle,
             record.dot_product,
+            record.cp_async_copy,
+            record.cp_async_control,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -666,6 +670,14 @@ fn validate_policy(
         "warp_shuffle" => validate_warp_shuffle_policy(policy, declaration)?,
         "packed_alu" => validate_packed_alu_policy(policy, source, declaration)?,
         "packed_conversion" => validate_packed_conversion_policy(policy, source, declaration)?,
+        "cp_async_copy" => validate_cp_async_copy_policy(
+            policy,
+            declaration.context("cp_async_copy requires imported LLVM declaration")?,
+        )?,
+        "cp_async_control" => validate_cp_async_control_policy(
+            policy,
+            declaration.context("cp_async_control requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -750,6 +762,14 @@ fn validate_policy(
             "warp_match" => 4,
             "warp_shuffle" => 8,
             "packed_conversion" => 0,
+            "cp_async_copy"
+                if policy
+                    .cp_async_copy
+                    .as_ref()
+                    .is_some_and(|copy| copy.source_size == CpAsyncSourceSize::Runtime) =>
+            {
+                2
+            }
             _ => 1,
         };
         ensure!(
@@ -820,6 +840,35 @@ fn selection_matches_policy(
                 "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
                 recipe.ptx_mode
             )
+            && selection.constraints.is_empty();
+    }
+
+    if policy.family == "cp_async_copy" {
+        let Some(copy) = &policy.cp_async_copy else {
+            return false;
+        };
+        let Some(recipe) = cp_async_copy_recipe(copy) else {
+            return false;
+        };
+        return recipe
+            .selections
+            .contains(&selection.source_record.as_str())
+            && policy.expected_ptx.matches(&selection.asm)
+            && selection.constraints.is_empty();
+    }
+
+    if policy.family == "cp_async_control" {
+        let Some(control) = &policy.cp_async_control else {
+            return false;
+        };
+        let recipe = cp_async_control_recipe(control.operation);
+        let instruction_matches = if control.operation == CpAsyncControlOperation::WaitGroup {
+            selection.asm == "cp.async.wait_group \t$n;"
+        } else {
+            policy.expected_ptx.matches(&selection.asm)
+        };
+        return selection.source_record == recipe.selection
+            && instruction_matches
             && selection.constraints.is_empty();
     }
 
@@ -929,6 +978,8 @@ fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with sync",
         policy.id
@@ -1085,6 +1136,8 @@ fn validate_vote_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with vote",
         policy.id
@@ -1335,6 +1388,8 @@ fn validate_active_mask_policy(
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -1591,6 +1646,8 @@ fn validate_warp_match_policy(
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.warp_barrier.is_none()
             && policy.warp_shuffle.is_none()
             && policy.ldmatrix_variant.is_none()
@@ -1742,6 +1799,8 @@ fn validate_warp_barrier_policy(
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -1969,6 +2028,8 @@ fn validate_warp_shuffle_policy(
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -2449,7 +2510,13 @@ fn validate_selected_target_predicates(
         );
     } else if matches!(
         policy.family.as_str(),
-        "vote" | "active_mask" | "warp_match" | "warp_barrier" | "warp_shuffle"
+        "vote"
+            | "active_mask"
+            | "warp_match"
+            | "warp_barrier"
+            | "warp_shuffle"
+            | "cp_async_copy"
+            | "cp_async_control"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -2500,6 +2567,8 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with an sreg",
         policy.id
@@ -2692,6 +2761,8 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
@@ -2912,6 +2983,8 @@ fn validate_dot_product_policy(
             && policy.warp_shuffle.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with dotprod",
         policy.id
@@ -3211,7 +3284,9 @@ fn validate_ldmatrix_policy(
             && policy.warp_shuffle.is_none()
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
-            && policy.packed_conversion.is_none(),
+            && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none(),
         "{} mixes another generated-family contract with ldmatrix",
         policy.id
     );
@@ -3305,6 +3380,8 @@ fn validate_packed_atomic_policy(
             && policy.dot_product.is_none()
             && policy.packed_alu.is_none()
             && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
         policy.id
@@ -4050,6 +4127,553 @@ struct PackedConversionRecipe {
     summary: &'static str,
 }
 
+struct CpAsyncCopyRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    rust_name: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    selections: &'static [&'static str],
+    summary: &'static str,
+}
+
+fn cp_async_copy_recipe(copy: &crate::model::CpAsyncCopy) -> Option<CpAsyncCopyRecipe> {
+    match (copy.cache_policy, copy.copy_size, copy.source_size) {
+        (CpAsyncCachePolicy::Ca, CpAsyncCopySize::B4, CpAsyncSourceSize::Full) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_ca_4",
+                abi_id: "i0086",
+                operation_key: "memory.copy.async.global_to_shared.ca.4.full",
+                rust_name: "cp_async_ca_4",
+                dialect_op_type: "CpAsyncCa4Op",
+                dialect_op_name: "nvvm.cp_async_ca_4",
+                source_record: "int_nvvm_cp_async_ca_shared_global_4",
+                llvm_symbol: "llvm.nvvm.cp.async.ca.shared.global.4",
+                selections: &["CP_ASYNC_CA_SHARED_GLOBAL_4"],
+                summary: "Starts a four-byte cache-all asynchronous copy from global to shared memory.",
+            })
+        }
+        (CpAsyncCachePolicy::Ca, CpAsyncCopySize::B4, CpAsyncSourceSize::Runtime) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_ca_zfill_4",
+                abi_id: "i0087",
+                operation_key: "memory.copy.async.global_to_shared.ca.4.runtime_source_size",
+                rust_name: "cp_async_ca_zfill_4",
+                dialect_op_type: "CpAsyncCaZfill4Op",
+                dialect_op_name: "nvvm.cp_async_ca_zfill_4",
+                source_record: "int_nvvm_cp_async_ca_shared_global_4_s",
+                llvm_symbol: "llvm.nvvm.cp.async.ca.shared.global.4.s",
+                selections: &[
+                    "CP_ASYNC_CA_SHARED_GLOBAL_4_s",
+                    "CP_ASYNC_CA_SHARED_GLOBAL_4_si",
+                ],
+                summary: "Starts a four-byte cache-all asynchronous copy and zero-fills bytes beyond the runtime source size.",
+            })
+        }
+        (CpAsyncCachePolicy::Ca, CpAsyncCopySize::B8, CpAsyncSourceSize::Full) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_ca_8",
+                abi_id: "i0088",
+                operation_key: "memory.copy.async.global_to_shared.ca.8.full",
+                rust_name: "cp_async_ca_8",
+                dialect_op_type: "CpAsyncCa8Op",
+                dialect_op_name: "nvvm.cp_async_ca_8",
+                source_record: "int_nvvm_cp_async_ca_shared_global_8",
+                llvm_symbol: "llvm.nvvm.cp.async.ca.shared.global.8",
+                selections: &["CP_ASYNC_CA_SHARED_GLOBAL_8"],
+                summary: "Starts an eight-byte cache-all asynchronous copy from global to shared memory.",
+            })
+        }
+        (CpAsyncCachePolicy::Ca, CpAsyncCopySize::B8, CpAsyncSourceSize::Runtime) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_ca_zfill_8",
+                abi_id: "i0089",
+                operation_key: "memory.copy.async.global_to_shared.ca.8.runtime_source_size",
+                rust_name: "cp_async_ca_zfill_8",
+                dialect_op_type: "CpAsyncCaZfill8Op",
+                dialect_op_name: "nvvm.cp_async_ca_zfill_8",
+                source_record: "int_nvvm_cp_async_ca_shared_global_8_s",
+                llvm_symbol: "llvm.nvvm.cp.async.ca.shared.global.8.s",
+                selections: &[
+                    "CP_ASYNC_CA_SHARED_GLOBAL_8_s",
+                    "CP_ASYNC_CA_SHARED_GLOBAL_8_si",
+                ],
+                summary: "Starts an eight-byte cache-all asynchronous copy and zero-fills bytes beyond the runtime source size.",
+            })
+        }
+        (CpAsyncCachePolicy::Ca, CpAsyncCopySize::B16, CpAsyncSourceSize::Full) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_ca_16",
+                abi_id: "i0090",
+                operation_key: "memory.copy.async.global_to_shared.ca.16.full",
+                rust_name: "cp_async_ca_16",
+                dialect_op_type: "CpAsyncCa16Op",
+                dialect_op_name: "nvvm.cp_async_ca_16",
+                source_record: "int_nvvm_cp_async_ca_shared_global_16",
+                llvm_symbol: "llvm.nvvm.cp.async.ca.shared.global.16",
+                selections: &["CP_ASYNC_CA_SHARED_GLOBAL_16"],
+                summary: "Starts a sixteen-byte cache-all asynchronous copy from global to shared memory.",
+            })
+        }
+        (CpAsyncCachePolicy::Ca, CpAsyncCopySize::B16, CpAsyncSourceSize::Runtime) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_ca_zfill_16",
+                abi_id: "i0091",
+                operation_key: "memory.copy.async.global_to_shared.ca.16.runtime_source_size",
+                rust_name: "cp_async_ca_zfill_16",
+                dialect_op_type: "CpAsyncCaZfill16Op",
+                dialect_op_name: "nvvm.cp_async_ca_zfill_16",
+                source_record: "int_nvvm_cp_async_ca_shared_global_16_s",
+                llvm_symbol: "llvm.nvvm.cp.async.ca.shared.global.16.s",
+                selections: &[
+                    "CP_ASYNC_CA_SHARED_GLOBAL_16_s",
+                    "CP_ASYNC_CA_SHARED_GLOBAL_16_si",
+                ],
+                summary: "Starts a sixteen-byte cache-all asynchronous copy and zero-fills bytes beyond the runtime source size.",
+            })
+        }
+        (CpAsyncCachePolicy::Cg, CpAsyncCopySize::B16, CpAsyncSourceSize::Full) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_cg_16",
+                abi_id: "i0092",
+                operation_key: "memory.copy.async.global_to_shared.cg.16.full",
+                rust_name: "cp_async_cg_16",
+                dialect_op_type: "CpAsyncCg16Op",
+                dialect_op_name: "nvvm.cp_async_cg_16",
+                source_record: "int_nvvm_cp_async_cg_shared_global_16",
+                llvm_symbol: "llvm.nvvm.cp.async.cg.shared.global.16",
+                selections: &["CP_ASYNC_CG_SHARED_GLOBAL_16"],
+                summary: "Starts a sixteen-byte cache-global asynchronous copy from global to shared memory.",
+            })
+        }
+        (CpAsyncCachePolicy::Cg, CpAsyncCopySize::B16, CpAsyncSourceSize::Runtime) => {
+            Some(CpAsyncCopyRecipe {
+                id: "cp_async_cg_zfill_16",
+                abi_id: "i0093",
+                operation_key: "memory.copy.async.global_to_shared.cg.16.runtime_source_size",
+                rust_name: "cp_async_cg_zfill_16",
+                dialect_op_type: "CpAsyncCgZfill16Op",
+                dialect_op_name: "nvvm.cp_async_cg_zfill_16",
+                source_record: "int_nvvm_cp_async_cg_shared_global_16_s",
+                llvm_symbol: "llvm.nvvm.cp.async.cg.shared.global.16.s",
+                selections: &[
+                    "CP_ASYNC_CG_SHARED_GLOBAL_16_s",
+                    "CP_ASYNC_CG_SHARED_GLOBAL_16_si",
+                ],
+                summary: "Starts a sixteen-byte cache-global asynchronous copy and zero-fills bytes beyond the runtime source size.",
+            })
+        }
+        _ => None,
+    }
+}
+
+fn validate_cp_async_copy_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let copy = policy
+        .cp_async_copy
+        .as_ref()
+        .with_context(|| format!("{} has no closed cp.async copy contract", policy.id))?;
+    let recipe = cp_async_copy_recipe(copy).with_context(|| {
+        format!(
+            "{} requests an unsupported classic cp.async copy form",
+            policy.id
+        )
+    })?;
+    let dynamic_source_size = copy.source_size == CpAsyncSourceSize::Runtime;
+    let expected_adapter = if dynamic_source_size {
+        CpAsyncAdapter::DirectPointersAndSourceSize
+    } else {
+        CpAsyncAdapter::DirectPointers
+    };
+    ensure!(
+        copy.adapter == expected_adapter,
+        "{} cp.async source-size form and adapter disagree",
+        policy.id
+    );
+    ensure!(
+        copy.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} cannot claim unrecorded cp.async runtime validation",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} cp.async identity does not match its closed recipe",
+        policy.id
+    );
+    let rust_arguments = if dynamic_source_size {
+        vec!["*mut u32", "*const u8", "u32"]
+    } else {
+        vec!["*mut u32", "*const u32"]
+    };
+    ensure!(
+        policy.rust_module == "async_copy"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path
+                == format!("cuda_intrinsics::async_copy::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::async_copy::{}", recipe.rust_name)],
+        "{} must preserve its unsafe cp.async raw and compatibility API",
+        policy.id
+    );
+    let llvm_arguments = if dynamic_source_size {
+        vec!["shared_ptr", "global_ptr", "i32"]
+    } else {
+        vec!["shared_ptr", "global_ptr"]
+    };
+    let dialect_operands = if dynamic_source_size {
+        vec!["ptr", "ptr", "i32"]
+    } else {
+        vec!["ptr", "ptr"]
+    };
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_cp_async_copy",
+        "{} is outside the closed cp.async signature and lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.ptx_result == "()"
+            && policy.targets == "all",
+        "{} cp.async effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.9.26.3.1 Data Movement and Conversion Instructions: cp.async"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async",
+        "{} cp.async PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.summary == recipe.summary,
+        "{} cp.async summary does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties
+            == [
+                "IntrArgMemOnly",
+                "IntrNoCallback",
+                "NoAlias<arg0>",
+                "NoAlias<arg1>",
+                "ReadOnly<arg1>",
+                "WriteOnly<arg0>",
+            ],
+        "{} cp.async effects disagree with the imported LLVM declaration",
+        policy.id
+    );
+    let cache = match copy.cache_policy {
+        CpAsyncCachePolicy::Ca => "ca",
+        CpAsyncCachePolicy::Cg => "cg",
+    };
+    let mut operands = vec![
+        OperandPattern::Address,
+        OperandPattern::Address,
+        OperandPattern::Exact {
+            value: copy.copy_size.bytes().to_string(),
+        },
+    ];
+    if dynamic_source_size {
+        operands.push(OperandPattern::RegisterOrImmediate);
+    }
+    ensure!(
+        policy.expected_ptx.mnemonic == "cp"
+            && policy.expected_ptx.modifiers == ["async", cache, "shared", "global"]
+            && policy.expected_ptx.operands == operands,
+        "{} expected PTX does not match its cp.async recipe",
+        policy.id
+    );
+    let actual_selections: BTreeSet<_> = declaration
+        .selections
+        .iter()
+        .map(|selection| selection.source_record.as_str())
+        .collect();
+    ensure!(
+        actual_selections == recipe.selections.iter().copied().collect(),
+        "{} imported cp.async selection set changed",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must define the reviewed typed-LLVM and inline-PTX cp.async routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "cp_async_copy")?;
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes ldmatrix state with cp_async_copy",
+        policy.id
+    );
+    Ok(())
+}
+
+struct CpAsyncControlRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    rust_name: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    selection: &'static str,
+    ptx_modifier: &'static str,
+    summary: &'static str,
+}
+
+fn cp_async_control_recipe(operation: CpAsyncControlOperation) -> CpAsyncControlRecipe {
+    match operation {
+        CpAsyncControlOperation::CommitGroup => CpAsyncControlRecipe {
+            id: "cp_async_commit_group",
+            abi_id: "i0094",
+            operation_key: "memory.copy.async.group.commit",
+            rust_name: "cp_async_commit_group",
+            dialect_op_type: "CpAsyncCommitGroupOp",
+            dialect_op_name: "nvvm.cp_async_commit_group",
+            source_record: "int_nvvm_cp_async_commit_group",
+            llvm_symbol: "llvm.nvvm.cp.async.commit.group",
+            selection: "CP_ASYNC_COMMIT_GROUP",
+            ptx_modifier: "commit_group",
+            summary: "Commits this thread's uncommitted asynchronous copies as one group.",
+        },
+        CpAsyncControlOperation::WaitAll => CpAsyncControlRecipe {
+            id: "cp_async_wait_all",
+            abi_id: "i0095",
+            operation_key: "memory.copy.async.group.wait_all",
+            rust_name: "cp_async_wait_all",
+            dialect_op_type: "CpAsyncWaitAllOp",
+            dialect_op_name: "nvvm.cp_async_wait_all",
+            source_record: "int_nvvm_cp_async_wait_all",
+            llvm_symbol: "llvm.nvvm.cp.async.wait.all",
+            selection: "CP_ASYNC_WAIT_ALL",
+            ptx_modifier: "wait_all",
+            summary: "Waits for all asynchronous copy groups issued by this thread.",
+        },
+        CpAsyncControlOperation::WaitGroup => CpAsyncControlRecipe {
+            id: "cp_async_wait_group",
+            abi_id: "i0096",
+            operation_key: "memory.copy.async.group.wait_max_pending",
+            rust_name: "cp_async_wait_group",
+            dialect_op_type: "CpAsyncWaitGroupOp",
+            dialect_op_name: "nvvm.cp_async_wait_group",
+            source_record: "int_nvvm_cp_async_wait_group",
+            llvm_symbol: "llvm.nvvm.cp.async.wait.group",
+            selection: "CP_ASYNC_WAIT_GROUP",
+            ptx_modifier: "wait_group",
+            summary: "Waits until at most the compile-time constant number of recent asynchronous copy groups remain pending.",
+        },
+    }
+}
+
+fn validate_cp_async_control_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let control = policy
+        .cp_async_control
+        .as_ref()
+        .with_context(|| format!("{} has no closed cp.async control contract", policy.id))?;
+    let recipe = cp_async_control_recipe(control.operation);
+    let has_operand = control.operation == CpAsyncControlOperation::WaitGroup;
+    let expected_adapter = if has_operand {
+        CpAsyncControlAdapter::CompileTimeConstantMaxPending
+    } else {
+        CpAsyncControlAdapter::NoOperands
+    };
+    ensure!(
+        control.adapter == expected_adapter,
+        "{} cp.async control and adapter disagree",
+        policy.id
+    );
+    ensure!(
+        control.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} cannot claim unrecorded cp.async control runtime validation",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} cp.async control identity does not match its closed recipe",
+        policy.id
+    );
+    let rust_arguments = if has_operand { vec!["u32"] } else { vec![] };
+    let dialect_operands = if has_operand { vec!["i32"] } else { vec![] };
+    ensure!(
+        policy.rust_module == "async_copy"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path
+                == format!("cuda_intrinsics::async_copy::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::async_copy::{}", recipe.rust_name)]
+            && policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == dialect_operands
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_cp_async_control",
+        "{} is outside the closed cp.async control API and lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.ptx_result == "()"
+            && policy.targets == "all",
+        "{} cp.async control effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    let (ptx_isa_section, ptx_isa_url) = match control.operation {
+        CpAsyncControlOperation::CommitGroup => (
+            "9.7.9.26.3.2 Data Movement and Conversion Instructions: cp.async.commit_group",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-commit-group",
+        ),
+        CpAsyncControlOperation::WaitAll | CpAsyncControlOperation::WaitGroup => (
+            "9.7.9.26.3.3 Data Movement and Conversion Instructions: cp.async.wait_group / cp.async.wait_all",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-wait-group-cp-async-wait-all",
+        ),
+    };
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == ptx_isa_section
+            && policy.ptx_isa_url == ptx_isa_url,
+        "{} cp.async control PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.summary == recipe.summary,
+        "{} cp.async control summary does not match its closed recipe",
+        policy.id
+    );
+    let expected_properties: Vec<String> = if has_operand {
+        vec!["ImmArg<arg0>".into()]
+    } else {
+        vec![]
+    };
+    ensure!(
+        declaration.properties == expected_properties,
+        "{} cp.async control properties disagree with the imported declaration",
+        policy.id
+    );
+    let operands = if has_operand {
+        vec![OperandPattern::Immediate]
+    } else {
+        vec![]
+    };
+    ensure!(
+        policy.expected_ptx.mnemonic == "cp"
+            && policy.expected_ptx.modifiers == ["async", recipe.ptx_modifier]
+            && policy.expected_ptx.operands == operands
+            && declaration.selections.len() == 1
+            && declaration.selections[0].source_record == recipe.selection,
+        "{} expected PTX or imported selection disagrees with its cp.async control recipe",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must define the reviewed typed-LLVM and inline-PTX cp.async control routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "cp_async_control")?;
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes ldmatrix state with cp_async_control",
+        policy.id
+    );
+    Ok(())
+}
+
 fn packed_conversion_recipe(
     conversion: &crate::model::PackedConversion,
 ) -> Option<PackedConversionRecipe> {
@@ -4355,7 +4979,9 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && policy.ldmatrix_adapter.is_none()
             && policy.selected_address_space.is_none()
             && (policy.family == "packed_alu") == policy.packed_alu.is_some()
-            && (policy.family == "packed_conversion") == policy.packed_conversion.is_some(),
+            && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
+            && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
+            && (policy.family == "cp_async_control") == policy.cp_async_control.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -4709,8 +5335,12 @@ fn validate_typed_llvm_evidence(policy: &OverlayIntrinsic, record: &EvidenceReco
         .llvm_arguments
         .iter()
         .map(|argument| {
-            if argument != "anyptr" {
-                return Ok(argument.clone());
+            match argument.as_str() {
+                "shared_ptr" => return Ok("ptr addrspace(3)".into()),
+                "global_ptr" => return Ok("ptr addrspace(1)".into()),
+                "ptr" => return Ok("ptr".into()),
+                "anyptr" => {}
+                _ => return Ok(argument.clone()),
             }
             match policy.selected_address_space.with_context(|| {
                 format!(
@@ -5117,6 +5747,8 @@ fn resolve_record(
         dot_product: policy.dot_product.clone(),
         packed_alu: policy.packed_alu.clone(),
         packed_conversion: policy.packed_conversion.clone(),
+        cp_async_copy: policy.cp_async_copy.clone(),
+        cp_async_control: policy.cp_async_control.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -5229,6 +5861,8 @@ mod tests {
             dot_product: None,
             packed_alu: None,
             packed_conversion: None,
+            cp_async_copy: None,
+            cp_async_control: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -6157,8 +6791,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 13);
-        assert_eq!(overlay.intrinsics.len(), 85);
+        assert_eq!(overlay.shards.len(), 15);
+        assert_eq!(overlay.intrinsics.len(), 96);
         assert_eq!(
             overlay
                 .intrinsics
@@ -6198,6 +6832,22 @@ mod tests {
                 .filter(|record| record.family == "ldmatrix")
                 .count(),
             6
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "cp_async_copy")
+                .count(),
+            8
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "cp_async_control")
+                .count(),
+            3
         );
         assert_eq!(
             overlay
@@ -6249,6 +6899,127 @@ mod tests {
             "overlay/not-toml.json",
         ] {
             assert!(validate_overlay_shard_path(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn cp_async_copy_recipe_admits_only_classic_llvm_forms() {
+        let cases = [
+            (
+                CpAsyncCachePolicy::Ca,
+                CpAsyncCopySize::B4,
+                CpAsyncSourceSize::Full,
+                Some("cp_async_ca_4"),
+            ),
+            (
+                CpAsyncCachePolicy::Ca,
+                CpAsyncCopySize::B4,
+                CpAsyncSourceSize::Runtime,
+                Some("cp_async_ca_zfill_4"),
+            ),
+            (
+                CpAsyncCachePolicy::Ca,
+                CpAsyncCopySize::B8,
+                CpAsyncSourceSize::Full,
+                Some("cp_async_ca_8"),
+            ),
+            (
+                CpAsyncCachePolicy::Ca,
+                CpAsyncCopySize::B8,
+                CpAsyncSourceSize::Runtime,
+                Some("cp_async_ca_zfill_8"),
+            ),
+            (
+                CpAsyncCachePolicy::Ca,
+                CpAsyncCopySize::B16,
+                CpAsyncSourceSize::Full,
+                Some("cp_async_ca_16"),
+            ),
+            (
+                CpAsyncCachePolicy::Ca,
+                CpAsyncCopySize::B16,
+                CpAsyncSourceSize::Runtime,
+                Some("cp_async_ca_zfill_16"),
+            ),
+            (
+                CpAsyncCachePolicy::Cg,
+                CpAsyncCopySize::B4,
+                CpAsyncSourceSize::Full,
+                None,
+            ),
+            (
+                CpAsyncCachePolicy::Cg,
+                CpAsyncCopySize::B4,
+                CpAsyncSourceSize::Runtime,
+                None,
+            ),
+            (
+                CpAsyncCachePolicy::Cg,
+                CpAsyncCopySize::B8,
+                CpAsyncSourceSize::Full,
+                None,
+            ),
+            (
+                CpAsyncCachePolicy::Cg,
+                CpAsyncCopySize::B8,
+                CpAsyncSourceSize::Runtime,
+                None,
+            ),
+            (
+                CpAsyncCachePolicy::Cg,
+                CpAsyncCopySize::B16,
+                CpAsyncSourceSize::Full,
+                Some("cp_async_cg_16"),
+            ),
+            (
+                CpAsyncCachePolicy::Cg,
+                CpAsyncCopySize::B16,
+                CpAsyncSourceSize::Runtime,
+                Some("cp_async_cg_zfill_16"),
+            ),
+        ];
+
+        for (cache_policy, copy_size, source_size, expected) in cases {
+            let copy = crate::model::CpAsyncCopy {
+                cache_policy,
+                copy_size,
+                source_size,
+                adapter: if source_size == CpAsyncSourceSize::Runtime {
+                    CpAsyncAdapter::DirectPointersAndSourceSize
+                } else {
+                    CpAsyncAdapter::DirectPointers
+                },
+                runtime_validation: RuntimeValidation::Unexecuted,
+            };
+            assert_eq!(
+                cp_async_copy_recipe(&copy).map(|recipe| recipe.id),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn pinned_cp_async_records_match_the_closed_recipes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let policies: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| matches!(record.family.as_str(), "cp_async_copy" | "cp_async_control"))
+            .collect();
+
+        assert_eq!(policies.len(), 11);
+        for policy in policies {
+            let declaration = declarations[policy.source_record.as_deref().unwrap()];
+            validate_imported_policy(policy, declaration).unwrap();
         }
     }
 

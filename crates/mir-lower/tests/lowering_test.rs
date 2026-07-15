@@ -2774,6 +2774,224 @@ fn test_warp_barrier_uses_typed_intrinsic_on_both_backends() -> Result<(), anyho
 // cp.async lowering tests
 // =============================================================================
 
+fn lower_all_classic_cp_async(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = make_test_ctx();
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let dst_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let src32_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), false);
+    let src8_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![
+            dst_ty.into(),
+            src32_ty.into(),
+            src8_ty.into(),
+            u32_ty.into(),
+        ],
+    );
+    let dst = entry.deref(&ctx).get_argument(0);
+    let src32 = entry.deref(&ctx).get_argument(1);
+    let src8 = entry.deref(&ctx).get_argument(2);
+    let source_size = entry.deref(&ctx).get_argument(3);
+
+    let zero_op = Operation::new(
+        &mut ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(zero_op).set_attr_value(
+        &ctx,
+        IntegerAttr::new(u32_ty, APInt::from_u32(0, NonZeroUsize::new(32).unwrap())),
+    );
+    zero_op.insert_at_back(entry, &ctx);
+    let zero = zero_op.deref(&ctx).get_result(0);
+
+    for copy in [
+        nvvm::CpAsyncCa4Op::build(&mut ctx, dst, src32),
+        nvvm::CpAsyncCa8Op::build(&mut ctx, dst, src32),
+        nvvm::CpAsyncCa16Op::build(&mut ctx, dst, src32),
+        nvvm::CpAsyncCaZfill4Op::build(&mut ctx, dst, src8, source_size),
+        nvvm::CpAsyncCaZfill8Op::build(&mut ctx, dst, src8, source_size),
+        nvvm::CpAsyncCaZfill16Op::build(&mut ctx, dst, src8, source_size),
+        nvvm::CpAsyncCg16Op::build(&mut ctx, dst, src32),
+        nvvm::CpAsyncCgZfill16Op::build(&mut ctx, dst, src8, source_size),
+    ] {
+        copy.insert_at_back(entry, &ctx);
+    }
+    for control in [
+        nvvm::CpAsyncCommitGroupOp::build(&mut ctx),
+        nvvm::CpAsyncWaitGroupOp::build(&mut ctx, zero),
+        nvvm::CpAsyncWaitAllOp::build(&mut ctx),
+    ] {
+        control.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_generated_cp_async_llvm_nvptx_uses_all_typed_intrinsics() -> Result<(), anyhow::Error> {
+    use llvm_export::types::PointerType;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_all_classic_cp_async(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let mut found = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX cp.async must use typed intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        if !callee.starts_with("llvm_nvvm_cp_async") {
+            continue;
+        }
+        if callee.contains("shared_global") {
+            let call = op.deref(&ctx);
+            let destination_ty = call.get_operand(0).get_type(&ctx);
+            let source_ty = call.get_operand(1).get_type(&ctx);
+            assert_eq!(
+                destination_ty
+                    .deref(&ctx)
+                    .downcast_ref::<PointerType>()
+                    .unwrap()
+                    .address_space(),
+                3
+            );
+            assert_eq!(
+                source_ty
+                    .deref(&ctx)
+                    .downcast_ref::<PointerType>()
+                    .unwrap()
+                    .address_space(),
+                1
+            );
+        }
+        found.push(callee);
+    }
+    found.sort();
+    let mut expected = [
+        "llvm_nvvm_cp_async_ca_shared_global_4",
+        "llvm_nvvm_cp_async_ca_shared_global_4_s",
+        "llvm_nvvm_cp_async_ca_shared_global_8",
+        "llvm_nvvm_cp_async_ca_shared_global_8_s",
+        "llvm_nvvm_cp_async_ca_shared_global_16",
+        "llvm_nvvm_cp_async_ca_shared_global_16_s",
+        "llvm_nvvm_cp_async_cg_shared_global_16",
+        "llvm_nvvm_cp_async_cg_shared_global_16_s",
+        "llvm_nvvm_cp_async_commit_group",
+        "llvm_nvvm_cp_async_wait_all",
+        "llvm_nvvm_cp_async_wait_group",
+    ]
+    .map(str::to_owned);
+    expected.sort();
+    assert_eq!(found, expected);
+    Ok(())
+}
+
+#[test]
+fn test_generated_cp_async_libnvvm_uses_all_exact_inline_ptx() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) = lower_all_classic_cp_async(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let mut lowered = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::SideEffect);
+        assert!(
+            asm.get_attr_inline_asm_convergent(&ctx)
+                .is_some_and(|value| !bool::from((*value).clone()))
+        );
+        lowered.push((
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap(),
+            asm.get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap(),
+        ));
+    }
+
+    let expected = [
+        (
+            "cp.async.ca.shared.global [%smem32], [%gmem64], 4;",
+            "l,l,~{memory}",
+        ),
+        (
+            "cp.async.ca.shared.global [%smem32], [%gmem64], 8;",
+            "l,l,~{memory}",
+        ),
+        (
+            "cp.async.ca.shared.global [%smem32], [%gmem64], 16;",
+            "l,l,~{memory}",
+        ),
+        (
+            "cp.async.ca.shared.global [%smem32], [%gmem64], 4, $2;",
+            "l,l,r,~{memory}",
+        ),
+        (
+            "cp.async.ca.shared.global [%smem32], [%gmem64], 8, $2;",
+            "l,l,r,~{memory}",
+        ),
+        (
+            "cp.async.ca.shared.global [%smem32], [%gmem64], 16, $2;",
+            "l,l,r,~{memory}",
+        ),
+        (
+            "cp.async.cg.shared.global [%smem32], [%gmem64], 16;",
+            "l,l,~{memory}",
+        ),
+        (
+            "cp.async.cg.shared.global [%smem32], [%gmem64], 16, $2;",
+            "l,l,r,~{memory}",
+        ),
+        ("cp.async.commit_group;", "~{memory}"),
+        ("cp.async.wait_group $0;", "n,~{memory}"),
+        ("cp.async.wait_all;", "~{memory}"),
+    ];
+    for (instruction, constraints) in expected {
+        assert_eq!(
+            lowered
+                .iter()
+                .filter(|(template, actual_constraints)| {
+                    template.contains(instruction) && actual_constraints == constraints
+                })
+                .count(),
+            1,
+            "missing exact `{instruction}`"
+        );
+    }
+    assert_eq!(lowered.len(), expected.len());
+    Ok(())
+}
+
 #[test]
 fn test_cp_async_ca_4_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
@@ -2837,7 +3055,15 @@ fn assert_cp_async_inline_asm_lowering(
 ) -> Result<(), anyhow::Error> {
     use pliron::r#type::Typed;
 
-    mir_lower::lower_mir_to_llvm(ctx, module_ptr).map_err(|e| anyhow::anyhow!("{e}"))?;
+    mir_lower::lower_mir_to_llvm_with_options(
+        ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: mir_lower::IntrinsicBackend::LibNvvm,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let expected_template = format!(
         "{{ .reg .u64 %smem64; .reg .u32 %smem32; .reg .u64 %gmem64; \
@@ -3008,7 +3234,15 @@ fn assert_cp_async_zfill_inline_asm_lowering(
     use pliron::builtin::types::IntegerType;
     use pliron::r#type::Typed;
 
-    mir_lower::lower_mir_to_llvm(ctx, module_ptr).map_err(|e| anyhow::anyhow!("{e}"))?;
+    mir_lower::lower_mir_to_llvm_with_options(
+        ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: mir_lower::IntrinsicBackend::LibNvvm,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let expected_template = format!(
         "{{ .reg .u64 %smem64; .reg .u32 %smem32; .reg .u64 %gmem64; \

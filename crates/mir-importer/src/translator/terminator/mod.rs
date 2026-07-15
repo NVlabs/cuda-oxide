@@ -3288,35 +3288,6 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
-        // Async Copy (cp.async) Operations (from intrinsics::cp_async)
-        // =================================================================
-        "cuda_device::async_copy::cp_async_ca_4" => {
-            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_4(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::async_copy::cp_async_ca_8" => {
-            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_8(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::async_copy::cp_async_ca_zfill_4" => {
-            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_zfill_4(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::async_copy::cp_async_ca_zfill_8" => {
-            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_zfill_8(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::async_copy::cp_async_ca_zfill_16" => {
-            Ok(Some(intrinsics::cp_async::emit_cp_async_ca_zfill_16(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-
-        // =================================================================
         // Memory Operations (from intrinsics::memory)
         // Note: stmatrix is under cuda_device::tcgen05::
         // =================================================================
