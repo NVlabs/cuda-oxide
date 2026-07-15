@@ -209,6 +209,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub redux: Option<Redux>,
     #[serde(default)]
+    pub vote: Option<Vote>,
+    #[serde(default)]
     pub dot_product: Option<DotProduct>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
@@ -507,6 +509,44 @@ pub enum ReduxAdapter {
     MaskValueToSourceMemberMask,
 }
 
+/// Closed semantic and lowering contract for the generated `vote.sync`
+/// family.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Vote {
+    pub mode: VoteMode,
+    pub participation: VoteParticipation,
+    pub adapter: VoteAdapter,
+    pub mask_encoding: MaskEncoding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoteMode {
+    All,
+    Any,
+    Ballot,
+    Uni,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoteParticipation {
+    ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoteAdapter {
+    DirectMaskPredicate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskEncoding {
+    RegisterOrImmediate,
+}
+
 /// Closed identity and source adapter for generated packed integer dot products.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -701,6 +741,8 @@ pub struct CatalogIntrinsic {
     pub packed_atomic: Option<PackedAtomic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redux: Option<Redux>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vote: Option<Vote>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dot_product: Option<DotProduct>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1018,5 +1060,27 @@ adapter = "mask_value_direct"
 "#;
         let error = toml::from_str::<Redux>(input).unwrap_err();
         assert!(error.to_string().contains("mask_value_direct"));
+    }
+
+    #[test]
+    fn vote_contract_rejects_unknown_modes_and_mask_encodings() {
+        let valid = r#"
+mode = "all"
+participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+adapter = "direct_mask_predicate"
+mask_encoding = "register_or_immediate"
+"#;
+        toml::from_str::<Vote>(valid).unwrap();
+
+        for invalid in [
+            valid.replace("mode = \"all\"", "mode = \"match\""),
+            valid.replace(
+                "mask_encoding = \"register_or_immediate\"",
+                "mask_encoding = \"any_operand\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<Vote>(&invalid).is_err(), "{invalid}");
+        }
     }
 }

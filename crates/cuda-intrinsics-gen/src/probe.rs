@@ -4,6 +4,7 @@
  */
 
 use crate::model::{CatalogIntrinsic, CatalogLlvm, EvidenceStageKind, IntrinsicBackend};
+use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::render::render_probe;
 use crate::resolve::resolve;
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
@@ -76,11 +77,7 @@ pub fn run(
     ensure!(status.success(), "LLVM probe failed with {status}");
     let ptx = fs::read_to_string(&output)
         .with_context(|| format!("read generated PTX {}", output.display()))?;
-    ensure!(
-        record.expected_ptx.matches(&ptx),
-        "probe PTX has no instruction matching `{}`",
-        record.expected_ptx
-    );
+    validate_probe_instructions(record, &ptx)?;
     let has_terminal_stage = record.backend_lowerings.iter().any(|lowering| {
         lowering.backend == IntrinsicBackend::LlvmNvptx
             && lowering
@@ -120,6 +117,51 @@ pub fn run(
         ),
     }
     println!("PTX: {}", output.display());
+    Ok(())
+}
+
+fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<()> {
+    ensure!(
+        record.expected_ptx.matches(ptx),
+        "probe PTX has no instruction matching `{}`",
+        record.expected_ptx
+    );
+    if record.vote.is_some() {
+        validate_register_and_immediate_forms(&record.expected_ptx, 2, "-1", ptx)?;
+    }
+    Ok(())
+}
+
+fn validate_register_and_immediate_forms(
+    expected: &InstructionPattern,
+    operand_index: usize,
+    immediate: &str,
+    ptx: &str,
+) -> Result<()> {
+    let mut register = expected.clone();
+    let register_operand = register
+        .operands
+        .get_mut(operand_index)
+        .context("probe register-or-immediate operand index is out of range")?;
+    ensure!(
+        *register_operand == OperandPattern::RegisterOrImmediate,
+        "probe operand {operand_index} is not register-or-immediate"
+    );
+    *register_operand = OperandPattern::Register;
+
+    let mut immediate_pattern = expected.clone();
+    immediate_pattern.operands[operand_index] = OperandPattern::Exact {
+        value: immediate.into(),
+    };
+
+    ensure!(
+        register.matches(ptx),
+        "probe PTX has no register form matching `{register}`"
+    );
+    ensure!(
+        immediate_pattern.matches(ptx),
+        "probe PTX has no immediate form matching `{immediate_pattern}`"
+    );
     Ok(())
 }
 
@@ -601,6 +643,37 @@ fn rust_toolchain_llc() -> Result<PathBuf> {
 mod tests {
     use super::*;
     use crate::model::{CatalogHalfOpenRange, CatalogLlvmResultFacts};
+
+    #[test]
+    fn vote_probe_requires_register_and_negative_one_mask_forms() {
+        let expected = InstructionPattern::new(
+            "vote",
+            &["sync", "all", "pred"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+        let register = "vote.sync.all.pred %p1, %p2, %r3;";
+        let immediate = "vote.sync.all.pred %p4, %p5, -1;";
+
+        validate_register_and_immediate_forms(
+            &expected,
+            2,
+            "-1",
+            &format!("{register}\n{immediate}"),
+        )
+        .unwrap();
+
+        let error =
+            validate_register_and_immediate_forms(&expected, 2, "-1", register).unwrap_err();
+        assert!(error.to_string().contains("no immediate form"));
+
+        let error =
+            validate_register_and_immediate_forms(&expected, 2, "-1", immediate).unwrap_err();
+        assert!(error.to_string().contains("no register form"));
+    }
 
     fn identity() -> LlcIdentity {
         LlcIdentity {

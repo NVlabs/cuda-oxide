@@ -68,10 +68,8 @@ use dialect_mir::ops::{
     MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLanemaskEqOp,
-    ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
-    ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp,
-    ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
+    ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
@@ -3017,63 +3015,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Warp Primitives (from intrinsics::warp)
         // =================================================================
-        // Lane-position masks: zero-operand u32 special-register reads, same
-        // shape as the thread/block indexing sregs (see `emit_nvvm_intrinsic`).
-        "cuda_device::warp::lanemask_lt" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregLanemaskLtOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::lanemask_le" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregLanemaskLeOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::lanemask_eq" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregLanemaskEqOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::lanemask_ge" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregLanemaskGeOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::lanemask_gt" => Ok(Some(helpers::emit_nvvm_intrinsic(
-            ctx,
-            ReadPtxSregLanemaskGtOp::get_concrete_op_info(),
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
         // Hardware warp identification
         "cuda_device::warp::warpid" => Ok(Some(helpers::emit_nvvm_intrinsic(
             ctx,
@@ -3280,48 +3221,6 @@ fn try_dispatch_intrinsic(
                 loc,
             )?))
         }
-        "cuda_device::warp::all_sync" => Ok(Some(intrinsics::warp::emit_warp_vote(
-            ctx,
-            body,
-            dialect_nvvm::ops::VoteSyncAllOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::any_sync" => Ok(Some(intrinsics::warp::emit_warp_vote(
-            ctx,
-            body,
-            dialect_nvvm::ops::VoteSyncAnyOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::ballot_sync" => Ok(Some(intrinsics::warp::emit_warp_vote(
-            ctx,
-            body,
-            dialect_nvvm::ops::VoteSyncBallotOp::get_concrete_op_info(),
-            true,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
         "cuda_device::warp::match_any_sync" => Ok(Some(intrinsics::warp::emit_warp_match(
             ctx,
             body,

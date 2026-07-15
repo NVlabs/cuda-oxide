@@ -100,7 +100,7 @@ pub fn lane_id() -> u32 {
 /// satisfied the ballot predicate.
 #[inline(never)]
 pub fn lanemask_lt() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.lt()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_lt called outside CUDA kernel context")
 }
 
@@ -111,7 +111,7 @@ pub fn lanemask_lt() -> u32 {
 /// giving an inclusive prefix mask.
 #[inline(never)]
 pub fn lanemask_le() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.le()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_le called outside CUDA kernel context")
 }
 
@@ -122,7 +122,7 @@ pub fn lanemask_le() -> u32 {
 /// directly from a hardware register.
 #[inline(never)]
 pub fn lanemask_eq() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.eq()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_eq called outside CUDA kernel context")
 }
 
@@ -132,7 +132,7 @@ pub fn lanemask_eq() -> u32 {
 /// `i` the result sets bits `i..=31` (i.e. `lanemask_gt() | lanemask_eq()`).
 #[inline(never)]
 pub fn lanemask_ge() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.ge()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_ge called outside CUDA kernel context")
 }
 
@@ -143,7 +143,7 @@ pub fn lanemask_ge() -> u32 {
 /// scans and for finding the next active lane via `(ballot & lanemask_gt())`.
 #[inline(never)]
 pub fn lanemask_gt() -> u32 {
-    // Lowered to: call i32 @llvm.nvvm.read.ptx.sreg.lanemask.gt()
+    // Recognized through the generated intrinsic catalog.
     unreachable!("lanemask_gt called outside CUDA kernel context")
 }
 
@@ -575,6 +575,7 @@ pub fn shuffle_up_f64(var: f64, delta: u32) -> f64 {
 /// PTX `vote.sync.all`. The full-warp shorthand is [`all`].
 #[inline(never)]
 pub fn all_sync(mask: u32, predicate: bool) -> bool {
+    // Recognized through the generated intrinsic catalog.
     let _ = (mask, predicate);
     unreachable!("all_sync called outside CUDA kernel context")
 }
@@ -584,6 +585,7 @@ pub fn all_sync(mask: u32, predicate: bool) -> bool {
 /// PTX `vote.sync.any`. The full-warp shorthand is [`any`].
 #[inline(never)]
 pub fn any_sync(mask: u32, predicate: bool) -> bool {
+    // Recognized through the generated intrinsic catalog.
     let _ = (mask, predicate);
     unreachable!("any_sync called outside CUDA kernel context")
 }
@@ -595,6 +597,7 @@ pub fn any_sync(mask: u32, predicate: bool) -> bool {
 /// is [`ballot`].
 #[inline(never)]
 pub fn ballot_sync(mask: u32, predicate: bool) -> u32 {
+    // Recognized through the generated intrinsic catalog.
     let _ = (mask, predicate);
     unreachable!("ballot_sync called outside CUDA kernel context")
 }

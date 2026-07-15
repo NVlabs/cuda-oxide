@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "backend_profile": "cuda-13.3-libnvvm-13.3.33",
   "backend_kind": "lib_nvvm",
   "llvm_revision": "not-applicable-libnvvm-ir-2.0",

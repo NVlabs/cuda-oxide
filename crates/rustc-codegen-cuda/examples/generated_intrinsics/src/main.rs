@@ -5,17 +5,17 @@
 
 //! End-to-end smoke test for the generated low-level intrinsic surface.
 //!
-//! The kernel deliberately calls the generated raw X/Y/Z-coordinate intrinsics
-//! directly. That proves the raw paths are recognized by both the rustc
-//! call-graph collector and the MIR importer, rather than exercising only the
-//! compatibility spellings in `cuda-device`.
+//! The kernel calls generated coordinate, lane-mask, and vote intrinsics
+//! directly. This covers the raw path instead of only `cuda-device` wrappers.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel};
 use cuda_intrinsics::sreg::{
     block_dim_x, block_dim_y, block_dim_z, block_idx_x, block_idx_y, block_idx_z, grid_dim_x,
-    grid_dim_y, grid_dim_z, thread_idx_x, thread_idx_y, thread_idx_z,
+    grid_dim_y, grid_dim_z, lane_id, lanemask_eq, lanemask_ge, lanemask_gt, lanemask_le,
+    lanemask_lt, thread_idx_x, thread_idx_y, thread_idx_z,
 };
+use cuda_intrinsics::warp::{all_sync, any_sync, ballot_sync, uni_sync};
 
 #[cuda_module]
 mod kernels {
@@ -23,6 +23,31 @@ mod kernels {
 
     #[kernel]
     pub fn record_row_major_volume_idx(mut output: DisjointSlice<u32>) {
+        let lane = lane_id();
+        let lt = lanemask_lt();
+        let le = lanemask_le();
+        let eq = lanemask_eq();
+        let ge = lanemask_ge();
+        let gt = lanemask_gt();
+        let member_mask = lt | eq | gt;
+        let masks_ok = ((lt | eq) == le)
+            & ((gt | eq) == ge)
+            & ((lt ^ ge) == u32::MAX)
+            & ((le ^ gt) == u32::MAX)
+            & (eq.count_ones() == 1);
+
+        // SAFETY: every lane in each full warp executes these calls with the
+        // same full member mask and instruction sequence.
+        let (all_ok, any_ok, ballot, uniform) = unsafe {
+            (
+                all_sync(member_mask, masks_ok),
+                any_sync(member_mask, lane == 0),
+                ballot_sync(member_mask, masks_ok),
+                uni_sync(member_mask, masks_ok),
+            )
+        };
+        let votes_ok = all_ok & any_ok & uniform & (ballot == member_mask);
+
         let block_width = block_dim_x();
         let block_height = block_dim_y();
         let block_depth = block_dim_z();
@@ -34,7 +59,8 @@ mod kernels {
         let plane = block_idx_z() * block_depth + thread_idx_z();
         let row_major_idx = ((plane * grid_height + row) * grid_width + column) as usize;
 
-        if column < grid_width
+        if votes_ok
+            && column < grid_width
             && row < grid_height
             && plane < grid_depth
             && row_major_idx < output.len()

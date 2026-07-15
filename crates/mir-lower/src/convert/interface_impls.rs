@@ -64,24 +64,21 @@ use dialect_nvvm::ops::{
     ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp,
     ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp,
     ReadPtxSregClusterNctaidZOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregEnvReg1Op,
-    ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregLanemaskEqOp,
-    ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
-    ReadPtxSregLanemaskLtOp, ReadPtxSregNclusterIdOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
-    ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp, ShflSyncBflyF32Op,
-    ShflSyncBflyI32Op, ShflSyncBflyI64Op, ShflSyncDownF32Op, ShflSyncDownI32Op, ShflSyncDownI64Op,
-    ShflSyncIdxF32Op, ShflSyncIdxI32Op, ShflSyncIdxI64Op, ShflSyncUpF32Op, ShflSyncUpI32Op,
-    ShflSyncUpI64Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp, SubBf16x2Op, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
-    Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
-    Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
-    Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
+    ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregNclusterIdOp,
+    ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp,
+    ReadPtxSregWarpIdOp, ShflSyncBflyF32Op, ShflSyncBflyI32Op, ShflSyncBflyI64Op,
+    ShflSyncDownF32Op, ShflSyncDownI32Op, ShflSyncDownI64Op, ShflSyncIdxF32Op, ShflSyncIdxI32Op,
+    ShflSyncIdxI64Op, ShflSyncUpF32Op, ShflSyncUpI32Op, ShflSyncUpI64Op, StmatrixM8n8X2Op,
+    StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, SubBf16x2Op, Tcgen05AllocCg2Op,
+    Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp,
+    Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op,
+    Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
     Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
     Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
     Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
-    Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, TrapOp,
-    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VprintfOp, WgmmaCommitGroupSyncAlignedOp,
-    WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaWaitGroupSyncAlignedOp,
+    Tcgen05StoreWaitOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, TrapOp, VprintfOp,
+    WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMakeSmemDescOp,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -983,96 +980,6 @@ impl MirToLlvmConversion for ReadPtxSregEnvReg2Op {
 }
 
 #[op_interface_impl]
-impl MirToLlvmConversion for ReadPtxSregLanemaskLtOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_lanemask_lt",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ReadPtxSregLanemaskLeOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_lanemask_le",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ReadPtxSregLanemaskEqOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_lanemask_eq",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ReadPtxSregLanemaskGeOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_lanemask_ge",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ReadPtxSregLanemaskGtOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::basic::convert_sreg_read_i32(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_read_ptx_sreg_lanemask_gt",
-        )
-    }
-}
-
-#[op_interface_impl]
 impl MirToLlvmConversion for ReadPtxSregWarpIdOp {
     fn convert(
         &self,
@@ -1791,60 +1698,6 @@ impl MirToLlvmConversion for ShflSyncUpI64Op {
             operands_info,
             "up",
             0,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for VoteSyncAllOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::warp::convert_vote(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_vote_all_sync",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for VoteSyncAnyOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::warp::convert_vote(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_vote_any_sync",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for VoteSyncBallotOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::warp::convert_vote(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_vote_ballot_sync",
         )
     }
 }

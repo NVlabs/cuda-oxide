@@ -11,11 +11,12 @@ use std::fmt;
 /// Register operands accept both LLVM TableGen placeholders such as `$dst`
 /// and registers emitted by LLVM such as `%r12`. Exact operands are useful for
 /// literals and special registers, whose spelling is part of the instruction
-/// contract.
+/// contract. Register-or-immediate operands also accept integer literals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperandPattern {
     Register,
+    RegisterOrImmediate,
     Exact { value: String },
     RegisterList { length: usize },
     Address,
@@ -30,6 +31,7 @@ impl<'de> Deserialize<'de> for OperandPattern {
         #[serde(rename_all = "snake_case")]
         enum Kind {
             Register,
+            RegisterOrImmediate,
             Exact,
             RegisterList,
             Address,
@@ -50,11 +52,15 @@ impl<'de> Deserialize<'de> for OperandPattern {
             representation.length,
         ) {
             (Kind::Register, None, None) => Ok(Self::Register),
+            (Kind::RegisterOrImmediate, None, None) => Ok(Self::RegisterOrImmediate),
             (Kind::Exact, Some(value), None) => Ok(Self::Exact { value }),
             (Kind::RegisterList, None, Some(length)) => Ok(Self::RegisterList { length }),
             (Kind::Address, None, None) => Ok(Self::Address),
             (Kind::Register, _, _) => Err(serde::de::Error::custom(
                 "register operand accepts only the `kind` field",
+            )),
+            (Kind::RegisterOrImmediate, _, _) => Err(serde::de::Error::custom(
+                "register_or_immediate operand accepts only the `kind` field",
             )),
             (Kind::Exact, _, _) => Err(serde::de::Error::custom(
                 "exact operand requires only a `value` field",
@@ -107,13 +113,19 @@ impl InstructionPattern {
         }
         for operand in &self.operands {
             match operand {
-                OperandPattern::Exact { value } if value.is_empty() || value.trim() != value => {
-                    return Err(format!("invalid exact operand {value:?}"));
+                OperandPattern::Register
+                | OperandPattern::RegisterOrImmediate
+                | OperandPattern::Address => {}
+                OperandPattern::Exact { value } => {
+                    if value.is_empty() || value.trim() != value {
+                        return Err(format!("invalid exact operand {value:?}"));
+                    }
                 }
-                OperandPattern::RegisterList { length: 0 } => {
-                    return Err("register-list operand length must be positive".into());
+                OperandPattern::RegisterList { length } => {
+                    if *length == 0 {
+                        return Err("register-list operand length must be positive".into());
+                    }
                 }
-                _ => {}
             }
         }
         Ok(())
@@ -141,6 +153,9 @@ impl fmt::Display for InstructionPattern {
             }
             match operand {
                 OperandPattern::Register => formatter.write_str("<register>")?,
+                OperandPattern::RegisterOrImmediate => {
+                    formatter.write_str("<register-or-immediate>")?
+                }
                 OperandPattern::Exact { value } => formatter.write_str(value)?,
                 OperandPattern::RegisterList { length } => {
                     write!(formatter, "<register-list:{length}>")?
@@ -283,6 +298,7 @@ fn split_top_level(source: &str) -> Option<Vec<&str>> {
 fn operand_matches(operand: &str, pattern: &OperandPattern) -> bool {
     match pattern {
         OperandPattern::Register => is_register(operand),
+        OperandPattern::RegisterOrImmediate => is_register(operand) || is_integer_literal(operand),
         OperandPattern::Exact { value } => operand.trim() == value,
         OperandPattern::RegisterList { length } => enclosed_body(operand, b'{', b'}')
             // TableGen assembly strings escape a literal register-list brace
@@ -323,6 +339,23 @@ fn is_register(operand: &str) -> bool {
         && name[first_digit..]
             .bytes()
             .all(|byte| byte.is_ascii_digit())
+}
+
+fn is_integer_literal(operand: &str) -> bool {
+    let operand = operand.trim();
+    let digits = operand
+        .strip_prefix('+')
+        .or_else(|| operand.strip_prefix('-'))
+        .unwrap_or(operand);
+
+    if let Some(hex_digits) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        return !hex_digits.is_empty() && hex_digits.bytes().all(|byte| byte.is_ascii_hexdigit());
+    }
+
+    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn is_identifier(value: &str) -> bool {
@@ -587,6 +620,74 @@ mod tests {
         assert!(load.matches("ld.shared.u32 [%rd1 + 16];"));
         assert!(!load.matches("ld.shared.u32 %rd1;"));
         assert!(!load.matches("ld.shared.u32 [];"));
+    }
+
+    #[test]
+    fn register_or_immediate_accepts_registers_and_integer_literals() {
+        let vote = InstructionPattern::new(
+            "vote",
+            &["sync", "ballot", "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+
+        for member_mask in ["$mask", "%r3", "0", "-1", "+42", "0xFF", "-0X2a"] {
+            assert!(
+                vote.matches(&format!("vote.sync.ballot.b32 %r1, %p2, {member_mask};")),
+                "member mask {member_mask:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn register_or_immediate_rejects_malformed_integer_literals() {
+        let vote = InstructionPattern::new(
+            "vote",
+            &["sync", "ballot", "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+
+        for member_mask in [
+            "+", "-", "0x", "-0x", "0xGG", "1.0", "1u", "0x1_0", "--1", "0b11",
+        ] {
+            assert!(
+                !vote.matches(&format!("vote.sync.ballot.b32 %r1, %p2, {member_mask};")),
+                "member mask {member_mask:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn register_or_immediate_has_a_closed_policy_shape() {
+        let pattern = InstructionPattern::new(
+            "vote",
+            &["sync", "all", "pred"],
+            vec![OperandPattern::RegisterOrImmediate],
+        );
+        assert_eq!(
+            pattern.to_string(),
+            "vote.sync.all.pred <register-or-immediate>;"
+        );
+
+        let encoded = serde_json::to_string(&pattern).unwrap();
+        assert!(encoded.contains(r#""kind":"register_or_immediate""#));
+        assert_eq!(
+            serde_json::from_str::<InstructionPattern>(&encoded).unwrap(),
+            pattern
+        );
+        assert!(
+            serde_json::from_str::<InstructionPattern>(
+                r#"{"mnemonic":"vote","modifiers":[],"operands":[{"kind":"register_or_immediate","value":"-1"}]}"#,
+            )
+            .is_err()
+        );
     }
 
     #[test]

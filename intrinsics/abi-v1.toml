@@ -245,3 +245,66 @@ status = "active"
 catalog_id = "sync_threads"
 operation_key = "synchronization.cta.barrier.aligned.all"
 raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0035"
+status = "active"
+catalog_id = "lanemask_lt"
+operation_key = "warp.lane_mask.lt"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0036"
+status = "active"
+catalog_id = "lanemask_le"
+operation_key = "warp.lane_mask.le"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0037"
+status = "active"
+catalog_id = "lanemask_eq"
+operation_key = "warp.lane_mask.eq"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0038"
+status = "active"
+catalog_id = "lanemask_ge"
+operation_key = "warp.lane_mask.ge"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0039"
+status = "active"
+catalog_id = "lanemask_gt"
+operation_key = "warp.lane_mask.gt"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0040"
+status = "active"
+catalog_id = "all_sync"
+operation_key = "warp.vote.sync.all.pred"
+raw_rust_signature = { safe = false, arguments = ["u32", "bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i0041"
+status = "active"
+catalog_id = "any_sync"
+operation_key = "warp.vote.sync.any.pred"
+raw_rust_signature = { safe = false, arguments = ["u32", "bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i0042"
+status = "active"
+catalog_id = "ballot_sync"
+operation_key = "warp.vote.sync.ballot.b32"
+raw_rust_signature = { safe = false, arguments = ["u32", "bool"], result = "u32" }
+
+[[entry]]
+abi_id = "i0043"
+status = "active"
+catalog_id = "uni_sync"
+operation_key = "warp.vote.sync.uni.pred"
+raw_rust_signature = { safe = false, arguments = ["u32", "bool"], result = "bool" }

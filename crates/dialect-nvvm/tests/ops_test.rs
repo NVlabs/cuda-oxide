@@ -19,6 +19,7 @@ use dialect_nvvm::ops::{
     ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
     ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
     ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -1013,6 +1014,98 @@ fn test_lanemask_op_rejects_non_i32_result() {
         0,
     );
     assert!(ReadPtxSregLanemaskLtOp::new(op).verify(&ctx).is_err());
+}
+
+#[test]
+fn test_generated_vote_sync_family_requires_exact_mask_predicate_and_result_types() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i1_ty.into(), i64_ty.into()],
+    );
+    let mask = block.deref(&ctx).get_argument(0);
+    let predicate = block.deref(&ctx).get_argument(1);
+    let wide_mask = block.deref(&ctx).get_argument(2);
+
+    macro_rules! check_vote {
+        ($op:ty, $result_ty:expr, $wrong_result_ty:expr) => {{
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![$result_ty.into()],
+                vec![mask, predicate],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
+
+            for operands in [vec![], vec![mask], vec![mask, predicate, predicate]] {
+                let wrong_arity = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    vec![$result_ty.into()],
+                    operands,
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(wrong_arity), &ctx).is_err());
+            }
+
+            for results in [vec![], vec![$result_ty.into(), $result_ty.into()]] {
+                let wrong_arity = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    results,
+                    vec![mask, predicate],
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(wrong_arity), &ctx).is_err());
+            }
+
+            let wrong_mask = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![$result_ty.into()],
+                vec![wide_mask, predicate],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_mask), &ctx).is_err());
+
+            let wrong_predicate = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![$result_ty.into()],
+                vec![mask, mask],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_predicate), &ctx).is_err());
+
+            let wrong_result = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![$wrong_result_ty.into()],
+                vec![mask, predicate],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_result), &ctx).is_err());
+        }};
+    }
+
+    check_vote!(VoteSyncAllOp, i1_ty, u32_ty);
+    check_vote!(VoteSyncAnyOp, i1_ty, u32_ty);
+    check_vote!(VoteSyncBallotOp, u32_ty, i1_ty);
+    check_vote!(VoteSyncUniOp, i1_ty, u32_ty);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 {
-  "schema": 5,
+  "schema": 6,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,14 +11,416 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "13b01c110b8d51e51c57bf4a17da53390b5ea1eb8daebff03f3ee40b0a4f1920",
-    "abi_ledger_sha256": "a1629eee55f19528e1b5fea9ba025c59c38d9305e5c53823f73f85fadaa3ff63",
+    "overlay_sha256": "e0b00d169ca48020c941e68da377219cefc898016845e91c07174274c0bc6c3a",
+    "abi_ledger_sha256": "ff80e0a3b39ad755abe2130aa75e5a02d31f3810a9e126e1853f68740c61945c",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:94a0eac388e9990aebdef3cff53743b68b1033173b60d79bc9d3104cdeeb2b1a",
-      "rust-llvm-22.1.2-1cb4e383.json:8305496c10632490ad7e1131bb9878955e66558290e6c50008b18cc997cd4a24"
+      "cuda-13.3-libnvvm-13.3.33.json:ff73150639536e0463fc6e82943edadb619c25184b112ad58610719e3e3f49fc",
+      "rust-llvm-22.1.2-1cb4e383.json:5b13f6debbe0acd495d2e11725a214c77c1f42293dbb8065bcdc80ca8cae52e7"
     ]
   },
   "intrinsics": [
+    {
+      "id": "all_sync",
+      "operation_key": "warp.vote.sync.all.pred",
+      "family": "vote",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_vote_all_sync"
+      },
+      "selections": [
+        {
+          "source_record": "VOTE_SYNC_ALLi",
+          "asm": "vote.sync.all.pred \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        },
+        {
+          "source_record": "VOTE_SYNC_ALLr",
+          "asm": "vote.sync.all.pred \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0040",
+        "module": "warp",
+        "name": "all_sync",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0040",
+        "public_path": "cuda_intrinsics::warp::all_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::all_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "VoteSyncAllOp",
+        "op_name": "nvvm.vote_sync_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.vote.all.sync",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.10 Warp Vote Instructions: vote.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "vote": {
+        "mode": "all",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "direct_mask_predicate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_vote",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "all",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns true when every named warp lane has a true predicate."
+    },
+    {
+      "id": "any_sync",
+      "operation_key": "warp.vote.sync.any.pred",
+      "family": "vote",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_vote_any_sync"
+      },
+      "selections": [
+        {
+          "source_record": "VOTE_SYNC_ANYi",
+          "asm": "vote.sync.any.pred \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        },
+        {
+          "source_record": "VOTE_SYNC_ANYr",
+          "asm": "vote.sync.any.pred \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0041",
+        "module": "warp",
+        "name": "any_sync",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0041",
+        "public_path": "cuda_intrinsics::warp::any_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::any_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "VoteSyncAnyOp",
+        "op_name": "nvvm.vote_sync_any",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.vote.any.sync",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.10 Warp Vote Instructions: vote.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "vote": {
+        "mode": "any",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "direct_mask_predicate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_vote",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "any",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns true when at least one named warp lane has a true predicate."
+    },
+    {
+      "id": "ballot_sync",
+      "operation_key": "warp.vote.sync.ballot.b32",
+      "family": "vote",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_vote_ballot_sync"
+      },
+      "selections": [
+        {
+          "source_record": "VOTE_SYNC_BALLOTi",
+          "asm": "vote.sync.ballot.b32 \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        },
+        {
+          "source_record": "VOTE_SYNC_BALLOTr",
+          "asm": "vote.sync.ballot.b32 \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0042",
+        "module": "warp",
+        "name": "ballot_sync",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0042",
+        "public_path": "cuda_intrinsics::warp::ballot_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::ballot_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "VoteSyncBallotOp",
+        "op_name": "nvvm.vote_sync_ballot",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.vote.ballot.sync",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.10 Warp Vote Instructions: vote.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "vote": {
+        "mode": "ballot",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "direct_mask_predicate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_vote",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "ballot",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns a mask of named warp lanes whose predicates are true."
+    },
     {
       "id": "block_dim_x",
       "operation_key": "launch.block_dimension.x",
@@ -2077,6 +2479,526 @@
         ]
       },
       "summary": "Returns this thread's lane identifier within its warp."
+    },
+    {
+      "id": "lanemask_eq",
+      "operation_key": "warp.lane_mask.eq",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_lanemask_eq"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_LANEMASK_EQ",
+          "asm": "mov.u32 \t$d, %lanemask_eq;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0037",
+        "module": "sreg",
+        "name": "lanemask_eq",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "reading the read-only current-lane mask has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0037",
+        "public_path": "cuda_intrinsics::sreg::lanemask_eq",
+        "compatibility_paths": [
+          "cuda_device::warp::lanemask_eq"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregLanemaskEqOp",
+        "op_name": "nvvm.read_ptx_sreg_lanemask_eq",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.lanemask.eq",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.11 Special Registers: %lanemask_eq",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-eq"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_eq"
+          }
+        ]
+      },
+      "summary": "Returns a mask containing only this thread's lane identifier."
+    },
+    {
+      "id": "lanemask_ge",
+      "operation_key": "warp.lane_mask.ge",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_lanemask_ge"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_LANEMASK_GE",
+          "asm": "mov.u32 \t$d, %lanemask_ge;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0038",
+        "module": "sreg",
+        "name": "lanemask_ge",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "reading the read-only greater-or-equal lane mask has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0038",
+        "public_path": "cuda_intrinsics::sreg::lanemask_ge",
+        "compatibility_paths": [
+          "cuda_device::warp::lanemask_ge"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregLanemaskGeOp",
+        "op_name": "nvvm.read_ptx_sreg_lanemask_ge",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.lanemask.ge",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.14 Special Registers: %lanemask_ge",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-ge"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_ge"
+          }
+        ]
+      },
+      "summary": "Returns a mask of warp lanes whose lane identifiers are greater than or equal to this thread's lane identifier."
+    },
+    {
+      "id": "lanemask_gt",
+      "operation_key": "warp.lane_mask.gt",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_lanemask_gt"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_LANEMASK_GT",
+          "asm": "mov.u32 \t$d, %lanemask_gt;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0039",
+        "module": "sreg",
+        "name": "lanemask_gt",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "reading the read-only higher-lane mask has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0039",
+        "public_path": "cuda_intrinsics::sreg::lanemask_gt",
+        "compatibility_paths": [
+          "cuda_device::warp::lanemask_gt"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregLanemaskGtOp",
+        "op_name": "nvvm.read_ptx_sreg_lanemask_gt",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.lanemask.gt",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.15 Special Registers: %lanemask_gt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-gt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_gt"
+          }
+        ]
+      },
+      "summary": "Returns a mask of warp lanes whose lane identifiers are higher than this thread's lane identifier."
+    },
+    {
+      "id": "lanemask_le",
+      "operation_key": "warp.lane_mask.le",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_lanemask_le"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_LANEMASK_LE",
+          "asm": "mov.u32 \t$d, %lanemask_le;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0036",
+        "module": "sreg",
+        "name": "lanemask_le",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "reading the read-only lower-or-equal lane mask has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0036",
+        "public_path": "cuda_intrinsics::sreg::lanemask_le",
+        "compatibility_paths": [
+          "cuda_device::warp::lanemask_le"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregLanemaskLeOp",
+        "op_name": "nvvm.read_ptx_sreg_lanemask_le",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.lanemask.le",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.12 Special Registers: %lanemask_le",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-le"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_le"
+          }
+        ]
+      },
+      "summary": "Returns a mask of warp lanes whose lane identifiers are less than or equal to this thread's lane identifier."
+    },
+    {
+      "id": "lanemask_lt",
+      "operation_key": "warp.lane_mask.lt",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_lanemask_lt"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_LANEMASK_LT",
+          "asm": "mov.u32 \t$d, %lanemask_lt;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0035",
+        "module": "sreg",
+        "name": "lanemask_lt",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "reading the read-only lower-lane mask has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0035",
+        "public_path": "cuda_intrinsics::sreg::lanemask_lt",
+        "compatibility_paths": [
+          "cuda_device::warp::lanemask_lt"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregLanemaskLtOp",
+        "op_name": "nvvm.read_ptx_sreg_lanemask_lt",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.lanemask.lt",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "2.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.13 Special Registers: %lanemask_lt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-lt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_lt"
+          }
+        ]
+      },
+      "summary": "Returns a mask of warp lanes whose lane identifiers are lower than this thread's lane identifier."
     },
     {
       "id": "ldmatrix_m8n8_x1_b16",
@@ -5713,6 +6635,138 @@
         ]
       },
       "summary": "Returns the Z thread index within the current cooperative thread array (CTA)."
+    },
+    {
+      "id": "uni_sync",
+      "operation_key": "warp.vote.sync.uni.pred",
+      "family": "vote",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_vote_uni_sync"
+      },
+      "selections": [
+        {
+          "source_record": "VOTE_SYNC_UNIi",
+          "asm": "vote.sync.uni.pred \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        },
+        {
+          "source_record": "VOTE_SYNC_UNIr",
+          "asm": "vote.sync.uni.pred \t$dest, $pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0043",
+        "module": "warp",
+        "name": "uni_sync",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0043",
+        "public_path": "cuda_intrinsics::warp::uni_sync",
+        "compatibility_paths": []
+      },
+      "dialect": {
+        "op_type": "VoteSyncUniOp",
+        "op_name": "nvvm.vote_sync_uni",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.vote.uni.sync",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.10 Warp Vote Instructions: vote.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-vote-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "vote": {
+        "mode": "uni",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "direct_mask_predicate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_vote",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "uni",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns true when every named warp lane has the same predicate."
     }
   ]
 }

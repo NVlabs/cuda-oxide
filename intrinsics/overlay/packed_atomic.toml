@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for one intrinsic family.
 
-schema = 2
+schema = 3
 family = "packed_atomic"
 
 [[intrinsic]]

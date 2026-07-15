@@ -8,7 +8,7 @@ use crate::model::{
     CatalogIntrinsic, CatalogLlvm, CatalogSelection, DotProductAdapter, DotProductOperation,
     DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
     IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
-    LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter,
+    LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter, VoteAdapter, VoteMode,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,6 +72,10 @@ pub fn all_outputs(
         render_dialect_sync(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/vote.rs".into(),
+        render_dialect_vote(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/mir-importer/src/translator/terminator/intrinsics/generated.rs".into(),
         render_importer(catalog, catalog_sha256),
     );
@@ -111,6 +115,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 (record.family == "ldmatrix" && record.ldmatrix.is_some())
                     || (record.family == "packed_atomic" && record.packed_atomic.is_some())
                     || (record.family == "redux" && record.redux.is_some())
+                    || (record.family == "vote" && record.vote.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -203,6 +208,25 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the fixed-zero generated sync_threads recipe",
                 record.id
             ),
+            "vote" => ensure!(
+                record.rust.module == "warp"
+                    && record.rust.arguments == ["u32", "bool"]
+                    && matches!(record.rust.result.as_str(), "bool" | "u32")
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.arguments == ["i32", "i1"]
+                            && matches!(llvm.results.as_slice(), [result]
+                                if result == "i1" || result == "i32")
+                    })
+                    && record.dialect.operands == ["i32", "i1"]
+                    && matches!(record.dialect.results.as_slice(), [result]
+                        if result == "i1" || result == "i32")
+                    && record.lowering == "generated_vote"
+                    && record.vote.is_some(),
+                "{} is outside the closed generated vote.sync recipe",
+                record.id
+            ),
             family => ensure!(false, "{} has unrenderable family {family}", record.id),
         };
     }
@@ -285,6 +309,13 @@ fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrin
         .intrinsics
         .iter()
         .filter(|record| record.family == "sync")
+}
+
+fn vote_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "vote")
 }
 
 fn dot_product_ptx(record: &CatalogIntrinsic) -> &'static str {
@@ -536,6 +567,11 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `redux.sync` operation with the same qualifiers and mask.\n\
                      /// The instruction waits for those lanes; violating this participation contract makes the PTX operation undefined.\n",
                 );
+            } else if record.vote.is_some() {
+                output.push_str(
+                    "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `vote.sync` operation with the same qualifiers and mask.\n\
+                     /// Violating this participation contract makes the PTX operation undefined.\n",
+                );
             } else if record.family == "sync" {
                 output.push_str(
                     "/// Every active thread in the CTA must reach the same barrier. Calling it from divergent control flow can deadlock the CTA.\n",
@@ -667,7 +703,7 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\nmod sync;\n\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n}\n",
+        "mod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\n\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n}\n",
     );
     output
 }
@@ -739,6 +775,61 @@ fn render_dialect_sync(catalog: &CatalogFile, hash: &str) -> String {
     }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in sync_intrinsics(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_vote(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operations for the generated `vote.sync` family.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_integer_width(ctx: &Context, ty: pliron::r#type::TypeHandle, width: u32) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == width)\n}\n\n",
+    );
+    for record in vote_intrinsics(catalog) {
+        let result_width = match record.vote.as_ref().unwrap().mode {
+            VoteMode::All | VoteMode::Any | VoteMode::Uni => 1,
+            VoteMode::Ballot => 32,
+        };
+        let result_signedness = if result_width == 32 {
+            "Unsigned"
+        } else {
+            "Signless"
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n/// Operands are `[member_mask, predicate]`. The generated verifier keeps\n/// the mask, predicate, and result types exact.\n",
+        );
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, member_mask: Value, predicate: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {result_width}, Signedness::{result_signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![member_mask, predicate],\n            vec![],\n            0,\n        )\n    }}\n}}"
+        )
+        .unwrap();
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)\n            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 1)\n            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), {result_width})\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!(
+                "{} requires exactly two operands [member_mask, predicate] and one result",
+                record.dialect.op_name
+            ),
+            format!(
+                "{} requires i32 member mask, i1 predicate, and i{result_width} result",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in vote_intrinsics(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -1232,11 +1323,27 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if vote_intrinsics(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in vote_intrinsics(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     if dot_products(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
             || packed_atomics(catalog).next().is_some()
             || redux(catalog).next().is_some()
+            || vote_intrinsics(catalog).next().is_some()
         {
             output.push_str(", ");
         }
@@ -1252,6 +1359,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             || ldmatrix(catalog).next().is_some()
             || packed_atomics(catalog).next().is_some()
             || redux(catalog).next().is_some()
+            || vote_intrinsics(catalog).next().is_some()
             || dot_products(catalog).next().is_some()
         {
             output.push_str(", ");
@@ -1460,6 +1568,47 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    for record in vote_intrinsics(catalog) {
+        debug_assert_eq!(
+            record.vote.as_ref().unwrap().adapter,
+            VoteAdapter::DirectMaskPredicate
+        );
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 2, &loc)?;\n");
+        output.push_str(
+            "            let (member_mask, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (predicate, last_op) = rvalue::translate_operand(\n                ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        writeln!(
+            output,
+            "            let vote = {}::build(ctx, member_mask, predicate);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            vote.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, vote, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, vote, block_ptr, last_op);\n            let result = vote.deref(ctx).get_result(0);\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, vote, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
     for record in dot_products(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -1601,7 +1750,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::convert_redux};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::{convert_redux, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -1635,11 +1784,27 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if vote_intrinsics(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in vote_intrinsics(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     if dot_products(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
             || packed_atomics(catalog).next().is_some()
             || redux(catalog).next().is_some()
+            || vote_intrinsics(catalog).next().is_some()
         {
             output.push_str(", ");
         }
@@ -1655,6 +1820,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             || ldmatrix(catalog).next().is_some()
             || packed_atomics(catalog).next().is_some()
             || redux(catalog).next().is_some()
+            || vote_intrinsics(catalog).next().is_some()
             || dot_products(catalog).next().is_some()
         {
             output.push_str(", ");
@@ -1746,6 +1912,28 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "        convert_redux(ctx, rewriter, self.get_operation(), operands_info, {:?})",
+            record.llvm_identifier()
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
+    for record in vote_intrinsics(catalog) {
+        debug_assert_eq!(
+            record.vote.as_ref().unwrap().adapter,
+            VoteAdapter::DirectMaskPredicate
+        );
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_vote(ctx, rewriter, self.get_operation(), operands_info, {:?})",
             record.llvm_identifier()
         )
         .unwrap();
@@ -2092,6 +2280,45 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             }
         }
         output.push_str("  ret i32 %result\n}\n");
+    } else if let Some(vote) = &record.vote {
+        debug_assert_eq!(vote.adapter, VoteAdapter::DirectMaskPredicate);
+        let result_ty = match vote.mode {
+            VoteMode::All | VoteMode::Any | VoteMode::Uni => "i1",
+            VoteMode::Ballot => "i32",
+        };
+        writeln!(
+            output,
+            "declare {result_ty} @{}(i32, i1)",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push('\n');
+        writeln!(
+            output,
+            "define {result_ty} @probe_{}(i32 %member_mask, i1 %predicate) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  %result = call {result_ty} @{}(i32 %member_mask, i1 %predicate)",
+            llvm(record).symbol
+        )
+        .unwrap();
+        writeln!(output, "  ret {result_ty} %result\n}}").unwrap();
+        writeln!(
+            output,
+            "define {result_ty} @probe_{}_immediate(i1 %predicate) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  %result = call {result_ty} @{}(i32 -1, i1 %predicate)",
+            llvm(record).symbol
+        )
+        .unwrap();
+        writeln!(output, "  ret {result_ty} %result\n}}").unwrap();
     } else if let Some(redux) = &record.redux {
         debug_assert_eq!(redux.adapter, ReduxAdapter::MaskValueToSourceMemberMask);
         writeln!(output, "declare i32 @{}(i32, i32)", llvm(record).symbol).unwrap();
@@ -2230,6 +2457,15 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "- `{}`: raw and dialect operands are `[member_mask, value]`, adapted to LLVM `(value, membermask)`. The executing lane must be named in the mask, and every non-exited named lane must execute the same instruction with the same qualifiers and mask.",
+            record.id,
+        )
+        .unwrap();
+    }
+    output.push_str("\n## Warp vote contracts\n\n");
+    for record in vote_intrinsics(catalog) {
+        writeln!(
+            output,
+            "- `{}` keeps raw and dialect operands in `[member_mask, predicate]` order. The executing lane must be named in the mask, and every non-exited named lane must execute the same `vote.sync` instruction with the same qualifiers and mask. Both immediate and register member masks are admitted.",
             record.id,
         )
         .unwrap();
@@ -2564,6 +2800,55 @@ mod tests {
         assert!(raw.contains("pub unsafe fn i0019(_arg0: u32, _arg1: i32) -> i32"));
         assert!(raw.contains("pub unsafe fn i0024(_arg0: u32, _arg1: u32) -> u32"));
         assert!(raw.contains("The executing lane must be named in `mask`"));
+    }
+
+    #[test]
+    fn vote_rendering_keeps_types_selection_pairs_and_raw_only_uni() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(vote_intrinsics(&catalog).count(), 4);
+
+        let dialect = render_dialect_vote(&catalog, "test-hash");
+        for op in [
+            "VoteSyncAllOp",
+            "VoteSyncAnyOp",
+            "VoteSyncBallotOp",
+            "VoteSyncUniOp",
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op}")));
+            assert!(dialect.contains(&format!("{op}::register(ctx)")));
+        }
+        assert!(dialect.contains("requires i32 member mask, i1 predicate, and i1 result"));
+        assert!(dialect.contains("requires i32 member mask, i1 predicate, and i32 result"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::warp::all_sync"));
+        assert!(!importer.contains("cuda_device::warp::uni_sync"));
+        assert!(importer.contains("let vote = VoteSyncUniOp::build(ctx, member_mask, predicate)"));
+        assert!(importer.contains("set_generated_intrinsic_marker(ctx, vote, \"v1:i0043\")"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("impl MirToLlvmConversion for VoteSyncUniOp"));
+        assert!(lowering.contains("\"llvm_nvvm_vote_uni_sync\""));
+        assert!(
+            lowering.contains("convert_vote(ctx, rewriter, self.get_operation(), operands_info")
+        );
+
+        let record = vote_intrinsics(&catalog)
+            .find(|record| record.id == "ballot_sync")
+            .unwrap();
+        assert_eq!(record.selections.len(), 2);
+        let probe = render_probe(&catalog, record, "test-hash");
+        assert!(probe.contains("define i32 @probe_ballot_sync(i32 %member_mask, i1 %predicate)"));
+        assert!(probe.contains("define i32 @probe_ballot_sync_immediate(i1 %predicate)"));
+        assert!(probe.contains("i32 -1, i1 %predicate"));
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        for abi_id in ["i0040", "i0041", "i0042", "i0043"] {
+            assert!(raw.contains(&format!("pub unsafe fn {abi_id}")));
+        }
+        assert!(raw.contains("Every non-exited lane named in `mask`"));
     }
 
     #[test]

@@ -464,6 +464,91 @@ fn test_lanemask_ops_lower_to_sreg_intrinsic_calls() -> Result<(), anyhow::Error
 }
 
 #[test]
+fn test_generated_vote_sync_family_lowers_to_exact_typed_intrinsics() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    let mut ctx = make_test_ctx();
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into(), i1_ty.into()]);
+    let mask = entry.deref(&ctx).get_argument(0);
+    let predicate = entry.deref(&ctx).get_argument(1);
+
+    for vote in [
+        nvvm::VoteSyncAllOp::build(&mut ctx, mask, predicate),
+        nvvm::VoteSyncAnyOp::build(&mut ctx, mask, predicate),
+        nvvm::VoteSyncBallotOp::build(&mut ctx, mask, predicate),
+        nvvm::VoteSyncUniOp::build(&mut ctx, mask, predicate),
+    ] {
+        vote.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let expected = [
+        ("llvm_nvvm_vote_all_sync", 1),
+        ("llvm_nvvm_vote_any_sync", 1),
+        ("llvm_nvvm_vote_ballot_sync", 32),
+        ("llvm_nvvm_vote_uni_sync", 1),
+    ];
+    let mut found = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "generated vote.sync operations must use typed LLVM intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        let Some((_, result_width)) = expected.iter().find(|(name, _)| *name == callee) else {
+            continue;
+        };
+
+        let call = call.get_operation().deref(&ctx);
+        assert_eq!(call.get_num_operands(), 2);
+        assert_eq!(call.get_num_results(), 1);
+
+        let integer_shape = |value: pliron::value::Value| {
+            let ty = value.get_type(&ctx);
+            let ty = ty.deref(&ctx);
+            let integer = ty
+                .downcast_ref::<IntegerType>()
+                .expect("vote.sync operands and results are integers");
+            (integer.width(), integer.signedness())
+        };
+        assert_eq!(
+            [
+                integer_shape(call.get_operand(0)),
+                integer_shape(call.get_operand(1)),
+            ],
+            [(32, Signedness::Signless), (1, Signedness::Signless),],
+            "{callee} must preserve [mask, predicate] operand order"
+        );
+        assert_eq!(
+            integer_shape(call.get_result(0)),
+            (*result_width, Signedness::Signless),
+            "{callee} returned the wrong LLVM integer type"
+        );
+        found.push((callee, *result_width));
+    }
+
+    found.sort();
+    let mut expected = expected
+        .map(|(name, width)| (name.to_owned(), width))
+        .to_vec();
+    expected.sort();
+    assert_eq!(found, expected);
+    Ok(())
+}
+
+#[test]
 fn test_warpid_ops_preserve_snapshot_semantics() -> Result<(), anyhow::Error> {
     assert_sreg_lowers_to_inline_asm(
         nvvm::ReadPtxSregWarpIdOp::get_concrete_op_info(),

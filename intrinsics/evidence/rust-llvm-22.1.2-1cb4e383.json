@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "backend_profile": "rust-llvm-22.1.2-1cb4e383",
   "backend_kind": "llvm_nvptx",
   "llvm_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
@@ -1530,6 +1530,286 @@
           {
             "kind": "exact",
             "value": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lanemask_lt",
+      "source_record": "int_nvvm_read_ptx_sreg_lanemask_lt",
+      "llvm_symbol": "llvm.nvvm.read.ptx.sreg.lanemask.lt",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_lt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lanemask_le",
+      "source_record": "int_nvvm_read_ptx_sreg_lanemask_le",
+      "llvm_symbol": "llvm.nvvm.read.ptx.sreg.lanemask.le",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_le"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lanemask_eq",
+      "source_record": "int_nvvm_read_ptx_sreg_lanemask_eq",
+      "llvm_symbol": "llvm.nvvm.read.ptx.sreg.lanemask.eq",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_eq"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lanemask_ge",
+      "source_record": "int_nvvm_read_ptx_sreg_lanemask_ge",
+      "llvm_symbol": "llvm.nvvm.read.ptx.sreg.lanemask.ge",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_ge"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lanemask_gt",
+      "source_record": "int_nvvm_read_ptx_sreg_lanemask_gt",
+      "llvm_symbol": "llvm.nvvm.read.ptx.sreg.lanemask.gt",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%lanemask_gt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "all_sync",
+      "source_record": "int_nvvm_vote_all_sync",
+      "llvm_symbol": "llvm.nvvm.vote.all.sync",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "all",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "any_sync",
+      "source_record": "int_nvvm_vote_any_sync",
+      "llvm_symbol": "llvm.nvvm.vote.any.sync",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "any",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ballot_sync",
+      "source_record": "int_nvvm_vote_ballot_sync",
+      "llvm_symbol": "llvm.nvvm.vote.ballot.sync",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "ballot",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "uni_sync",
+      "source_record": "int_nvvm_vote_uni_sync",
+      "llvm_symbol": "llvm.nvvm.vote.uni.sync",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "vote",
+        "modifiers": [
+          "sync",
+          "uni",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
           }
         ]
       }

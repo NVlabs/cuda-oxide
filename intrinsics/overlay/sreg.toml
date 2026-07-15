@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for one intrinsic family.
 
-schema = 2
+schema = 3
 family = "sreg"
 
 [[intrinsic]]
@@ -467,3 +467,178 @@ ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-r
 lowering = "direct_nvvm"
 expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%laneid" }] }
 summary = "Returns this thread's lane identifier within its warp."
+
+[[intrinsic]]
+id = "lanemask_lt"
+abi_id = "i0035"
+operation_key = "warp.lane_mask.lt"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_lt"
+rust_module = "sreg"
+rust_name = "lanemask_lt"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only lower-lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_lt"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_lt"]
+dialect_op_type = "ReadPtxSregLanemaskLtOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_lt"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.lt"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.13 Special Registers: %lanemask_lt"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-lt"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_lt" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are lower than this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_le"
+abi_id = "i0036"
+operation_key = "warp.lane_mask.le"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_le"
+rust_module = "sreg"
+rust_name = "lanemask_le"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only lower-or-equal lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_le"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_le"]
+dialect_op_type = "ReadPtxSregLanemaskLeOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_le"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.le"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.12 Special Registers: %lanemask_le"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-le"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_le" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are less than or equal to this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_eq"
+abi_id = "i0037"
+operation_key = "warp.lane_mask.eq"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_eq"
+rust_module = "sreg"
+rust_name = "lanemask_eq"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only current-lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_eq"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_eq"]
+dialect_op_type = "ReadPtxSregLanemaskEqOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_eq"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.eq"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.11 Special Registers: %lanemask_eq"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-eq"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_eq" }] }
+summary = "Returns a mask containing only this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_ge"
+abi_id = "i0038"
+operation_key = "warp.lane_mask.ge"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_ge"
+rust_module = "sreg"
+rust_name = "lanemask_ge"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only greater-or-equal lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_ge"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_ge"]
+dialect_op_type = "ReadPtxSregLanemaskGeOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_ge"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.ge"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.14 Special Registers: %lanemask_ge"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-ge"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_ge" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are greater than or equal to this thread's lane identifier."
+
+[[intrinsic]]
+id = "lanemask_gt"
+abi_id = "i0039"
+operation_key = "warp.lane_mask.gt"
+family = "sreg"
+source_record = "int_nvvm_read_ptx_sreg_lanemask_gt"
+rust_module = "sreg"
+rust_name = "lanemask_gt"
+rust_arguments = []
+rust_result = "u32"
+safe = true
+must_use = true
+safe_allowlist_reason = "reading the read-only higher-lane mask has no memory, participation, synchronization, or pointer-validity preconditions."
+public_rust_path = "cuda_intrinsics::sreg::lanemask_gt"
+compatibility_rust_paths = ["cuda_device::warp::lanemask_gt"]
+dialect_op_type = "ReadPtxSregLanemaskGtOp"
+dialect_op_name = "nvvm.read_ptx_sreg_lanemask_gt"
+llvm_symbol = "llvm.nvvm.read.ptx.sreg.lanemask.gt"
+llvm_arguments = []
+llvm_results = ["i32"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "2.0"
+minimum_sm = "sm_20"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "10.15 Special Registers: %lanemask_gt"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-lanemask-gt"
+lowering = "direct_nvvm"
+expected_ptx = { mnemonic = "mov", modifiers = ["u32"], operands = [{ kind = "register" }, { kind = "exact", value = "%lanemask_gt" }] }
+summary = "Returns a mask of warp lanes whose lane identifiers are higher than this thread's lane identifier."

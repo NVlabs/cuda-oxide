@@ -82,7 +82,13 @@ mod kernels {
         // in bounds and joins the full-warp ballot.
         let keep = gid.in_bounds(n) && data[gid.get()] != 0;
         let ballot = warp::ballot_sync(FULL_MASK, keep);
-        let rank = (ballot & warp::lanemask_lt()).count_ones();
+        let all_lanes_joined = warp::all_sync(FULL_MASK, true);
+        let lane_zero_joined = warp::any_sync(FULL_MASK, warp::lane_id() == 0);
+        let rank = if all_lanes_joined & lane_zero_joined {
+            (ballot & warp::lanemask_lt()).count_ones()
+        } else {
+            u32::MAX
+        };
 
         if gid.in_bounds(n) {
             unsafe {
