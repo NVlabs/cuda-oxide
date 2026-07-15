@@ -7,12 +7,12 @@
 //!
 //! Handles translation of warp shuffle and vote intrinsics.
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto};
+use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{BarWarpSyncOp, ElectSyncOp};
+use dialect_nvvm::ops::ElectSyncOp;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -21,67 +21,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-/// Emits `warp::sync_mask(mask)`: barrier across a subset of warp lanes.
-///
-/// Lowers to `nvvm.bar_warp_sync` (PTX `bar.warp.sync`). All lanes named
-/// in `mask` must reach the call with the same mask. Returns no value.
-pub fn emit_warp_sync_mask(
-    ctx: &mut Context,
-    body: &mir::Body,
-    args: &[mir::Operand],
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    if args.len() != 1 {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(format!(
-                "warp::sync_mask expects 1 argument [mask], got {}",
-                args.len()
-            ))
-        );
-    }
-
-    let (mask, last_op) = rvalue::translate_operand(
-        ctx,
-        body,
-        &args[0],
-        value_map,
-        block_ptr,
-        prev_op,
-        loc.clone(),
-    )?;
-
-    let sync_op = Operation::new(
-        ctx,
-        BarWarpSyncOp::get_concrete_op_info(),
-        vec![],
-        vec![mask],
-        vec![],
-        0,
-    );
-    sync_op.deref_mut(ctx).set_loc(loc.clone());
-
-    if let Some(prev) = last_op {
-        sync_op.insert_after(ctx, prev);
-    } else {
-        sync_op.insert_at_front(block_ptr, ctx);
-    }
-
-    if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, sync_op, block_map, loc);
-        Ok(goto_op)
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported("warp::sync_mask call without target block".to_string())
-        )
-    }
-}
 
 /// Emit a warp shuffle operation for i32.
 ///

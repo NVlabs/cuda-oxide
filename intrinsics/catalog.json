@@ -1,5 +1,5 @@
 {
-  "schema": 7,
+  "schema": 8,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,11 +11,11 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "0159ba9a2beba45dd9f4d17c046ad6e1a46ca6a807c356173e4864f4a6174b54",
-    "abi_ledger_sha256": "7e3caf05c751854ca474e0692633a837e9eca36e30efdf6b0a77fd8594ba1fc5",
+    "overlay_sha256": "554d70bc720fb1f902394c61feea2c43b4d697b9a9a97f7b6a7f93e675f5f0a0",
+    "abi_ledger_sha256": "38a97578775b2e3d496053ecbc6e89ffacf3c1177da8cf929fe86dbbeccb0194",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:65f76083ed9fa74bba43e2260ab158b6b49430480078592c77fca048daefadfb",
-      "rust-llvm-22.1.2-1cb4e383.json:f626c147d7800143957310232c67ff730347b442fd1048b7f44ee83bc6df26f8"
+      "cuda-13.3-libnvvm-13.3.33.json:99b2721060c2a0009196146b54a1b2092814e12847ec104d46bdbd7a5525b867",
+      "rust-llvm-22.1.2-1cb4e383.json:f47b30a504ea32aaceaec6a24476c85cb728437de077ce637217a1dee847c1be"
     ]
   },
   "intrinsics": [
@@ -6937,6 +6937,266 @@
         ]
       },
       "summary": "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise XOR, and broadcasts the result."
+    },
+    {
+      "id": "sync_mask",
+      "operation_key": "warp.barrier.sync.masked",
+      "family": "warp_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_bar_warp_sync"
+      },
+      "selections": [
+        {
+          "source_record": "INT_BAR_WARP_SYNC_I",
+          "asm": "bar.warp.sync \t$i;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        },
+        {
+          "source_record": "INT_BAR_WARP_SYNC_R",
+          "asm": "bar.warp.sync \t$i;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 30"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0049",
+        "module": "warp",
+        "name": "sync_mask",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0049",
+        "public_path": "cuda_intrinsics::warp::sync_mask",
+        "compatibility_paths": [
+          "cuda_device::warp::sync_mask"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarWarpSyncOp",
+        "op_name": "nvvm.bar_warp_sync",
+        "operands": [
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.bar.warp.sync",
+        "arguments": [
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.2 Parallel Synchronization and Communication Instructions: bar.warp.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-warp-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed llvm.nvvm.bar.warp.sync(i32) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration and preserved its convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed masked warp barrier calls with register and immediate masks",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact register and immediate bar.warp.sync forms.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx60"
+              ],
+              "representation": "PTX 6.0 containing register and immediate bar.warp.sync forms",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted both forms and produced a 1,464-byte cubin (SHA-256 df48ead94aa2ad3402456419362350879e99993d4b2ce03a05f695e9d58fbf37).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR typed llvm.nvvm.bar.warp.sync(i32) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the typed declaration with its convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "typed masked warp barrier calls with register and immediate masks",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM emitted exact register and immediate bar.warp.sync forms.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated-intrinsics kernel containing the typed masked warp barrier call",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 5,212-byte LTOIR (SHA-256 617a67c02ae53343922fa2ab38a8b6d022914f5c1a64c901e3cb79f1ea0511c5); nvJitLink produced an 8,360-byte cubin (SHA-256 11bc13b23e68cb7c86ffc1e1be09037e018509c57b34674c835d9a34d719158a); cuobjdump showed WARPSYNC.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "warp_barrier": {
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "legacy_pre_sm70": "all_named_lanes_converged_and_only_named_lanes_active",
+        "adapter": "direct_member_mask",
+        "mask_encoding": "register_or_immediate",
+        "memory_ordering": "participating_lanes"
+      },
+      "lowering": "generated_warp_barrier",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "warp",
+          "sync"
+        ],
+        "operands": [
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Synchronize and order memory for the named warp lanes."
     },
     {
       "id": "sync_threads",

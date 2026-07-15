@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for synchronized warp votes.
 
-schema = 4
+schema = 5
 family = "vote"
 
 [[intrinsic]]

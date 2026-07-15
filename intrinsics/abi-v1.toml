@@ -343,3 +343,10 @@ status = "active"
 catalog_id = "match_all_i64_sync"
 operation_key = "warp.match.sync.all.b64"
 raw_rust_signature = { safe = false, arguments = ["u32", "u64"], result = "u32" }
+
+[[entry]]
+abi_id = "i0049"
+status = "active"
+catalog_id = "sync_mask"
+operation_key = "warp.barrier.sync.masked"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }

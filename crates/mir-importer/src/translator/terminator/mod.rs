@@ -3038,9 +3038,6 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
-        "cuda_device::warp::sync_mask" => Ok(Some(intrinsics::warp::emit_warp_sync_mask(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-        )?)),
         "cuda_device::warp::shuffle_sync" => Ok(Some(intrinsics::warp::emit_warp_shuffle_i32(
             ctx,
             body,

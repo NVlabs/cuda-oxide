@@ -39,18 +39,18 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    AbsBf16x2Op, AddBf16x2Op, BarWarpSyncOp, BreakpointOp, ClcQueryGetFirstCtaidXOp,
-    ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp, ClcQueryIsCanceledOp,
-    ClcTryCancelMulticastOp, ClcTryCancelOp, ClusterSyncOp, CpAsyncBulkCommitGroupOp,
-    CpAsyncBulkTensorG2sTile1dOp, CpAsyncBulkTensorG2sTile2dMulticastCg2Op,
-    CpAsyncBulkTensorG2sTile2dMulticastOp, CpAsyncBulkTensorG2sTile2dOp,
-    CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp, CpAsyncBulkTensorG2sTile5dOp,
-    CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp, CpAsyncBulkTensorS2gTile3dOp,
-    CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp, CpAsyncBulkWaitGroupOp,
-    CpAsyncBulkWaitGroupReadOp, CpAsyncCa4Op, CpAsyncCa8Op, CpAsyncCaZfill4Op, CpAsyncCaZfill8Op,
-    CpAsyncCaZfill16Op, CvtF16x2F32Op, CvtF32x2Bf16x2Op, CvtRnReluBf16x2F32Op, CvtRnReluF16x2F32Op,
-    CvtRzBf16x2F32Op, CvtRzF16x2F32Op, DsmemReadU32Op, ElectSyncOp,
-    FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
+    AbsBf16x2Op, AddBf16x2Op, BreakpointOp, ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp,
+    ClcQueryGetFirstCtaidZOp, ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp,
+    ClusterSyncOp, CpAsyncBulkCommitGroupOp, CpAsyncBulkTensorG2sTile1dOp,
+    CpAsyncBulkTensorG2sTile2dMulticastCg2Op, CpAsyncBulkTensorG2sTile2dMulticastOp,
+    CpAsyncBulkTensorG2sTile2dOp, CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp,
+    CpAsyncBulkTensorG2sTile5dOp, CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp,
+    CpAsyncBulkTensorS2gTile3dOp, CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp,
+    CpAsyncBulkWaitGroupOp, CpAsyncBulkWaitGroupReadOp, CpAsyncCa4Op, CpAsyncCa8Op,
+    CpAsyncCaZfill4Op, CpAsyncCaZfill8Op, CpAsyncCaZfill16Op, CvtF16x2F32Op, CvtF32x2Bf16x2Op,
+    CvtRnReluBf16x2F32Op, CvtRnReluF16x2F32Op, CvtRzBf16x2F32Op, CvtRzF16x2F32Op, DsmemReadU32Op,
+    ElectSyncOp, FenceMbarrierInitReleaseClusterOp,
+    FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, FmaBf16x2Op,
     FmaReluBf16x2Op, InlinePtxOp, MapaSharedClusterOp, MaxBf16x2Op, MbarrierArriveClusterOp,
     MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
@@ -1697,23 +1697,6 @@ impl MirToLlvmConversion for ShflSyncUpI64Op {
             operands_info,
             "up",
             0,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for BarWarpSyncOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::warp::convert_bar_warp_sync(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
         )
     }
 }

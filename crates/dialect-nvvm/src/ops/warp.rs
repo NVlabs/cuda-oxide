@@ -445,47 +445,6 @@ impl ShflSyncUpI64Op {
 }
 
 // =============================================================================
-// Warp-scoped barrier (sub-warp synchronization)
-// =============================================================================
-
-/// Synchronize a subset of warp lanes given by `mask`.
-///
-/// Corresponds to `llvm.nvvm.bar.warp.sync` / PTX `bar.warp.sync`. Acts as
-/// a convergence point for every lane bit set in `mask`: each such lane
-/// must reach this op with the same `mask` value before any of them
-/// proceeds. Lanes whose bit is clear are not affected and need not
-/// reach the call.
-///
-/// This is the primitive that backs `CoalescedThreads::sync()` and the
-/// `WarpTile<N>::sync()` method on sub-warp tiles. Callers who already
-/// know the lanes are converged in lockstep (e.g. straight-line warp-
-/// uniform code) do not need this — but its presence forces the SIMT
-/// reconvergence model on Volta+ targets and is required after a
-/// divergent branch before any other `*.sync` collective.
-///
-/// # Operands
-///
-/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
-///
-/// # Results
-///
-/// - none
-#[pliron_op(
-    name = "nvvm.bar_warp_sync",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
-)]
-pub struct BarWarpSyncOp;
-
-impl BarWarpSyncOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        BarWarpSyncOp { op }
-    }
-}
-
-// =============================================================================
 // Leader Election (sm_90+)
 // =============================================================================
 
@@ -601,8 +560,6 @@ pub(super) fn register(ctx: &mut Context) {
     ShflSyncUpI64Op::register(ctx);
     // Leader election (sm_90+)
     ElectSyncOp::register(ctx);
-    // Warp-scoped barrier
-    BarWarpSyncOp::register(ctx);
     // Hardware warp identification
     ReadPtxSregWarpIdOp::register(ctx);
     ReadPtxSregNwarpIdOp::register(ctx);

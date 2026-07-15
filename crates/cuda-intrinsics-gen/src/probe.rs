@@ -132,6 +132,9 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.warp_match.is_some() {
         validate_two_register_and_immediate_forms(&record.expected_ptx, 1, "7", 2, "-1", ptx)?;
     }
+    if record.warp_barrier.is_some() {
+        validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
+    }
     Ok(())
 }
 
@@ -751,6 +754,33 @@ mod tests {
 
         let error =
             validate_register_and_immediate_forms(&expected, 2, "-1", immediate).unwrap_err();
+        assert!(error.to_string().contains("no register form"));
+    }
+
+    #[test]
+    fn warp_barrier_probe_requires_register_and_negative_one_mask_forms() {
+        let expected = InstructionPattern::new(
+            "bar",
+            &["warp", "sync"],
+            vec![OperandPattern::RegisterOrImmediate],
+        );
+        let register = "bar.warp.sync %r1;";
+        let immediate = "bar.warp.sync -1;";
+
+        validate_register_and_immediate_forms(
+            &expected,
+            0,
+            "-1",
+            &format!("{register}\n{immediate}"),
+        )
+        .unwrap();
+
+        let error =
+            validate_register_and_immediate_forms(&expected, 0, "-1", register).unwrap_err();
+        assert!(error.to_string().contains("no immediate form"));
+
+        let error =
+            validate_register_and_immediate_forms(&expected, 0, "-1", immediate).unwrap_err();
         assert!(error.to_string().contains("no register form"));
     }
 

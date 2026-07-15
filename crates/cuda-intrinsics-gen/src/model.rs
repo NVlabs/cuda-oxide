@@ -215,6 +215,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub warp_match: Option<WarpMatch>,
     #[serde(default)]
+    pub warp_barrier: Option<WarpBarrier>,
+    #[serde(default)]
     pub dot_product: Option<DotProduct>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
@@ -625,6 +627,47 @@ pub enum MatchOperandEncoding {
     RegisterOrImmediate,
 }
 
+/// Closed semantic and lowering contract for `bar.warp.sync`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WarpBarrier {
+    pub participation: WarpBarrierParticipation,
+    pub legacy_pre_sm70: WarpBarrierLegacyParticipation,
+    pub adapter: WarpBarrierAdapter,
+    pub mask_encoding: WarpBarrierMaskEncoding,
+    pub memory_ordering: WarpBarrierMemoryOrdering,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpBarrierParticipation {
+    ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpBarrierLegacyParticipation {
+    AllNamedLanesConvergedAndOnlyNamedLanesActive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpBarrierAdapter {
+    DirectMemberMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpBarrierMaskEncoding {
+    RegisterOrImmediate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpBarrierMemoryOrdering {
+    ParticipatingLanes,
+}
+
 /// Closed identity and source adapter for generated packed integer dot products.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -825,6 +868,8 @@ pub struct CatalogIntrinsic {
     pub active_mask: Option<ActiveMask>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warp_match: Option<WarpMatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warp_barrier: Option<WarpBarrier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dot_product: Option<DotProduct>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1191,6 +1236,40 @@ mask_encoding = "register_or_immediate"
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<WarpMatch>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn warp_barrier_contract_rejects_open_ended_policy() {
+        let valid = r#"
+participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active"
+adapter = "direct_member_mask"
+mask_encoding = "register_or_immediate"
+memory_ordering = "participating_lanes"
+"#;
+        toml::from_str::<WarpBarrier>(valid).unwrap();
+
+        for invalid in [
+            valid.replace("adapter = \"direct_member_mask\"", "adapter = \"direct\""),
+            valid.replace(
+                "legacy_pre_sm70 = \"all_named_lanes_converged_and_only_named_lanes_active\"",
+                "legacy_pre_sm70 = \"independent_threads\"",
+            ),
+            valid.replace(
+                "mask_encoding = \"register_or_immediate\"",
+                "mask_encoding = \"any_operand\"",
+            ),
+            valid.replace(
+                "memory_ordering = \"participating_lanes\"",
+                "memory_ordering = \"none\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<WarpBarrier>(&invalid).is_err(),
+                "{invalid}"
+            );
         }
     }
 }

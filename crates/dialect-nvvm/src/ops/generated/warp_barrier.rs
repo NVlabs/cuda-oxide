@@ -7,12 +7,12 @@
 // Catalog schema/version: 8/0.1.0; intrinsic ABI: v1; catalog SHA-256: e1766b2e2a768f84cbe24a68ed7b25858b973fe8c78919b809fa047a83522581.
 // LLVM source: 1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e.
 
-//! Structural operation for the generated active warp mask.
+//! Structural operation for generated warp synchronization.
 
 use pliron::{
     builtin::{
         op_interfaces::{NOpdsInterface, NResultsInterface},
-        types::{IntegerType, Signedness},
+        types::IntegerType,
     },
     common_traits::Verify,
     context::{Context, Ptr},
@@ -21,57 +21,60 @@ use pliron::{
     operation::Operation,
     result::Error,
     r#type::Typed,
+    value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
 
-/// Returns the lanes active at this instruction in the current warp.
-#[pliron_op(
-    name = "nvvm.activemask",
-    format,
-    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
-)]
-pub struct ActiveMaskOp;
+fn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == 32)
+}
 
-impl ActiveMaskOp {
+/// Synchronize and order memory for the named warp lanes.
+///
+/// The operand is the 32-bit warp participation mask.
+#[pliron_op(
+    name = "nvvm.bar_warp_sync",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
+)]
+pub struct BarWarpSyncOp;
+
+impl BarWarpSyncOp {
     pub fn new(op: Ptr<Operation>) -> Self {
         Self { op }
     }
 
-    pub fn build(ctx: &mut Context) -> Ptr<Operation> {
-        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+    pub fn build(ctx: &mut Context, member_mask: Value) -> Ptr<Operation> {
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![result_ty.into()],
             vec![],
+            vec![member_mask],
             vec![],
             0,
         )
     }
 }
 
-impl Verify for ActiveMaskOp {
+impl Verify for BarWarpSyncOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
-        let valid = op.get_num_operands() == 0
-            && op.get_num_results() == 1
-            && op
-                .get_result(0)
-                .get_type(ctx)
-                .deref(ctx)
-                .downcast_ref::<IntegerType>()
-                .is_some_and(|integer| integer.width() == 32);
-        if !valid {
+        if op.get_num_operands() != 1 || op.get_num_results() != 0 {
             return verify_err!(
                 op.loc(),
-                "nvvm.activemask requires no operands and one i32 result"
+                "nvvm.bar_warp_sync requires exactly one member-mask operand and no results"
             );
+        }
+        if !is_i32(ctx, op.get_operand(0).get_type(ctx)) {
+            return verify_err!(op.loc(), "nvvm.bar_warp_sync member mask must be i32");
         }
         Ok(())
     }
 }
 
 pub(super) fn register(ctx: &mut Context) {
-    ActiveMaskOp::register(ctx);
+    BarWarpSyncOp::register(ctx);
 }

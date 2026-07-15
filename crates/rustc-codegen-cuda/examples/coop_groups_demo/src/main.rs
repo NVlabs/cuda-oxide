@@ -203,6 +203,7 @@ pub fn test_typed_warp16_shfl(mut out: DisjointSlice<u32>) {
     let gid = thread::index_1d();
     let tile = this_thread_block().tiled_partition::<16>();
     let lane = warp::lane_id();
+    tile.sync();
     let broadcast = tile.shfl(lane, 0);
     if let Some(slot) = out.get_mut(gid) {
         *slot = broadcast;

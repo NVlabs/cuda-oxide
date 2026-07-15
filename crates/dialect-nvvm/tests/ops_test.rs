@@ -5,9 +5,9 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    ActiveMaskOp, Barrier0Op, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
-    LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
-    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
+    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
+    ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
+    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
     MatchAnySyncI32Op, MatchAnySyncI64Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
     MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
     NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
@@ -1583,6 +1583,34 @@ fn test_redux_sync_integer_family_construct_and_verify() {
     check_variant!(ReduxSyncAndOp);
     check_variant!(ReduxSyncOrOp);
     check_variant!(ReduxSyncXorOp);
+}
+
+#[test]
+fn test_bar_warp_sync_construct_and_verify() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), i64_ty.into()]);
+    let mask = block.deref(&ctx).get_argument(0);
+    let wrong_mask = block.deref(&ctx).get_argument(1);
+
+    let valid = BarWarpSyncOp::build(&mut ctx, mask);
+    assert!(verify_op(&BarWarpSyncOp::new(valid), &ctx).is_ok());
+
+    let wrong_type = BarWarpSyncOp::build(&mut ctx, wrong_mask);
+    assert!(verify_op(&BarWarpSyncOp::new(wrong_type), &ctx).is_err());
+
+    let wrong_arity = Operation::new(
+        &mut ctx,
+        BarWarpSyncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&BarWarpSyncOp::new(wrong_arity), &ctx).is_err());
 }
 
 #[test]

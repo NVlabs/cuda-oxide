@@ -2893,6 +2893,66 @@ fn test_sync_threads_libnvvm_uses_exact_convergent_inline_ptx() -> Result<(), an
     Ok(())
 }
 
+fn lower_warp_barrier(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+    let member_mask = entry.deref(&ctx).get_argument(0);
+    nvvm::BarWarpSyncOp::build(&mut ctx, member_mask).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_warp_barrier_uses_typed_intrinsic_on_both_backends() -> Result<(), anyhow::Error> {
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let (ctx, module_ptr) = lower_warp_barrier(backend)?;
+        let body = lowered_kernel_body(&ctx, module_ptr);
+        let mut calls = 0;
+        for op in body {
+            assert!(
+                Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+                "warp barrier must use its typed intrinsic"
+            );
+            let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+                continue;
+            };
+            let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+                continue;
+            };
+            if callee.to_string() == "llvm_nvvm_bar_warp_sync" {
+                assert_eq!(op.deref(&ctx).get_num_operands(), 1);
+                assert_eq!(op.deref(&ctx).get_num_results(), 1);
+                calls += 1;
+            }
+        }
+        assert_eq!(calls, 1, "expected one typed warp-barrier call");
+
+        let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        assert!(ir.contains("@llvm.nvvm.bar.warp.sync(i32"), "{ir}");
+    }
+    Ok(())
+}
+
 // =============================================================================
 // cp.async lowering tests
 // =============================================================================

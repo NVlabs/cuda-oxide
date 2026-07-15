@@ -21,7 +21,9 @@ use crate::model::{
     PackedAtomicReturnContract, PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract,
     PackedAtomicStateSpace, PackedAtomicSubnormal, PtxVersion, ReduxAdapter, ReduxOperation,
     ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation,
-    WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth,
+    WarpBarrierAdapter, WarpBarrierLegacyParticipation, WarpBarrierMaskEncoding,
+    WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
+    WarpMatchParticipation, WarpMatchValueWidth,
 };
 #[cfg(test)]
 use crate::ptx::InstructionPattern;
@@ -32,9 +34,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 8;
-const OVERLAY_SHARD_SCHEMA: u32 = 4;
-pub(crate) const CATALOG_SCHEMA: u32 = 7;
+const OVERLAY_SCHEMA: u32 = 9;
+const OVERLAY_SHARD_SCHEMA: u32 = 5;
+pub(crate) const CATALOG_SCHEMA: u32 = 8;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -640,6 +642,10 @@ fn validate_policy(
             policy,
             declaration.context("warp_match requires imported LLVM declaration")?,
         )?,
+        "warp_barrier" => validate_warp_barrier_policy(
+            policy,
+            declaration.context("warp_barrier requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -709,7 +715,7 @@ fn validate_policy(
             .filter(|selection| selection_matches_policy(policy, selection))
             .collect();
         let expected_selection_count = match policy.family.as_str() {
-            "vote" => 2,
+            "vote" | "warp_barrier" => 2,
             "warp_match" => 4,
             _ => 1,
         };
@@ -759,6 +765,14 @@ fn selection_matches_policy(
         return recipe
             .selections
             .contains(&selection.source_record.as_str())
+            && policy.expected_ptx.matches(&selection.asm)
+            && selection.constraints.is_empty();
+    }
+
+    if policy.family == "warp_barrier" {
+        return policy.warp_barrier.is_some()
+            && ["INT_BAR_WARP_SYNC_I", "INT_BAR_WARP_SYNC_R"]
+                .contains(&selection.source_record.as_str())
             && policy.expected_ptx.matches(&selection.asm)
             && selection.constraints.is_empty();
     }
@@ -864,6 +878,7 @@ fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with sync",
@@ -1014,6 +1029,7 @@ fn validate_vote_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.redux.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with vote",
@@ -1260,6 +1276,7 @@ fn validate_active_mask_policy(
             && policy.redux.is_none()
             && policy.vote.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.dot_product.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
@@ -1515,6 +1532,7 @@ fn validate_warp_match_policy(
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.dot_product.is_none()
+            && policy.warp_barrier.is_none()
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
@@ -1568,6 +1586,177 @@ fn validate_warp_match_policy(
                     ]
                 && selection.constraints.is_empty(),
             "{} warp-match selections disagree on PTX shape, predicates, or constraints",
+            policy.id
+        );
+    }
+    Ok(())
+}
+
+fn validate_warp_barrier_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let barrier = policy
+        .warp_barrier
+        .as_ref()
+        .with_context(|| format!("{} has no closed warp-barrier contract", policy.id))?;
+    ensure!(
+        barrier.participation
+            == WarpBarrierParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask
+            && barrier.legacy_pre_sm70
+                == WarpBarrierLegacyParticipation::AllNamedLanesConvergedAndOnlyNamedLanesActive
+            && barrier.adapter == WarpBarrierAdapter::DirectMemberMask
+            && barrier.mask_encoding == WarpBarrierMaskEncoding::RegisterOrImmediate
+            && barrier.memory_ordering == WarpBarrierMemoryOrdering::ParticipatingLanes,
+        "{} requests an unsupported warp-barrier participation, legacy rule, adapter, mask encoding, or memory ordering",
+        policy.id
+    );
+    ensure!(
+        policy.id == "sync_mask"
+            && policy.abi_id == "i0049"
+            && policy.operation_key == "warp.barrier.sync.masked"
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some("int_nvvm_bar_warp_sync")
+            && policy.llvm_symbol.as_deref() == Some("llvm.nvvm.bar.warp.sync")
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} warp-barrier identity does not match the closed sync_mask recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "warp"
+            && policy.rust_name == "sync_mask"
+            && policy.rust_arguments == ["u32"]
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == "cuda_intrinsics::warp::sync_mask"
+            && policy.compatibility_rust_paths == ["cuda_device::warp::sync_mask"],
+        "{} must keep its unsafe raw API and safe cuda-device compatibility path distinct",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "BarWarpSyncOp"
+            && policy.dialect_op_name == "nvvm.bar_warp_sync"
+            && policy.dialect_operands == ["i32"]
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == ["i32"]
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_warp_barrier",
+        "{} is outside the closed one-mask warp-barrier lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "6.0"
+            && policy.minimum_sm.as_deref() == Some("sm_30")
+            && policy.ptx_result == "()"
+            && policy.targets == "all",
+        "{} warp-barrier effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.2 Parallel Synchronization and Communication Instructions: bar.warp.sync"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-warp-sync",
+        "{} warp-barrier PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == ["IntrConvergent", "IntrNoCallback"],
+        "{} warp-barrier effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
+            && policy.dot_product.is_none()
+            && policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with warp_barrier",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "bar"
+            && policy.expected_ptx.modifiers == ["warp", "sync"]
+            && policy.expected_ptx.operands == [OperandPattern::RegisterOrImmediate],
+        "{} expected PTX does not match bar.warp.sync mask",
+        policy.id
+    );
+
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                ]),
+        "{} must define exactly the reviewed typed LLVM and libNVVM routes",
+        policy.id
+    );
+    for lowering in &policy.backend_lowerings {
+        let floor_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.as_deref() == Some("6.0")
+                    && lowering.minimum_sm.as_deref() == Some("sm_30")
+            }
+            IntrinsicBackend::LibNvvm => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.as_deref() == Some("6.0")
+                    && lowering.minimum_sm.as_deref() == Some("sm_75")
+            }
+        };
+        ensure!(
+            floor_matches && !lowering.evidence_profile.trim().is_empty(),
+            "{} backend {:?} does not carry its reviewed warp-barrier profile floor",
+            policy.id,
+            lowering.backend
+        );
+    }
+
+    let expected_selection_records = BTreeSet::from(["INT_BAR_WARP_SYNC_I", "INT_BAR_WARP_SYNC_R"]);
+    let actual_selection_records: BTreeSet<_> = declaration
+        .selections
+        .iter()
+        .map(|selection| selection.source_record.as_str())
+        .collect();
+    ensure!(
+        declaration.selections.len() == 2 && actual_selection_records == expected_selection_records,
+        "{} warp-barrier declaration must contain exactly its immediate/register selection pair",
+        policy.id
+    );
+    for selection in &declaration.selections {
+        ensure!(
+            selection.asm == "bar.warp.sync \t$i;"
+                && selection.predicates
+                    == [
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 30",
+                    ]
+                && selection.constraints.is_empty(),
+            "{} warp-barrier selections disagree on PTX shape, target predicates, or constraints",
             policy.id
         );
     }
@@ -1658,7 +1847,7 @@ fn validate_selected_target_predicates(
         );
     } else if matches!(
         policy.family.as_str(),
-        "vote" | "active_mask" | "warp_match"
+        "vote" | "active_mask" | "warp_match" | "warp_barrier"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -1704,6 +1893,7 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with an sreg",
@@ -1898,6 +2088,7 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with redux",
         policy.id
@@ -2109,6 +2300,7 @@ fn validate_dot_product_policy(
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with dotprod",
         policy.id
@@ -2404,6 +2596,7 @@ fn validate_ldmatrix_policy(
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.dot_product.is_none(),
         "{} mixes another generated-family contract with ldmatrix",
         policy.id
@@ -2493,6 +2686,7 @@ fn validate_packed_atomic_policy(
             && policy.vote.is_none()
             && policy.active_mask.is_none()
             && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
@@ -3241,6 +3435,7 @@ fn resolve_record(
         vote: policy.vote.clone(),
         active_mask: policy.active_mask.clone(),
         warp_match: policy.warp_match.clone(),
+        warp_barrier: policy.warp_barrier.clone(),
         dot_product: policy.dot_product.clone(),
         ldmatrix: policy
             .ldmatrix_variant
@@ -3349,6 +3544,7 @@ mod tests {
             vote: None,
             active_mask: None,
             warp_match: None,
+            warp_barrier: None,
             dot_product: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
@@ -3530,6 +3726,21 @@ mod tests {
             .intrinsics
             .into_iter()
             .find(|record| record.source_record == "int_nvvm_barrier_cta_sync_aligned_all")
+            .unwrap()
+    }
+
+    fn warp_barrier_policy() -> OverlayIntrinsic {
+        packed_policy("sync_mask")
+    }
+
+    fn warp_barrier_declaration() -> ImportedIntrinsic {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let text = std::fs::read_to_string(repo_root.join("intrinsics/imported.json")).unwrap();
+        serde_json::from_str::<ImportedFile>(&text)
+            .unwrap()
+            .intrinsics
+            .into_iter()
+            .find(|record| record.source_record == "int_nvvm_bar_warp_sync")
             .unwrap()
     }
 
@@ -3830,8 +4041,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 9);
-        assert_eq!(overlay.intrinsics.len(), 48);
+        assert_eq!(overlay.shards.len(), 10);
+        assert_eq!(overlay.intrinsics.len(), 49);
         assert_eq!(
             overlay
                 .intrinsics
@@ -3871,6 +4082,14 @@ mod tests {
                 .filter(|record| record.family == "vote")
                 .count(),
             4
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "warp_barrier")
+                .count(),
+            1
         );
         assert_eq!(
             overlay
@@ -4415,6 +4634,133 @@ mod tests {
             .minimum_ptx = None;
         assert!(
             validate_imported_policy(&wrong_llvm_floor, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("profile floor")
+        );
+    }
+
+    #[test]
+    fn sync_mask_matches_the_closed_warp_barrier_recipe() {
+        let policy = warp_barrier_policy();
+        let declaration = warp_barrier_declaration();
+        validate_imported_policy(&policy, &declaration).unwrap();
+
+        let selected: Vec<_> = declaration
+            .selections
+            .iter()
+            .filter(|selection| selection_matches_policy(&policy, selection))
+            .collect();
+        assert_eq!(selected.len(), 2);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|selection| selection.source_record.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["INT_BAR_WARP_SYNC_I", "INT_BAR_WARP_SYNC_R"])
+        );
+
+        let mut record = evidence();
+        record.id = policy.id.clone();
+        record.source_record = policy.source_record.clone();
+        record.llvm_symbol = policy.llvm_symbol.clone();
+        record.llvm_arguments = policy.llvm_arguments.clone();
+        record.llvm_results = policy.llvm_results.clone();
+        record.expected_ptx = policy.expected_ptx.clone();
+        let resolved = resolve_record(
+            &policy,
+            resolve_policy_source(&policy).unwrap(),
+            Some(&declaration),
+            &record,
+            "test",
+            "LLVM version test",
+            "0123456789abcdef",
+            vec![],
+            1,
+        )
+        .unwrap();
+        assert_eq!(resolved.selections.len(), 2);
+        assert_eq!(resolved.warp_barrier, policy.warp_barrier);
+    }
+
+    #[test]
+    fn sync_mask_recipe_rejects_unreviewed_contract_and_selection_changes() {
+        let valid = warp_barrier_policy();
+        let declaration = warp_barrier_declaration();
+
+        let mut wrong_identity = valid.clone();
+        wrong_identity.id = "bar_warp_sync".into();
+        assert!(
+            validate_imported_policy(&wrong_identity, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("warp-barrier identity")
+        );
+
+        let mut missing_contract = valid.clone();
+        missing_contract.warp_barrier = None;
+        assert!(
+            validate_imported_policy(&missing_contract, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("closed warp-barrier contract")
+        );
+
+        let mut safe_raw_api = valid.clone();
+        safe_raw_api.safe = true;
+        safe_raw_api.safe_allowlist_reason = Some("incorrectly hides participation rules".into());
+        assert!(
+            validate_imported_policy(&safe_raw_api, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("unsafe raw API")
+        );
+
+        let mut wrong_memory = valid.clone();
+        wrong_memory.memory = "none".into();
+        assert!(
+            validate_imported_policy(&wrong_memory, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("effects or target floor")
+        );
+
+        let mut register_only = valid.clone();
+        register_only.expected_ptx.operands[0] = OperandPattern::Register;
+        assert!(
+            validate_imported_policy(&register_only, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("expected PTX")
+        );
+
+        let mut one_selection = declaration.clone();
+        one_selection.selections.pop();
+        assert!(
+            validate_imported_policy(&valid, &one_selection)
+                .unwrap_err()
+                .to_string()
+                .contains("immediate/register selection pair")
+        );
+
+        let mut wrong_predicate = declaration.clone();
+        wrong_predicate.selections[1].predicates[0] = "Subtarget->getPTXVersion() >= 61".into();
+        assert!(
+            validate_imported_policy(&valid, &wrong_predicate)
+                .unwrap_err()
+                .to_string()
+                .contains("selections disagree")
+        );
+
+        let mut missing_libnvvm_floor = valid;
+        missing_libnvvm_floor
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap()
+            .minimum_sm = None;
+        assert!(
+            validate_imported_policy(&missing_libnvvm_floor, &declaration)
                 .unwrap_err()
                 .to_string()
                 .contains("profile floor")

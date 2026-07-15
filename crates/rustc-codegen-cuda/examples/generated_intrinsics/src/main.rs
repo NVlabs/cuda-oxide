@@ -17,7 +17,7 @@ use cuda_intrinsics::sreg::{
 };
 use cuda_intrinsics::warp::{
     active_mask, all_sync, any_sync, ballot_sync, match_all_i64_sync, match_all_sync,
-    match_any_i64_sync, match_any_sync, uni_sync,
+    match_any_i64_sync, match_any_sync, sync_mask, uni_sync,
 };
 
 #[cuda_module]
@@ -48,6 +48,7 @@ mod kernels {
         // SAFETY: every lane in each full warp executes these calls with the
         // same full member mask and instruction sequence.
         let (all_ok, any_ok, ballot, uniform, any32, any64, all32, all64) = unsafe {
+            sync_mask(member_mask);
             (
                 all_sync(member_mask, masks_ok),
                 any_sync(member_mask, lane == 0),
