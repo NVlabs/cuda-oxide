@@ -445,57 +445,6 @@ impl ShflSyncUpI64Op {
 }
 
 // =============================================================================
-// Active Mask
-// =============================================================================
-
-/// Read the active-thread mask of the current warp.
-///
-/// Corresponds to `llvm.nvvm.activemask` / PTX `activemask.b32` (PTX 6.2+).
-/// The result is a 32-bit bitmask: bit `k` is set iff lane `k` is currently
-/// converged with this thread (i.e. participating in this dynamic execution
-/// region). For full-warp execution this is `0xFFFFFFFF`; in divergent code
-/// it shrinks to whatever subset of lanes reached this point together.
-///
-/// # Verification
-///
-/// - Must have 0 operands
-/// - Must have 1 result of type `i32`
-#[pliron_op(
-    name = "nvvm.activemask",
-    format,
-    interfaces = [NOpdsInterface<0>, NResultsInterface<1>],
-)]
-pub struct ActiveMaskOp;
-
-impl ActiveMaskOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        ActiveMaskOp { op }
-    }
-}
-
-impl Verify for ActiveMaskOp {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = &*self.get_operation().deref(ctx);
-        let res = op.get_result(0);
-        let ty = res.get_type(ctx);
-
-        let ty_obj = ty.deref(ctx);
-        let int_ty = match ty_obj.downcast_ref::<IntegerType>() {
-            Some(ty) => ty,
-            None => {
-                return verify_err!(op.loc(), "nvvm.activemask result must be integer");
-            }
-        };
-
-        if int_ty.width() != 32 {
-            return verify_err!(op.loc(), "nvvm.activemask result must be 32-bit integer");
-        }
-        Ok(())
-    }
-}
-
-// =============================================================================
 // Warp-scoped barrier (sub-warp synchronization)
 // =============================================================================
 
@@ -533,122 +482,6 @@ impl BarWarpSyncOp {
     /// Wrap an existing operation pointer.
     pub fn new(op: Ptr<Operation>) -> Self {
         BarWarpSyncOp { op }
-    }
-}
-
-// =============================================================================
-// Warp Match Operations (sm_70+)
-// =============================================================================
-
-/// Warp match-any (32-bit value): bitmask of lanes whose value equals mine.
-///
-/// Corresponds to `llvm.nvvm.match.any.sync.i32` / PTX `match.any.sync.b32`.
-/// Requires sm_70+.
-///
-/// # Operands
-///
-/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
-/// - `value` (i32): value broadcast-and-compared across the mask
-///
-/// # Results
-///
-/// - `result` (i32): bitmask of lanes (within `mask`) whose `value` equals this lane's
-#[pliron_op(
-    name = "nvvm.match_any_sync_i32",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct MatchAnySyncI32Op;
-
-impl MatchAnySyncI32Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAnySyncI32Op { op }
-    }
-}
-
-/// Warp match-any (64-bit value): 64-bit variant of [`MatchAnySyncI32Op`].
-///
-/// Corresponds to `llvm.nvvm.match.any.sync.i64` / PTX `match.any.sync.b64`.
-///
-/// # Operands
-///
-/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
-/// - `value` (i64): value broadcast-and-compared across the mask
-///
-/// # Results
-///
-/// - `result` (i32): bitmask of lanes (within `mask`) whose `value` equals this lane's
-#[pliron_op(
-    name = "nvvm.match_any_sync_i64",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct MatchAnySyncI64Op;
-
-impl MatchAnySyncI64Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAnySyncI64Op { op }
-    }
-}
-
-/// Warp match-all (32-bit value): full participating mask if every lane agrees, else 0.
-///
-/// Corresponds to `llvm.nvvm.match.all.sync.i32p` / PTX `match.all.sync.b32`.
-/// The LLVM intrinsic returns `{i32, i1}`; the lowering extracts field 0
-/// (the matching mask). Callers can recover the predicate as `result != 0`.
-/// Requires sm_70+.
-///
-/// # Operands
-///
-/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
-/// - `value` (i32): value broadcast-and-compared across the mask
-///
-/// # Results
-///
-/// - `result` (i32): `mask` if every participating lane has the same `value`, else 0
-#[pliron_op(
-    name = "nvvm.match_all_sync_i32",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct MatchAllSyncI32Op;
-
-impl MatchAllSyncI32Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAllSyncI32Op { op }
-    }
-}
-
-/// Warp match-all (64-bit value): 64-bit variant of [`MatchAllSyncI32Op`].
-///
-/// Corresponds to `llvm.nvvm.match.all.sync.i64p` / PTX `match.all.sync.b64`.
-///
-/// # Operands
-///
-/// - `mask` (i32): warp lane participation mask (`-1` = full warp)
-/// - `value` (i64): value broadcast-and-compared across the mask
-///
-/// # Results
-///
-/// - `result` (i32): `mask` if every participating lane has the same `value`, else 0
-#[pliron_op(
-    name = "nvvm.match_all_sync_i64",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct MatchAllSyncI64Op;
-
-impl MatchAllSyncI64Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MatchAllSyncI64Op { op }
     }
 }
 
@@ -766,15 +599,8 @@ pub(super) fn register(ctx: &mut Context) {
     ShflSyncBflyI64Op::register(ctx);
     ShflSyncDownI64Op::register(ctx);
     ShflSyncUpI64Op::register(ctx);
-    // Match
-    MatchAnySyncI32Op::register(ctx);
-    MatchAnySyncI64Op::register(ctx);
-    MatchAllSyncI32Op::register(ctx);
-    MatchAllSyncI64Op::register(ctx);
     // Leader election (sm_90+)
     ElectSyncOp::register(ctx);
-    // Active mask
-    ActiveMaskOp::register(ctx);
     // Warp-scoped barrier
     BarWarpSyncOp::register(ctx);
     // Hardware warp identification

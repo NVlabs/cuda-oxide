@@ -211,6 +211,10 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub vote: Option<Vote>,
     #[serde(default)]
+    pub active_mask: Option<ActiveMask>,
+    #[serde(default)]
+    pub warp_match: Option<WarpMatch>,
+    #[serde(default)]
     pub dot_product: Option<DotProduct>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
@@ -547,6 +551,80 @@ pub enum MaskEncoding {
     RegisterOrImmediate,
 }
 
+/// Closed semantic and lowering contract for `activemask`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveMask {
+    pub observation: ActiveMaskObservation,
+    pub adapter: ActiveMaskAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveMaskObservation {
+    ExecutingLanesAtInstruction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveMaskAdapter {
+    DirectZeroOperandMask,
+}
+
+/// Closed semantic and lowering contract for `match.sync`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WarpMatch {
+    pub mode: WarpMatchMode,
+    pub value_width: WarpMatchValueWidth,
+    pub participation: WarpMatchParticipation,
+    pub adapter: WarpMatchAdapter,
+    pub value_encoding: MatchOperandEncoding,
+    pub mask_encoding: MatchOperandEncoding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpMatchMode {
+    Any,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpMatchValueWidth {
+    B32,
+    B64,
+}
+
+impl WarpMatchValueWidth {
+    pub const fn bits(self) -> u32 {
+        match self {
+            Self::B32 => 32,
+            Self::B64 => 64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpMatchParticipation {
+    ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpMatchAdapter {
+    DirectMask,
+    ProjectMaskDiscardPredicate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchOperandEncoding {
+    RegisterOrImmediate,
+}
+
 /// Closed identity and source adapter for generated packed integer dot products.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -743,6 +821,10 @@ pub struct CatalogIntrinsic {
     pub redux: Option<Redux>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vote: Option<Vote>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_mask: Option<ActiveMask>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warp_match: Option<WarpMatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dot_product: Option<DotProduct>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1081,6 +1163,34 @@ mask_encoding = "register_or_immediate"
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<Vote>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn warp_match_contract_rejects_open_ended_adapters_and_encodings() {
+        let valid = r#"
+mode = "all"
+value_width = "b64"
+participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+adapter = "project_mask_discard_predicate"
+value_encoding = "register_or_immediate"
+mask_encoding = "register_or_immediate"
+"#;
+        toml::from_str::<WarpMatch>(valid).unwrap();
+
+        for invalid in [
+            valid.replace("mode = \"all\"", "mode = \"equal\""),
+            valid.replace(
+                "adapter = \"project_mask_discard_predicate\"",
+                "adapter = \"first_result\"",
+            ),
+            valid.replace(
+                "value_encoding = \"register_or_immediate\"",
+                "value_encoding = \"anything\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<WarpMatch>(&invalid).is_err(), "{invalid}");
         }
     }
 }

@@ -548,6 +548,266 @@ fn test_generated_vote_sync_family_lowers_to_exact_typed_intrinsics() -> Result<
     Ok(())
 }
 
+fn lower_generated_active_mask(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    nvvm::ActiveMaskOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_generated_active_mask_llvm_nvptx_uses_typed_intrinsic() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_generated_active_mask(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let mut found = 0;
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX active_mask must use the typed intrinsic"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        if callee.to_string() != "llvm_nvvm_activemask" {
+            continue;
+        }
+
+        found += 1;
+        let call = op.deref(&ctx);
+        assert_eq!(call.get_num_operands(), 0);
+        assert_eq!(call.get_num_results(), 1);
+        let result_ty = call.get_result(0).get_type(&ctx);
+        let result_ty = result_ty.deref(&ctx);
+        let result_ty = result_ty
+            .downcast_ref::<IntegerType>()
+            .expect("active_mask returns an integer");
+        assert_eq!(result_ty.width(), 32);
+    }
+    assert_eq!(found, 1, "expected one typed active_mask call");
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    assert!(ir.contains("call i32 @llvm.nvvm.activemask()"), "{ir}");
+    Ok(())
+}
+
+#[test]
+fn test_generated_active_mask_libnvvm_uses_convergent_sideeffect_asm() -> Result<(), anyhow::Error>
+{
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_generated_active_mask(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let mut found = 0;
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+        {
+            assert_ne!(callee.to_string(), "llvm_nvvm_activemask");
+        }
+        let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+
+        found += 1;
+        assert_eq!(
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("activemask.b32 $0;")
+        );
+        assert_eq!(
+            asm.get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("=r,~{memory}")
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::Convergent);
+        assert!(
+            asm.get_attr_inline_asm_convergent(&ctx)
+                .is_some_and(|value| bool::from((*value).clone()))
+        );
+        let asm = op.deref(&ctx);
+        assert_eq!(asm.get_num_operands(), 0);
+        assert_eq!(asm.get_num_results(), 1);
+        let result_ty = asm.get_result(0).get_type(&ctx);
+        let result_ty = result_ty.deref(&ctx);
+        let result_ty = result_ty
+            .downcast_ref::<IntegerType>()
+            .expect("active_mask inline asm returns an integer");
+        assert_eq!(result_ty.width(), 32);
+    }
+    assert_eq!(found, 1, "expected one exact active_mask asm block");
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    assert!(
+        ir.contains("call i32 asm sideeffect \"activemask.b32 $0;\", \"=r,~{memory}\"()"),
+        "{ir}"
+    );
+    assert!(ir.contains("attributes #0 = { convergent }"), "{ir}");
+    Ok(())
+}
+
+#[test]
+fn test_generated_warp_match_family_uses_exact_typed_calls_and_mask_projection()
+-> Result<(), anyhow::Error> {
+    use llvm_export::types::StructType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    let mut ctx = make_test_ctx();
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i64_ty.into()]);
+    let mask = entry.deref(&ctx).get_argument(0);
+    let value32 = entry.deref(&ctx).get_argument(1);
+    let value64 = entry.deref(&ctx).get_argument(2);
+    for warp_match in [
+        nvvm::MatchAnySyncI32Op::build(&mut ctx, mask, value32),
+        nvvm::MatchAnySyncI64Op::build(&mut ctx, mask, value64),
+        nvvm::MatchAllSyncI32Op::build(&mut ctx, mask, value32),
+        nvvm::MatchAllSyncI64Op::build(&mut ctx, mask, value64),
+    ] {
+        warp_match.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: mir_lower::IntrinsicBackend::LlvmNvptx,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let expected = [
+        ("llvm_nvvm_match_any_sync_i32", 32, false),
+        ("llvm_nvvm_match_any_sync_i64", 64, false),
+        ("llvm_nvvm_match_all_sync_i32p", 32, true),
+        ("llvm_nvvm_match_all_sync_i64p", 64, true),
+    ];
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let integer_width = |value: pliron::value::Value| {
+        let ty = value.get_type(&ctx);
+        let ty = ty.deref(&ctx);
+        ty.downcast_ref::<IntegerType>()
+            .expect("warp-match value is an integer")
+            .width()
+    };
+    let mut found = Vec::new();
+    let mut aggregate_results = Vec::new();
+    for &op in &body {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "warp match must use typed LLVM intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        let Some((_, value_width, aggregate)) =
+            expected.iter().find(|(name, _, _)| *name == callee)
+        else {
+            continue;
+        };
+
+        let call = op.deref(&ctx);
+        assert_eq!(call.get_num_operands(), 2);
+        assert_eq!(
+            [
+                integer_width(call.get_operand(0)),
+                integer_width(call.get_operand(1)),
+            ],
+            [32, *value_width],
+            "{callee} has the wrong typed signature"
+        );
+        assert_eq!(call.get_num_results(), 1);
+        let result = call.get_result(0);
+        if *aggregate {
+            let result_ty = result.get_type(&ctx);
+            let result_ty = result_ty.deref(&ctx);
+            let result_ty = result_ty
+                .downcast_ref::<StructType>()
+                .expect("match.all returns an LLVM aggregate");
+            assert_eq!(result_ty.num_fields(), 2);
+            let field_widths = (0..2)
+                .map(|index| {
+                    let field = result_ty.field_type(index);
+                    let field = field.deref(&ctx);
+                    field
+                        .downcast_ref::<IntegerType>()
+                        .expect("match.all aggregate fields are integers")
+                        .width()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(field_widths, [32, 1]);
+            aggregate_results.push((callee.clone(), result));
+        } else {
+            assert_eq!(integer_width(result), 32);
+        }
+        found.push(callee);
+    }
+
+    found.sort();
+    let mut expected_calls = expected.map(|(name, _, _)| name.to_owned());
+    expected_calls.sort();
+    assert_eq!(found, expected_calls);
+
+    let mut projected = Vec::new();
+    for &op in &body {
+        let Some(extract) = Operation::get_op::<llvm::ExtractValueOp>(op, &ctx) else {
+            continue;
+        };
+        assert_eq!(extract.indices(&ctx), vec![0]);
+        let extract = op.deref(&ctx);
+        assert_eq!(extract.get_num_operands(), 1);
+        assert_eq!(extract.get_num_results(), 1);
+        assert_eq!(integer_width(extract.get_result(0)), 32);
+        let aggregate = extract.get_operand(0);
+        let callee = aggregate_results
+            .iter()
+            .find_map(|(callee, result)| (*result == aggregate).then(|| callee.clone()))
+            .expect("match.all must extract from its aggregate call result");
+        projected.push(callee);
+    }
+    projected.sort();
+    assert_eq!(
+        projected,
+        [
+            "llvm_nvvm_match_all_sync_i32p".to_owned(),
+            "llvm_nvvm_match_all_sync_i64p".to_owned(),
+        ]
+    );
+    Ok(())
+}
+
 #[test]
 fn test_warpid_ops_preserve_snapshot_semantics() -> Result<(), anyhow::Error> {
     assert_sreg_lowers_to_inline_asm(

@@ -7,7 +7,7 @@
 // Catalog schema/version: 7/0.1.0; intrinsic ABI: v1; catalog SHA-256: d4bfc77062c760c6c3b9a0dd5898d4863e19ce9ae42e4e0bf5db102491f3da6b.
 // LLVM source: 1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e.
 
-//! Structural operations for the generated `vote.sync` family.
+//! Structural operations for the generated `match.sync` family.
 
 use pliron::{
     builtin::{
@@ -32,204 +32,202 @@ fn is_integer_width(ctx: &Context, ty: pliron::r#type::TypeHandle, width: u32) -
         .is_some_and(|integer| integer.width() == width)
 }
 
-/// Returns true when every named warp lane has a true predicate.
+/// Returns the named non-exited warp lanes when every 64-bit value agrees, otherwise zero.
 ///
-/// Operands are `[member_mask, predicate]`. The generated verifier keeps
-/// the mask, predicate, and result types exact.
+/// Operands are `[member_mask, value]`; the result is a 32-bit lane mask.
+/// LLVM also returns a predicate, which the established API discards.
 #[pliron_op(
-    name = "nvvm.vote_sync_all",
+    name = "nvvm.match_all_sync_i64",
     format,
     interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
 )]
-pub struct VoteSyncAllOp;
+pub struct MatchAllSyncI64Op;
 
-impl VoteSyncAllOp {
+impl MatchAllSyncI64Op {
     pub fn new(op: Ptr<Operation>) -> Self {
         Self { op }
     }
 
-    pub fn build(ctx: &mut Context, member_mask: Value, predicate: Value) -> Ptr<Operation> {
-        let result_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-        Operation::new(
-            ctx,
-            Self::get_concrete_op_info(),
-            vec![result_ty.into()],
-            vec![member_mask, predicate],
-            vec![],
-            0,
-        )
-    }
-}
-
-impl Verify for VoteSyncAllOp {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = self.get_operation().deref(ctx);
-        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
-            return verify_err!(
-                op.loc(),
-                "nvvm.vote_sync_all requires exactly two operands [member_mask, predicate] and one result"
-            );
-        }
-        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
-            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 1)
-            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 1)
-        {
-            return verify_err!(
-                op.loc(),
-                "nvvm.vote_sync_all requires i32 member mask, i1 predicate, and i1 result"
-            );
-        }
-        Ok(())
-    }
-}
-
-/// Returns true when at least one named warp lane has a true predicate.
-///
-/// Operands are `[member_mask, predicate]`. The generated verifier keeps
-/// the mask, predicate, and result types exact.
-#[pliron_op(
-    name = "nvvm.vote_sync_any",
-    format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct VoteSyncAnyOp;
-
-impl VoteSyncAnyOp {
-    pub fn new(op: Ptr<Operation>) -> Self {
-        Self { op }
-    }
-
-    pub fn build(ctx: &mut Context, member_mask: Value, predicate: Value) -> Ptr<Operation> {
-        let result_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-        Operation::new(
-            ctx,
-            Self::get_concrete_op_info(),
-            vec![result_ty.into()],
-            vec![member_mask, predicate],
-            vec![],
-            0,
-        )
-    }
-}
-
-impl Verify for VoteSyncAnyOp {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = self.get_operation().deref(ctx);
-        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
-            return verify_err!(
-                op.loc(),
-                "nvvm.vote_sync_any requires exactly two operands [member_mask, predicate] and one result"
-            );
-        }
-        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
-            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 1)
-            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 1)
-        {
-            return verify_err!(
-                op.loc(),
-                "nvvm.vote_sync_any requires i32 member mask, i1 predicate, and i1 result"
-            );
-        }
-        Ok(())
-    }
-}
-
-/// Returns a mask of named warp lanes whose predicates are true.
-///
-/// Operands are `[member_mask, predicate]`. The generated verifier keeps
-/// the mask, predicate, and result types exact.
-#[pliron_op(
-    name = "nvvm.vote_sync_ballot",
-    format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct VoteSyncBallotOp;
-
-impl VoteSyncBallotOp {
-    pub fn new(op: Ptr<Operation>) -> Self {
-        Self { op }
-    }
-
-    pub fn build(ctx: &mut Context, member_mask: Value, predicate: Value) -> Ptr<Operation> {
+    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {
         let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
             vec![result_ty.into()],
-            vec![member_mask, predicate],
+            vec![member_mask, value],
             vec![],
             0,
         )
     }
 }
 
-impl Verify for VoteSyncBallotOp {
+impl Verify for MatchAllSyncI64Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
         if op.get_num_operands() != 2 || op.get_num_results() != 1 {
             return verify_err!(
                 op.loc(),
-                "nvvm.vote_sync_ballot requires exactly two operands [member_mask, predicate] and one result"
+                "nvvm.match_all_sync_i64 requires exactly [member_mask, value] and one mask result"
             );
         }
         if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
-            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 1)
+            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 64)
             || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)
         {
             return verify_err!(
                 op.loc(),
-                "nvvm.vote_sync_ballot requires i32 member mask, i1 predicate, and i32 result"
+                "nvvm.match_all_sync_i64 requires i32 member mask, i64 value, and i32 result"
             );
         }
         Ok(())
     }
 }
 
-/// Returns true when every named warp lane has the same predicate.
+/// Returns the named non-exited warp lanes when every 32-bit value agrees, otherwise zero.
 ///
-/// Operands are `[member_mask, predicate]`. The generated verifier keeps
-/// the mask, predicate, and result types exact.
+/// Operands are `[member_mask, value]`; the result is a 32-bit lane mask.
+/// LLVM also returns a predicate, which the established API discards.
 #[pliron_op(
-    name = "nvvm.vote_sync_uni",
+    name = "nvvm.match_all_sync_i32",
     format,
     interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
 )]
-pub struct VoteSyncUniOp;
+pub struct MatchAllSyncI32Op;
 
-impl VoteSyncUniOp {
+impl MatchAllSyncI32Op {
     pub fn new(op: Ptr<Operation>) -> Self {
         Self { op }
     }
 
-    pub fn build(ctx: &mut Context, member_mask: Value, predicate: Value) -> Ptr<Operation> {
-        let result_ty = IntegerType::get(ctx, 1, Signedness::Signless);
+    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
             vec![result_ty.into()],
-            vec![member_mask, predicate],
+            vec![member_mask, value],
             vec![],
             0,
         )
     }
 }
 
-impl Verify for VoteSyncUniOp {
+impl Verify for MatchAllSyncI32Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
         if op.get_num_operands() != 2 || op.get_num_results() != 1 {
             return verify_err!(
                 op.loc(),
-                "nvvm.vote_sync_uni requires exactly two operands [member_mask, predicate] and one result"
+                "nvvm.match_all_sync_i32 requires exactly [member_mask, value] and one mask result"
             );
         }
         if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
-            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 1)
-            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 1)
+            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 32)
+            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)
         {
             return verify_err!(
                 op.loc(),
-                "nvvm.vote_sync_uni requires i32 member mask, i1 predicate, and i1 result"
+                "nvvm.match_all_sync_i32 requires i32 member mask, i32 value, and i32 result"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Returns the named warp lanes whose 64-bit value equals this lane's value.
+///
+/// Operands are `[member_mask, value]`; the result is a 32-bit lane mask.
+#[pliron_op(
+    name = "nvvm.match_any_sync_i64",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct MatchAnySyncI64Op;
+
+impl MatchAnySyncI64Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![member_mask, value],
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for MatchAnySyncI64Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.match_any_sync_i64 requires exactly [member_mask, value] and one mask result"
+            );
+        }
+        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
+            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 64)
+            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.match_any_sync_i64 requires i32 member mask, i64 value, and i32 result"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Returns the named warp lanes whose 32-bit value equals this lane's value.
+///
+/// Operands are `[member_mask, value]`; the result is a 32-bit lane mask.
+#[pliron_op(
+    name = "nvvm.match_any_sync_i32",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct MatchAnySyncI32Op;
+
+impl MatchAnySyncI32Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![member_mask, value],
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for MatchAnySyncI32Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.match_any_sync_i32 requires exactly [member_mask, value] and one mask result"
+            );
+        }
+        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
+            || !is_integer_width(ctx, op.get_operand(1).get_type(ctx), 32)
+            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.match_any_sync_i32 requires i32 member mask, i32 value, and i32 result"
             );
         }
         Ok(())
@@ -237,8 +235,8 @@ impl Verify for VoteSyncUniOp {
 }
 
 pub(super) fn register(ctx: &mut Context) {
-    VoteSyncAllOp::register(ctx);
-    VoteSyncAnyOp::register(ctx);
-    VoteSyncBallotOp::register(ctx);
-    VoteSyncUniOp::register(ctx);
+    MatchAllSyncI64Op::register(ctx);
+    MatchAllSyncI32Op::register(ctx);
+    MatchAnySyncI64Op::register(ctx);
+    MatchAnySyncI32Op::register(ctx);
 }

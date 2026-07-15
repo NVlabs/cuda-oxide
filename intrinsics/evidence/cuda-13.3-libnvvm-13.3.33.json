@@ -591,6 +591,47 @@
           { "kind": "exact", "value": "0" }
         ]
       }
+    },
+    {
+      "id": "active_mask",
+      "source_record": "int_nvvm_activemask",
+      "llvm_symbol": "llvm.nvvm.activemask",
+      "llvm_arguments": [],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.2 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "legacy NVVM IR convergent side-effecting inline PTX activemask.b32 with =r and ~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained exact activemask.b32 PTX and produced 1,812-byte LTOIR from the reviewed probe source (SHA-256 d98ba219074ef5b6b866e18ecff76c8aa6f35d31409cfd4af5b30e07ccd673b8)."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "retained legacy-NVVM kernel storing the inline activemask result",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 2,856-byte cubin (SHA-256 d2b3a14122744f1685f4042a7f8653d6bb8d33bf03b540c54bab7da799196557); cuobjdump showed the expected VOTE.ANY active-mask implementation and global result store.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "activemask",
+        "modifiers": ["b32"],
+        "operands": [
+          { "kind": "register" }
+        ]
+      }
     }
   ]
 }

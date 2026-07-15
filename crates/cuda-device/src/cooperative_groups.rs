@@ -538,22 +538,19 @@ impl<const N: u32> WarpCollective for WarpTile<N> {
 // CoalescedThreads
 // =============================================================================
 
-/// The set of warp lanes that are currently converged with this thread.
+/// A snapshot of the warp lanes active when this group is created.
 ///
 /// Construct with [`coalesced_threads`]. The participation mask is
-/// captured at construction time from PTX `activemask.b32`, so the
-/// group is stable across subsequent collectives even if control flow
-/// later diverges further.
+/// captured from PTX `activemask.b32`. Every non-exited lane in that mask must
+/// still execute each later group collective with the same mask.
 ///
-/// Use this when you're already inside a divergent branch and need a
-/// type-safe handle for the lanes that took it. For straight-line warp
-/// code use [`WarpTile<32>`] instead.
+/// For straight-line full-warp code, use [`WarpTile<32>`] instead.
 #[derive(Copy, Clone, Debug)]
 pub struct CoalescedThreads {
     mask: u32,
 }
 
-/// Capture the currently-converged lanes as a [`CoalescedThreads`] group.
+/// Capture the currently active lanes as a [`CoalescedThreads`] group.
 #[inline(always)]
 pub fn coalesced_threads() -> CoalescedThreads {
     CoalescedThreads {

@@ -39,7 +39,7 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    AbsBf16x2Op, ActiveMaskOp, AddBf16x2Op, BarWarpSyncOp, BreakpointOp, ClcQueryGetFirstCtaidXOp,
+    AbsBf16x2Op, AddBf16x2Op, BarWarpSyncOp, BreakpointOp, ClcQueryGetFirstCtaidXOp,
     ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp, ClcQueryIsCanceledOp,
     ClcTryCancelMulticastOp, ClcTryCancelOp, ClusterSyncOp, CpAsyncBulkCommitGroupOp,
     CpAsyncBulkTensorG2sTile1dOp, CpAsyncBulkTensorG2sTile2dMulticastCg2Op,
@@ -52,8 +52,7 @@ use dialect_nvvm::ops::{
     CvtRzBf16x2F32Op, CvtRzF16x2F32Op, DsmemReadU32Op, ElectSyncOp,
     FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, FmaBf16x2Op,
-    FmaReluBf16x2Op, InlinePtxOp, MapaSharedClusterOp, MatchAllSyncI32Op, MatchAllSyncI64Op,
-    MatchAnySyncI32Op, MatchAnySyncI64Op, MaxBf16x2Op, MbarrierArriveClusterOp,
+    FmaReluBf16x2Op, InlinePtxOp, MapaSharedClusterOp, MaxBf16x2Op, MbarrierArriveClusterOp,
     MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
     MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
     MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp,
@@ -1703,95 +1702,6 @@ impl MirToLlvmConversion for ShflSyncUpI64Op {
 }
 
 #[op_interface_impl]
-impl MirToLlvmConversion for MatchAnySyncI32Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        let i32_ty = pliron::builtin::types::IntegerType::get(
-            ctx,
-            32,
-            pliron::builtin::types::Signedness::Signless,
-        );
-        super::intrinsics::warp::convert_match_any(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_match_any_sync_i32",
-            i32_ty.into(),
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MatchAnySyncI64Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        let i64_ty = pliron::builtin::types::IntegerType::get(
-            ctx,
-            64,
-            pliron::builtin::types::Signedness::Signless,
-        );
-        super::intrinsics::warp::convert_match_any(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_match_any_sync_i64",
-            i64_ty.into(),
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MatchAllSyncI32Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        let i32_ty = pliron::builtin::types::IntegerType::get(
-            ctx,
-            32,
-            pliron::builtin::types::Signedness::Signless,
-        );
-        super::intrinsics::warp::convert_match_all(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_match_all_sync_i32p",
-            i32_ty.into(),
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ActiveMaskOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::warp::convert_active_mask(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
 impl MirToLlvmConversion for BarWarpSyncOp {
     fn convert(
         &self,
@@ -1804,30 +1714,6 @@ impl MirToLlvmConversion for BarWarpSyncOp {
             rewriter,
             self.get_operation(),
             operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MatchAllSyncI64Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        let i64_ty = pliron::builtin::types::IntegerType::get(
-            ctx,
-            64,
-            pliron::builtin::types::Signedness::Signless,
-        );
-        super::intrinsics::warp::convert_match_all(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "llvm_nvvm_match_all_sync_i64p",
-            i64_ty.into(),
         )
     }
 }

@@ -5,9 +5,10 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    Barrier0Op, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
+    ActiveMaskOp, Barrier0Op, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
     LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
-    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
+    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
+    MatchAnySyncI32Op, MatchAnySyncI64Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
     MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
     NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
     PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr,
@@ -1106,6 +1107,149 @@ fn test_generated_vote_sync_family_requires_exact_mask_predicate_and_result_type
     check_vote!(VoteSyncAnyOp, i1_ty, u32_ty);
     check_vote!(VoteSyncBallotOp, u32_ty, i1_ty);
     check_vote!(VoteSyncUniOp, i1_ty, u32_ty);
+}
+
+#[test]
+fn test_generated_active_mask_requires_no_operands_and_i32_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    let unexpected_operand = block.deref(&ctx).get_argument(0);
+
+    let valid = Operation::new(
+        &mut ctx,
+        ActiveMaskOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ActiveMaskOp::new(valid), &ctx).is_ok());
+
+    let wrong_operand_count = Operation::new(
+        &mut ctx,
+        ActiveMaskOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![unexpected_operand],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ActiveMaskOp::new(wrong_operand_count), &ctx).is_err());
+
+    for results in [vec![], vec![i32_ty.into(), i32_ty.into()]] {
+        let wrong_result_count = Operation::new(
+            &mut ctx,
+            ActiveMaskOp::get_concrete_op_info(),
+            results,
+            vec![],
+            vec![],
+            0,
+        );
+        assert!(verify_op(&ActiveMaskOp::new(wrong_result_count), &ctx).is_err());
+    }
+
+    let wrong_result_width = Operation::new(
+        &mut ctx,
+        ActiveMaskOp::get_concrete_op_info(),
+        vec![i64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ActiveMaskOp::new(wrong_result_width), &ctx).is_err());
+}
+
+#[test]
+fn test_generated_match_family_requires_exact_mask_value_and_result_widths() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i32_ty.into(), i64_ty.into()],
+    );
+    let mask = block.deref(&ctx).get_argument(0);
+    let value32 = block.deref(&ctx).get_argument(1);
+    let value64 = block.deref(&ctx).get_argument(2);
+
+    macro_rules! check_match {
+        ($op:ty, $value:expr, $wrong_value:expr) => {{
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![mask, $value],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
+
+            for operands in [vec![], vec![mask], vec![mask, $value, $value]] {
+                let wrong_operand_count = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    vec![i32_ty.into()],
+                    operands,
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(wrong_operand_count), &ctx).is_err());
+            }
+
+            for results in [vec![], vec![i32_ty.into(), i32_ty.into()]] {
+                let wrong_result_count = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    results,
+                    vec![mask, $value],
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(wrong_result_count), &ctx).is_err());
+            }
+
+            let wrong_mask_width = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![value64, $value],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_mask_width), &ctx).is_err());
+
+            let wrong_value_width = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![mask, $wrong_value],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_value_width), &ctx).is_err());
+
+            let wrong_result_width = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i64_ty.into()],
+                vec![mask, $value],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_result_width), &ctx).is_err());
+        }};
+    }
+
+    check_match!(MatchAnySyncI32Op, value32, value64);
+    check_match!(MatchAllSyncI32Op, value32, value64);
+    check_match!(MatchAnySyncI64Op, value64, value32);
+    check_match!(MatchAllSyncI64Op, value64, value32);
 }
 
 #[test]

@@ -12,11 +12,13 @@ use std::fmt;
 /// and registers emitted by LLVM such as `%r12`. Exact operands are useful for
 /// literals and special registers, whose spelling is part of the instruction
 /// contract. Register-or-immediate operands also accept integer literals.
+/// Register-predicate pairs model PTX destinations such as `d|p`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperandPattern {
     Register,
     RegisterOrImmediate,
+    RegisterPredicatePair,
     Exact { value: String },
     RegisterList { length: usize },
     Address,
@@ -32,6 +34,7 @@ impl<'de> Deserialize<'de> for OperandPattern {
         enum Kind {
             Register,
             RegisterOrImmediate,
+            RegisterPredicatePair,
             Exact,
             RegisterList,
             Address,
@@ -53,6 +56,7 @@ impl<'de> Deserialize<'de> for OperandPattern {
         ) {
             (Kind::Register, None, None) => Ok(Self::Register),
             (Kind::RegisterOrImmediate, None, None) => Ok(Self::RegisterOrImmediate),
+            (Kind::RegisterPredicatePair, None, None) => Ok(Self::RegisterPredicatePair),
             (Kind::Exact, Some(value), None) => Ok(Self::Exact { value }),
             (Kind::RegisterList, None, Some(length)) => Ok(Self::RegisterList { length }),
             (Kind::Address, None, None) => Ok(Self::Address),
@@ -61,6 +65,9 @@ impl<'de> Deserialize<'de> for OperandPattern {
             )),
             (Kind::RegisterOrImmediate, _, _) => Err(serde::de::Error::custom(
                 "register_or_immediate operand accepts only the `kind` field",
+            )),
+            (Kind::RegisterPredicatePair, _, _) => Err(serde::de::Error::custom(
+                "register_predicate_pair operand accepts only the `kind` field",
             )),
             (Kind::Exact, _, _) => Err(serde::de::Error::custom(
                 "exact operand requires only a `value` field",
@@ -115,6 +122,7 @@ impl InstructionPattern {
             match operand {
                 OperandPattern::Register
                 | OperandPattern::RegisterOrImmediate
+                | OperandPattern::RegisterPredicatePair
                 | OperandPattern::Address => {}
                 OperandPattern::Exact { value } => {
                     if value.is_empty() || value.trim() != value {
@@ -155,6 +163,9 @@ impl fmt::Display for InstructionPattern {
                 OperandPattern::Register => formatter.write_str("<register>")?,
                 OperandPattern::RegisterOrImmediate => {
                     formatter.write_str("<register-or-immediate>")?
+                }
+                OperandPattern::RegisterPredicatePair => {
+                    formatter.write_str("<register|predicate>")?
                 }
                 OperandPattern::Exact { value } => formatter.write_str(value)?,
                 OperandPattern::RegisterList { length } => {
@@ -299,6 +310,7 @@ fn operand_matches(operand: &str, pattern: &OperandPattern) -> bool {
     match pattern {
         OperandPattern::Register => is_register(operand),
         OperandPattern::RegisterOrImmediate => is_register(operand) || is_integer_literal(operand),
+        OperandPattern::RegisterPredicatePair => is_register_predicate_pair(operand),
         OperandPattern::Exact { value } => operand.trim() == value,
         OperandPattern::RegisterList { length } => enclosed_body(operand, b'{', b'}')
             // TableGen assembly strings escape a literal register-list brace
@@ -339,6 +351,29 @@ fn is_register(operand: &str) -> bool {
         && name[first_digit..]
             .bytes()
             .all(|byte| byte.is_ascii_digit())
+}
+
+fn is_register_predicate_pair(operand: &str) -> bool {
+    let mut parts = operand.split('|');
+    let Some(register) = parts.next() else {
+        return false;
+    };
+    let Some(predicate) = parts.next() else {
+        return false;
+    };
+
+    parts.next().is_none() && is_register(register) && is_predicate_register(predicate)
+}
+
+fn is_predicate_register(operand: &str) -> bool {
+    let operand = operand.trim();
+    if let Some(name) = operand.strip_prefix('$') {
+        return name == "pred";
+    }
+
+    operand.strip_prefix("%p").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 fn is_integer_literal(operand: &str) -> bool {
@@ -688,6 +723,81 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn register_predicate_pair_matches_emitted_and_tablegen_ptx() {
+        let match_all = InstructionPattern::new(
+            "match",
+            &["all", "sync", "b32"],
+            vec![
+                OperandPattern::RegisterPredicatePair,
+                OperandPattern::RegisterOrImmediate,
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+
+        assert!(match_all.matches("match.all.sync.b32 %r1|%p2, %r3, %r4;"));
+        assert!(match_all.matches("match.all.sync.b32 $dest|$pred, $value, $mask;"));
+        assert!(match_all.matches("match.all.sync.b32 %r1 | %p2, 7, -1;"));
+    }
+
+    #[test]
+    fn register_predicate_pair_rejects_partial_or_malformed_pairs() {
+        let match_all = InstructionPattern::new(
+            "match",
+            &["all", "sync", "b32"],
+            vec![OperandPattern::RegisterPredicatePair],
+        );
+
+        for destination in [
+            "%r1",
+            "%r1|",
+            "|%p2",
+            "%r1|%p2|%p3",
+            "%r1|%r2",
+            "%r1|1",
+            "1|%p2",
+            "$dest|bad",
+            "$dest|$value",
+            "{%r1, %p2}",
+        ] {
+            assert!(
+                !match_all.matches(&format!("match.all.sync.b32 {destination};")),
+                "destination {destination:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn register_predicate_pair_has_a_closed_policy_shape() {
+        let pattern = InstructionPattern::new(
+            "match",
+            &["all", "sync", "b64"],
+            vec![OperandPattern::RegisterPredicatePair],
+        );
+        assert_eq!(
+            pattern.to_string(),
+            "match.all.sync.b64 <register|predicate>;"
+        );
+
+        let encoded = serde_json::to_string(&pattern).unwrap();
+        assert!(encoded.contains(r#""kind":"register_predicate_pair""#));
+        assert_eq!(
+            serde_json::from_str::<InstructionPattern>(&encoded).unwrap(),
+            pattern
+        );
+        assert_eq!(
+            toml::from_str::<InstructionPattern>(&toml::to_string(&pattern).unwrap()).unwrap(),
+            pattern
+        );
+
+        for extra_field in [r#","value":"%r1|%p2""#, r#","length":2"#] {
+            let source = format!(
+                r#"{{"mnemonic":"match","modifiers":[],"operands":[{{"kind":"register_predicate_pair"{extra_field}}}]}}"#
+            );
+            assert!(serde_json::from_str::<InstructionPattern>(&source).is_err());
+        }
     }
 
     #[test]

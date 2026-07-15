@@ -1813,6 +1813,202 @@
           }
         ]
       }
+    },
+    {
+      "id": "active_mask",
+      "source_record": "int_nvvm_activemask",
+      "llvm_symbol": "llvm.nvvm.activemask",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx62",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx62"
+          ],
+          "representation": "typed llvm.nvvm.activemask() declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, side-effect, and inaccessible-memory contract."
+        },
+        {
+          "targets": [
+            "sm_30",
+            "ptx62"
+          ],
+          "representation": "typed zero-operand activemask call",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted activemask.b32 at the imported instruction floor."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "activemask",
+        "modifiers": [
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "match_any_sync",
+      "source_record": "int_nvvm_match_any_sync_i32",
+      "llvm_symbol": "llvm.nvvm.match.any.sync.i32",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "any",
+          "sync",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "match_any_i64_sync",
+      "source_record": "int_nvvm_match_any_sync_i64",
+      "llvm_symbol": "llvm.nvvm.match.any.sync.i64",
+      "llvm_arguments": [
+        "i32",
+        "i64"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "any",
+          "sync",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "match_all_sync",
+      "source_record": "int_nvvm_match_all_sync_i32p",
+      "llvm_symbol": "llvm.nvvm.match.all.sync.i32p",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "all",
+          "sync",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register_predicate_pair"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "match_all_i64_sync",
+      "source_record": "int_nvvm_match_all_sync_i64p",
+      "llvm_symbol": "llvm.nvvm.match.all.sync.i64p",
+      "llvm_arguments": [
+        "i32",
+        "i64"
+      ],
+      "llvm_results": [
+        "i32",
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "all",
+          "sync",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register_predicate_pair"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
     }
   ]
 }

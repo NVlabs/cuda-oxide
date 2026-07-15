@@ -129,6 +129,9 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.vote.is_some() {
         validate_register_and_immediate_forms(&record.expected_ptx, 2, "-1", ptx)?;
     }
+    if record.warp_match.is_some() {
+        validate_two_register_and_immediate_forms(&record.expected_ptx, 1, "7", 2, "-1", ptx)?;
+    }
     Ok(())
 }
 
@@ -162,6 +165,68 @@ fn validate_register_and_immediate_forms(
         immediate_pattern.matches(ptx),
         "probe PTX has no immediate form matching `{immediate_pattern}`"
     );
+    Ok(())
+}
+
+fn validate_two_register_and_immediate_forms(
+    expected: &InstructionPattern,
+    first_operand_index: usize,
+    first_immediate: &str,
+    second_operand_index: usize,
+    second_immediate: &str,
+    ptx: &str,
+) -> Result<()> {
+    ensure!(
+        first_operand_index != second_operand_index,
+        "probe register-or-immediate operand indices must be distinct"
+    );
+    for operand_index in [first_operand_index, second_operand_index] {
+        let operand = expected
+            .operands
+            .get(operand_index)
+            .context("probe register-or-immediate operand index is out of range")?;
+        ensure!(
+            *operand == OperandPattern::RegisterOrImmediate,
+            "probe operand {operand_index} is not register-or-immediate"
+        );
+    }
+
+    let combinations = [
+        ("rr", OperandPattern::Register, OperandPattern::Register),
+        (
+            "ri",
+            OperandPattern::Register,
+            OperandPattern::Exact {
+                value: second_immediate.into(),
+            },
+        ),
+        (
+            "ir",
+            OperandPattern::Exact {
+                value: first_immediate.into(),
+            },
+            OperandPattern::Register,
+        ),
+        (
+            "ii",
+            OperandPattern::Exact {
+                value: first_immediate.into(),
+            },
+            OperandPattern::Exact {
+                value: second_immediate.into(),
+            },
+        ),
+    ];
+
+    for (name, first, second) in combinations {
+        let mut pattern = expected.clone();
+        pattern.operands[first_operand_index] = first;
+        pattern.operands[second_operand_index] = second;
+        ensure!(
+            pattern.matches(ptx),
+            "probe PTX has no {name} form matching `{pattern}`"
+        );
+    }
     Ok(())
 }
 
@@ -229,6 +294,7 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
     let mut inaccessible_memory_only = false;
     let mut reads_memory = false;
     let mut writes_memory = false;
+    let mut has_side_effects = false;
 
     for property in &llvm.properties {
         match property.as_str() {
@@ -246,6 +312,7 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
             "IntrInaccessibleMemOnly" => inaccessible_memory_only = true,
             "IntrReadMem" => reads_memory = true,
             "IntrWriteMem" => writes_memory = true,
+            "IntrHasSideEffects" => has_side_effects = true,
             "NoUndef<ret>" => {
                 // Return attributes are asserted from the normalized result facts below.
                 ensure!(
@@ -306,13 +373,25 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
         }
     }
 
-    if let Some(memory) = canonical_memory_attribute(
+    let memory = canonical_memory_attribute(
         no_memory,
         argument_memory_only,
         inaccessible_memory_only,
         reads_memory,
         writes_memory,
-    )? {
+    )?;
+    if has_side_effects {
+        let memory = memory.as_deref().with_context(|| {
+            format!(
+                "@{symbol} IntrHasSideEffects requires a concrete non-`memory(none)` canonical memory effect"
+            )
+        })?;
+        ensure!(
+            memory != "memory(none)",
+            "@{symbol} IntrHasSideEffects requires a concrete non-`memory(none)` canonical memory effect"
+        );
+    }
+    if let Some(memory) = memory {
         require_attribute_fragment(function_attributes, &memory, symbol, "function")?;
     }
 
@@ -675,6 +754,49 @@ mod tests {
         assert!(error.to_string().contains("no register form"));
     }
 
+    #[test]
+    fn warp_match_probe_requires_every_register_and_immediate_combination() {
+        let expected = InstructionPattern::new(
+            "match",
+            &["any", "sync", "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::RegisterOrImmediate,
+                OperandPattern::RegisterOrImmediate,
+            ],
+        );
+        let forms = [
+            ("rr", "match.any.sync.b32 %r1, %r2, %r3;"),
+            ("ri", "match.any.sync.b32 %r4, %r5, -1;"),
+            ("ir", "match.any.sync.b32 %r6, 7, %r7;"),
+            ("ii", "match.any.sync.b32 %r8, 7, -1;"),
+        ];
+        let complete = forms
+            .iter()
+            .map(|(_, instruction)| *instruction)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        validate_two_register_and_immediate_forms(&expected, 1, "7", 2, "-1", &complete).unwrap();
+
+        for (missing_index, (name, _)) in forms.iter().enumerate() {
+            let incomplete = forms
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != missing_index)
+                .map(|(_, (_, instruction))| *instruction)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let error =
+                validate_two_register_and_immediate_forms(&expected, 1, "7", 2, "-1", &incomplete)
+                    .unwrap_err();
+            assert!(
+                error.to_string().contains(&format!("no {name} form")),
+                "{error:#}"
+            );
+        }
+    }
+
     fn identity() -> LlcIdentity {
         LlcIdentity {
             version: "LLVM version 22.1.2-test".into(),
@@ -787,6 +909,63 @@ attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwri
 "#;
 
         assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+    }
+
+    #[test]
+    fn verifies_side_effects_have_a_concrete_memory_effect() {
+        let llvm = llvm_facts(
+            "llvm.nvvm.activemask",
+            None,
+            &[],
+            &["i32"],
+            &[
+                "IntrConvergent",
+                "IntrHasSideEffects",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+            false,
+            None,
+        );
+        let canonical = r#"
+declare i32 @llvm.nvvm.activemask() #0
+attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwrite) }
+"#;
+
+        assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+    }
+
+    #[test]
+    fn side_effects_without_a_concrete_memory_effect_fail_closed() {
+        let llvm = llvm_facts(
+            "llvm.nvvm.activemask",
+            None,
+            &[],
+            &["i32"],
+            &["IntrHasSideEffects"],
+            false,
+            None,
+        );
+        let error =
+            assert_canonical_intrinsic_declaration("declare i32 @llvm.nvvm.activemask()\n", &llvm)
+                .unwrap_err();
+        assert!(error.to_string().contains("concrete non-`memory(none)`"));
+
+        let no_memory = llvm_facts(
+            "llvm.nvvm.activemask",
+            None,
+            &[],
+            &["i32"],
+            &["IntrHasSideEffects", "IntrNoMem"],
+            false,
+            None,
+        );
+        let canonical = r#"
+declare i32 @llvm.nvvm.activemask() #0
+attributes #0 = { nounwind memory(none) }
+"#;
+        let error = assert_canonical_intrinsic_declaration(canonical, &no_memory).unwrap_err();
+        assert!(error.to_string().contains("concrete non-`memory(none)`"));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{ActiveMaskOp, BarWarpSyncOp, ElectSyncOp};
+use dialect_nvvm::ops::{BarWarpSyncOp, ElectSyncOp};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -21,57 +21,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-/// Emits `active_mask()`: a 32-bit mask of currently-converged lanes.
-///
-/// Generates an `nvvm.activemask` op that lowers to PTX `activemask.b32`
-/// / `@llvm.nvvm.activemask`. Useful for building the mask passed to
-/// `*_sync` intrinsics from inside divergent control flow, and for
-/// constructing the `CoalescedThreads` cooperative group.
-pub fn emit_active_mask(
-    ctx: &mut Context,
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    let u32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
-
-    let active_mask_op = Operation::new(
-        ctx,
-        ActiveMaskOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
-    );
-    active_mask_op.deref_mut(ctx).set_loc(loc.clone());
-
-    let active_mask_op = if let Some(prev) = prev_op {
-        active_mask_op.insert_after(ctx, prev);
-        active_mask_op
-    } else {
-        active_mask_op.insert_at_front(block_ptr, ctx);
-        active_mask_op
-    };
-
-    let result_value = active_mask_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
-        ctx,
-        destination,
-        result_value,
-        target,
-        block_ptr,
-        active_mask_op,
-        value_map,
-        block_map,
-        loc,
-        "active_mask call without target block",
-    )
-}
-
 /// Emits `warp::sync_mask(mask)`: barrier across a subset of warp lanes.
 ///
 /// Lowers to `nvvm.bar_warp_sync` (PTX `bar.warp.sync`). All lanes named
@@ -430,104 +379,10 @@ pub fn emit_warp_shuffle_i64(
     )
 }
 
-/// Emit a warp match operation (`match.any.sync` or `match.all.sync`).
-///
-/// Both ops have the same shape from MIR's perspective: 2 operands
-/// `[mask, value]` and 1 result (a u32 bitmask). The op identifier picks the
-/// 32-bit vs 64-bit and any vs all variant.
-///
-/// # Parameters
-/// - `match_opid`: The NVVM opid for the specific match variant
-/// - `value_is_i64`: true if the value operand is u64 (picks the i64 intrinsic)
-/// - `args`: `[mask, value]`
-pub fn emit_warp_match(
-    ctx: &mut Context,
-    body: &mir::Body,
-    match_opid: (
-        fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
-        std::any::TypeId,
-    ),
-    value_is_i64: bool,
-    args: &[mir::Operand],
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    if args.len() != 2 {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(format!(
-                "warp match expects 2 arguments [mask, value], got {}",
-                args.len()
-            ))
-        );
-    }
-
-    let _ = value_is_i64;
-
-    let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned).to_handle();
-
-    let (mask, mut last_op) = rvalue::translate_operand(
-        ctx,
-        body,
-        &args[0],
-        value_map,
-        block_ptr,
-        prev_op,
-        loc.clone(),
-    )?;
-
-    let (value, last_op_after) = rvalue::translate_operand(
-        ctx,
-        body,
-        &args[1],
-        value_map,
-        block_ptr,
-        last_op,
-        loc.clone(),
-    )?;
-    last_op = last_op_after;
-
-    let match_op = Operation::new(
-        ctx,
-        match_opid,
-        vec![result_ty],
-        vec![mask, value],
-        vec![],
-        0,
-    );
-    match_op.deref_mut(ctx).set_loc(loc.clone());
-
-    if let Some(prev) = last_op {
-        match_op.insert_after(ctx, prev);
-    } else {
-        match_op.insert_at_front(block_ptr, ctx);
-    }
-
-    let result_value = match_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
-        ctx,
-        destination,
-        result_value,
-        target,
-        block_ptr,
-        match_op,
-        value_map,
-        block_map,
-        loc,
-        "warp match call without target block",
-    )
-}
-
 /// Emit a warp reduction operation (`redux.sync.{add,min,max,and,or,xor}`).
 ///
-/// Same MIR shape as [`emit_warp_match`]: 2 operands `[mask, value]` and 1
-/// result. Kept as its own helper (rather than reusing `emit_warp_match`) for
-/// clarity and to share the whole integer reduction family.
+/// Takes 2 operands `[mask, value]` and returns one result. This helper is
+/// shared by the whole integer reduction family.
 ///
 /// # Parameters
 /// - `redux_opid`: The NVVM opid for the specific reduction variant

@@ -308,3 +308,38 @@ status = "active"
 catalog_id = "uni_sync"
 operation_key = "warp.vote.sync.uni.pred"
 raw_rust_signature = { safe = false, arguments = ["u32", "bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i0044"
+status = "active"
+catalog_id = "active_mask"
+operation_key = "warp.active_mask"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0045"
+status = "active"
+catalog_id = "match_any_sync"
+operation_key = "warp.match.sync.any.b32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0046"
+status = "active"
+catalog_id = "match_any_i64_sync"
+operation_key = "warp.match.sync.any.b64"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64"], result = "u32" }
+
+[[entry]]
+abi_id = "i0047"
+status = "active"
+catalog_id = "match_all_sync"
+operation_key = "warp.match.sync.all.b32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0048"
+status = "active"
+catalog_id = "match_all_i64_sync"
+operation_key = "warp.match.sync.all.b64"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64"], result = "u32" }

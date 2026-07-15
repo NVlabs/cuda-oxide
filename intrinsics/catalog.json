@@ -1,5 +1,5 @@
 {
-  "schema": 6,
+  "schema": 7,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,14 +11,232 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "e0b00d169ca48020c941e68da377219cefc898016845e91c07174274c0bc6c3a",
-    "abi_ledger_sha256": "ff80e0a3b39ad755abe2130aa75e5a02d31f3810a9e126e1853f68740c61945c",
+    "overlay_sha256": "0159ba9a2beba45dd9f4d17c046ad6e1a46ca6a807c356173e4864f4a6174b54",
+    "abi_ledger_sha256": "7e3caf05c751854ca474e0692633a837e9eca36e30efdf6b0a77fd8594ba1fc5",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:ff73150639536e0463fc6e82943edadb619c25184b112ad58610719e3e3f49fc",
-      "rust-llvm-22.1.2-1cb4e383.json:5b13f6debbe0acd495d2e11725a214c77c1f42293dbb8065bcdc80ca8cae52e7"
+      "cuda-13.3-libnvvm-13.3.33.json:65f76083ed9fa74bba43e2260ab158b6b49430480078592c77fca048daefadfb",
+      "rust-llvm-22.1.2-1cb4e383.json:f626c147d7800143957310232c67ff730347b442fd1048b7f44ee83bc6df26f8"
     ]
   },
   "intrinsics": [
+    {
+      "id": "active_mask",
+      "operation_key": "warp.active_mask",
+      "family": "active_mask",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_activemask"
+      },
+      "selections": [
+        {
+          "source_record": "ACTIVEMASK",
+          "asm": "activemask.b32 \t$dest;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 30",
+            "Subtarget->getPTXVersion() >= 62"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0044",
+        "module": "warp",
+        "name": "active_mask",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "reading the current warp's active-lane mask has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0044",
+        "public_path": "cuda_intrinsics::warp::active_mask",
+        "compatibility_paths": [
+          "cuda_device::warp::active_mask"
+        ]
+      },
+      "dialect": {
+        "op_type": "ActiveMaskOp",
+        "op_name": "nvvm.activemask",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.activemask",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrHasSideEffects",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.2",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.12 Parallel Synchronization and Communication Instructions: activemask",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-activemask"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx62"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx62"
+              ],
+              "representation": "typed llvm.nvvm.activemask() declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration and preserved its convergent, nocallback, side-effect, and inaccessible-memory contract.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_30",
+                "ptx62"
+              ],
+              "representation": "typed zero-operand activemask call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted activemask.b32 at the imported instruction floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR convergent side-effecting inline PTX activemask.b32 with =r and ~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained exact activemask.b32 PTX and produced 1,812-byte LTOIR from the reviewed probe source (SHA-256 d98ba219074ef5b6b866e18ecff76c8aa6f35d31409cfd4af5b30e07ccd673b8).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "retained legacy-NVVM kernel storing the inline activemask result",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 2,856-byte cubin (SHA-256 d2b3a14122744f1685f4042a7f8653d6bb8d33bf03b540c54bab7da799196557); cuobjdump showed the expected VOTE.ANY active-mask implementation and global result store.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "active_mask": {
+        "observation": "executing_lanes_at_instruction",
+        "adapter": "direct_zero_operand_mask"
+      },
+      "lowering": "generated_active_mask",
+      "expected_ptx": {
+        "mnemonic": "activemask",
+        "modifiers": [
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Returns the lanes active at this instruction in the current warp."
+    },
     {
       "id": "all_sync",
       "operation_key": "warp.vote.sync.all.pred",
@@ -4667,6 +4885,616 @@
         ]
       },
       "summary": "Loads four transposed 8×8 b16 matrices cooperatively from shared memory and returns this lane's four packed register fragments."
+    },
+    {
+      "id": "match_all_i64_sync",
+      "operation_key": "warp.match.sync.all.b64",
+      "family": "warp_match",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_match_all_sync_i64p"
+      },
+      "selections": [
+        {
+          "source_record": "MATCH_ALLP_SYNC_64ii",
+          "asm": "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ALLP_SYNC_64ir",
+          "asm": "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ALLP_SYNC_64ri",
+          "asm": "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ALLP_SYNC_64rr",
+          "asm": "match.all.sync.b64 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0048",
+        "module": "warp",
+        "name": "match_all_i64_sync",
+        "arguments": [
+          "u32",
+          "u64"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0048",
+        "public_path": "cuda_intrinsics::warp::match_all_i64_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::match_all_i64_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "MatchAllSyncI64Op",
+        "op_name": "nvvm.match_all_sync_i64",
+        "operands": [
+          "i32",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.match.all.sync.i64p",
+        "arguments": [
+          "i32",
+          "i64"
+        ],
+        "results": [
+          "i32",
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 70
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "warp_match": {
+        "mode": "all",
+        "value_width": "b64",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "project_mask_discard_predicate",
+        "value_encoding": "register_or_immediate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_warp_match",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "all",
+          "sync",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register_predicate_pair"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns the named non-exited warp lanes when every 64-bit value agrees, otherwise zero."
+    },
+    {
+      "id": "match_all_sync",
+      "operation_key": "warp.match.sync.all.b32",
+      "family": "warp_match",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_match_all_sync_i32p"
+      },
+      "selections": [
+        {
+          "source_record": "MATCH_ALLP_SYNC_32ii",
+          "asm": "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ALLP_SYNC_32ir",
+          "asm": "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ALLP_SYNC_32ri",
+          "asm": "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ALLP_SYNC_32rr",
+          "asm": "match.all.sync.b32 \t$dest|$pred, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0047",
+        "module": "warp",
+        "name": "match_all_sync",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0047",
+        "public_path": "cuda_intrinsics::warp::match_all_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::match_all_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "MatchAllSyncI32Op",
+        "op_name": "nvvm.match_all_sync_i32",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.match.all.sync.i32p",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 70
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "warp_match": {
+        "mode": "all",
+        "value_width": "b32",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "project_mask_discard_predicate",
+        "value_encoding": "register_or_immediate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_warp_match",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "all",
+          "sync",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register_predicate_pair"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns the named non-exited warp lanes when every 32-bit value agrees, otherwise zero."
+    },
+    {
+      "id": "match_any_i64_sync",
+      "operation_key": "warp.match.sync.any.b64",
+      "family": "warp_match",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_match_any_sync_i64"
+      },
+      "selections": [
+        {
+          "source_record": "MATCH_ANY_SYNC_64ii",
+          "asm": "match.any.sync.b64 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ANY_SYNC_64ir",
+          "asm": "match.any.sync.b64 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ANY_SYNC_64ri",
+          "asm": "match.any.sync.b64 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ANY_SYNC_64rr",
+          "asm": "match.any.sync.b64 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0046",
+        "module": "warp",
+        "name": "match_any_i64_sync",
+        "arguments": [
+          "u32",
+          "u64"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0046",
+        "public_path": "cuda_intrinsics::warp::match_any_i64_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::match_any_i64_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "MatchAnySyncI64Op",
+        "op_name": "nvvm.match_any_sync_i64",
+        "operands": [
+          "i32",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.match.any.sync.i64",
+        "arguments": [
+          "i32",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 70
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "warp_match": {
+        "mode": "any",
+        "value_width": "b64",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "direct_mask",
+        "value_encoding": "register_or_immediate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_warp_match",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "any",
+          "sync",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns the named warp lanes whose 64-bit value equals this lane's value."
+    },
+    {
+      "id": "match_any_sync",
+      "operation_key": "warp.match.sync.any.b32",
+      "family": "warp_match",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_match_any_sync_i32"
+      },
+      "selections": [
+        {
+          "source_record": "MATCH_ANY_SYNC_32ii",
+          "asm": "match.any.sync.b32 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ANY_SYNC_32ir",
+          "asm": "match.any.sync.b32 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ANY_SYNC_32ri",
+          "asm": "match.any.sync.b32 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        },
+        {
+          "source_record": "MATCH_ANY_SYNC_32rr",
+          "asm": "match.any.sync.b32 \t$dest, $value, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60",
+            "Subtarget->getSmVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0045",
+        "module": "warp",
+        "name": "match_any_sync",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0045",
+        "public_path": "cuda_intrinsics::warp::match_any_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::match_any_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "MatchAnySyncI32Op",
+        "op_name": "nvvm.match_any_sync_i32",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.match.any.sync.i32",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 70
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "warp_match": {
+        "mode": "any",
+        "value_width": "b32",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "direct_mask",
+        "value_encoding": "register_or_immediate",
+        "mask_encoding": "register_or_immediate"
+      },
+      "lowering": "generated_warp_match",
+      "expected_ptx": {
+        "mnemonic": "match",
+        "modifiers": [
+          "any",
+          "sync",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Returns the named warp lanes whose 32-bit value equals this lane's value."
     },
     {
       "id": "packed_atomic_add_bf16x2",

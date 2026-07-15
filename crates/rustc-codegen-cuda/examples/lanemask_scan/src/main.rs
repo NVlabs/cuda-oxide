@@ -81,10 +81,21 @@ mod kernels {
         // Launched with exactly `n` threads (a multiple of 32), so every lane is
         // in bounds and joins the full-warp ballot.
         let keep = gid.in_bounds(n) && data[gid.get()] != 0;
+        let lane = warp::lane_id();
+        let group = lane / 4;
+        let expected_group_mask = 0xfu32 << (group * 4);
+        // High-only values catch an accidental 32-bit match lowering.
+        let wide_group = (group as u64) << 32;
+        let wide_lane = (lane as u64) << 32;
+        let active = warp::active_mask();
         let ballot = warp::ballot_sync(FULL_MASK, keep);
         let all_lanes_joined = warp::all_sync(FULL_MASK, true);
-        let lane_zero_joined = warp::any_sync(FULL_MASK, warp::lane_id() == 0);
-        let rank = if all_lanes_joined & lane_zero_joined {
+        let lane_zero_joined = warp::any_sync(FULL_MASK, lane == 0);
+        let matches_ok = (warp::match_any_sync(FULL_MASK, group) == expected_group_mask)
+            & (warp::match_any_i64_sync(FULL_MASK, wide_group) == expected_group_mask)
+            & (warp::match_all_sync(FULL_MASK, 42) == FULL_MASK)
+            & (warp::match_all_i64_sync(FULL_MASK, wide_lane) == 0);
+        let rank = if all_lanes_joined & lane_zero_joined & (active == FULL_MASK) & matches_ok {
             (ballot & warp::lanemask_lt()).count_ones()
         } else {
             u32::MAX

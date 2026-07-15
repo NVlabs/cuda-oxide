@@ -199,10 +199,10 @@ pub fn nwarpid() -> u32 {
 /// # Example
 ///
 /// ```rust,ignore
+/// let mask = warp::ballot_sync(u32::MAX, some_predicate);
 /// if some_predicate {
-///     let mask = warp::active_mask();
-///     // ... do divergent work ...
-///     warp::sync_mask(mask);  // formal convergence point
+///     // Every lane in `mask` must reach this call.
+///     warp::sync_mask(mask);
 ///     let leader = mask.trailing_zeros();
 ///     let value = warp::shuffle_sync(mask, my_value, leader);
 /// }
@@ -213,32 +213,28 @@ pub fn sync_mask(mask: u32) {
     unreachable!("sync_mask called outside CUDA kernel context")
 }
 
-/// Bitmask of currently-converged lanes in this warp.
+/// Bitmask of lanes active at this instruction.
 ///
 /// PTX `activemask.b32` (PTX 6.2+, sm_30+). Returns a 32-bit value where bit
-/// `k` is set iff lane `k` is currently converged with this thread (i.e.
-/// participating in this dynamic execution region).
+/// `k` is set when lane `k` is active as this instruction executes.
 ///
-/// In straight-line warp-uniform code this is `0xFFFFFFFF`. In divergent
-/// branches it shrinks to the subset of lanes that took the same branch.
+/// This is only a snapshot. It does not prove that the returned lanes are
+/// converged or will all execute a later collective. In straight-line,
+/// full-warp code the result is normally `0xFFFFFFFF`.
 ///
 /// # Common uses
 ///
-/// - **Build a mask for `*_sync` calls inside divergent code**: when only
-///   some lanes reach a `ballot`/`shuffle`/`match` call site, pass
-///   `active_mask()` as the mask so the intrinsic only synchronises the
-///   participating lanes.
-/// - **Construct a `CoalescedThreads` group**: the typed group's membership
-///   set is the active mask captured at construction time.
+/// - Inspect which lanes are active at a specific point.
+/// - Capture the mask used by [`crate::cooperative_groups::CoalescedThreads`].
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// if some_predicate {
-///     // Only some lanes get here. Build a mask of who's actually present.
+///     // Only some lanes get here. Observe the active lanes at this point.
 ///     let mask = warp::active_mask();
-///     let count = mask.count_ones();        // how many lanes converged here
-///     let leader = mask.trailing_zeros();   // lowest converged lane
+///     let count = mask.count_ones();
+///     let leader = mask.trailing_zeros();
 /// }
 /// ```
 #[inline(never)]
@@ -714,13 +710,14 @@ pub fn match_any_i64_sync(mask: u32, value: u64) -> u32 {
     unreachable!("match_any_i64_sync called outside CUDA kernel context")
 }
 
-/// Match-all (32-bit, masked): full mask if every participating lane agrees, else 0.
+/// Match-all (32-bit, masked): participating-lane mask if every value agrees, else 0.
 ///
 /// PTX `match.all.sync.b32`. Lowered to `@llvm.nvvm.match.all.sync.i32p`
 /// with the predicate field discarded. Requires sm_70+.
 ///
-/// Returns `mask` if every lane in `mask` has the same `value`; otherwise 0.
-/// Recover the all-match predicate as `result != 0`.
+/// Returns the non-exited participating lanes if every participating lane has
+/// the same `value`; otherwise 0. Recover the all-match predicate as
+/// `result != 0`.
 ///
 /// # Example
 ///

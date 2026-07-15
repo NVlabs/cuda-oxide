@@ -15,7 +15,10 @@ use cuda_intrinsics::sreg::{
     grid_dim_y, grid_dim_z, lane_id, lanemask_eq, lanemask_ge, lanemask_gt, lanemask_le,
     lanemask_lt, thread_idx_x, thread_idx_y, thread_idx_z,
 };
-use cuda_intrinsics::warp::{all_sync, any_sync, ballot_sync, uni_sync};
+use cuda_intrinsics::warp::{
+    active_mask, all_sync, any_sync, ballot_sync, match_all_i64_sync, match_all_sync,
+    match_any_i64_sync, match_any_sync, uni_sync,
+};
 
 #[cuda_module]
 mod kernels {
@@ -35,18 +38,33 @@ mod kernels {
             & ((lt ^ ge) == u32::MAX)
             & ((le ^ gt) == u32::MAX)
             & (eq.count_ones() == 1);
+        let group = lane / 4;
+        let expected_group_mask = 0xfu32 << (group * 4);
+        // High-only values catch an accidental 32-bit match lowering.
+        let wide_group = (group as u64) << 32;
+        let wide_lane = (lane as u64) << 32;
+        let active = active_mask();
 
         // SAFETY: every lane in each full warp executes these calls with the
         // same full member mask and instruction sequence.
-        let (all_ok, any_ok, ballot, uniform) = unsafe {
+        let (all_ok, any_ok, ballot, uniform, any32, any64, all32, all64) = unsafe {
             (
                 all_sync(member_mask, masks_ok),
                 any_sync(member_mask, lane == 0),
                 ballot_sync(member_mask, masks_ok),
                 uni_sync(member_mask, masks_ok),
+                match_any_sync(member_mask, group),
+                match_any_i64_sync(member_mask, wide_group),
+                match_all_sync(member_mask, 42),
+                match_all_i64_sync(member_mask, wide_lane),
             )
         };
         let votes_ok = all_ok & any_ok & uniform & (ballot == member_mask);
+        let matches_ok = (active == member_mask)
+            & (any32 == expected_group_mask)
+            & (any64 == expected_group_mask)
+            & (all32 == member_mask)
+            & (all64 == 0);
 
         let block_width = block_dim_x();
         let block_height = block_dim_y();
@@ -60,6 +78,7 @@ mod kernels {
         let row_major_idx = ((plane * grid_height + row) * grid_width + column) as usize;
 
         if votes_ok
+            && matches_ok
             && column < grid_width
             && row < grid_height
             && plane < grid_depth

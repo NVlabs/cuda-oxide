@@ -5,22 +5,23 @@
 
 use crate::extract::{IMPORTED_SCHEMA, read_upstream_lock};
 use crate::model::{
-    AbiLedgerEntry, AbiLedgerFile, AbiRawRustSignature, BackendLoweringMechanism, CatalogBackend,
-    CatalogBackendLowering, CatalogDialect, CatalogFile, CatalogHalfOpenRange,
-    CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs, CatalogIntrinsic,
-    CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust, CatalogSelection,
-    CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement, DotProductAdapter,
-    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceRecord,
-    EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
-    IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
-    LdmatrixStateSpace, MaskEncoding, OverlayFile, OverlayIntrinsic, OverlayShardFile,
-    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
-    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
-    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
-    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
-    PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RuntimeValidation, VoteAdapter,
-    VoteMode, VoteParticipation,
+    AbiLedgerEntry, AbiLedgerFile, AbiRawRustSignature, ActiveMaskAdapter, ActiveMaskObservation,
+    BackendLoweringMechanism, CatalogBackend, CatalogBackendLowering, CatalogDialect, CatalogFile,
+    CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
+    CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
+    CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
+    DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
+    EvidenceFile, EvidenceRecord, EvidenceStageKind, ImportedAddressSpace, ImportedFile,
+    ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract,
+    LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder, LdmatrixMultiplicity,
+    LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding,
+    OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAtomicAccessContract,
+    PackedAtomicAdapter, PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat,
+    PackedAtomicOperation, PackedAtomicOrdering, PackedAtomicPointerContract,
+    PackedAtomicReturnContract, PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract,
+    PackedAtomicStateSpace, PackedAtomicSubnormal, PtxVersion, ReduxAdapter, ReduxOperation,
+    ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation,
+    WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth,
 };
 #[cfg(test)]
 use crate::ptx::InstructionPattern;
@@ -31,9 +32,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 7;
-const OVERLAY_SHARD_SCHEMA: u32 = 3;
-pub(crate) const CATALOG_SCHEMA: u32 = 6;
+const OVERLAY_SCHEMA: u32 = 8;
+const OVERLAY_SHARD_SCHEMA: u32 = 4;
+pub(crate) const CATALOG_SCHEMA: u32 = 7;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -320,12 +321,14 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
             record.redux,
             record.vote,
+            record.active_mask,
+            record.warp_match,
             record.dot_product,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
@@ -629,6 +632,14 @@ fn validate_policy(
             policy,
             declaration.context("vote requires imported LLVM declaration")?,
         )?,
+        "active_mask" => validate_active_mask_policy(
+            policy,
+            declaration.context("active_mask requires imported LLVM declaration")?,
+        )?,
+        "warp_match" => validate_warp_match_policy(
+            policy,
+            declaration.context("warp_match requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -697,7 +708,11 @@ fn validate_policy(
             .iter()
             .filter(|selection| selection_matches_policy(policy, selection))
             .collect();
-        let expected_selection_count = if policy.family == "vote" { 2 } else { 1 };
+        let expected_selection_count = match policy.family.as_str() {
+            "vote" => 2,
+            "warp_match" => 4,
+            _ => 1,
+        };
         ensure!(
             matching_selections.len() == expected_selection_count,
             "{} expected PTX {:?} does not agree with its closed imported selection set",
@@ -734,6 +749,18 @@ fn selection_matches_policy(
             && policy.expected_ptx.matches(&selection.asm)
             && selection.constraints.address_space.is_none()
             && selection.constraints.immediate_bindings.is_empty();
+    }
+
+    if policy.family == "warp_match" {
+        let Some(warp_match) = &policy.warp_match else {
+            return false;
+        };
+        let recipe = warp_match_recipe(warp_match.mode, warp_match.value_width);
+        return recipe
+            .selections
+            .contains(&selection.source_record.as_str())
+            && policy.expected_ptx.matches(&selection.asm)
+            && selection.constraints.is_empty();
     }
 
     if !policy.expected_ptx.matches(&selection.asm)
@@ -835,6 +862,8 @@ fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.packed_atomic.is_none()
             && policy.redux.is_none()
             && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with sync",
@@ -983,6 +1012,8 @@ fn validate_vote_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
             && policy.redux.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with vote",
@@ -1124,6 +1155,425 @@ fn vote_recipe(mode: VoteMode) -> VoteRecipe {
     }
 }
 
+fn validate_active_mask_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let active_mask = policy
+        .active_mask
+        .as_ref()
+        .with_context(|| format!("{} has no closed active-mask contract", policy.id))?;
+    ensure!(
+        active_mask.observation == ActiveMaskObservation::ExecutingLanesAtInstruction
+            && active_mask.adapter == ActiveMaskAdapter::DirectZeroOperandMask,
+        "{} requests an unsupported active-mask observation or adapter",
+        policy.id
+    );
+    ensure!(
+        policy.id == "active_mask"
+            && policy.abi_id == "i0044"
+            && policy.operation_key == "warp.active_mask"
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some("int_nvvm_activemask")
+            && policy.llvm_symbol.as_deref() == Some("llvm.nvvm.activemask")
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} active-mask identity does not match the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "warp"
+            && policy.rust_name == "active_mask"
+            && policy.rust_arguments.is_empty()
+            && policy.rust_result == "u32"
+            && policy.safe
+            && policy.must_use
+            && policy
+                .safe_allowlist_reason
+                .as_deref()
+                .is_some_and(|reason| !reason.is_empty())
+            && policy.public_rust_path == "cuda_intrinsics::warp::active_mask"
+            && policy.compatibility_rust_paths == ["cuda_device::warp::active_mask"],
+        "{} must preserve its safe must-use raw and compatibility APIs",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "ActiveMaskOp"
+            && policy.dialect_op_name == "nvvm.activemask"
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results == ["i32"]
+            && policy.llvm_arguments.is_empty()
+            && policy.llvm_results == ["i32"]
+            && policy.lowering == "generated_active_mask",
+        "{} is outside the closed zero-operand active-mask lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "inaccessible_read_write"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "6.2"
+            && policy.minimum_sm.as_deref() == Some("sm_30")
+            && policy.ptx_result == "u32"
+            && policy.targets == "all",
+        "{} active-mask effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.12 Parallel Synchronization and Communication Instructions: activemask"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-activemask",
+        "{} active-mask PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties
+            == [
+                "IntrConvergent",
+                "IntrHasSideEffects",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ]
+            && declaration.selections.len() == 1
+            && declaration.selections[0].source_record == "ACTIVEMASK"
+            && declaration.selections[0].asm == "activemask.b32 \t$dest;"
+            && declaration.selections[0].predicates
+                == [
+                    "Subtarget->getSmVersion() >= 30",
+                    "Subtarget->getPTXVersion() >= 62",
+                ]
+            && declaration.selections[0].constraints.is_empty(),
+        "{} active-mask declaration or selection facts changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "activemask"
+            && policy.expected_ptx.modifiers == ["b32"]
+            && policy.expected_ptx.operands == [OperandPattern::Register],
+        "{} expected PTX does not match activemask.b32",
+        policy.id
+    );
+    ensure!(
+        policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.warp_match.is_none()
+            && policy.dot_product.is_none()
+            && policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with active_mask",
+        policy.id
+    );
+
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ]),
+        "{} must keep the LLVM typed and libNVVM inline-PTX routes explicit",
+        policy.id
+    );
+    for lowering in &policy.backend_lowerings {
+        let floor_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.as_deref() == Some("6.2")
+                    && lowering.minimum_sm.as_deref() == Some("sm_30")
+            }
+            IntrinsicBackend::LibNvvm => {
+                lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    && lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.as_deref() == Some("sm_75")
+            }
+        };
+        ensure!(
+            floor_matches && !lowering.evidence_profile.trim().is_empty(),
+            "{} backend {:?} does not carry its reviewed active-mask floor",
+            policy.id,
+            lowering.backend
+        );
+    }
+    Ok(())
+}
+
+struct WarpMatchRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_name: &'static str,
+    rust_value: &'static str,
+    llvm_value: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    ptx_mode: &'static str,
+    ptx_type: &'static str,
+    selections: [&'static str; 4],
+    adapter: WarpMatchAdapter,
+}
+
+fn warp_match_recipe(mode: WarpMatchMode, width: WarpMatchValueWidth) -> WarpMatchRecipe {
+    match (mode, width) {
+        (WarpMatchMode::Any, WarpMatchValueWidth::B32) => WarpMatchRecipe {
+            id: "match_any_sync",
+            abi_id: "i0045",
+            operation_key: "warp.match.sync.any.b32",
+            source_record: "int_nvvm_match_any_sync_i32",
+            llvm_symbol: "llvm.nvvm.match.any.sync.i32",
+            rust_name: "match_any_sync",
+            rust_value: "u32",
+            llvm_value: "i32",
+            dialect_op_type: "MatchAnySyncI32Op",
+            dialect_op_name: "nvvm.match_any_sync_i32",
+            ptx_mode: "any",
+            ptx_type: "b32",
+            selections: [
+                "MATCH_ANY_SYNC_32ii",
+                "MATCH_ANY_SYNC_32ir",
+                "MATCH_ANY_SYNC_32ri",
+                "MATCH_ANY_SYNC_32rr",
+            ],
+            adapter: WarpMatchAdapter::DirectMask,
+        },
+        (WarpMatchMode::Any, WarpMatchValueWidth::B64) => WarpMatchRecipe {
+            id: "match_any_i64_sync",
+            abi_id: "i0046",
+            operation_key: "warp.match.sync.any.b64",
+            source_record: "int_nvvm_match_any_sync_i64",
+            llvm_symbol: "llvm.nvvm.match.any.sync.i64",
+            rust_name: "match_any_i64_sync",
+            rust_value: "u64",
+            llvm_value: "i64",
+            dialect_op_type: "MatchAnySyncI64Op",
+            dialect_op_name: "nvvm.match_any_sync_i64",
+            ptx_mode: "any",
+            ptx_type: "b64",
+            selections: [
+                "MATCH_ANY_SYNC_64ii",
+                "MATCH_ANY_SYNC_64ir",
+                "MATCH_ANY_SYNC_64ri",
+                "MATCH_ANY_SYNC_64rr",
+            ],
+            adapter: WarpMatchAdapter::DirectMask,
+        },
+        (WarpMatchMode::All, WarpMatchValueWidth::B32) => WarpMatchRecipe {
+            id: "match_all_sync",
+            abi_id: "i0047",
+            operation_key: "warp.match.sync.all.b32",
+            source_record: "int_nvvm_match_all_sync_i32p",
+            llvm_symbol: "llvm.nvvm.match.all.sync.i32p",
+            rust_name: "match_all_sync",
+            rust_value: "u32",
+            llvm_value: "i32",
+            dialect_op_type: "MatchAllSyncI32Op",
+            dialect_op_name: "nvvm.match_all_sync_i32",
+            ptx_mode: "all",
+            ptx_type: "b32",
+            selections: [
+                "MATCH_ALLP_SYNC_32ii",
+                "MATCH_ALLP_SYNC_32ir",
+                "MATCH_ALLP_SYNC_32ri",
+                "MATCH_ALLP_SYNC_32rr",
+            ],
+            adapter: WarpMatchAdapter::ProjectMaskDiscardPredicate,
+        },
+        (WarpMatchMode::All, WarpMatchValueWidth::B64) => WarpMatchRecipe {
+            id: "match_all_i64_sync",
+            abi_id: "i0048",
+            operation_key: "warp.match.sync.all.b64",
+            source_record: "int_nvvm_match_all_sync_i64p",
+            llvm_symbol: "llvm.nvvm.match.all.sync.i64p",
+            rust_name: "match_all_i64_sync",
+            rust_value: "u64",
+            llvm_value: "i64",
+            dialect_op_type: "MatchAllSyncI64Op",
+            dialect_op_name: "nvvm.match_all_sync_i64",
+            ptx_mode: "all",
+            ptx_type: "b64",
+            selections: [
+                "MATCH_ALLP_SYNC_64ii",
+                "MATCH_ALLP_SYNC_64ir",
+                "MATCH_ALLP_SYNC_64ri",
+                "MATCH_ALLP_SYNC_64rr",
+            ],
+            adapter: WarpMatchAdapter::ProjectMaskDiscardPredicate,
+        },
+    }
+}
+
+fn validate_warp_match_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let warp_match = policy
+        .warp_match
+        .as_ref()
+        .with_context(|| format!("{} has no closed warp-match contract", policy.id))?;
+    let recipe = warp_match_recipe(warp_match.mode, warp_match.value_width);
+    ensure!(
+        warp_match.participation
+            == WarpMatchParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask
+            && warp_match.adapter == recipe.adapter
+            && warp_match.value_encoding == MatchOperandEncoding::RegisterOrImmediate
+            && warp_match.mask_encoding == MatchOperandEncoding::RegisterOrImmediate,
+        "{} requests an unsupported warp-match participation, adapter, or encoding",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} warp-match identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "warp"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == ["u32", recipe.rust_value]
+            && policy.rust_result == "u32"
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::warp::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::warp::{}", recipe.rust_name)],
+        "{} must preserve its unsafe raw and stable compatibility paths",
+        policy.id
+    );
+    let expected_llvm_results: &[&str] = match warp_match.mode {
+        WarpMatchMode::Any => &["i32"],
+        WarpMatchMode::All => &["i32", "i1"],
+    };
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == ["i32", recipe.llvm_value]
+            && policy.dialect_results == ["i32"]
+            && policy.llvm_arguments == ["i32", recipe.llvm_value]
+            && policy.llvm_results == expected_llvm_results
+            && policy.lowering == "generated_warp_match",
+        "{} is outside the closed two-operand warp-match lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "inaccessible_read_write"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "6.0"
+            && policy.minimum_sm.as_deref() == Some("sm_70")
+            && policy.ptx_result == "u32"
+            && policy.targets == "all",
+        "{} warp-match effects, carrier, or target floor disagree with its recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.11 Parallel Synchronization and Communication Instructions: match.sync"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-match-sync",
+        "{} warp-match PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties
+            == [
+                "IntrConvergent",
+                "IntrInaccessibleMemOnly",
+                "IntrNoCallback",
+            ],
+        "{} warp-match effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.is_empty()
+            && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.dot_product.is_none()
+            && policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with warp_match",
+        policy.id
+    );
+    let destination = match warp_match.mode {
+        WarpMatchMode::Any => OperandPattern::Register,
+        WarpMatchMode::All => OperandPattern::RegisterPredicatePair,
+    };
+    ensure!(
+        policy.expected_ptx.mnemonic == "match"
+            && policy.expected_ptx.modifiers == [recipe.ptx_mode, "sync", recipe.ptx_type]
+            && policy.expected_ptx.operands
+                == [
+                    destination,
+                    OperandPattern::RegisterOrImmediate,
+                    OperandPattern::RegisterOrImmediate,
+                ],
+        "{} expected PTX does not match its closed match.sync recipe",
+        policy.id
+    );
+    let actual_selection_records: BTreeSet<_> = declaration
+        .selections
+        .iter()
+        .map(|selection| selection.source_record.as_str())
+        .collect();
+    ensure!(
+        declaration.selections.len() == 4
+            && actual_selection_records == BTreeSet::from(recipe.selections),
+        "{} warp-match declaration must contain exactly ii/ir/ri/rr selections",
+        policy.id
+    );
+    let destination = if warp_match.mode == WarpMatchMode::All {
+        "$dest|$pred"
+    } else {
+        "$dest"
+    };
+    let expected_asm = format!(
+        "match.{}.sync.{} \t{}, $value, $mask;",
+        recipe.ptx_mode, recipe.ptx_type, destination
+    );
+    for selection in &declaration.selections {
+        ensure!(
+            selection.asm == expected_asm
+                && selection.predicates
+                    == [
+                        "Subtarget->getPTXVersion() >= 60",
+                        "Subtarget->getSmVersion() >= 70",
+                    ]
+                && selection.constraints.is_empty(),
+            "{} warp-match selections disagree on PTX shape, predicates, or constraints",
+            policy.id
+        );
+    }
+    Ok(())
+}
+
 fn validate_selected_target_predicates(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,
@@ -1206,10 +1656,13 @@ fn validate_selected_target_predicates(
             "{} dotprod selection must carry only the hasDotInstructions predicate",
             policy.id
         );
-    } else if policy.family == "vote" {
+    } else if matches!(
+        policy.family.as_str(),
+        "vote" | "active_mask" | "warp_match"
+    ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
-            "{} vote selection must carry exactly its PTX and SM predicates",
+            "{} selection must carry exactly its PTX and SM predicates",
             policy.id
         );
     }
@@ -1249,6 +1702,8 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
             && policy.packed_atomic.is_none()
             && policy.redux.is_none()
             && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with an sreg",
@@ -1441,6 +1896,8 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.ldmatrix_adapter.is_none()
             && policy.dot_product.is_none()
             && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with redux",
         policy.id
@@ -1650,6 +2107,8 @@ fn validate_dot_product_policy(
             && policy.packed_atomic.is_none()
             && policy.redux.is_none()
             && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with dotprod",
         policy.id
@@ -1943,6 +2402,8 @@ fn validate_ldmatrix_policy(
         policy.packed_atomic.is_none()
             && policy.redux.is_none()
             && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.dot_product.is_none(),
         "{} mixes another generated-family contract with ldmatrix",
         policy.id
@@ -2030,6 +2491,8 @@ fn validate_packed_atomic_policy(
             && policy.ldmatrix_adapter.is_none()
             && policy.redux.is_none()
             && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
             && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
@@ -2776,6 +3239,8 @@ fn resolve_record(
         packed_atomic: policy.packed_atomic.clone(),
         redux: policy.redux.clone(),
         vote: policy.vote.clone(),
+        active_mask: policy.active_mask.clone(),
+        warp_match: policy.warp_match.clone(),
         dot_product: policy.dot_product.clone(),
         ldmatrix: policy
             .ldmatrix_variant
@@ -2882,6 +3347,8 @@ mod tests {
             packed_atomic: None,
             redux: None,
             vote: None,
+            active_mask: None,
+            warp_match: None,
             dot_product: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
@@ -2992,6 +3459,30 @@ mod tests {
     ) -> Result<()> {
         let source = resolve_policy_source(policy)?;
         validate_policy(policy, &source, Some(declaration), 1)
+    }
+
+    fn pinned_active_mask_and_warp_match_records()
+    -> BTreeMap<String, (OverlayIntrinsic, ImportedIntrinsic)> {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .into_iter()
+            .map(|record| (record.source_record.clone(), record))
+            .collect();
+
+        overlay
+            .intrinsics
+            .into_iter()
+            .filter(|record| matches!(record.family.as_str(), "active_mask" | "warp_match"))
+            .map(|policy| {
+                let declaration = declarations[policy.source_record.as_deref().unwrap()].clone();
+                (policy.id.clone(), (policy, declaration))
+            })
+            .collect()
     }
 
     fn packed_policy(id: &str) -> OverlayIntrinsic {
@@ -3339,8 +3830,16 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 7);
-        assert_eq!(overlay.intrinsics.len(), 43);
+        assert_eq!(overlay.shards.len(), 9);
+        assert_eq!(overlay.intrinsics.len(), 48);
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "active_mask")
+                .count(),
+            1
+        );
         assert_eq!(
             overlay
                 .intrinsics
@@ -3373,6 +3872,14 @@ mod tests {
                 .count(),
             4
         );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "warp_match")
+                .count(),
+            4
+        );
         assert_eq!(hash.len(), 64);
 
         for invalid in [
@@ -3384,6 +3891,81 @@ mod tests {
         ] {
             assert!(validate_overlay_shard_path(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn pinned_active_mask_and_warp_match_recipes_resolve() {
+        let records = pinned_active_mask_and_warp_match_records();
+        assert_eq!(records.len(), 5);
+
+        for (policy, declaration) in records.values() {
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+    }
+
+    #[test]
+    fn active_mask_and_warp_match_recipes_fail_closed() {
+        let records = pinned_active_mask_and_warp_match_records();
+        let reject =
+            |policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic, expected: &str| {
+                let error = validate_imported_policy(policy, declaration).unwrap_err();
+                let message = error.to_string();
+                assert!(message.contains(expected), "unexpected error: {message}");
+            };
+
+        let (active_mask, active_mask_declaration) = &records["active_mask"];
+        let mut wrong_identity = active_mask.clone();
+        wrong_identity.operation_key = "warp.active_mask.changed".into();
+        reject(
+            &wrong_identity,
+            active_mask_declaration,
+            "active-mask identity",
+        );
+
+        let mut wrong_effects = active_mask.clone();
+        wrong_effects.memory = "none".into();
+        reject(
+            &wrong_effects,
+            active_mask_declaration,
+            "active-mask effects or target floor",
+        );
+
+        let (match_any, match_any_declaration) = &records["match_any_sync"];
+        let mut wrong_adapter = match_any.clone();
+        wrong_adapter.warp_match.as_mut().unwrap().adapter =
+            WarpMatchAdapter::ProjectMaskDiscardPredicate;
+        reject(
+            &wrong_adapter,
+            match_any_declaration,
+            "warp-match participation, adapter, or encoding",
+        );
+
+        let (match_all, match_all_declaration) = &records["match_all_sync"];
+        let mut wrong_projection = match_all.clone();
+        wrong_projection.dialect_results.push("i1".into());
+        reject(
+            &wrong_projection,
+            match_all_declaration,
+            "two-operand warp-match lowering recipe",
+        );
+
+        let (match_any_i64, match_any_i64_declaration) = &records["match_any_i64_sync"];
+        let mut incomplete_selections = match_any_i64_declaration.clone();
+        incomplete_selections.selections.pop();
+        reject(
+            match_any_i64,
+            &incomplete_selections,
+            "exactly ii/ir/ri/rr selections",
+        );
+
+        let (match_all_i64, match_all_i64_declaration) = &records["match_all_i64_sync"];
+        let mut wrong_predicates = match_all_i64_declaration.clone();
+        wrong_predicates.selections[0].predicates[0] = "Subtarget->getPTXVersion() >= 61".into();
+        reject(
+            match_all_i64,
+            &wrong_predicates,
+            "PTX shape, predicates, or constraints",
+        );
     }
 
     #[test]
