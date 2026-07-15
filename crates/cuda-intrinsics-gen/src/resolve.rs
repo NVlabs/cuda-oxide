@@ -35,9 +35,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 10;
-const OVERLAY_SHARD_SCHEMA: u32 = 6;
-pub(crate) const CATALOG_SCHEMA: u32 = 9;
+const OVERLAY_SCHEMA: u32 = 11;
+const OVERLAY_SHARD_SCHEMA: u32 = 7;
+pub(crate) const CATALOG_SCHEMA: u32 = 10;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -649,10 +649,7 @@ fn validate_policy(
             policy,
             declaration.context("warp_barrier requires imported LLVM declaration")?,
         )?,
-        "warp_shuffle" => validate_warp_shuffle_policy(
-            policy,
-            declaration.context("warp_shuffle requires imported LLVM declaration")?,
-        )?,
+        "warp_shuffle" => validate_warp_shuffle_policy(policy, declaration)?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1793,7 +1790,7 @@ fn validate_warp_barrier_policy(
 
 fn validate_warp_shuffle_policy(
     policy: &OverlayIntrinsic,
-    declaration: &ImportedIntrinsic,
+    declaration: Option<&ImportedIntrinsic>,
 ) -> Result<()> {
     let shuffle = policy
         .warp_shuffle
@@ -1807,21 +1804,41 @@ fn validate_warp_shuffle_policy(
                 == PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive
             && shuffle.source_lane
                 == WarpShuffleSourceLane::InRangeSourceActiveAndNamedOutOfRangeCopiesSelf
-            && shuffle.adapter == WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp
+            && shuffle.adapter == recipe.adapter
             && shuffle.clamp == recipe.clamp
-            && shuffle.lane_encoding == WarpShuffleOperandEncoding::RegisterOrImmediate
-            && shuffle.mask_encoding == WarpShuffleOperandEncoding::RegisterOrImmediate,
+            && shuffle.lane_encoding == recipe.operand_encoding
+            && shuffle.mask_encoding == recipe.operand_encoding,
         "{} requests an unsupported warp-shuffle semantic or operand contract",
         policy.id
     );
+
+    let source_matches = match recipe.source {
+        WarpShuffleRecipeSource::LlvmImported {
+            source_record,
+            llvm_symbol,
+        } => {
+            policy.source.is_none()
+                && policy.source_record.as_deref() == Some(source_record)
+                && policy.llvm_symbol.as_deref() == Some(llvm_symbol)
+                && policy.resolved_llvm_symbol.is_none()
+        }
+        WarpShuffleRecipeSource::PtxNative { instruction } => {
+            policy.source
+                == Some(IntrinsicSource::PtxNative {
+                    instruction: instruction.into(),
+                })
+                && policy.source_record.is_none()
+                && policy.llvm_symbol.is_none()
+                && policy.resolved_llvm_symbol.is_none()
+                && policy.llvm_arguments.is_empty()
+                && policy.llvm_results.is_empty()
+        }
+    };
     ensure!(
         policy.id == recipe.id
             && policy.abi_id == recipe.abi_id
             && policy.operation_key == recipe.operation_key
-            && policy.source.is_none()
-            && policy.source_record.as_deref() == Some(recipe.source_record)
-            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
-            && policy.resolved_llvm_symbol.is_none(),
+            && source_matches,
         "{} warp-shuffle identity does not match its closed mode and value recipe",
         policy.id
     );
@@ -1842,12 +1859,19 @@ fn validate_warp_shuffle_policy(
     ensure!(
         policy.dialect_op_type == recipe.dialect_op_type
             && policy.dialect_op_name == recipe.dialect_op_name
-            && policy.dialect_operands == ["i32", recipe.llvm_value, "i32"]
-            && policy.dialect_results == [recipe.llvm_value]
-            && policy.llvm_arguments == ["i32", recipe.llvm_value, "i32", "i32"]
-            && policy.llvm_results == [recipe.llvm_value]
-            && policy.lowering == "generated_warp_shuffle",
-        "{} is outside the closed warp-shuffle clamp-insertion lowering recipe",
+            && policy.dialect_operands == ["i32", recipe.dialect_value, "i32"]
+            && policy.dialect_results == [recipe.dialect_value]
+            && policy.lowering == recipe.lowering
+            && match recipe.source {
+                WarpShuffleRecipeSource::LlvmImported { .. } => {
+                    policy.llvm_arguments == ["i32", recipe.dialect_value, "i32", "i32"]
+                        && policy.llvm_results == [recipe.dialect_value]
+                }
+                WarpShuffleRecipeSource::PtxNative { .. } => {
+                    policy.llvm_arguments.is_empty() && policy.llvm_results.is_empty()
+                }
+            },
+        "{} is outside the closed warp-shuffle lowering recipe",
         policy.id
     );
     ensure!(
@@ -1871,23 +1895,32 @@ fn validate_warp_shuffle_policy(
         "{} warp-shuffle PTX provenance disagrees with the reviewed recipe",
         policy.id
     );
-    ensure!(
-        declaration.classes
-            == [
-                "ClangBuiltin",
-                "NVVMBuiltin",
-                "SDPatternOperator",
-                "Intrinsic"
-            ]
-            && declaration.properties
-                == [
-                    "IntrConvergent",
-                    "IntrInaccessibleMemOnly",
-                    "IntrNoCallback",
-                ],
-        "{} warp-shuffle class or effects disagree with the imported declaration",
-        policy.id
-    );
+    if let Some(declaration) = declaration {
+        ensure!(
+            matches!(recipe.source, WarpShuffleRecipeSource::LlvmImported { .. })
+                && declaration.classes
+                    == [
+                        "ClangBuiltin",
+                        "NVVMBuiltin",
+                        "SDPatternOperator",
+                        "Intrinsic"
+                    ]
+                && declaration.properties
+                    == [
+                        "IntrConvergent",
+                        "IntrInaccessibleMemOnly",
+                        "IntrNoCallback",
+                    ],
+            "{} warp-shuffle class or effects disagree with the imported declaration",
+            policy.id
+        );
+    } else {
+        ensure!(
+            matches!(recipe.source, WarpShuffleRecipeSource::PtxNative { .. }),
+            "{} imported warp shuffle is missing its LLVM declaration",
+            policy.id
+        );
+    }
     ensure!(
         policy.packed_atomic.is_none()
             && policy.redux.is_none()
@@ -1903,19 +1936,30 @@ fn validate_warp_shuffle_policy(
         "{} mixes another generated-family contract with warp_shuffle",
         policy.id
     );
+    let expected_operands = match recipe.adapter {
+        WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp => vec![
+            OperandPattern::Register,
+            OperandPattern::Register,
+            OperandPattern::RegisterOrImmediate,
+            OperandPattern::Exact {
+                value: recipe.clamp.to_string(),
+            },
+            OperandPattern::RegisterOrImmediate,
+        ],
+        WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble => vec![
+            OperandPattern::Exact { value: "lo".into() },
+            OperandPattern::Exact { value: "lo".into() },
+            OperandPattern::Register,
+            OperandPattern::Exact {
+                value: recipe.clamp.to_string(),
+            },
+            OperandPattern::Register,
+        ],
+    };
     ensure!(
         policy.expected_ptx.mnemonic == "shfl"
             && policy.expected_ptx.modifiers == ["sync", recipe.ptx_mode, "b32"]
-            && policy.expected_ptx.operands
-                == [
-                    OperandPattern::Register,
-                    OperandPattern::Register,
-                    OperandPattern::RegisterOrImmediate,
-                    OperandPattern::Exact {
-                        value: recipe.clamp.to_string(),
-                    },
-                    OperandPattern::RegisterOrImmediate,
-                ],
+            && policy.expected_ptx.operands == expected_operands,
         "{} expected PTX does not match its closed shfl.sync recipe",
         policy.id
     );
@@ -1929,27 +1973,21 @@ fn validate_warp_shuffle_policy(
         policy.backend_lowerings.len() == 2
             && backend_pairs
                 == BTreeSet::from([
-                    (
-                        IntrinsicBackend::LlvmNvptx,
-                        BackendLoweringMechanism::TypedNvvm,
-                    ),
-                    (
-                        IntrinsicBackend::LibNvvm,
-                        BackendLoweringMechanism::TypedNvvm,
-                    ),
+                    (IntrinsicBackend::LlvmNvptx, recipe.backend_mechanism),
+                    (IntrinsicBackend::LibNvvm, recipe.backend_mechanism),
                 ]),
-        "{} must define exactly the reviewed typed LLVM and libNVVM routes",
+        "{} must define exactly the reviewed LLVM and libNVVM routes",
         policy.id
     );
     for lowering in &policy.backend_lowerings {
         let floor_matches = match lowering.backend {
             IntrinsicBackend::LlvmNvptx => {
-                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                lowering.mechanism == recipe.backend_mechanism
                     && lowering.minimum_ptx.as_deref() == Some("6.0")
                     && lowering.minimum_sm.as_deref() == Some("sm_30")
             }
             IntrinsicBackend::LibNvvm => {
-                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                lowering.mechanism == recipe.backend_mechanism
                     && lowering.minimum_ptx.as_deref() == Some("6.0")
                     && lowering.minimum_sm.as_deref() == Some("sm_75")
             }
@@ -1962,53 +2000,69 @@ fn validate_warp_shuffle_policy(
         );
     }
 
-    let selection_records: BTreeSet<_> = declaration
-        .selections
-        .iter()
-        .map(|selection| selection.source_record.as_str())
-        .collect();
-    ensure!(
-        declaration.selections.len() == 8
-            && selection_records.len() == 8
-            && selection_records
-                .iter()
-                .all(|source_record| !source_record.trim().is_empty()),
-        "{} warp-shuffle declaration must contain exactly eight distinct operand-encoding selections",
-        policy.id
-    );
-    let expected_asm = format!(
-        "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
-        recipe.ptx_mode
-    );
-    for selection in &declaration.selections {
+    if let Some(declaration) = declaration {
+        let selection_records: BTreeSet<_> = declaration
+            .selections
+            .iter()
+            .map(|selection| selection.source_record.as_str())
+            .collect();
         ensure!(
-            selection.asm == expected_asm
-                && selection.predicates
-                    == [
-                        "Subtarget->getPTXVersion() >= 60",
-                        "Subtarget->getSmVersion() >= 30",
-                    ]
-                && selection.constraints.is_empty(),
-            "{} warp-shuffle selections disagree on PTX shape, target predicates, or constraints",
+            declaration.selections.len() == 8
+                && selection_records.len() == 8
+                && selection_records
+                    .iter()
+                    .all(|source_record| !source_record.trim().is_empty()),
+            "{} warp-shuffle declaration must contain exactly eight distinct operand-encoding selections",
             policy.id
         );
+        let expected_asm = format!(
+            "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
+            recipe.ptx_mode
+        );
+        for selection in &declaration.selections {
+            ensure!(
+                selection.asm == expected_asm
+                    && selection.predicates
+                        == [
+                            "Subtarget->getPTXVersion() >= 60",
+                            "Subtarget->getSmVersion() >= 30",
+                        ]
+                    && selection.constraints.is_empty(),
+                "{} warp-shuffle selections disagree on PTX shape, target predicates, or constraints",
+                policy.id
+            );
+        }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum WarpShuffleRecipeSource {
+    LlvmImported {
+        source_record: &'static str,
+        llvm_symbol: &'static str,
+    },
+    PtxNative {
+        instruction: &'static str,
+    },
 }
 
 struct WarpShuffleRecipe {
     id: &'static str,
     abi_id: &'static str,
     operation_key: &'static str,
-    source_record: &'static str,
-    llvm_symbol: &'static str,
+    source: WarpShuffleRecipeSource,
     rust_name: &'static str,
     rust_value: &'static str,
-    llvm_value: &'static str,
+    dialect_value: &'static str,
     dialect_op_type: &'static str,
     dialect_op_name: &'static str,
     ptx_mode: &'static str,
     clamp: u32,
+    adapter: WarpShuffleAdapter,
+    operand_encoding: WarpShuffleOperandEncoding,
+    lowering: &'static str,
+    backend_mechanism: BackendLoweringMechanism,
 }
 
 fn warp_shuffle_recipe(
@@ -2020,113 +2074,241 @@ fn warp_shuffle_recipe(
             id: "shuffle_sync",
             abi_id: "i0050",
             operation_key: "warp.shuffle.sync.idx.i32",
-            source_record: "int_nvvm_shfl_sync_idx_i32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.idx.i32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_idx_i32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.idx.i32",
+            },
             rust_name: "shuffle_sync",
             rust_value: "u32",
-            llvm_value: "i32",
+            dialect_value: "i32",
             dialect_op_type: "ShflSyncIdxI32Op",
             dialect_op_name: "nvvm.shfl_sync_idx_i32",
             ptx_mode: "idx",
             clamp: 31,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Bfly, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
             id: "shuffle_xor_sync",
             abi_id: "i0051",
             operation_key: "warp.shuffle.sync.bfly.i32",
-            source_record: "int_nvvm_shfl_sync_bfly_i32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.bfly.i32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_bfly_i32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.bfly.i32",
+            },
             rust_name: "shuffle_xor_sync",
             rust_value: "u32",
-            llvm_value: "i32",
+            dialect_value: "i32",
             dialect_op_type: "ShflSyncBflyI32Op",
             dialect_op_name: "nvvm.shfl_sync_bfly_i32",
             ptx_mode: "bfly",
             clamp: 31,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Down, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
             id: "shuffle_down_sync",
             abi_id: "i0052",
             operation_key: "warp.shuffle.sync.down.i32",
-            source_record: "int_nvvm_shfl_sync_down_i32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.down.i32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_down_i32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.down.i32",
+            },
             rust_name: "shuffle_down_sync",
             rust_value: "u32",
-            llvm_value: "i32",
+            dialect_value: "i32",
             dialect_op_type: "ShflSyncDownI32Op",
             dialect_op_name: "nvvm.shfl_sync_down_i32",
             ptx_mode: "down",
             clamp: 31,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Up, WarpShuffleValueKind::I32) => WarpShuffleRecipe {
             id: "shuffle_up_sync",
             abi_id: "i0053",
             operation_key: "warp.shuffle.sync.up.i32",
-            source_record: "int_nvvm_shfl_sync_up_i32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.up.i32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_up_i32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.up.i32",
+            },
             rust_name: "shuffle_up_sync",
             rust_value: "u32",
-            llvm_value: "i32",
+            dialect_value: "i32",
             dialect_op_type: "ShflSyncUpI32Op",
             dialect_op_name: "nvvm.shfl_sync_up_i32",
             ptx_mode: "up",
             clamp: 0,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Idx, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
             id: "shuffle_f32_sync",
             abi_id: "i0054",
             operation_key: "warp.shuffle.sync.idx.f32",
-            source_record: "int_nvvm_shfl_sync_idx_f32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.idx.f32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_idx_f32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.idx.f32",
+            },
             rust_name: "shuffle_f32_sync",
             rust_value: "f32",
-            llvm_value: "f32",
+            dialect_value: "f32",
             dialect_op_type: "ShflSyncIdxF32Op",
             dialect_op_name: "nvvm.shfl_sync_idx_f32",
             ptx_mode: "idx",
             clamp: 31,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Bfly, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
             id: "shuffle_xor_f32_sync",
             abi_id: "i0055",
             operation_key: "warp.shuffle.sync.bfly.f32",
-            source_record: "int_nvvm_shfl_sync_bfly_f32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.bfly.f32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_bfly_f32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.bfly.f32",
+            },
             rust_name: "shuffle_xor_f32_sync",
             rust_value: "f32",
-            llvm_value: "f32",
+            dialect_value: "f32",
             dialect_op_type: "ShflSyncBflyF32Op",
             dialect_op_name: "nvvm.shfl_sync_bfly_f32",
             ptx_mode: "bfly",
             clamp: 31,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Down, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
             id: "shuffle_down_f32_sync",
             abi_id: "i0056",
             operation_key: "warp.shuffle.sync.down.f32",
-            source_record: "int_nvvm_shfl_sync_down_f32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.down.f32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_down_f32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.down.f32",
+            },
             rust_name: "shuffle_down_f32_sync",
             rust_value: "f32",
-            llvm_value: "f32",
+            dialect_value: "f32",
             dialect_op_type: "ShflSyncDownF32Op",
             dialect_op_name: "nvvm.shfl_sync_down_f32",
             ptx_mode: "down",
             clamp: 31,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
         },
         (WarpShuffleMode::Up, WarpShuffleValueKind::F32) => WarpShuffleRecipe {
             id: "shuffle_up_f32_sync",
             abi_id: "i0057",
             operation_key: "warp.shuffle.sync.up.f32",
-            source_record: "int_nvvm_shfl_sync_up_f32",
-            llvm_symbol: "llvm.nvvm.shfl.sync.up.f32",
+            source: WarpShuffleRecipeSource::LlvmImported {
+                source_record: "int_nvvm_shfl_sync_up_f32",
+                llvm_symbol: "llvm.nvvm.shfl.sync.up.f32",
+            },
             rust_name: "shuffle_up_f32_sync",
             rust_value: "f32",
-            llvm_value: "f32",
+            dialect_value: "f32",
             dialect_op_type: "ShflSyncUpF32Op",
             dialect_op_name: "nvvm.shfl_sync_up_f32",
             ptx_mode: "up",
             clamp: 0,
+            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lowering: "generated_warp_shuffle",
+            backend_mechanism: BackendLoweringMechanism::TypedNvvm,
+        },
+        (WarpShuffleMode::Idx, WarpShuffleValueKind::I64) => WarpShuffleRecipe {
+            id: "shuffle_u64_sync",
+            abi_id: "i0058",
+            operation_key: "warp.shuffle.sync.idx.i64",
+            source: WarpShuffleRecipeSource::PtxNative {
+                instruction: "shfl.sync.idx.b32",
+            },
+            rust_name: "shuffle_u64_sync",
+            rust_value: "u64",
+            dialect_value: "i64",
+            dialect_op_type: "ShflSyncIdxI64Op",
+            dialect_op_name: "nvvm.shfl_sync_idx_i64",
+            ptx_mode: "idx",
+            clamp: 31,
+            adapter:
+                WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOnly,
+            lowering: "generated_warp_shuffle_i64_inline_ptx",
+            backend_mechanism: BackendLoweringMechanism::InlinePtx,
+        },
+        (WarpShuffleMode::Bfly, WarpShuffleValueKind::I64) => WarpShuffleRecipe {
+            id: "shuffle_xor_u64_sync",
+            abi_id: "i0059",
+            operation_key: "warp.shuffle.sync.bfly.i64",
+            source: WarpShuffleRecipeSource::PtxNative {
+                instruction: "shfl.sync.bfly.b32",
+            },
+            rust_name: "shuffle_xor_u64_sync",
+            rust_value: "u64",
+            dialect_value: "i64",
+            dialect_op_type: "ShflSyncBflyI64Op",
+            dialect_op_name: "nvvm.shfl_sync_bfly_i64",
+            ptx_mode: "bfly",
+            clamp: 31,
+            adapter:
+                WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOnly,
+            lowering: "generated_warp_shuffle_i64_inline_ptx",
+            backend_mechanism: BackendLoweringMechanism::InlinePtx,
+        },
+        (WarpShuffleMode::Down, WarpShuffleValueKind::I64) => WarpShuffleRecipe {
+            id: "shuffle_down_u64_sync",
+            abi_id: "i0060",
+            operation_key: "warp.shuffle.sync.down.i64",
+            source: WarpShuffleRecipeSource::PtxNative {
+                instruction: "shfl.sync.down.b32",
+            },
+            rust_name: "shuffle_down_u64_sync",
+            rust_value: "u64",
+            dialect_value: "i64",
+            dialect_op_type: "ShflSyncDownI64Op",
+            dialect_op_name: "nvvm.shfl_sync_down_i64",
+            ptx_mode: "down",
+            clamp: 31,
+            adapter:
+                WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOnly,
+            lowering: "generated_warp_shuffle_i64_inline_ptx",
+            backend_mechanism: BackendLoweringMechanism::InlinePtx,
+        },
+        (WarpShuffleMode::Up, WarpShuffleValueKind::I64) => WarpShuffleRecipe {
+            id: "shuffle_up_u64_sync",
+            abi_id: "i0061",
+            operation_key: "warp.shuffle.sync.up.i64",
+            source: WarpShuffleRecipeSource::PtxNative {
+                instruction: "shfl.sync.up.b32",
+            },
+            rust_name: "shuffle_up_u64_sync",
+            rust_value: "u64",
+            dialect_value: "i64",
+            dialect_op_type: "ShflSyncUpI64Op",
+            dialect_op_name: "nvvm.shfl_sync_up_i64",
+            ptx_mode: "up",
+            clamp: 0,
+            adapter:
+                WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble,
+            operand_encoding: WarpShuffleOperandEncoding::RegisterOnly,
+            lowering: "generated_warp_shuffle_i64_inline_ptx",
+            backend_mechanism: BackendLoweringMechanism::InlinePtx,
         },
     }
 }
@@ -4224,7 +4406,31 @@ mod tests {
         record.abi_id = recipe.abi_id.into();
         record.operation_key = recipe.operation_key.into();
         record.family = "warp_shuffle".into();
-        record.source_record = Some(recipe.source_record.into());
+        match recipe.source {
+            WarpShuffleRecipeSource::LlvmImported {
+                source_record,
+                llvm_symbol,
+            } => {
+                record.source_record = Some(source_record.into());
+                record.llvm_symbol = Some(llvm_symbol.into());
+                record.llvm_arguments = vec![
+                    "i32".into(),
+                    recipe.dialect_value.into(),
+                    "i32".into(),
+                    "i32".into(),
+                ];
+                record.llvm_results = vec![recipe.dialect_value.into()];
+            }
+            WarpShuffleRecipeSource::PtxNative { instruction } => {
+                record.source = Some(IntrinsicSource::PtxNative {
+                    instruction: instruction.into(),
+                });
+                record.source_record = None;
+                record.llvm_symbol = None;
+                record.llvm_arguments.clear();
+                record.llvm_results.clear();
+            }
+        }
         record.rust_module = "warp".into();
         record.rust_name = recipe.rust_name.into();
         record.rust_arguments = vec!["u32".into(), recipe.rust_value.into(), "u32".into()];
@@ -4236,16 +4442,8 @@ mod tests {
         record.compatibility_rust_paths = vec![format!("cuda_device::warp::{}", recipe.rust_name)];
         record.dialect_op_type = recipe.dialect_op_type.into();
         record.dialect_op_name = recipe.dialect_op_name.into();
-        record.dialect_operands = vec!["i32".into(), recipe.llvm_value.into(), "i32".into()];
-        record.dialect_results = vec![recipe.llvm_value.into()];
-        record.llvm_symbol = Some(recipe.llvm_symbol.into());
-        record.llvm_arguments = vec![
-            "i32".into(),
-            recipe.llvm_value.into(),
-            "i32".into(),
-            "i32".into(),
-        ];
-        record.llvm_results = vec![recipe.llvm_value.into()];
+        record.dialect_operands = vec!["i32".into(), recipe.dialect_value.into(), "i32".into()];
+        record.dialect_results = vec![recipe.dialect_value.into()];
         record.pure = false;
         record.memory = "inaccessible_read_write".into();
         record.convergent = true;
@@ -4257,18 +4455,18 @@ mod tests {
         record.ptx_isa_section =
             "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync".into();
         record.ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync".into();
-        record.lowering = "generated_warp_shuffle".into();
+        record.lowering = recipe.lowering.into();
         record.backend_lowerings = vec![
             crate::model::OverlayBackendLowering {
                 backend: IntrinsicBackend::LlvmNvptx,
-                mechanism: BackendLoweringMechanism::TypedNvvm,
+                mechanism: recipe.backend_mechanism,
                 evidence_profile: "llvm-test".into(),
                 minimum_ptx: Some("6.0".into()),
                 minimum_sm: Some("sm_30".into()),
             },
             crate::model::OverlayBackendLowering {
                 backend: IntrinsicBackend::LibNvvm,
-                mechanism: BackendLoweringMechanism::TypedNvvm,
+                mechanism: recipe.backend_mechanism,
                 evidence_profile: "libnvvm-test".into(),
                 minimum_ptx: Some("6.0".into()),
                 minimum_sm: Some("sm_75".into()),
@@ -4281,15 +4479,13 @@ mod tests {
                 WarpShuffleParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
             legacy_pre_sm70: PreSm70MemberMaskRule::AllNamedLanesConvergedAndOnlyNamedLanesActive,
             source_lane: WarpShuffleSourceLane::InRangeSourceActiveAndNamedOutOfRangeCopiesSelf,
-            adapter: WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp,
+            adapter: recipe.adapter,
             clamp: recipe.clamp,
-            lane_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
-            mask_encoding: WarpShuffleOperandEncoding::RegisterOrImmediate,
+            lane_encoding: recipe.operand_encoding,
+            mask_encoding: recipe.operand_encoding,
         });
-        record.expected_ptx = InstructionPattern::new(
-            "shfl",
-            &["sync", recipe.ptx_mode, "b32"],
-            vec![
+        let operands = match recipe.adapter {
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp => vec![
                 OperandPattern::Register,
                 OperandPattern::Register,
                 OperandPattern::RegisterOrImmediate,
@@ -4298,7 +4494,20 @@ mod tests {
                 },
                 OperandPattern::RegisterOrImmediate,
             ],
-        );
+            WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble => {
+                vec![
+                    OperandPattern::Exact { value: "lo".into() },
+                    OperandPattern::Exact { value: "lo".into() },
+                    OperandPattern::Register,
+                    OperandPattern::Exact {
+                        value: recipe.clamp.to_string(),
+                    },
+                    OperandPattern::Register,
+                ]
+            }
+        };
+        record.expected_ptx =
+            InstructionPattern::new("shfl", &["sync", recipe.ptx_mode, "b32"], operands);
         record.summary = "synchronized warp shuffle".into();
         record
     }
@@ -4308,6 +4517,13 @@ mod tests {
         value_kind: WarpShuffleValueKind,
     ) -> ImportedIntrinsic {
         let recipe = warp_shuffle_recipe(mode, value_kind);
+        let WarpShuffleRecipeSource::LlvmImported {
+            source_record,
+            llvm_symbol,
+        } = recipe.source
+        else {
+            panic!("PTX-native i64 shuffles have no imported declaration");
+        };
         let selections = (0..8)
             .map(|index| ImportedSelection {
                 source_record: format!("anonymous_test_{index}"),
@@ -4323,15 +4539,15 @@ mod tests {
             })
             .collect();
         ImportedIntrinsic {
-            source_record: recipe.source_record.into(),
-            llvm_name: recipe.llvm_symbol.into(),
+            source_record: source_record.into(),
+            llvm_name: llvm_symbol.into(),
             arguments: vec![
                 "i32".into(),
-                recipe.llvm_value.into(),
+                recipe.dialect_value.into(),
                 "i32".into(),
                 "i32".into(),
             ],
-            results: vec![recipe.llvm_value.into()],
+            results: vec![recipe.dialect_value.into()],
             classes: vec![
                 "ClangBuiltin".into(),
                 "NVVMBuiltin".into(),
@@ -4551,7 +4767,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 11);
-        assert_eq!(overlay.intrinsics.len(), 57);
+        assert_eq!(overlay.intrinsics.len(), 61);
         assert_eq!(
             overlay
                 .intrinsics
@@ -4614,7 +4830,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "warp_shuffle")
                 .count(),
-            8
+            12
         );
         assert_eq!(hash.len(), 64);
 
@@ -5067,16 +5283,286 @@ mod tests {
             .iter()
             .map(|record| (record.source_record.as_str(), record))
             .collect();
-        let policies: Vec<_> = overlay
+        let all_policies: Vec<_> = overlay
             .intrinsics
             .iter()
             .filter(|record| record.family == "warp_shuffle")
+            .collect();
+        assert_eq!(all_policies.len(), 12);
+        let native_policies: Vec<_> = all_policies
+            .iter()
+            .copied()
+            .filter(|record| record.source.is_some())
+            .collect();
+        assert_eq!(native_policies.len(), 4);
+        for policy in native_policies {
+            validate_ptx_native_policy(policy).unwrap();
+        }
+        let policies: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "warp_shuffle" && record.source_record.is_some())
             .collect();
         assert_eq!(policies.len(), 8);
         for policy in policies {
             let declaration = declarations[policy.source_record.as_deref().unwrap()];
             validate_imported_policy(policy, declaration).unwrap();
         }
+    }
+
+    #[test]
+    fn pinned_llvm_has_no_direct_i64_or_f64_shuffle_record() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let direct_64: Vec<_> = imported
+            .intrinsics
+            .iter()
+            .filter(|record| {
+                record.llvm_name.starts_with("llvm.nvvm.shfl")
+                    && (record.llvm_name.contains(".i64") || record.llvm_name.contains(".f64"))
+            })
+            .map(|record| record.llvm_name.as_str())
+            .collect();
+        assert!(
+            direct_64.is_empty(),
+            "unexpected LLVM records: {direct_64:?}"
+        );
+    }
+
+    #[test]
+    fn i64_warp_shuffle_recipes_are_exact_ptx_native_pairs() {
+        let cases = [
+            (
+                WarpShuffleMode::Idx,
+                "shuffle_u64_sync",
+                "i0058",
+                "warp.shuffle.sync.idx.i64",
+                "shfl.sync.idx.b32",
+                "idx",
+                31,
+                "ShflSyncIdxI64Op",
+                "nvvm.shfl_sync_idx_i64",
+            ),
+            (
+                WarpShuffleMode::Bfly,
+                "shuffle_xor_u64_sync",
+                "i0059",
+                "warp.shuffle.sync.bfly.i64",
+                "shfl.sync.bfly.b32",
+                "bfly",
+                31,
+                "ShflSyncBflyI64Op",
+                "nvvm.shfl_sync_bfly_i64",
+            ),
+            (
+                WarpShuffleMode::Down,
+                "shuffle_down_u64_sync",
+                "i0060",
+                "warp.shuffle.sync.down.i64",
+                "shfl.sync.down.b32",
+                "down",
+                31,
+                "ShflSyncDownI64Op",
+                "nvvm.shfl_sync_down_i64",
+            ),
+            (
+                WarpShuffleMode::Up,
+                "shuffle_up_u64_sync",
+                "i0061",
+                "warp.shuffle.sync.up.i64",
+                "shfl.sync.up.b32",
+                "up",
+                0,
+                "ShflSyncUpI64Op",
+                "nvvm.shfl_sync_up_i64",
+            ),
+        ];
+
+        for (mode, id, abi_id, operation_key, instruction, ptx_mode, clamp, op_type, op_name) in
+            cases
+        {
+            let policy = warp_shuffle_policy(mode, WarpShuffleValueKind::I64);
+            validate_ptx_native_policy(&policy).unwrap();
+
+            assert_eq!(policy.id, id);
+            assert_eq!(policy.abi_id, abi_id);
+            assert_eq!(policy.operation_key, operation_key);
+            assert_eq!(
+                policy.source,
+                Some(IntrinsicSource::PtxNative {
+                    instruction: instruction.into(),
+                })
+            );
+            assert!(policy.source_record.is_none());
+            assert!(policy.llvm_symbol.is_none());
+            assert!(policy.resolved_llvm_symbol.is_none());
+            assert!(policy.llvm_arguments.is_empty());
+            assert!(policy.llvm_results.is_empty());
+            assert_eq!(policy.rust_arguments, ["u32", "u64", "u32"]);
+            assert_eq!(policy.rust_result, "u64");
+            assert!(!policy.safe);
+            assert!(policy.must_use);
+            assert_eq!(policy.dialect_op_type, op_type);
+            assert_eq!(policy.dialect_op_name, op_name);
+            assert_eq!(policy.dialect_operands, ["i32", "i64", "i32"]);
+            assert_eq!(policy.dialect_results, ["i64"]);
+            assert_eq!(policy.lowering, "generated_warp_shuffle_i64_inline_ptx");
+
+            let shuffle = policy.warp_shuffle.as_ref().unwrap();
+            assert_eq!(shuffle.clamp, clamp);
+            assert_eq!(
+                shuffle.adapter,
+                WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble
+            );
+            assert_eq!(
+                shuffle.lane_encoding,
+                WarpShuffleOperandEncoding::RegisterOnly
+            );
+            assert_eq!(
+                shuffle.mask_encoding,
+                WarpShuffleOperandEncoding::RegisterOnly
+            );
+            assert_eq!(
+                policy.expected_ptx,
+                InstructionPattern::new(
+                    "shfl",
+                    &["sync", ptx_mode, "b32"],
+                    vec![
+                        OperandPattern::Exact { value: "lo".into() },
+                        OperandPattern::Exact { value: "lo".into() },
+                        OperandPattern::Register,
+                        OperandPattern::Exact {
+                            value: clamp.to_string(),
+                        },
+                        OperandPattern::Register,
+                    ],
+                )
+            );
+
+            let routes: BTreeMap<_, _> = policy
+                .backend_lowerings
+                .iter()
+                .map(|route| (route.backend, route))
+                .collect();
+            assert_eq!(routes.len(), 2);
+            for backend in [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm] {
+                assert_eq!(
+                    routes[&backend].mechanism,
+                    BackendLoweringMechanism::InlinePtx
+                );
+                assert_eq!(routes[&backend].minimum_ptx.as_deref(), Some("6.0"));
+            }
+            assert_eq!(
+                routes[&IntrinsicBackend::LlvmNvptx].minimum_sm.as_deref(),
+                Some("sm_30")
+            );
+            assert_eq!(
+                routes[&IntrinsicBackend::LibNvvm].minimum_sm.as_deref(),
+                Some("sm_75")
+            );
+
+            let mut record = evidence();
+            record.id = policy.id.clone();
+            record.source = policy.source.clone();
+            record.source_record = None;
+            record.llvm_symbol = None;
+            record.llvm_arguments.clear();
+            record.llvm_results.clear();
+            record.expected_ptx = policy.expected_ptx.clone();
+            let resolved = resolve_record(
+                &policy,
+                resolve_policy_source(&policy).unwrap(),
+                None,
+                &record,
+                "test",
+                "LLVM version test",
+                "0123456789abcdef",
+                vec![],
+                1,
+            )
+            .unwrap();
+            assert!(resolved.llvm.is_none());
+            assert!(resolved.selections.is_empty());
+            assert_eq!(resolved.warp_shuffle, policy.warp_shuffle);
+        }
+    }
+
+    #[test]
+    fn i64_warp_shuffle_contract_rejects_unreviewed_changes() {
+        let valid = warp_shuffle_policy(WarpShuffleMode::Idx, WarpShuffleValueKind::I64);
+        validate_ptx_native_policy(&valid).unwrap();
+
+        let reject = |policy: &OverlayIntrinsic, expected: &str| {
+            let error = validate_ptx_native_policy(policy).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains(expected), "unexpected error: {message}");
+        };
+
+        let mut fabricated_llvm = valid.clone();
+        fabricated_llvm.source = None;
+        fabricated_llvm.source_record = Some("int_nvvm_shfl_sync_idx_i64".into());
+        fabricated_llvm.llvm_symbol = Some("llvm.nvvm.shfl.sync.idx.i64".into());
+        fabricated_llvm.llvm_arguments =
+            vec!["i32".into(), "i64".into(), "i32".into(), "i32".into()];
+        fabricated_llvm.llvm_results = vec!["i64".into()];
+        reject(
+            &fabricated_llvm,
+            "source kind and imported declaration disagree",
+        );
+
+        let mut wrong_source = valid.clone();
+        wrong_source.source = Some(IntrinsicSource::PtxNative {
+            instruction: "shfl.sync.down.b32".into(),
+        });
+        reject(&wrong_source, "warp-shuffle identity");
+
+        let mut wrong_adapter = valid.clone();
+        wrong_adapter.warp_shuffle.as_mut().unwrap().adapter =
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp;
+        reject(&wrong_adapter, "semantic or operand contract");
+
+        let mut wrong_mode = valid.clone();
+        wrong_mode.warp_shuffle.as_mut().unwrap().mode = WarpShuffleMode::Up;
+        wrong_mode.warp_shuffle.as_mut().unwrap().clamp = 0;
+        wrong_mode.expected_ptx.modifiers[1] = "up".into();
+        wrong_mode.expected_ptx.operands[3] = OperandPattern::Exact { value: "0".into() };
+        reject(&wrong_mode, "warp-shuffle identity");
+
+        let mut wrong_clamp = valid.clone();
+        wrong_clamp.warp_shuffle.as_mut().unwrap().clamp = 0;
+        reject(&wrong_clamp, "semantic or operand contract");
+
+        let mut broad_encoding = valid.clone();
+        broad_encoding.warp_shuffle.as_mut().unwrap().lane_encoding =
+            WarpShuffleOperandEncoding::RegisterOrImmediate;
+        reject(&broad_encoding, "semantic or operand contract");
+
+        let mut typed_backend = valid.clone();
+        typed_backend.backend_lowerings[0].mechanism = BackendLoweringMechanism::TypedNvvm;
+        reject(&typed_backend, "reviewed LLVM and libNVVM routes");
+
+        let mut wrong_native_floor = valid.clone();
+        wrong_native_floor.minimum_sm = Some("sm_70".into());
+        reject(&wrong_native_floor, "target floor");
+
+        let mut wrong_profile_floor = valid.clone();
+        wrong_profile_floor
+            .backend_lowerings
+            .iter_mut()
+            .find(|route| route.backend == IntrinsicBackend::LibNvvm)
+            .unwrap()
+            .minimum_sm = Some("sm_80".into());
+        reject(&wrong_profile_floor, "profile floor");
+
+        let mut safe = valid.clone();
+        safe.safe = true;
+        safe.safe_allowlist_reason = Some("incorrectly hides participation obligations".into());
+        reject(&safe, "unsafe must-use warp-shuffle");
+
+        let mut wrong_ptx = valid;
+        wrong_ptx.expected_ptx.operands[0] = OperandPattern::Register;
+        reject(&wrong_ptx, "closed shfl.sync recipe");
     }
 
     #[test]
@@ -5104,7 +5590,7 @@ mod tests {
 
         let mut wrong_signature = valid.clone();
         wrong_signature.dialect_operands.pop();
-        reject_policy(&wrong_signature, "clamp-insertion lowering");
+        reject_policy(&wrong_signature, "closed warp-shuffle lowering recipe");
 
         let mut wrong_clamp = valid.clone();
         wrong_clamp.warp_shuffle.as_mut().unwrap().clamp = 0;

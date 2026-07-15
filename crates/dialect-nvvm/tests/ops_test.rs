@@ -586,12 +586,6 @@ fn test_mma_m16n8k32_s8_verifies_exact_register_signature() {
     assert!(verify_op(&MmaM16N8K32S32S8Op::new(invalid_arity), &ctx).is_err());
 }
 
-/// The `(constructor, TypeId)` pair returned by `get_concrete_op_info()`.
-type OpInfo = (
-    fn(pliron::context::Ptr<Operation>) -> pliron::op::OpObj,
-    std::any::TypeId,
-);
-
 #[test]
 fn test_matrix_memory_ops_verify_pointer_and_packed_register_types() {
     let mut ctx = Context::new();
@@ -1668,7 +1662,6 @@ fn test_shfl_sync_i64_construct_and_verify() {
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
 
-    // A block supplies [mask (i32), value (i64), lane/delta (i32)].
     let block = BasicBlock::new(
         &mut ctx,
         None,
@@ -1678,36 +1671,43 @@ fn test_shfl_sync_i64_construct_and_verify() {
     let value = block.deref(&ctx).get_argument(1);
     let lane = block.deref(&ctx).get_argument(2);
 
-    // All four modes share the same shape: 3 operands [mask, value, lane], 1
-    // i64 result (NOpdsInterface<3>/NResultsInterface<1>).
-    let modes: [OpInfo; 4] = [
-        ShflSyncIdxI64Op::get_concrete_op_info(),
-        ShflSyncBflyI64Op::get_concrete_op_info(),
-        ShflSyncDownI64Op::get_concrete_op_info(),
-        ShflSyncUpI64Op::get_concrete_op_info(),
-    ];
+    macro_rules! check_mode {
+        ($op:ty) => {{
+            let valid = <$op>::build(&mut ctx, mask, value, lane);
+            assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
 
-    for opid in modes {
-        // Valid.
-        let op = Operation::new(
-            &mut ctx,
-            opid,
-            vec![i64_ty.into()],
-            vec![mask, value, lane],
-            vec![],
-            0,
-        );
-        assert!(verify_op(&ShflSyncIdxI64Op::new(op), &ctx).is_ok());
+            for (operands, result_ty) in [
+                (vec![mask, value], i64_ty.into()),
+                (vec![value, value, lane], i64_ty.into()),
+                (vec![mask, mask, lane], i64_ty.into()),
+                (vec![mask, value, value], i64_ty.into()),
+                (vec![mask, value, lane], i32_ty.into()),
+            ] {
+                let invalid = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    vec![result_ty],
+                    operands,
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(invalid), &ctx).is_err());
+            }
 
-        // Invalid: wrong operand count (2 instead of 3) must fail verification.
-        let bad = Operation::new(
-            &mut ctx,
-            opid,
-            vec![i64_ty.into()],
-            vec![mask, value],
-            vec![],
-            0,
-        );
-        assert!(verify_op(&ShflSyncIdxI64Op::new(bad), &ctx).is_err());
+            let no_result = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![],
+                vec![mask, value, lane],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(no_result), &ctx).is_err());
+        }};
     }
+
+    check_mode!(ShflSyncIdxI64Op);
+    check_mode!(ShflSyncBflyI64Op);
+    check_mode!(ShflSyncDownI64Op);
+    check_mode!(ShflSyncUpI64Op);
 }

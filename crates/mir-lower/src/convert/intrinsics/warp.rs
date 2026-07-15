@@ -138,9 +138,8 @@ pub(crate) fn convert_shuffle_f32(
 /// shuffles. We emit a single inline-PTX block that unpacks the value into
 /// `{lo, hi}` halves with `mov.b64`, runs `shfl.sync.<mode>.b32` on each half
 /// with the shared lane and membermask operands, then repacks the result.
-/// Keeping both halves inside one convergent asm block keeps the pair a single
-/// fused warp collective, the same way the elect.sync lowering uses inline PTX
-/// to dodge a missing intrinsic.
+/// Keeping both halves in one compiler-visible convergent block prevents code
+/// motion between them. Hardware still executes two sequential `b32` shuffles.
 ///
 /// The shfl `c` (clamp/segmentation) operand is baked into the template per
 /// mode: `31` for idx/bfly/down and `0` for up — exactly the value the 32-bit

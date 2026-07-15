@@ -44,7 +44,7 @@ TCGEN05_EXAMPLES=(gemm_sol gemm_sol_final tcgen05 tcgen05_matmul)
 WGMMA_EXAMPLES=(wgmma)
 LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test legacy_nvvm_pointer_shapes manual_launch_libdevice mathdx_ffi_test primitive_stress)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
-NVVM_VERIFY_EXAMPLES=(device_global generated_intrinsics generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress)
+NVVM_VERIFY_EXAMPLES=(device_global generated_intrinsics generated_ldmatrix libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress shuffle_64)
 ERROR_EXAMPLES=(error error_wgmma_mma_unimplemented error_set_discriminant_niche error_set_discriminant_uninhabited error_static_initializer_provenance error_drop_glue error_heap_alloc error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 classify() {
@@ -75,6 +75,7 @@ nvvm_verify_arch() {
         generated_intrinsics) floor=75 ;;
         generated_ldmatrix) floor=75 ;;
         packed_atomic_add) floor=90 ;;
+        shuffle_64) floor=75 ;;
     esac
     if [[ ${floor} -ne 0 && "${arch}" =~ ^sm_([0-9]+)[af]?$ ]]; then
         number=$((10#${BASH_REMATCH[1]}))

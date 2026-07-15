@@ -3038,64 +3038,6 @@ fn try_dispatch_intrinsic(
             block_map,
             loc,
         )?)),
-        "cuda_device::warp::shuffle_u64_sync" => Ok(Some(intrinsics::warp::emit_warp_shuffle_i64(
-            ctx,
-            body,
-            dialect_nvvm::ops::ShflSyncIdxI64Op::get_concrete_op_info(),
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::shuffle_up_u64_sync" => {
-            Ok(Some(intrinsics::warp::emit_warp_shuffle_i64(
-                ctx,
-                body,
-                dialect_nvvm::ops::ShflSyncUpI64Op::get_concrete_op_info(),
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::warp::shuffle_down_u64_sync" => {
-            Ok(Some(intrinsics::warp::emit_warp_shuffle_i64(
-                ctx,
-                body,
-                dialect_nvvm::ops::ShflSyncDownI64Op::get_concrete_op_info(),
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::warp::shuffle_xor_u64_sync" => {
-            Ok(Some(intrinsics::warp::emit_warp_shuffle_i64(
-                ctx,
-                body,
-                dialect_nvvm::ops::ShflSyncBflyI64Op::get_concrete_op_info(),
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
         "cuda_device::warp::elect_sync" => Ok(Some(intrinsics::warp::emit_elect_sync(
             ctx,
             body,

@@ -1,5 +1,5 @@
 {
-  "schema": 9,
+  "schema": 10,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,11 +11,11 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "bcaf94f9db9a2abc8a37eb8e74236fe85f3415182c91a17bb953d7d5173f2a94",
-    "abi_ledger_sha256": "7b570fe7e00b962ed316dabf40010277ca5e2a4b30562c5a463db450e02a60d4",
+    "overlay_sha256": "507581bb8fd653913afd73a6f6d4ec6b06a68e43652652a17db38d76a7dc85db",
+    "abi_ledger_sha256": "8be1321895ca2145dd18778418d63f85a74d4f59615b259c004876cc758368d2",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:c77574557a1ef169d82ea6d116e54172a7b0ab3051fecb573942cfb7194af600",
-      "rust-llvm-22.1.2-1cb4e383.json:206646ba11ec5a285bbc64d8279c5b007d6dec97960c68fb119ac11e6fc88516"
+      "cuda-13.3-libnvvm-13.3.33.json:97905f54727ecf57405ba3f4e744846dc01ed69b201166f7c571186a226f545a",
+      "rust-llvm-22.1.2-1cb4e383.json:7a55ae73708050e643dc3468dc9048bf16e037fd9bfc665470f538df988bde60"
     ]
   },
   "intrinsics": [
@@ -7618,6 +7618,230 @@
       "summary": "Read a 32-bit value from a higher named warp lane."
     },
     {
+      "id": "shuffle_down_u64_sync",
+      "operation_key": "warp.shuffle.sync.down.i64",
+      "family": "warp_shuffle",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.down.b32"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0060",
+        "module": "warp",
+        "name": "shuffle_down_u64_sync",
+        "arguments": [
+          "u32",
+          "u64",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0060",
+        "public_path": "cuda_intrinsics::warp::shuffle_down_u64_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::shuffle_down_u64_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "ShflSyncDownI64Op",
+        "op_name": "nvvm.shfl_sync_down_i64",
+        "operands": [
+          "i32",
+          "i64",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.down.b32 instructions with shared operands, and reassembles i64",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx60"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM 64-bit down shuffle probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact two-instruction recipe when assembled forward for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.down.b32 instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "warp_shuffle": {
+        "mode": "down",
+        "value_kind": "i64",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "legacy_pre_sm70": "all_named_lanes_converged_and_only_named_lanes_active",
+        "source_lane": "in_range_source_active_and_named_out_of_range_copies_self",
+        "adapter": "mask_value_lane_or_delta_split_i64_low_high_b32_insert_clamp_reassemble",
+        "clamp": 31,
+        "lane_encoding": "register_only",
+        "mask_encoding": "register_only"
+      },
+      "lowering": "generated_warp_shuffle_i64_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "down",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Read a 64-bit value from a higher named lane using two 32-bit shuffles."
+    },
+    {
       "id": "shuffle_f32_sync",
       "operation_key": "warp.shuffle.sync.idx.f32",
       "family": "warp_shuffle",
@@ -8292,6 +8516,230 @@
         ]
       },
       "summary": "Read a 32-bit value from a named warp lane."
+    },
+    {
+      "id": "shuffle_u64_sync",
+      "operation_key": "warp.shuffle.sync.idx.i64",
+      "family": "warp_shuffle",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.idx.b32"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0058",
+        "module": "warp",
+        "name": "shuffle_u64_sync",
+        "arguments": [
+          "u32",
+          "u64",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0058",
+        "public_path": "cuda_intrinsics::warp::shuffle_u64_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::shuffle_u64_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "ShflSyncIdxI64Op",
+        "op_name": "nvvm.shfl_sync_idx_i64",
+        "operands": [
+          "i32",
+          "i64",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.idx.b32 instructions with shared operands, and reassembles i64",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx60"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM 64-bit idx shuffle probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact two-instruction recipe when assembled forward for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.idx.b32 instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "warp_shuffle": {
+        "mode": "idx",
+        "value_kind": "i64",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "legacy_pre_sm70": "all_named_lanes_converged_and_only_named_lanes_active",
+        "source_lane": "in_range_source_active_and_named_out_of_range_copies_self",
+        "adapter": "mask_value_lane_or_delta_split_i64_low_high_b32_insert_clamp_reassemble",
+        "clamp": 31,
+        "lane_encoding": "register_only",
+        "mask_encoding": "register_only"
+      },
+      "lowering": "generated_warp_shuffle_i64_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "idx",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Read a 64-bit value from a named warp lane using two 32-bit shuffles."
     },
     {
       "id": "shuffle_up_f32_sync",
@@ -8970,6 +9418,230 @@
       "summary": "Read a 32-bit value from a lower named warp lane."
     },
     {
+      "id": "shuffle_up_u64_sync",
+      "operation_key": "warp.shuffle.sync.up.i64",
+      "family": "warp_shuffle",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.up.b32"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0061",
+        "module": "warp",
+        "name": "shuffle_up_u64_sync",
+        "arguments": [
+          "u32",
+          "u64",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0061",
+        "public_path": "cuda_intrinsics::warp::shuffle_up_u64_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::shuffle_up_u64_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "ShflSyncUpI64Op",
+        "op_name": "nvvm.shfl_sync_up_i64",
+        "operands": [
+          "i32",
+          "i64",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.up.b32 instructions with shared operands, and reassembles i64",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx60"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM 64-bit up shuffle probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact two-instruction recipe when assembled forward for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.up.b32 instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "warp_shuffle": {
+        "mode": "up",
+        "value_kind": "i64",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "legacy_pre_sm70": "all_named_lanes_converged_and_only_named_lanes_active",
+        "source_lane": "in_range_source_active_and_named_out_of_range_copies_self",
+        "adapter": "mask_value_lane_or_delta_split_i64_low_high_b32_insert_clamp_reassemble",
+        "clamp": 0,
+        "lane_encoding": "register_only",
+        "mask_encoding": "register_only"
+      },
+      "lowering": "generated_warp_shuffle_i64_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "up",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Read a 64-bit value from a lower named lane using two 32-bit shuffles."
+    },
+    {
       "id": "shuffle_xor_f32_sync",
       "operation_key": "warp.shuffle.sync.bfly.f32",
       "family": "warp_shuffle",
@@ -9644,6 +10316,230 @@
         ]
       },
       "summary": "Exchange a 32-bit value with a named XOR partner lane."
+    },
+    {
+      "id": "shuffle_xor_u64_sync",
+      "operation_key": "warp.shuffle.sync.bfly.i64",
+      "family": "warp_shuffle",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.bfly.b32"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0059",
+        "module": "warp",
+        "name": "shuffle_xor_u64_sync",
+        "arguments": [
+          "u32",
+          "u64",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0059",
+        "public_path": "cuda_intrinsics::warp::shuffle_xor_u64_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::shuffle_xor_u64_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "ShflSyncBflyI64Op",
+        "op_name": "nvvm.shfl_sync_bfly_i64",
+        "operands": [
+          "i32",
+          "i64",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.6 Data Movement and Conversion Instructions: shfl.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.bfly.b32 instructions with shared operands, and reassembles i64",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx60"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM 64-bit butterfly shuffle probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the exact two-instruction recipe when assembled forward for sm_75.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.bfly.b32 instructions",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx93"
+              ],
+              "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "warp_shuffle": {
+        "mode": "bfly",
+        "value_kind": "i64",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "legacy_pre_sm70": "all_named_lanes_converged_and_only_named_lanes_active",
+        "source_lane": "in_range_source_active_and_named_out_of_range_copies_self",
+        "adapter": "mask_value_lane_or_delta_split_i64_low_high_b32_insert_clamp_reassemble",
+        "clamp": 31,
+        "lane_encoding": "register_only",
+        "mask_encoding": "register_only"
+      },
+      "lowering": "generated_warp_shuffle_i64_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": [
+          "sync",
+          "bfly",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Exchange a 64-bit value with a named XOR partner using two 32-bit shuffles."
     },
     {
       "id": "sync_mask",

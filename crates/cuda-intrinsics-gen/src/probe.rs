@@ -3,8 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::model::{CatalogIntrinsic, CatalogLlvm, EvidenceStageKind, IntrinsicBackend};
-use crate::ptx::{InstructionPattern, OperandPattern};
+use crate::model::{
+    CatalogIntrinsic, CatalogLlvm, EvidenceStageKind, IntrinsicBackend, WarpShuffleAdapter,
+};
+use crate::ptx::{
+    InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
+};
 use crate::render::render_probe;
 use crate::resolve::resolve;
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
@@ -136,7 +140,14 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
         validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
     }
     if let Some(shuffle) = &record.warp_shuffle {
-        validate_warp_shuffle_forms(&record.expected_ptx, shuffle.clamp, ptx)?;
+        match shuffle.adapter {
+            WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp => {
+                validate_warp_shuffle_forms(&record.expected_ptx, shuffle.clamp, ptx)?;
+            }
+            WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble => {
+                validate_wide_warp_shuffle_recipe(&record.expected_ptx, shuffle.clamp, ptx)?;
+            }
+        }
     }
     Ok(())
 }
@@ -151,6 +162,112 @@ fn validate_warp_shuffle_forms(expected: &InstructionPattern, clamp: u32, ptx: &
         "shuffle probe clamp operand is not the exact catalog clamp {clamp}"
     );
     validate_two_register_and_immediate_forms(expected, 2, "1", 4, "-1", ptx)
+}
+
+fn validate_wide_warp_shuffle_recipe(
+    expected: &InstructionPattern,
+    clamp: u32,
+    ptx: &str,
+) -> Result<()> {
+    let clamp = clamp.to_string();
+    let low_operands = vec![
+        OperandPattern::Exact { value: "lo".into() },
+        OperandPattern::Exact { value: "lo".into() },
+        OperandPattern::Register,
+        OperandPattern::Exact {
+            value: clamp.clone(),
+        },
+        OperandPattern::Register,
+    ];
+    ensure!(
+        expected.operands == low_operands,
+        "wide shuffle expected PTX must be `lo, lo, <register>, {clamp}, <register>`"
+    );
+
+    let all_shuffles = instructions_with_matching_head(ptx, expected);
+    ensure!(
+        all_shuffles.len() == 2,
+        "wide shuffle probe must contain exactly two `{}` instructions; found {}",
+        expected
+            .modifiers
+            .iter()
+            .fold(expected.mnemonic.clone(), |head, modifier| format!(
+                "{head}.{modifier}"
+            )),
+        all_shuffles.len()
+    );
+
+    let low = matching_instructions(ptx, expected);
+    ensure!(
+        low.len() == 1,
+        "wide shuffle probe must contain exactly one low-half instruction matching `{expected}`"
+    );
+    let mut high_pattern = expected.clone();
+    high_pattern.operands[0] = OperandPattern::Exact { value: "hi".into() };
+    high_pattern.operands[1] = OperandPattern::Exact { value: "hi".into() };
+    let high = matching_instructions(ptx, &high_pattern);
+    ensure!(
+        high.len() == 1,
+        "wide shuffle probe must contain exactly one high-half instruction matching `{high_pattern}`"
+    );
+    ensure!(
+        low[0].operands[2..=4] == high[0].operands[2..=4],
+        "wide shuffle halves must use the same lane, clamp, and member mask"
+    );
+
+    let split_pattern = InstructionPattern {
+        mnemonic: "mov".into(),
+        modifiers: vec!["b64".into()],
+        operands: vec![
+            OperandPattern::Exact {
+                value: "{lo, hi}".into(),
+            },
+            OperandPattern::Register,
+        ],
+    };
+    let reassemble_pattern = InstructionPattern {
+        mnemonic: "mov".into(),
+        modifiers: vec!["b64".into()],
+        operands: vec![
+            OperandPattern::Register,
+            OperandPattern::Exact {
+                value: "{lo, hi}".into(),
+            },
+        ],
+    };
+    let split = matching_instructions(ptx, &split_pattern);
+    let reassemble = matching_instructions(ptx, &reassemble_pattern);
+    ensure!(
+        split.len() == 1,
+        "wide shuffle probe must contain exactly one split matching `{split_pattern}`"
+    );
+    ensure!(
+        reassemble.len() == 1,
+        "wide shuffle probe must contain exactly one reassembly matching `{reassemble_pattern}`"
+    );
+    ensure!(
+        split[0].offset < low[0].offset
+            && low[0].offset < high[0].offset
+            && high[0].offset < reassemble[0].offset,
+        "wide shuffle probe must split, shuffle low, shuffle high, then reassemble"
+    );
+    ensure!(
+        [&split[0], &low[0], &high[0], &reassemble[0]]
+            .iter()
+            .all(|instruction| instruction.prefix.is_empty()),
+        "wide shuffle recipe instructions must be unguarded"
+    );
+    ensure!(
+        [
+            (&split[0], &low[0]),
+            (&low[0], &high[0]),
+            (&high[0], &reassemble[0])
+        ]
+        .iter()
+        .all(|(before, after)| ptx[before.end..after.offset].trim().is_empty()),
+        "wide shuffle recipe instructions must be consecutive"
+    );
+    Ok(())
 }
 
 fn validate_register_and_immediate_forms(
@@ -897,6 +1014,133 @@ mod tests {
         );
         let error = validate_warp_shuffle_forms(&wrong_clamp, 31, &complete).unwrap_err();
         assert!(error.to_string().contains("exact catalog clamp 31"));
+    }
+
+    fn wide_shuffle_pattern() -> InstructionPattern {
+        InstructionPattern::new(
+            "shfl",
+            &["sync", "idx", "b32"],
+            vec![
+                OperandPattern::Exact { value: "lo".into() },
+                OperandPattern::Exact { value: "lo".into() },
+                OperandPattern::Register,
+                OperandPattern::Exact { value: "31".into() },
+                OperandPattern::Register,
+            ],
+        )
+    }
+
+    const WIDE_SHUFFLE_PTX: &str = r#"
+        mov.b64 {lo, hi}, %rd1;
+        shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;
+        shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;
+        mov.b64 %rd2, {lo, hi};
+    "#;
+
+    const WIDE_SHUFFLE_INLINE_BLOCK: &str = "{ .reg .b32 lo; .reg .b32 hi; mov.b64 {lo, hi}, %rd1; shfl.sync.idx.b32 lo, lo, %r1, 31, %r2; shfl.sync.idx.b32 hi, hi, %r1, 31, %r2; mov.b64 %rd2, {lo, hi}; }";
+
+    #[test]
+    fn wide_warp_shuffle_probe_requires_the_exact_two_half_recipe() {
+        let expected = wide_shuffle_pattern();
+        validate_wide_warp_shuffle_recipe(&expected, 31, WIDE_SHUFFLE_PTX).unwrap();
+        validate_wide_warp_shuffle_recipe(&expected, 31, WIDE_SHUFFLE_INLINE_BLOCK).unwrap();
+
+        let cases = [
+            (
+                "missing high half",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                    "",
+                ),
+                "exactly two",
+            ),
+            (
+                "reversed halves",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;\n        shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;\n        shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;",
+                ),
+                "split, shuffle low, shuffle high",
+            ),
+            (
+                "different lane",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                    "shfl.sync.idx.b32 hi, hi, %r3, 31, %r2;",
+                ),
+                "same lane, clamp, and member mask",
+            ),
+            (
+                "different mask",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r3;",
+                ),
+                "same lane, clamp, and member mask",
+            ),
+            (
+                "wrong clamp",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                    "shfl.sync.idx.b32 hi, hi, %r1, 30, %r2;",
+                ),
+                "high-half instruction",
+            ),
+            (
+                "missing split",
+                WIDE_SHUFFLE_PTX.replace("mov.b64 {lo, hi}, %rd1;", ""),
+                "exactly one split",
+            ),
+            (
+                "missing reassembly",
+                WIDE_SHUFFLE_PTX.replace("mov.b64 %rd2, {lo, hi};", ""),
+                "exactly one reassembly",
+            ),
+            (
+                "duplicate pair",
+                WIDE_SHUFFLE_PTX.replace(
+                    "mov.b64 %rd2, {lo, hi};",
+                    "shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;\n        shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;\n        mov.b64 %rd2, {lo, hi};",
+                ),
+                "exactly two",
+            ),
+            (
+                "predicated low half",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;",
+                    "@%p1 shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;",
+                ),
+                "must be unguarded",
+            ),
+            (
+                "intervening instruction",
+                WIDE_SHUFFLE_PTX.replace(
+                    "shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                    "mov.u32 %r9, %r9;\n        shfl.sync.idx.b32 hi, hi, %r1, 31, %r2;",
+                ),
+                "must be consecutive",
+            ),
+        ];
+
+        for (name, ptx, message) in cases {
+            let error = validate_wide_warp_shuffle_recipe(&expected, 31, &ptx).unwrap_err();
+            assert!(error.to_string().contains(message), "{name}: {error:#}");
+        }
+
+        let wrong_policy = InstructionPattern::new(
+            "shfl",
+            &["sync", "idx", "b32"],
+            vec![
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::Register,
+                OperandPattern::Exact { value: "31".into() },
+                OperandPattern::Register,
+            ],
+        );
+        let error =
+            validate_wide_warp_shuffle_recipe(&wrong_policy, 31, WIDE_SHUFFLE_PTX).unwrap_err();
+        assert!(error.to_string().contains("expected PTX must be"));
     }
 
     fn identity() -> LlcIdentity {

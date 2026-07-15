@@ -434,8 +434,10 @@ pub fn shuffle_up_f32(var: f32, delta: u32) -> f32 {
 // instruction and no `@llvm.nvvm.shfl.sync.*.i64` intrinsic. A 64-bit shuffle
 // is therefore two 32-bit shuffles: split the value into its low/high halves,
 // shuffle each with the same lane argument, and reassemble. We do that split in
-// one convergent inline-PTX block (`mov.b64 {lo,hi}, x; shfl…; shfl…; mov.b64`)
-// so the two halves stay a single fused collective at the call site.
+// one compiler-visible convergent inline-PTX block
+// (`mov.b64 {lo,hi}, x; shfl…; shfl…; mov.b64`). The hardware still executes
+// two sequential b32 collectives; the block keeps the compiler from separating
+// them.
 //
 // `u64` is the carrier (data movement is bit-exact, so it also covers `i64` —
 // cast with `as u64` / `as i64`). The `f64` forms are zero-cost wrappers that
@@ -451,6 +453,16 @@ pub fn shuffle_up_f32(var: f32, delta: u32) -> f32 {
 /// - `mask`: warp lane participation mask (`u32::MAX` = all 32 lanes)
 /// - `var`: the 64-bit value to share (each lane provides its own)
 /// - `src_lane`: the lane ID (0-31) to read from
+///
+/// # Participation contract
+///
+/// This compatibility function keeps its existing safe signature. The calling
+/// lane must be named in `mask`, and every non-exited named lane must execute
+/// the same shuffle with the same mask. A source lane computed as in range by
+/// PTX must be active and named in `mask`; if PTX marks it out of range, the
+/// calling lane's input is copied.
+/// On `sm_6x` and earlier, all named lanes must execute in convergence, and no
+/// lane outside `mask` may be active.
 #[inline(never)]
 pub fn shuffle_u64_sync(mask: u32, var: u64, src_lane: u32) -> u64 {
     let _ = (mask, var, src_lane);
@@ -461,6 +473,9 @@ pub fn shuffle_u64_sync(mask: u32, var: u64, src_lane: u32) -> u64 {
 ///
 /// 64-bit analogue of [`shuffle_xor_sync`] (PTX `shfl.sync.bfly`). The full-warp
 /// shorthand is [`shuffle_xor_u64`].
+///
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(never)]
 pub fn shuffle_xor_u64_sync(mask: u32, var: u64, lane_mask: u32) -> u64 {
     let _ = (mask, var, lane_mask);
@@ -471,6 +486,9 @@ pub fn shuffle_xor_u64_sync(mask: u32, var: u64, lane_mask: u32) -> u64 {
 ///
 /// 64-bit analogue of [`shuffle_down_sync`] (PTX `shfl.sync.down`). The full-warp
 /// shorthand is [`shuffle_down_u64`].
+///
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(never)]
 pub fn shuffle_down_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
     let _ = (mask, var, delta);
@@ -481,6 +499,9 @@ pub fn shuffle_down_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
 ///
 /// 64-bit analogue of [`shuffle_up_sync`] (PTX `shfl.sync.up`). The full-warp
 /// shorthand is [`shuffle_up_u64`].
+///
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(never)]
 pub fn shuffle_up_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
     let _ = (mask, var, delta);
@@ -488,24 +509,32 @@ pub fn shuffle_up_u64_sync(mask: u32, var: u64, delta: u32) -> u64 {
 }
 
 /// Shuffle u64 (full-warp): equivalent to [`shuffle_u64_sync`]`(u32::MAX, ...)`.
+/// All 32 non-exited lanes must execute the same shuffle. A source computed as
+/// in range by PTX must be active.
 #[inline(always)]
 pub fn shuffle_u64(var: u64, src_lane: u32) -> u64 {
     shuffle_u64_sync(u32::MAX, var, src_lane)
 }
 
 /// Shuffle XOR u64 (full-warp): equivalent to [`shuffle_xor_u64_sync`]`(u32::MAX, ...)`.
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(always)]
 pub fn shuffle_xor_u64(var: u64, lane_mask: u32) -> u64 {
     shuffle_xor_u64_sync(u32::MAX, var, lane_mask)
 }
 
 /// Shuffle down u64 (full-warp): equivalent to [`shuffle_down_u64_sync`]`(u32::MAX, ...)`.
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(always)]
 pub fn shuffle_down_u64(var: u64, delta: u32) -> u64 {
     shuffle_down_u64_sync(u32::MAX, var, delta)
 }
 
 /// Shuffle up u64 (full-warp): equivalent to [`shuffle_up_u64_sync`]`(u32::MAX, ...)`.
+/// The participation and source requirements are the same as
+/// [`shuffle_u64_sync`].
 #[inline(always)]
 pub fn shuffle_up_u64(var: u64, delta: u32) -> u64 {
     shuffle_up_u64_sync(u32::MAX, var, delta)
@@ -924,4 +953,37 @@ pub fn elect_sync(mask: u32) -> (u32, bool) {
 #[inline(always)]
 pub fn is_elected_sync(mask: u32) -> bool {
     elect_sync(mask).1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_64_bit_shuffle_signatures_stay_stable() {
+        let _: [fn(u32, u64, u32) -> u64; 4] = [
+            shuffle_u64_sync,
+            shuffle_xor_u64_sync,
+            shuffle_down_u64_sync,
+            shuffle_up_u64_sync,
+        ];
+        let _: [fn(u64, u32) -> u64; 4] = [
+            shuffle_u64,
+            shuffle_xor_u64,
+            shuffle_down_u64,
+            shuffle_up_u64,
+        ];
+        let _: [fn(u32, f64, u32) -> f64; 4] = [
+            shuffle_f64_sync,
+            shuffle_xor_f64_sync,
+            shuffle_down_f64_sync,
+            shuffle_up_f64_sync,
+        ];
+        let _: [fn(f64, u32) -> f64; 4] = [
+            shuffle_f64,
+            shuffle_xor_f64,
+            shuffle_down_f64,
+            shuffle_up_f64,
+        ];
+    }
 }

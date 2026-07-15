@@ -700,6 +700,7 @@ pub enum WarpShuffleMode {
 pub enum WarpShuffleValueKind {
     I32,
     F32,
+    I64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -718,12 +719,16 @@ pub enum WarpShuffleSourceLane {
 #[serde(rename_all = "snake_case")]
 pub enum WarpShuffleAdapter {
     MaskValueLaneOrDeltaInsertClamp,
+    /// Split i64 into low/high b32 halves, shuffle both in one convergent
+    /// side-effecting block, then reassemble the original bit layout.
+    MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WarpShuffleOperandEncoding {
     RegisterOrImmediate,
+    RegisterOnly,
 }
 
 /// Closed identity and source adapter for generated packed integer dot products.
@@ -1303,6 +1308,45 @@ mask_encoding = "register_or_immediate"
                 "lane_encoding = \"anything\"",
             ),
             format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<WarpShuffle>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+
+        let i64 = r#"
+mode = "down"
+value_kind = "i64"
+participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+legacy_pre_sm70 = "all_named_lanes_converged_and_only_named_lanes_active"
+source_lane = "in_range_source_active_and_named_out_of_range_copies_self"
+adapter = "mask_value_lane_or_delta_split_i64_low_high_b32_insert_clamp_reassemble"
+clamp = 31
+lane_encoding = "register_only"
+mask_encoding = "register_only"
+"#;
+        let parsed = toml::from_str::<WarpShuffle>(i64).unwrap();
+        assert_eq!(parsed.value_kind, WarpShuffleValueKind::I64);
+        assert_eq!(
+            parsed.adapter,
+            WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble
+        );
+        assert_eq!(
+            parsed.lane_encoding,
+            WarpShuffleOperandEncoding::RegisterOnly
+        );
+
+        for invalid in [
+            i64.replace("value_kind = \"i64\"", "value_kind = \"u64\""),
+            i64.replace(
+                "adapter = \"mask_value_lane_or_delta_split_i64_low_high_b32_insert_clamp_reassemble\"",
+                "adapter = \"split_any_width\"",
+            ),
+            i64.replace(
+                "mask_encoding = \"register_only\"",
+                "mask_encoding = \"any_operand\"",
+            ),
         ] {
             assert!(
                 toml::from_str::<WarpShuffle>(&invalid).is_err(),

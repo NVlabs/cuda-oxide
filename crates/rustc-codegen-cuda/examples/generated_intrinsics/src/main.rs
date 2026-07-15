@@ -5,7 +5,7 @@
 
 //! End-to-end smoke test for the generated low-level intrinsic surface.
 //!
-//! The kernel calls generated coordinate, lane-mask, and vote intrinsics
+//! The kernel calls generated coordinate, lane-mask, vote, and shuffle intrinsics
 //! directly. This covers the raw path instead of only `cuda-device` wrappers.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
@@ -18,8 +18,9 @@ use cuda_intrinsics::sreg::{
 use cuda_intrinsics::warp::{
     active_mask, all_sync, any_sync, ballot_sync, match_all_i64_sync, match_all_sync,
     match_any_i64_sync, match_any_sync, shuffle_down_f32_sync, shuffle_down_sync,
-    shuffle_f32_sync, shuffle_sync, shuffle_up_f32_sync, shuffle_up_sync,
-    shuffle_xor_f32_sync, shuffle_xor_sync, sync_mask, uni_sync,
+    shuffle_down_u64_sync, shuffle_f32_sync, shuffle_sync, shuffle_u64_sync,
+    shuffle_up_f32_sync, shuffle_up_sync, shuffle_up_u64_sync, shuffle_xor_f32_sync,
+    shuffle_xor_sync, shuffle_xor_u64_sync, sync_mask, uni_sync,
 };
 
 #[cuda_module]
@@ -94,6 +95,30 @@ mod kernels {
             & (down_f32 == (lane + down_delta) as f32)
             & (up_f32 == (lane - up_delta) as f32);
 
+        // Distinct halves catch a split, source, or reassembly mistake.
+        let wide_low_base = 0xa5a5_0000u64;
+        let wide_value = ((lane as u64) << 32) | (wide_low_base + lane as u64);
+        // SAFETY: both full warps execute the same shuffle sequence with the
+        // full member mask. Every computed source lane is active and named.
+        let (idx_u64, bfly_u64, down_u64, up_u64) = unsafe {
+            (
+                shuffle_u64_sync(member_mask, wide_value, 0),
+                shuffle_xor_u64_sync(member_mask, wide_value, 1),
+                shuffle_down_u64_sync(member_mask, wide_value, down_delta),
+                shuffle_up_u64_sync(member_mask, wide_value, up_delta),
+            )
+        };
+        let bfly_lane = lane ^ 1;
+        let down_lane = lane + down_delta;
+        let up_lane = lane - up_delta;
+        let expected_bfly = ((bfly_lane as u64) << 32) | (wide_low_base + bfly_lane as u64);
+        let expected_down = ((down_lane as u64) << 32) | (wide_low_base + down_lane as u64);
+        let expected_up = ((up_lane as u64) << 32) | (wide_low_base + up_lane as u64);
+        let shuffles_u64_ok = (idx_u64 == wide_low_base)
+            & (bfly_u64 == expected_bfly)
+            & (down_u64 == expected_down)
+            & (up_u64 == expected_up);
+
         let block_width = block_dim_x();
         let block_height = block_dim_y();
         let block_depth = block_dim_z();
@@ -108,6 +133,7 @@ mod kernels {
         if votes_ok
             && matches_ok
             && shuffles_ok
+            && shuffles_u64_ok
             && column < grid_width
             && row < grid_height
             && plane < grid_depth

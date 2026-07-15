@@ -406,3 +406,31 @@ status = "active"
 catalog_id = "shuffle_up_f32_sync"
 operation_key = "warp.shuffle.sync.up.f32"
 raw_rust_signature = { safe = false, arguments = ["u32", "f32", "u32"], result = "f32" }
+
+[[entry]]
+abi_id = "i0058"
+status = "active"
+catalog_id = "shuffle_u64_sync"
+operation_key = "warp.shuffle.sync.idx.i64"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u32"], result = "u64" }
+
+[[entry]]
+abi_id = "i0059"
+status = "active"
+catalog_id = "shuffle_xor_u64_sync"
+operation_key = "warp.shuffle.sync.bfly.i64"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u32"], result = "u64" }
+
+[[entry]]
+abi_id = "i0060"
+status = "active"
+catalog_id = "shuffle_down_u64_sync"
+operation_key = "warp.shuffle.sync.down.i64"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u32"], result = "u64" }
+
+[[entry]]
+abi_id = "i0061"
+status = "active"
+catalog_id = "shuffle_up_u64_sync"
+operation_key = "warp.shuffle.sync.up.i64"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u32"], result = "u64" }

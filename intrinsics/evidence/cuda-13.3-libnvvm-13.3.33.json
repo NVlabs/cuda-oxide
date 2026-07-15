@@ -1436,6 +1436,186 @@
           }
         ]
       }
+    },
+    {
+      "id": "shuffle_u64_sync",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.idx.b32"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.idx.b32 instructions",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": ["sync", "idx", "b32"],
+        "operands": [
+          { "kind": "exact", "value": "lo" },
+          { "kind": "exact", "value": "lo" },
+          { "kind": "register" },
+          { "kind": "exact", "value": "31" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_xor_u64_sync",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.bfly.b32"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.bfly.b32 instructions",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": ["sync", "bfly", "b32"],
+        "operands": [
+          { "kind": "exact", "value": "lo" },
+          { "kind": "exact", "value": "lo" },
+          { "kind": "register" },
+          { "kind": "exact", "value": "31" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_down_u64_sync",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.down.b32"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.down.b32 instructions",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": ["sync", "down", "b32"],
+        "operands": [
+          { "kind": "exact", "value": "lo" },
+          { "kind": "exact", "value": "lo" },
+          { "kind": "register" },
+          { "kind": "exact", "value": "31" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
+      "id": "shuffle_up_u64_sync",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "shfl.sync.up.b32"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 6.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "legacy NVVM IR containing one convergent side-effecting inline PTX block with two shfl.sync.up.b32 instructions",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the reviewed low-half then high-half recipe and produced LTOIR."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "shuffle_64 kernels containing all four generated 64-bit synchronized shuffle recipes",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 4,512-byte LTOIR (SHA-256 ea189a7d375862e72996f49f95b4f660a1c56c2edaf3c7d39e58b953e1e9d1b2); nvJitLink produced an 8,936-byte cubin (SHA-256 860fcf7329acaa4e8a77e00860b1c89f3e6d671e9d008b8901464bf4eb5263a6); cuobjdump showed all four shuffle modes.",
+          "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "shfl",
+        "modifiers": ["sync", "up", "b32"],
+        "operands": [
+          { "kind": "exact", "value": "lo" },
+          { "kind": "exact", "value": "lo" },
+          { "kind": "register" },
+          { "kind": "exact", "value": "0" },
+          { "kind": "register" }
+        ]
+      }
     }
   ]
 }
