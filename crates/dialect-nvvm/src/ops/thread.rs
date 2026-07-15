@@ -25,7 +25,6 @@
 //! │ ReadPtxSregNctaidZOp │ %nctaid.z    │ Grid dimension (Z)         │
 //! │ ReadPtxSregEnvReg1Op │ %envreg1     │ Driver ABI envreg 1        │
 //! │ ReadPtxSregEnvReg2Op │ %envreg2     │ Driver ABI envreg 2        │
-//! │ Barrier0Op           │ bar.sync 0   │ Block-wide barrier         │
 //! │ ThreadfenceBlockOp   │ membar.cta   │ Block-scoped memory fence  │
 //! │ ThreadfenceOp        │ membar.gl    │ Device-scoped memory fence │
 //! │ ThreadfenceSystemOp  │ membar.sys   │ System-scoped memory fence │
@@ -152,34 +151,6 @@ impl Verify for ReadPtxSregEnvReg2Op {
             );
         }
         Ok(())
-    }
-}
-
-// =============================================================================
-// Block Synchronization
-// =============================================================================
-
-/// Block-wide barrier synchronization.
-///
-/// All threads in the block must reach this barrier before any can proceed.
-/// Corresponds to `llvm.nvvm.barrier0` / PTX `bar.sync 0`.
-///
-/// # Verification
-///
-/// - Must have 0 operands
-/// - Must have 0 results
-#[pliron_op(
-    name = "nvvm.barrier0",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct Barrier0Op;
-
-impl Barrier0Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        Barrier0Op { op }
     }
 }
 
@@ -370,8 +341,7 @@ pub(super) fn register(ctx: &mut Context) {
     ReadPtxSregSmIdOp::register(ctx);
     ReadPtxSregNsmIdOp::register(ctx);
     ReadPtxSregGridIdOp::register(ctx);
-    // Synchronization
-    Barrier0Op::register(ctx);
+    // Memory fences
     ThreadfenceBlockOp::register(ctx);
     ThreadfenceOp::register(ctx);
     ThreadfenceSystemOp::register(ctx);

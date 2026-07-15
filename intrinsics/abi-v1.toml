@@ -238,3 +238,10 @@ status = "active"
 catalog_id = "dp2a_u32"
 operation_key = "integer.dot_product.dp2a.lo.u32"
 raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0034"
+status = "active"
+catalog_id = "sync_threads"
+operation_key = "synchronization.cta.barrier.aligned.all"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }

@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Basic NVVM intrinsic conversion: thread IDs, block IDs, barrier.
+//! Basic NVVM intrinsic conversion for special registers and memory fences.
 //!
 //! | Operation    | LLVM Intrinsic                    |
 //! |--------------|-----------------------------------|
 //! | `ReadTidX`   | `llvm_nvvm_read_ptx_sreg_tid_x`   |
 //! | `ReadCtaidX` | `llvm_nvvm_read_ptx_sreg_ctaid_x` |
 //! | `ReadNtidX`  | `llvm_nvvm_read_ptx_sreg_ntid_x`  |
-//! | `Barrier0`   | `llvm_nvvm_barrier0`              |
 //! | `ThreadfenceBlock` | inline PTX `membar.cta`      |
 //! | `Threadfence` | inline PTX `membar.gl`           |
 //! | `ThreadfenceSystem` | inline PTX `membar.sys`     |
@@ -68,20 +67,6 @@ pub(crate) fn convert_sreg_read_inline(
     let asm_op = inline_asm.get_operation();
     rewriter.insert_operation(ctx, asm_op);
     rewriter.replace_operation(ctx, op, asm_op);
-    Ok(())
-}
-
-/// Convert `mir.barrier0` to `llvm.nvvm.barrier0` intrinsic call.
-pub(crate) fn convert_barrier0(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    let func_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![], false);
-    call_intrinsic(ctx, rewriter, op, "llvm_nvvm_barrier0", func_ty, vec![])?;
-    rewriter.erase_operation(ctx, op);
     Ok(())
 }
 

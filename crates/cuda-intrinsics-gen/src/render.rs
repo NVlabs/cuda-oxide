@@ -68,6 +68,10 @@ pub fn all_outputs(
         render_dialect_redux(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/sync.rs".into(),
+        render_dialect_sync(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/mir-importer/src/translator/terminator/intrinsics/generated.rs".into(),
         render_importer(catalog, catalog_sha256),
     );
@@ -106,7 +110,8 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             ensure!(
                 (record.family == "ldmatrix" && record.ldmatrix.is_some())
                     || (record.family == "packed_atomic" && record.packed_atomic.is_some())
-                    || (record.family == "redux" && record.redux.is_some()),
+                    || (record.family == "redux" && record.redux.is_some())
+                    || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
             );
@@ -175,6 +180,27 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_dotprod"
                     && record.dot_product.is_some(),
                 "{} is outside the closed generated dot-product recipe",
+                record.id
+            ),
+            "sync" => ensure!(
+                record.id == "sync_threads"
+                    && record.rust.module == "thread"
+                    && record.rust.name == "sync_threads"
+                    && record.rust.arguments.is_empty()
+                    && record.rust.result == "()"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.symbol == "llvm.nvvm.barrier.cta.sync.aligned.all"
+                            && llvm.arguments == ["i32"]
+                            && llvm.results.is_empty()
+                    })
+                    && record.dialect.op_type == "Barrier0Op"
+                    && record.dialect.op_name == "nvvm.barrier0"
+                    && record.dialect.operands.is_empty()
+                    && record.dialect.results.is_empty()
+                    && record.lowering == "generated_sync_threads",
+                "{} is outside the fixed-zero generated sync_threads recipe",
                 record.id
             ),
             family => ensure!(false, "{} has unrenderable family {family}", record.id),
@@ -252,6 +278,13 @@ fn dot_products(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic
         .intrinsics
         .iter()
         .filter(|record| record.family == "dotprod")
+}
+
+fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "sync")
 }
 
 fn dot_product_ptx(record: &CatalogIntrinsic) -> &'static str {
@@ -503,6 +536,10 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `redux.sync` operation with the same qualifiers and mask.\n\
                      /// The instruction waits for those lanes; violating this participation contract makes the PTX operation undefined.\n",
                 );
+            } else if record.family == "sync" {
+                output.push_str(
+                    "/// Every active thread in the CTA must reach the same barrier. Calling it from divergent control flow can deadlock the CTA.\n",
+                );
             } else {
                 output.push_str(
                     "/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.\n\
@@ -630,7 +667,7 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\n\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n}\n",
+        "mod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\nmod sync;\n\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n}\n",
     );
     output
 }
@@ -675,6 +712,33 @@ fn render_dialect_sreg(catalog: &CatalogFile, hash: &str) -> String {
         "fn verify_scalar_result(\n    ctx: &Context,\n    op: Ptr<Operation>,\n    name: &str,\n    width: u32,\n) -> Result<(), Error> {\n    let op = op.deref(ctx);\n    let ty = op.get_result(0).get_type(ctx);\n    let ty_object = ty.deref(ctx);\n    let Some(integer) = ty_object.downcast_ref::<IntegerType>() else {\n        return verify_err!(op.loc(), \"{} result must be an integer\", name);\n    };\n    if integer.width() != width {\n        return verify_err!(\n            op.loc(),\n            \"{} result must be a {}-bit integer\",\n            name,\n            width\n        );\n    }\n    Ok(())\n}\n\npub(super) fn register(ctx: &mut Context) {\n",
     );
     for record in sregs(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_sync(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operation for generated CTA synchronization.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+    );
+    for record in sync_intrinsics(catalog) {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    pub fn new(op: Ptr<Operation>) -> Self {\n        Self { op }\n    }\n}\n\n",
+        );
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in sync_intrinsics(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -1183,6 +1247,22 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if sync_intrinsics(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+            || dot_products(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in sync_intrinsics(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
@@ -1420,6 +1500,37 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    for record in sync_intrinsics(catalog) {
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 0, &loc)?;\n");
+        writeln!(
+            output,
+            "            let barrier = Operation::new(ctx, {}::get_concrete_op_info(), vec![], vec![], vec![], 0);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            barrier.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, barrier, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, barrier, block_ptr, prev_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, barrier, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
     output.push_str("        _ => Ok(None),\n    }\n}\n\n");
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
@@ -1490,7 +1601,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::call_intrinsic, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::convert_redux};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::convert_redux};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -1533,6 +1644,22 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         for (index, record) in dot_products(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if sync_intrinsics(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+            || dot_products(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in sync_intrinsics(catalog).enumerate() {
             if index != 0 {
                 output.push_str(", ");
             }
@@ -1646,6 +1773,26 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("    }\n}\n\n");
+    }
+    for record in sync_intrinsics(catalog) {
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n        match context::lowering_options(ctx).intrinsic_backend {\n            IntrinsicBackend::LlvmNvptx => {\n                let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n                let barrier_id = create_i32_const(ctx, rewriter, 0);\n                let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![i32_ty.into()], false);\n",
+        );
+        writeln!(
+            output,
+            "                call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![barrier_id])?;",
+            record.llvm_identifier()
+        )
+        .unwrap();
+        output.push_str(
+            "            }\n            IntrinsicBackend::LibNvvm => {\n                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], \"bar.sync 0;\", \"~{memory}\");\n            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
+        );
     }
     output
 }
@@ -1893,6 +2040,12 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %old\n}\n");
+    } else if record.family == "sync" {
+        writeln!(output, "declare void @{}(i32)", llvm(record).symbol).unwrap();
+        output.push('\n');
+        writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
+        writeln!(output, "  call void @{}(i32 0)", llvm(record).symbol).unwrap();
+        output.push_str("  ret void\n}\n");
     } else if let Some(dot) = &record.dot_product {
         match dot.adapter {
             DotProductAdapter::DirectThreeOperands => {
@@ -2077,6 +2230,15 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "- `{}`: raw and dialect operands are `[member_mask, value]`, adapted to LLVM `(value, membermask)`. The executing lane must be named in the mask, and every non-exited named lane must execute the same instruction with the same qualifiers and mask.",
+            record.id,
+        )
+        .unwrap();
+    }
+    output.push_str("\n## CTA synchronization contracts\n\n");
+    for record in sync_intrinsics(catalog) {
+        writeln!(
+            output,
+            "- `{}` inserts the fixed barrier ID `0`. Every active CTA thread must reach the same barrier; divergent use can deadlock the CTA.",
             record.id,
         )
         .unwrap();
@@ -2442,5 +2604,63 @@ mod tests {
         let target = render_targets(&catalog, "test-hash");
         assert!(target.contains("GeneratedImmediateBinding { argument_index: 2, value: 0 }"));
         assert!(!target.contains("GeneratedImmediateBinding { argument_index: 2, value: -1 }"));
+    }
+
+    #[test]
+    fn sync_threads_rendering_keeps_fixed_zero_and_backend_routes_explicit() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let record = sync_intrinsics(&catalog).next().unwrap();
+        assert_eq!(sync_intrinsics(&catalog).count(), 1);
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub unsafe fn i0034() -> ()"));
+        assert!(raw.contains("Every active thread in the CTA must reach the same barrier"));
+
+        let dialect = render_dialect_sync(&catalog, "test-hash");
+        assert!(dialect.contains("pub struct Barrier0Op"));
+        assert!(dialect.contains("NOpdsInterface<0>, NResultsInterface<0>"));
+        assert!(dialect.contains("Barrier0Op::register(ctx)"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::thread::sync_threads"));
+        assert!(importer.contains("cuda_device::sync_threads"));
+        assert!(importer.contains("Barrier0Op::get_concrete_op_info()"));
+        assert!(importer.contains("set_generated_intrinsic_marker(ctx, barrier, \"v1:i0034\")"));
+        assert!(importer.contains("helpers::emit_goto(ctx, *target_idx, barrier"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("impl MirToLlvmConversion for Barrier0Op"));
+        assert!(lowering.contains("create_i32_const(ctx, rewriter, 0)"));
+        assert!(lowering.contains("\"llvm_nvvm_barrier_cta_sync_aligned_all\""));
+        assert!(lowering.contains("IntrinsicBackend::LlvmNvptx"));
+        assert!(lowering.contains("IntrinsicBackend::LibNvvm"));
+        assert!(lowering.contains("\"bar.sync 0;\", \"~{memory}\""));
+
+        let probe = render_probe(&catalog, record, "test-hash");
+        assert!(probe.contains("declare void @llvm.nvvm.barrier.cta.sync.aligned.all(i32)"));
+        assert!(probe.contains("call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)"));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains("id: \"sync_threads\", abi_id: \"i0034\""));
+        assert!(targets.contains("source_record: \"BARRIER_CTA_SYNC_ALIGNED_ALL_i\""));
+        assert!(targets.contains(
+            "backend: GeneratedIntrinsicBackend::LlvmNvptx, requirement: GeneratedTargetRequirement { minimum_ptx: GeneratedPtxVersion::from_encoded(32), hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(20)]) }"
+        ));
+        assert!(targets.contains(
+            "backend: GeneratedIntrinsicBackend::LibNvvm, requirement: GeneratedTargetRequirement { minimum_ptx: GeneratedPtxVersion::from_encoded(10), hardware: GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(75)]) }"
+        ));
+        assert!(
+            !record
+                .selections
+                .iter()
+                .any(|selection| selection.source_record.ends_with("_r"))
+        );
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/sync.rs"
+        )));
     }
 }

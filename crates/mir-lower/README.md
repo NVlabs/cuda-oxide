@@ -95,7 +95,8 @@ For each `MirFuncOp`, `convert_func` (in `lowering.rs`):
 
 | Module     | Intrinsics                              | Strategy        | GPU       |
 |------------|-----------------------------------------|-----------------|-----------|
-| `basic`    | Thread/block IDs, `barrier0`            | LLVM intrinsics | All       |
+| `generated_intrinsics` | Admitted sreg, barrier, matrix, atomic, redux, and dot-product ops | Backend-selected | Varies |
+| `basic`    | Environment registers and threadfences  | LLVM/PTX        | All       |
 | `warp`     | Shuffle, vote, lane operations          | LLVM intrinsics | All       |
 | `debug`    | `vprintf`, clock, trap                  | LLVM intrinsics | All       |
 | `atomic`   | Scoped GPU + `core::sync` atomics       | LLVM intrinsics | sm_70+    |

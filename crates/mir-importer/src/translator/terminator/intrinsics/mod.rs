@@ -10,8 +10,9 @@
 //!
 //! | Module      | Intrinsics                                                                   |
 //! |-------------|------------------------------------------------------------------------------|
+//! | `generated` | Admitted generated intrinsics, including `sync_threads`                     |
 //! | `indexing`  | `threadIdx_*`, `blockIdx_*`, `index_1d`, `index_2d::<S>`, `index_2d_runtime` |
-//! | `sync`      | `sync_threads`, `mbarrier_*`, `fence_*`                                      |
+//! | `sync`      | `mbarrier_*`, `fence_*`                                                     |
 //! | `cluster`   | `cluster_ctaidX`, `cluster_sync`, `map_shared_rank`                          |
 //! | `warp`      | `shuffle_*`, `vote_*`, `lane_id`                                             |
 //! | `wgmma`     | Hopper WGMMA matrix operations                                               |

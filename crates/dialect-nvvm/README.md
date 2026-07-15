@@ -79,7 +79,8 @@ src/
 ├── lib.rs          # Dialect registration
 └── ops/
     ├── mod.rs       # Op module registry + architecture table
-    ├── thread.rs    # Thread/block indexing, barrier0, threadfences
+    ├── generated/   # Generated sreg, barrier, matrix, atomic, redux, and dot-product ops
+    ├── thread.rs    # Environment registers, hardware IDs, and threadfences
     ├── warp.rs      # Shuffle, vote, match operations
     ├── grid.rs      # Cooperative grid_sync
     ├── atomic.rs    # Atomic ops + ordering/scope/kind attributes

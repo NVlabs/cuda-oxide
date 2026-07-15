@@ -2428,6 +2428,126 @@ fn test_dot_product_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::E
     Ok(())
 }
 
+fn lower_sync_threads(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![]);
+    Operation::new(
+        &mut ctx,
+        nvvm::Barrier0Op::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_sync_threads_llvm_nvptx_uses_typed_intrinsic_with_fixed_zero() -> Result<(), anyhow::Error>
+{
+    use pliron::builtin::attributes::IntegerAttr;
+
+    let (ctx, module_ptr) = lower_sync_threads(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let mut found = false;
+    for op in body {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX sync_threads must use the typed intrinsic"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        if callee.to_string() != "llvm_nvvm_barrier_cta_sync_aligned_all" {
+            continue;
+        }
+        let call = op.deref(&ctx);
+        assert_eq!(call.get_num_operands(), 1);
+        let barrier_id = call.get_operand(0);
+        let defining_op = barrier_id.defining_op().expect("barrier ID is constant");
+        let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
+            .expect("barrier ID is an LLVM constant");
+        let value = constant.get_value(&ctx);
+        let integer = value
+            .downcast_ref::<IntegerAttr>()
+            .expect("barrier ID is an integer");
+        assert_eq!(integer.value().bw(), 32);
+        assert_eq!(integer.value().to_u64(), 0);
+        found = true;
+    }
+    assert!(found, "modern typed CTA barrier call was not emitted");
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    assert!(ir.contains("@llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)"));
+    assert!(!ir.contains("@llvm.nvvm.barrier0"));
+    Ok(())
+}
+
+#[test]
+fn test_sync_threads_libnvvm_uses_exact_convergent_inline_ptx() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) = lower_sync_threads(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let mut found = false;
+    for op in body {
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+                && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+            {
+                assert_ne!(callee.to_string(), "llvm_nvvm_barrier_cta_sync_aligned_all");
+            }
+            continue;
+        };
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("bar.sync 0;")
+        );
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("~{memory}")
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Convergent);
+        assert_eq!(op.deref(&ctx).get_num_operands(), 0);
+        found = true;
+    }
+    assert!(found, "exact libNVVM barrier inline PTX was not emitted");
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    assert!(
+        ir.contains("call void asm sideeffect \"bar.sync 0;\", \"~{memory}\"() #0"),
+        "{ir}"
+    );
+    assert!(ir.contains("attributes #0 = { convergent }"), "{ir}");
+    assert!(!ir.contains("@llvm.nvvm.barrier.cta.sync.aligned.all"));
+    Ok(())
+}
+
 // =============================================================================
 // cp.async lowering tests
 // =============================================================================

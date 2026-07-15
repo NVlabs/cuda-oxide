@@ -550,6 +550,47 @@
           { "kind": "register" }
         ]
       }
+    },
+    {
+      "id": "sync_threads",
+      "source_record": "int_nvvm_barrier_cta_sync_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.sync.aligned.all",
+      "llvm_arguments": ["i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 1.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "legacy NVVM IR convergent side-effecting inline PTX bar.sync 0 with ~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact inline-PTX route at compute_75 and produced 1,656-byte LTOIR using its PTX 9.3 profile."
+        },
+        {
+          "targets": ["sm_75", "ptx93"],
+          "representation": "retained legacy-NVVM kernel containing convergent side-effecting bar.sync 0 inline PTX",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 2,856-byte cubin; cuobjdump showed BAR.SYNC 0x0.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": ["sync"],
+        "operands": [
+          { "kind": "exact", "value": "0" }
+        ]
+      }
     }
   ]
 }

@@ -616,6 +616,10 @@ fn validate_policy(
             policy,
             declaration.context("dotprod requires imported LLVM declaration")?,
         )?,
+        "sync" => validate_sync_policy(
+            policy,
+            declaration.context("sync requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -699,6 +703,15 @@ fn selection_matches_policy(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,
 ) -> bool {
+    if policy.family == "sync" {
+        return policy.id == "sync_threads"
+            && selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
+            && selection.asm == "bar.sync \t$i;"
+            && selection.predicates.is_empty()
+            && selection.constraints.address_space.is_none()
+            && selection.constraints.immediate_bindings.is_empty();
+    }
+
     if !policy.expected_ptx.matches(&selection.asm)
         || policy
             .selected_address_space
@@ -723,6 +736,135 @@ fn selection_matches_policy(
                 && selection.constraints.immediate_bindings[0].value == 0
         }
     }
+}
+
+fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    ensure!(
+        policy.id == "sync_threads"
+            && policy.abi_id == "i0034"
+            && policy.operation_key == "synchronization.cta.barrier.aligned.all"
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some("int_nvvm_barrier_cta_sync_aligned_all")
+            && policy.llvm_symbol.as_deref() == Some("llvm.nvvm.barrier.cta.sync.aligned.all")
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} sync identity does not match the closed sync_threads recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "thread"
+            && policy.rust_name == "sync_threads"
+            && policy.rust_arguments.is_empty()
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == "cuda_intrinsics::thread::sync_threads"
+            && policy.compatibility_rust_paths
+                == [
+                    "cuda_device::thread::sync_threads",
+                    "cuda_device::sync_threads",
+                ],
+        "{} must preserve the unsafe sync_threads raw API and both cuda-device compatibility paths",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "Barrier0Op"
+            && policy.dialect_op_name == "nvvm.barrier0"
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == ["i32"]
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_sync_threads",
+        "{} is outside the fixed-zero sync_threads lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "cta"
+            && policy.minimum_ptx == "1.0"
+            && policy.minimum_sm.is_none()
+            && policy.ptx_result == "()"
+            && policy.targets == "all",
+        "{} sync effects or native target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier",
+        "{} sync PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == ["IntrConvergent", "IntrNoCallback"],
+        "{} sync properties disagree with the imported LLVM declaration",
+        policy.id
+    );
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.dot_product.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with sync",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "bar"
+            && policy.expected_ptx.modifiers == ["sync"]
+            && policy.expected_ptx.operands == [OperandPattern::Exact { value: "0".into() }],
+        "{} expected PTX does not match literal bar.sync 0",
+        policy.id
+    );
+
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ]),
+        "{} must define exactly the reviewed LLVM typed and libNVVM inline-PTX routes",
+        policy.id
+    );
+    for lowering in &policy.backend_lowerings {
+        let floor_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.as_deref() == Some("3.2")
+                    && lowering.minimum_sm.as_deref() == Some("sm_20")
+            }
+            IntrinsicBackend::LibNvvm => {
+                lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    && lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.as_deref() == Some("sm_75")
+            }
+        };
+        ensure!(
+            floor_matches && !lowering.evidence_profile.trim().is_empty(),
+            "{} backend {:?} does not carry its reviewed sync profile floor",
+            policy.id,
+            lowering.backend
+        );
+    }
+    Ok(())
 }
 
 fn validate_selected_target_predicates(
@@ -1966,8 +2108,12 @@ fn validate_selected_stage_targets(
             // exact instruction is accepted at an architecture satisfying it.
             sm >= expected_sm
         };
+        let ptx_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => ptx == expected_ptx,
+            IntrinsicBackend::LibNvvm => ptx >= expected_ptx,
+        };
         ensure!(
-            sm_matches && ptx == expected_ptx,
+            sm_matches && ptx_matches,
             "{} evidence stage {:?} targets sm_{} / PTX {}.{} instead of a compatible target at catalog floor sm_{} / PTX {}.{}",
             policy.id,
             stage.stage,
@@ -1988,8 +2134,12 @@ fn validate_selected_stage_targets(
                 )
             })?;
         let (sm, ptx) = selected_stage_floor(runtime)?;
+        let ptx_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => ptx == expected_ptx,
+            IntrinsicBackend::LibNvvm => ptx >= expected_ptx,
+        };
         ensure!(
-            sm >= expected_sm && ptx == expected_ptx,
+            sm >= expected_sm && ptx_matches,
             "{} runtime stage target does not satisfy its catalog floor",
             policy.id
         );
@@ -2182,12 +2332,15 @@ fn resolve_record(
     } else {
         None
     };
-    let dialect_operands = if policy.dialect_operands.is_empty() {
-        policy.llvm_arguments.clone()
-    } else {
-        policy.dialect_operands.clone()
-    };
-    let dialect_results = if policy.dialect_results.is_empty() {
+    let preserves_empty_dialect_signature = policy.family == "sync" && policy.id == "sync_threads";
+    let dialect_operands =
+        if policy.dialect_operands.is_empty() && !preserves_empty_dialect_signature {
+            policy.llvm_arguments.clone()
+        } else {
+            policy.dialect_operands.clone()
+        };
+    let dialect_results = if policy.dialect_results.is_empty() && !preserves_empty_dialect_signature
+    {
         policy.llvm_results.clone()
     } else {
         policy.dialect_results.clone()
@@ -2505,6 +2658,32 @@ mod tests {
             .unwrap()
     }
 
+    fn sync_policy() -> OverlayIntrinsic {
+        packed_policy("sync_threads")
+    }
+
+    fn sync_declaration() -> ImportedIntrinsic {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let text = std::fs::read_to_string(repo_root.join("intrinsics/imported.json")).unwrap();
+        serde_json::from_str::<ImportedFile>(&text)
+            .unwrap()
+            .intrinsics
+            .into_iter()
+            .find(|record| record.source_record == "int_nvvm_barrier_cta_sync_aligned_all")
+            .unwrap()
+    }
+
+    fn sync_evidence(policy: &OverlayIntrinsic) -> EvidenceRecord {
+        let mut record = evidence();
+        record.id = policy.id.clone();
+        record.source_record = policy.source_record.clone();
+        record.llvm_symbol = policy.llvm_symbol.clone();
+        record.llvm_arguments = policy.llvm_arguments.clone();
+        record.llvm_results = policy.llvm_results.clone();
+        record.expected_ptx = policy.expected_ptx.clone();
+        record
+    }
+
     fn dot_product_policy(
         operation: DotProductOperation,
         signedness: DotProductSignedness,
@@ -2697,8 +2876,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 5);
-        assert_eq!(overlay.intrinsics.len(), 33);
+        assert_eq!(overlay.shards.len(), 6);
+        assert_eq!(overlay.intrinsics.len(), 34);
         assert_eq!(
             overlay
                 .intrinsics
@@ -2714,6 +2893,14 @@ mod tests {
                 .filter(|record| record.family == "ldmatrix")
                 .count(),
             6
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "sync")
+                .count(),
+            1
         );
         assert_eq!(hash.len(), 64);
 
@@ -2889,6 +3076,162 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("memory and convergence effects")
+        );
+    }
+
+    #[test]
+    fn sync_threads_selects_only_the_fixed_immediate_barrier_recipe() {
+        let policy = sync_policy();
+        let declaration = sync_declaration();
+        validate_imported_policy(&policy, &declaration).unwrap();
+
+        let selected: Vec<_> = declaration
+            .selections
+            .iter()
+            .filter(|selection| selection_matches_policy(&policy, selection))
+            .collect();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].source_record, "BARRIER_CTA_SYNC_ALIGNED_ALL_i");
+        assert_eq!(selected[0].asm, "bar.sync \t$i;");
+        assert!(policy.expected_ptx.matches("bar.sync 0;"));
+        assert!(!policy.expected_ptx.matches(&selected[0].asm));
+        assert_eq!(policy.minimum_ptx, "1.0");
+        assert!(policy.minimum_sm.is_none());
+        let llvm_route = policy
+            .backend_lowerings
+            .iter()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+            .unwrap();
+        assert_eq!(llvm_route.minimum_ptx.as_deref(), Some("3.2"));
+        assert_eq!(llvm_route.minimum_sm.as_deref(), Some("sm_20"));
+
+        let resolved = resolve_record(
+            &policy,
+            resolve_policy_source(&policy).unwrap(),
+            Some(&declaration),
+            &sync_evidence(&policy),
+            "test",
+            "LLVM version test",
+            "0123456789abcdef",
+            vec![],
+            1,
+        )
+        .unwrap();
+        assert!(resolved.dialect.operands.is_empty());
+        assert!(resolved.dialect.results.is_empty());
+        assert_eq!(resolved.selections.len(), 1);
+        assert_eq!(
+            resolved.selections[0].source_record,
+            "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
+        );
+    }
+
+    #[test]
+    fn sync_threads_recipe_rejects_unreviewed_selection_effect_and_floor_changes() {
+        let valid = sync_policy();
+        let declaration = sync_declaration();
+
+        let mut register_only = declaration.clone();
+        register_only
+            .selections
+            .retain(|selection| selection.source_record.ends_with("_r"));
+        assert!(
+            validate_imported_policy(&valid, &register_only)
+                .unwrap_err()
+                .to_string()
+                .contains("does not agree")
+        );
+
+        let mut wrong_properties = declaration.clone();
+        wrong_properties.properties.pop();
+        assert!(
+            validate_imported_policy(&valid, &wrong_properties)
+                .unwrap_err()
+                .to_string()
+                .contains("sync properties")
+        );
+
+        let mut wrong_source = valid.clone();
+        wrong_source.source_record = Some("int_nvvm_barrier0".into());
+        assert!(
+            validate_imported_policy(&wrong_source, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("sync identity")
+        );
+
+        let mut wrong_signature = valid.clone();
+        wrong_signature.llvm_arguments.clear();
+        assert!(
+            validate_imported_policy(&wrong_signature, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("LLVM argument signature mismatch")
+        );
+
+        let mut wrong_path = valid.clone();
+        wrong_path.compatibility_rust_paths.swap(0, 1);
+        assert!(
+            validate_imported_policy(&wrong_path, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("both cuda-device compatibility paths")
+        );
+
+        let mut safe = valid.clone();
+        safe.safe = true;
+        safe.safe_allowlist_reason = Some("incorrectly hides the participation contract".into());
+        assert!(
+            validate_imported_policy(&safe, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("unsafe sync_threads raw API")
+        );
+
+        let mut wrong_effect = valid.clone();
+        wrong_effect.memory = "none".into();
+        assert!(
+            validate_imported_policy(&wrong_effect, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("sync effects")
+        );
+
+        let mut native_floor = valid.clone();
+        native_floor.minimum_sm = Some("sm_75".into());
+        assert!(
+            validate_imported_policy(&native_floor, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("native target floor")
+        );
+
+        let mut missing_profile_floor = valid;
+        missing_profile_floor
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap()
+            .minimum_sm = None;
+        assert!(
+            validate_imported_policy(&missing_profile_floor, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("profile floor")
+        );
+
+        let mut wrong_llvm_floor = sync_policy();
+        wrong_llvm_floor
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+            .unwrap()
+            .minimum_ptx = None;
+        assert!(
+            validate_imported_policy(&wrong_llvm_floor, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("profile floor")
         );
     }
 
@@ -3329,6 +3672,54 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("runtime stage")
+        );
+    }
+
+    #[test]
+    fn libnvvm_stage_may_report_newer_ptx_than_the_native_instruction_floor() {
+        let mut target_policy = policy();
+        target_policy.minimum_ptx = "1.0".into();
+        target_policy.minimum_sm = None;
+        let lowering = crate::model::OverlayBackendLowering {
+            backend: IntrinsicBackend::LibNvvm,
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            evidence_profile: "test".into(),
+            minimum_ptx: None,
+            minimum_sm: Some("sm_75".into()),
+        };
+        let mut record = evidence();
+        record.stages = vec![evidence_stage(
+            EvidenceStageKind::BackendCodegen,
+            BackendLoweringMechanism::InlinePtx,
+            &["sm_75", "ptx93"],
+        )];
+        validate_selected_stage_targets(&target_policy, &record, &lowering).unwrap();
+
+        record.stages[0].targets = vec!["sm_75".into(), "ptx09".into()];
+        assert!(
+            validate_selected_stage_targets(&target_policy, &record, &lowering)
+                .unwrap_err()
+                .to_string()
+                .contains("catalog floor sm_75 / PTX 1.0")
+        );
+
+        let llvm_lowering = crate::model::OverlayBackendLowering {
+            backend: IntrinsicBackend::LlvmNvptx,
+            mechanism: BackendLoweringMechanism::TypedNvvm,
+            evidence_profile: "test".into(),
+            minimum_ptx: Some("3.2".into()),
+            minimum_sm: Some("sm_20".into()),
+        };
+        record.stages = vec![evidence_stage(
+            EvidenceStageKind::BackendCodegen,
+            BackendLoweringMechanism::TypedNvvm,
+            &["sm_20", "ptx93"],
+        )];
+        assert!(
+            validate_selected_stage_targets(&target_policy, &record, &llvm_lowering)
+                .unwrap_err()
+                .to_string()
+                .contains("catalog floor sm_20 / PTX 3.2")
         );
     }
 

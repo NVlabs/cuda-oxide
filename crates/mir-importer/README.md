@@ -82,9 +82,10 @@ artifact; a missing required sidecar is an error rather than a silent fallback.
 
 | Module     | Intrinsics                                         | GPU       |
 |------------|----------------------------------------------------|-----------|
+| `generated`| Admitted generated intrinsics, including barriers  | Varies    |
 | `indexing` | `threadIdx`, `blockIdx`, `blockDim`, `gridDim`,    | All       |
 |            | `index_1d`/`index_2d`, DisjointSlice helpers       |           |
-| `sync`     | `sync_threads`, mbarrier ops, fences               | All       |
+| `sync`     | mbarrier ops and fences                            | All       |
 | `warp`     | Shuffle operations, `lane_id`, warp vote           | All       |
 | `atomic`   | Scoped GPU atomics, `core::sync::atomic` support   | sm_70+    |
 | `memory`   | Shared memory, address space casts, stmatrix       | All       |

@@ -593,7 +593,7 @@ pub fn gridid() -> u64 {
 ///   will cause deadlock
 #[inline(never)]
 pub fn sync_threads() {
-    // Lowered to: call void @llvm.nvvm.barrier0()
+    // Replaced by the generated CTA barrier during device compilation.
     unreachable!("sync_threads called outside CUDA kernel context")
 }
 

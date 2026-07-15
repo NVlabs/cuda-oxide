@@ -1079,6 +1079,29 @@ fn test_sync_ops_construct_and_verify() {
     );
     assert!(Barrier0Op::new(barrier).verify(&ctx).is_ok());
 
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    let unexpected_operand = block.deref(&ctx).get_argument(0);
+    let bad_operand = Operation::new(
+        &mut ctx,
+        Barrier0Op::get_concrete_op_info(),
+        vec![],
+        vec![unexpected_operand],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Barrier0Op::new(bad_operand), &ctx).is_err());
+
+    let bad_result = Operation::new(
+        &mut ctx,
+        Barrier0Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&Barrier0Op::new(bad_result), &ctx).is_err());
+
     let block_fence = Operation::new(
         &mut ctx,
         ThreadfenceBlockOp::get_concrete_op_info(),

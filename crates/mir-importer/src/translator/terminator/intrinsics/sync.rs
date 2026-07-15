@@ -5,8 +5,7 @@
 
 //! Synchronization and barrier intrinsics.
 //!
-//! Handles translation of synchronization primitives including:
-//! - `sync_threads()` - CTA-wide barrier
+//! Handles handwritten synchronization primitives including:
 //! - `mbarrier_*` - Asynchronous barrier operations
 //! - `fence_proxy_async_shared_cta()` - Async proxy fence
 
@@ -31,61 +30,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-/// Emits `sync_threads()`: CTA-wide barrier synchronization.
-///
-/// All threads in the CTA (Cooperative Thread Array) must reach the barrier
-/// before any can proceed. This is the fundamental synchronization primitive.
-///
-/// # Generated Operation
-///
-/// `nvvm.barrier0` - Maps to PTX `bar.sync 0`
-///
-/// # Returns
-///
-/// void (no result value)
-pub fn emit_sync_threads(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    use dialect_nvvm::ops::Barrier0Op;
-
-    // Create the barrier operation
-    let barrier_op = Operation::new(
-        ctx,
-        Barrier0Op::get_concrete_op_info(),
-        vec![], // No results
-        vec![], // No operands
-        vec![], // No successors
-        0,      // No regions
-    );
-    barrier_op.deref_mut(ctx).set_loc(loc.clone());
-
-    // Insert the barrier operation
-    let last_op = if let Some(prev) = prev_op {
-        barrier_op.insert_after(ctx, prev);
-        barrier_op
-    } else {
-        barrier_op.insert_at_front(block_ptr, ctx);
-        barrier_op
-    };
-
-    // Branch to the call's success successor (barrier-like intrinsics always
-    // have exactly one MIR successor).
-    if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, last_op, block_map, loc);
-        Ok(goto_op)
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported("sync_threads call without target block".to_string(),)
-        )
-    }
-}
-
 /// Emit a zero-operand, zero-result synchronization op and branch to the
 /// target block.
 fn emit_zero_arg_void_sync_op<F>(

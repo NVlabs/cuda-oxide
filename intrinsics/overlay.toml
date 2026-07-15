@@ -8,4 +8,5 @@ shards = [
     "overlay/packed_atomic.toml",
     "overlay/redux.toml",
     "overlay/sreg.toml",
+    "overlay/sync.toml",
 ]

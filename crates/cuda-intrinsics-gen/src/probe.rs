@@ -717,6 +717,25 @@ attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwri
     }
 
     #[test]
+    fn verifies_sync_threads_convergence_and_callback_attributes() {
+        let llvm = llvm_facts(
+            "llvm.nvvm.barrier.cta.sync.aligned.all",
+            None,
+            &["i32"],
+            &[],
+            &["IntrConvergent", "IntrNoCallback"],
+            false,
+            None,
+        );
+        let canonical = r#"
+declare void @llvm.nvvm.barrier.cta.sync.aligned.all(i32) #0
+attributes #0 = { convergent nocallback nounwind }
+"#;
+
+        assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+    }
+
+    #[test]
     fn verifies_dp2a_immediate_argument_attribute() {
         let llvm = llvm_facts(
             "llvm.nvvm.idp2a.s.s",
