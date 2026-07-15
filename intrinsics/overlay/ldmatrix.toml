@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for one intrinsic family.
 
-schema = 12
+schema = 13
 family = "ldmatrix"
 
 [[intrinsic]]

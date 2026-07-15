@@ -5,24 +5,25 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, CpAsyncCa4Op, CpAsyncCaZfill4Op, CpAsyncWaitGroupOp,
-    Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr,
-    LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
-    LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
-    MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
-    MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
-    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op,
-    NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr,
-    PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr,
-    PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, ReadPtxSregDynamicSmemSizeOp,
-    ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
-    ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp,
-    ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp,
-    ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
-    ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op,
-    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp,
-    ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
-    VoteSyncUniOp,
+    ActiveMaskOp, BarWarpSyncOp, Barrier0Op, CpAsyncCa4Op, CpAsyncCaZfill4Op,
+    CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
+    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op,
+    ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
+    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MatchAllSyncI32Op, MatchAllSyncI64Op,
+    MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp,
+    MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
+    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
+    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
+    PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr,
+    PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
+    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
+    ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
+    ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
+    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
 
 #[test]
@@ -84,6 +85,66 @@ fn test_generated_cp_async_accepts_pointer_shapes_and_both_constant_kinds() {
 
     let dynamic_wait = CpAsyncWaitGroupOp::build(&mut ctx, dynamic);
     assert!(verify_op(&CpAsyncWaitGroupOp::new(dynamic_wait), &ctx).is_err());
+}
+
+#[test]
+fn generated_cp_async_mbarrier_requires_mutable_generic_or_shared_u64() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let generic_u64 = MirPtrType::get_generic(&mut ctx, u64_ty.into(), true);
+    let shared_u64 = MirPtrType::get_shared(&mut ctx, u64_ty.into(), true);
+    let global_u64 = MirPtrType::get_global(&mut ctx, u64_ty.into(), true);
+    let immutable_u64 = MirPtrType::get_generic(&mut ctx, u64_ty.into(), false);
+    let generic_u32 = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            generic_u64.into(),
+            shared_u64.into(),
+            global_u64.into(),
+            immutable_u64.into(),
+            generic_u32.into(),
+            u64_ty.into(),
+        ],
+    );
+    let generic = block.deref(&ctx).get_argument(0);
+    let shared = block.deref(&ctx).get_argument(1);
+    let global = block.deref(&ctx).get_argument(2);
+    let immutable = block.deref(&ctx).get_argument(3);
+    let wrong_pointee = block.deref(&ctx).get_argument(4);
+    let scalar = block.deref(&ctx).get_argument(5);
+
+    macro_rules! check_bridge {
+        ($op:ty) => {{
+            for barrier in [generic, shared] {
+                let valid = <$op>::build(&mut ctx, barrier);
+                assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
+            }
+            for barrier in [global, immutable, wrong_pointee, scalar] {
+                let invalid = <$op>::build(&mut ctx, barrier);
+                assert!(verify_op(&<$op>::new(invalid), &ctx).is_err());
+            }
+            let wrong_shape = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![u64_ty.into()],
+                vec![generic],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_shape), &ctx).is_err());
+        }};
+    }
+
+    check_bridge!(CpAsyncMbarrierArriveOp);
+    check_bridge!(CpAsyncMbarrierArriveSharedOp);
+    check_bridge!(CpAsyncMbarrierArriveNoIncOp);
+    check_bridge!(CpAsyncMbarrierArriveNoIncSharedOp);
 }
 
 #[test]

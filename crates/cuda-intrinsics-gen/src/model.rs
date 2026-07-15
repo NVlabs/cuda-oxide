@@ -229,6 +229,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub cp_async_control: Option<CpAsyncControl>,
     #[serde(default)]
+    pub cp_async_mbarrier: Option<CpAsyncMbarrier>,
+    #[serde(default)]
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
@@ -928,6 +930,36 @@ pub enum CpAsyncControlAdapter {
     CompileTimeConstantMaxPending,
 }
 
+/// Closed contract for associating classic `cp.async` completion with an mbarrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpAsyncMbarrier {
+    pub operation: CpAsyncMbarrierOperation,
+    pub state_space: CpAsyncMbarrierStateSpace,
+    pub adapter: CpAsyncMbarrierAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncMbarrierOperation {
+    Arrive,
+    ArriveNoInc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncMbarrierStateSpace {
+    Generic,
+    Shared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpAsyncMbarrierAdapter {
+    PointerToVoid,
+}
+
 /// Closed contract for the basic shared-memory mbarrier lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1146,6 +1178,8 @@ pub struct CatalogIntrinsic {
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp_async_control: Option<CpAsyncControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cp_async_mbarrier: Option<CpAsyncMbarrier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1709,6 +1743,31 @@ runtime_validation = "unexecuted"
         ] {
             assert!(
                 toml::from_str::<MbarrierBasic>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn cp_async_mbarrier_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "arrive_no_inc"
+state_space = "shared"
+adapter = "pointer_to_void"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<CpAsyncMbarrier>(valid).unwrap();
+        assert_eq!(parsed.operation, CpAsyncMbarrierOperation::ArriveNoInc);
+        assert_eq!(parsed.state_space, CpAsyncMbarrierStateSpace::Shared);
+
+        for invalid in [
+            valid.replace("operation = \"arrive_no_inc\"", "operation = \"wait\""),
+            valid.replace("state_space = \"shared\"", "state_space = \"global\""),
+            valid.replace("adapter = \"pointer_to_void\"", "adapter = \"direct\""),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<CpAsyncMbarrier>(&invalid).is_err(),
                 "{invalid}"
             );
         }

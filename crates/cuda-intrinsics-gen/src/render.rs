@@ -6,7 +6,8 @@
 use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
     CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, CpAsyncCachePolicy,
-    CpAsyncControlOperation, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
+    CpAsyncControlOperation, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
+    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
     DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
     IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
     LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
@@ -199,6 +200,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "warp_shuffle" && record.warp_shuffle.is_some())
                     || (record.family == "cp_async_copy" && record.cp_async_copy.is_some())
                     || (record.family == "cp_async_control" && record.cp_async_control.is_some())
+                    || (record.family == "cp_async_mbarrier" && record.cp_async_mbarrier.is_some())
                     || (record.family == "mbarrier_basic" && record.mbarrier_basic.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
@@ -372,6 +374,32 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_cp_async_control"
                     && record.cp_async_control.is_some(),
                 "{} is outside the closed generated cp.async control recipe",
+                record.id
+            ),
+            "cp_async_mbarrier" => ensure!(
+                record.rust.module == "async_copy"
+                    && record.rust.arguments == ["*mut u64"]
+                    && record.rust.result == "()"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.dialect.operands == ["ptr"]
+                    && record.dialect.results.is_empty()
+                    && record.lowering == "generated_cp_async_mbarrier"
+                    && record.cp_async_mbarrier.as_ref().is_some_and(|bridge| {
+                        bridge.adapter == CpAsyncMbarrierAdapter::PointerToVoid
+                            && record.llvm.as_ref().is_some_and(|llvm| {
+                                llvm.results.is_empty()
+                                    && match bridge.state_space {
+                                        CpAsyncMbarrierStateSpace::Generic => {
+                                            llvm.arguments == ["ptr"]
+                                        }
+                                        CpAsyncMbarrierStateSpace::Shared => {
+                                            llvm.arguments == ["shared_ptr"]
+                                        }
+                                    }
+                            })
+                    }),
+                "{} is outside the closed generated cp.async mbarrier recipe",
                 record.id
             ),
             "mbarrier_basic" => ensure!(
@@ -709,6 +737,13 @@ fn cp_async_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntr
         .intrinsics
         .iter()
         .filter(|record| record.family == "cp_async_control")
+}
+
+fn cp_async_mbarriers(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "cp_async_mbarrier")
 }
 
 fn mbarrier_basics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -1160,6 +1195,19 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// Every active thread in the CTA must reach the same barrier. Calling it from divergent control flow can deadlock the CTA.\n",
                 );
+            } else if let Some(bridge) = &record.cp_async_mbarrier {
+                output.push_str(
+                    "/// `_arg0` must point to a live, initialized, eight-byte-aligned mbarrier object in shared memory.\n\
+                     /// The issuing thread must have prior `cp.async` operations, and the object must remain valid until they complete.\n",
+                );
+                match bridge.operation {
+                    CpAsyncMbarrierOperation::Arrive => output.push_str(
+                        "/// This instruction increments the pending count before scheduling the asynchronous arrival; that increment must not exceed the barrier's pending-count limit.\n",
+                    ),
+                    CpAsyncMbarrierOperation::ArriveNoInc => output.push_str(
+                        "/// The barrier's initial pending count must already include the asynchronous arrival because this form does not increment it.\n",
+                    ),
+                }
             } else if let Some(mbarrier) = &record.mbarrier_basic {
                 output.push_str(
                     "/// `_arg0` must point to a live, eight-byte-aligned mbarrier object in shared memory.\n",
@@ -1521,6 +1569,53 @@ fn render_compat_cp_async_copy(catalog: &CatalogFile, hash: &str) -> String {
         } else {
             writeln!(output, "pub unsafe fn {}() {{", record.rust.name).unwrap();
         }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    for record in cp_async_mbarriers(catalog) {
+        let bridge = record
+            .cp_async_mbarrier
+            .as_ref()
+            .expect("cp.async mbarrier semantics");
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::async_copy::"))
+            .expect("cp.async mbarrier compatibility path");
+        assert_eq!(
+            path,
+            &format!("cuda_device::async_copy::{}", record.rust.name)
+        );
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        output.push_str(
+            "/// `barrier` must point to a live, initialized, eight-byte-aligned mbarrier object in shared memory.\n\
+             /// This thread must have issued the `cp.async` operations being associated with it.\n\
+             /// The object must remain valid until those operations complete.\n",
+        );
+        match bridge.operation {
+            CpAsyncMbarrierOperation::Arrive => output.push_str(
+                "/// This form increments the pending count before scheduling the asynchronous arrival.\n\
+                 /// That increment must not exceed the barrier's pending-count limit.\n",
+            ),
+            CpAsyncMbarrierOperation::ArriveNoInc => output.push_str(
+                "/// The initial pending count must already include the asynchronous arrival.\n",
+            ),
+        }
+        output.push_str("#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub unsafe fn {}(_barrier: *mut crate::barrier::Barrier) {{",
+            record.rust.name
+        )
+        .unwrap();
         writeln!(
             output,
             "    unreachable!(\"{} called outside CUDA kernel context\")",
@@ -1906,7 +2001,7 @@ fn render_dialect_active_mask(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_cp_async_copy(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        r#"//! Structural operations for classic global-to-shared `cp.async` copies.
+        r#"//! Structural operations for classic `cp.async` instructions.
 
 use dialect_mir::{ops::MirConstantOp, types::{MirPtrType, address_space}};
 use pliron::{
@@ -2016,6 +2111,41 @@ fn verify_cp_async_control(
     Ok(())
 }
 
+fn verify_cp_async_mbarrier(
+    ctx: &Context,
+    operation: Ptr<Operation>,
+    name: &str,
+) -> Result<(), Error> {
+    let op = operation.deref(ctx);
+    if op.get_num_operands() != 1 || op.get_num_results() != 0 {
+        return verify_err!(op.loc(), "{name} has the wrong operand or result count");
+    }
+    let ty = op.get_operand(0).get_type(ctx);
+    let ty = ty.deref(ctx);
+    let Some(pointer) = ty.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "mbarrier address must be a MIR pointer");
+    };
+    let pointee = pointer.pointee.deref(ctx);
+    let valid_pointee = pointee
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| {
+            integer.width() == 64 && integer.signedness() == Signedness::Unsigned
+        });
+    if !pointer.is_mutable
+        || !valid_pointee
+        || !matches!(
+            pointer.address_space,
+            address_space::GENERIC | address_space::SHARED
+        )
+    {
+        return verify_err!(
+            op.loc(),
+            "mbarrier address must be a mutable generic/shared pointer to u64"
+        );
+    }
+    Ok(())
+}
+
 "#,
     );
     for record in cp_async_copies(catalog) {
@@ -2082,11 +2212,35 @@ fn verify_cp_async_control(
         )
         .unwrap();
     }
+    for record in cp_async_mbarriers(catalog) {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],\n)]\npub struct {};",
+            record.dialect.op_name, record.dialect.op_type
+        )
+        .unwrap();
+        writeln!(output, "impl {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n\n    pub fn build(ctx: &mut Context, barrier: Value) -> Ptr<Operation> {\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![barrier], vec![], 0)\n    }\n}\n\n",
+        );
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_cp_async_mbarrier(ctx, self.get_operation(), {:?})\n    }}\n}}\n",
+            record.dialect.op_name
+        )
+        .unwrap();
+    }
     output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
     for record in cp_async_copies(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     for record in cp_async_controls(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    for record in cp_async_mbarriers(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -3187,6 +3341,15 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if cp_async_mbarriers(catalog).next().is_some() {
+        output.push_str(", ");
+        for (index, record) in cp_async_mbarriers(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     for record in mbarrier_basics(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
@@ -3773,6 +3936,44 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    for record in cp_async_mbarriers(catalog) {
+        debug_assert_eq!(
+            record.cp_async_mbarrier.as_ref().unwrap().adapter,
+            CpAsyncMbarrierAdapter::PointerToVoid
+        );
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 1, &loc)?;\n");
+        output.push_str(
+            "            let (barrier, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+        );
+        writeln!(
+            output,
+            "            let bridge = {}::build(ctx, barrier);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            bridge.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, bridge, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, bridge, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, bridge, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
     for record in mbarrier_basics(catalog) {
         let mbarrier = record.mbarrier_basic.as_ref().unwrap();
         let (argument_names, returns_value) = match mbarrier.operation {
@@ -3953,7 +4154,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -4101,7 +4302,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
-    for record in cp_async_copies(catalog).chain(cp_async_controls(catalog)) {
+    for record in cp_async_copies(catalog)
+        .chain(cp_async_controls(catalog))
+        .chain(cp_async_mbarriers(catalog))
+    {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
@@ -4418,6 +4622,33 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    for record in cp_async_mbarriers(catalog) {
+        let bridge = record.cp_async_mbarrier.as_ref().unwrap();
+        let operation = match bridge.operation {
+            CpAsyncMbarrierOperation::Arrive => "arrive",
+            CpAsyncMbarrierOperation::ArriveNoInc => "arrive_no_inc",
+        };
+        let state_space = match bridge.state_space {
+            CpAsyncMbarrierStateSpace::Generic => "generic",
+            CpAsyncMbarrierStateSpace::Shared => "shared",
+        };
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_generated_cp_async_mbarrier(ctx, rewriter, self.get_operation(), {operation:?}, {state_space:?}, {:?})",
+            record.llvm_identifier(),
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
     for record in mbarrier_basics(catalog) {
         let mbarrier = record.mbarrier_basic.as_ref().unwrap();
         let helper = match (mbarrier.operation, mbarrier.adapter) {
@@ -4723,7 +4954,40 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
 pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
-    if let Some(mbarrier) = &record.mbarrier_basic {
+    if let Some(bridge) = &record.cp_async_mbarrier {
+        let shared = bridge.state_space == CpAsyncMbarrierStateSpace::Shared;
+        let pointer_type = if shared { "ptr addrspace(3)" } else { "ptr" };
+        writeln!(
+            output,
+            "declare void @{}({pointer_type})\n",
+            llvm(record).symbol
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "define void @probe_{}(ptr %barrier_generic) {{",
+            record.id
+        )
+        .unwrap();
+        if shared {
+            output
+                .push_str("  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n");
+            writeln!(
+                output,
+                "  call void @{}(ptr addrspace(3) %barrier)",
+                llvm(record).symbol
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "  call void @{}(ptr %barrier_generic)",
+                llvm(record).symbol
+            )
+            .unwrap();
+        }
+        output.push_str("  ret void\n}\n");
+    } else if let Some(mbarrier) = &record.mbarrier_basic {
         match mbarrier.operation {
             MbarrierBasicOperation::Init => {
                 writeln!(
@@ -5464,6 +5728,28 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
     }
+    output.push_str("\n## cp.async mbarrier contracts\n\n");
+    for record in cp_async_mbarriers(catalog) {
+        let bridge = record.cp_async_mbarrier.as_ref().unwrap();
+        let address = match bridge.state_space {
+            CpAsyncMbarrierStateSpace::Generic => "generic",
+            CpAsyncMbarrierStateSpace::Shared => "explicit shared",
+        };
+        let counting = match bridge.operation {
+            CpAsyncMbarrierOperation::Arrive => {
+                "increments the pending count before the later asynchronous decrement"
+            }
+            CpAsyncMbarrierOperation::ArriveNoInc => {
+                "does not increment the pending count, so initialization must already include the later asynchronous decrement"
+            }
+        };
+        writeln!(
+            output,
+            "- `{}` uses {address} addressing and {counting}. It associates only the executing thread's prior `cp.async` operations with a live, eight-byte-aligned shared-memory barrier. LLVM-NVPTX uses the typed intrinsic; libNVVM uses reviewed convergent, side-effecting inline PTX with a memory clobber.",
+            record.id,
+        )
+        .unwrap();
+    }
     output.push_str("\n## Basic mbarrier contracts\n\n");
     for record in mbarrier_basics(catalog) {
         let mbarrier = record.mbarrier_basic.as_ref().unwrap();
@@ -5573,6 +5859,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .or_else(|| {
                 record
                     .mbarrier_basic
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
+            .or_else(|| {
+                record
+                    .cp_async_mbarrier
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
@@ -5981,6 +6273,7 @@ mod tests {
         validate_renderable(&catalog).unwrap();
         assert_eq!(cp_async_copies(&catalog).count(), 8);
         assert_eq!(cp_async_controls(&catalog).count(), 3);
+        assert_eq!(cp_async_mbarriers(&catalog).count(), 4);
 
         let compatibility = render_compat_cp_async_copy(&catalog, "test-hash");
         for signature in [
@@ -5995,6 +6288,10 @@ mod tests {
             "pub unsafe fn cp_async_commit_group()",
             "pub unsafe fn cp_async_wait_all()",
             "pub unsafe fn cp_async_wait_group(_max_pending: u32)",
+            "pub unsafe fn cp_async_mbarrier_arrive(_barrier: *mut crate::barrier::Barrier)",
+            "pub unsafe fn cp_async_mbarrier_arrive_shared(_barrier: *mut crate::barrier::Barrier)",
+            "pub unsafe fn cp_async_mbarrier_arrive_noinc(_barrier: *mut crate::barrier::Barrier)",
+            "pub unsafe fn cp_async_mbarrier_arrive_noinc_shared(_barrier: *mut crate::barrier::Barrier)",
         ] {
             assert!(compatibility.contains(signature));
         }
@@ -6003,7 +6300,10 @@ mod tests {
         let importer = render_importer(&catalog, "test-hash");
         let lowering = render_lowering(&catalog, "test-hash");
         let targets = render_targets(&catalog, "test-hash");
-        for record in cp_async_copies(&catalog).chain(cp_async_controls(&catalog)) {
+        for record in cp_async_copies(&catalog)
+            .chain(cp_async_controls(&catalog))
+            .chain(cp_async_mbarriers(&catalog))
+        {
             assert!(dialect.contains(&format!("pub struct {}", record.dialect.op_type)));
             assert!(dialect.contains(&format!("{}::register(ctx)", record.dialect.op_type)));
             assert!(importer.contains(&record.rust.canonical_path));
@@ -6030,9 +6330,95 @@ mod tests {
             );
             assert!(targets.contains(&format!("id: {:?}", record.id)));
         }
-        assert_eq!(dialect.matches("::register(ctx);").count(), 11);
+        assert_eq!(dialect.matches("::register(ctx);").count(), 15);
         assert!(lowering.contains("convert_generated_cp_async_copy"));
         assert!(lowering.contains("convert_generated_cp_async_control"));
+        assert!(lowering.contains("convert_generated_cp_async_mbarrier"));
+    }
+
+    #[test]
+    fn cp_async_mbarrier_rendering_preserves_counting_and_state_space_routes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let records: Vec<_> = cp_async_mbarriers(&catalog).collect();
+        assert_eq!(records.len(), 4);
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub unsafe fn i0101(_arg0: *mut u64)"));
+        assert!(raw.contains("live, initialized, eight-byte-aligned mbarrier"));
+        assert!(raw.contains("initial pending count must already include"));
+
+        let compatibility = render_compat_cp_async_copy(&catalog, "test-hash");
+        assert_eq!(
+            compatibility
+                .matches("That increment must not exceed the barrier's pending-count limit.")
+                .count(),
+            2
+        );
+
+        let dialect = render_dialect_cp_async_copy(&catalog, "test-hash");
+        assert!(dialect.contains("mutable generic/shared pointer to u64"));
+        let importer = render_importer(&catalog, "test-hash");
+        let lowering = render_lowering(&catalog, "test-hash");
+        for record in &records {
+            assert!(importer.contains(&format!(
+                "let bridge = {}::build(ctx, barrier)",
+                record.dialect.op_type
+            )));
+            assert!(lowering.contains(&record.llvm_identifier()));
+            let routes: BTreeSet<_> = record
+                .backend_lowerings
+                .iter()
+                .map(|route| (route.backend, route.mechanism))
+                .collect();
+            assert_eq!(
+                routes,
+                BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            );
+        }
+        assert!(lowering.contains("\"arrive\", \"generic\""));
+        assert!(lowering.contains("\"arrive\", \"shared\""));
+        assert!(lowering.contains("\"arrive_no_inc\", \"generic\""));
+        assert!(lowering.contains("\"arrive_no_inc\", \"shared\""));
+
+        let generic = records
+            .iter()
+            .find(|record| record.id == "cp_async_mbarrier_arrive")
+            .unwrap();
+        let generic_probe = render_probe(&catalog, generic, "test-hash");
+        assert!(generic_probe.contains("declare void @llvm.nvvm.cp.async.mbarrier.arrive(ptr)"));
+        assert!(!generic_probe.contains("addrspacecast"));
+        let shared = records
+            .iter()
+            .find(|record| record.id == "cp_async_mbarrier_arrive_shared")
+            .unwrap();
+        let shared_probe = render_probe(&catalog, shared, "test-hash");
+        assert!(shared_probe.contains("ptr addrspace(3)"));
+        assert!(shared_probe.contains("addrspacecast ptr %barrier_generic"));
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## cp.async mbarrier contracts"));
+        assert!(reference.contains("cp_async_mbarrier_arrive_noinc`: runtime `unexecuted`"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/async_copy.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/cp_async.rs"
+        )));
+        assert!(!outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/cp_async_mbarrier.rs"
+        )));
     }
 
     #[test]

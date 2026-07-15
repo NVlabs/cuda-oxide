@@ -1,5 +1,5 @@
 {
-  "schema": 15,
+  "schema": 16,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,12 +11,14 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "ec12e1fe6bed204e51b1ef3e21bba7efa9cb458a281eb9ccfb8586b8dbdfc4b6",
-    "abi_ledger_sha256": "90a97ba33b22986a780c7704f369ec1262c71ee4dd2138af4898c952b0b2ade8",
+    "overlay_sha256": "91cfd62e1886963644afd81eaf86900d80483d5c66819e21bd91ee3a1466ad3e",
+    "abi_ledger_sha256": "8e5f0d31d5e112a677fab993dcfc853b27fc9f85a74a005cbe5181768e538203",
     "evidence_sha256": [
+      "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
+      "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
       "rust-llvm-22.1.2-1cb4e383.json:618de5e9edb60f43a8b00d2923ddff6e5a373fc0e9f4ea6f525dca03c4e9bde5"
@@ -4426,6 +4428,1082 @@
         "operands": []
       },
       "summary": "Commits this thread's uncommitted asynchronous copies as one group."
+    },
+    {
+      "id": "cp_async_mbarrier_arrive",
+      "operation_key": "memory.copy.async.mbarrier.arrive.generic.increment",
+      "family": "cp_async_mbarrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_mbarrier_arrive"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_MBARRIER_ARRIVE",
+          "asm": "cp.async.mbarrier.arrive.b64 \t[$addr];",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0101",
+        "module": "async_copy",
+        "name": "cp_async_mbarrier_arrive",
+        "arguments": [
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0101",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_mbarrier_arrive",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_mbarrier_arrive"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncMbarrierArriveOp",
+        "op_name": "nvvm.cp_async_mbarrier_arrive",
+        "operands": [
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.mbarrier.arrive",
+        "arguments": [
+          "ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.16.18 Parallel Synchronization and Communication Instructions: cp.async.mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-cp-async-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.mbarrier.arrive(ptr) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM canonicalized the generic-pointer declaration with convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed generic-address cp.async mbarrier arrival",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.mbarrier.arrive.b64 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM bridge probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive(i8*)",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed cp.async mbarrier bridge module",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.b64 with l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_mbarrier": {
+        "operation": "arrive",
+        "state_space": "generic",
+        "adapter": "pointer_to_void",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_mbarrier",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "mbarrier",
+          "arrive",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Associates this thread's prior asynchronous copies with a shared-memory barrier using balanced pending-count accounting."
+    },
+    {
+      "id": "cp_async_mbarrier_arrive_noinc",
+      "operation_key": "memory.copy.async.mbarrier.arrive.generic.no_increment",
+      "family": "cp_async_mbarrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_mbarrier_arrive_noinc"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_MBARRIER_ARRIVE_NOINC",
+          "asm": "cp.async.mbarrier.arrive.noinc.b64 \t[$addr];",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0103",
+        "module": "async_copy",
+        "name": "cp_async_mbarrier_arrive_noinc",
+        "arguments": [
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0103",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_mbarrier_arrive_noinc",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_mbarrier_arrive_noinc"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncMbarrierArriveNoIncOp",
+        "op_name": "nvvm.cp_async_mbarrier_arrive_noinc",
+        "operands": [
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.mbarrier.arrive.noinc",
+        "arguments": [
+          "ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.16.18 Parallel Synchronization and Communication Instructions: cp.async.mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-cp-async-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.mbarrier.arrive.noinc(ptr) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM canonicalized the generic-pointer declaration with convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed generic-address no-increment cp.async mbarrier arrival",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.mbarrier.arrive.noinc.b64 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM bridge probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive.noinc(i8*)",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed cp.async mbarrier bridge module",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.noinc.b64 with l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_mbarrier": {
+        "operation": "arrive_no_inc",
+        "state_space": "generic",
+        "adapter": "pointer_to_void",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_mbarrier",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "mbarrier",
+          "arrive",
+          "noinc",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Associates this thread's prior asynchronous copies with a shared-memory barrier without incrementing its pending count."
+    },
+    {
+      "id": "cp_async_mbarrier_arrive_noinc_shared",
+      "operation_key": "memory.copy.async.mbarrier.arrive.shared.no_increment",
+      "family": "cp_async_mbarrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_mbarrier_arrive_noinc_shared"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_MBARRIER_ARRIVE_NOINC_SHARED",
+          "asm": "cp.async.mbarrier.arrive.noinc.shared.b64 \t[$addr];",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0104",
+        "module": "async_copy",
+        "name": "cp_async_mbarrier_arrive_noinc_shared",
+        "arguments": [
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0104",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_mbarrier_arrive_noinc_shared",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_mbarrier_arrive_noinc_shared"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncMbarrierArriveNoIncSharedOp",
+        "op_name": "nvvm.cp_async_mbarrier_arrive_noinc_shared",
+        "operands": [
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared",
+        "arguments": [
+          "shared_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.16.18 Parallel Synchronization and Communication Instructions: cp.async.mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-cp-async-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared(ptr addrspace(3)) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM canonicalized the shared-pointer declaration with convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed shared-address no-increment cp.async mbarrier arrival",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.mbarrier.arrive.noinc.shared.b64 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM bridge probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared(i8 addrspace(3)*)",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed cp.async mbarrier bridge module",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.noinc.shared.b64 with l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_mbarrier": {
+        "operation": "arrive_no_inc",
+        "state_space": "shared",
+        "adapter": "pointer_to_void",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_mbarrier",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "mbarrier",
+          "arrive",
+          "noinc",
+          "shared",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Associates this thread's prior asynchronous copies with a shared-address barrier without incrementing its pending count."
+    },
+    {
+      "id": "cp_async_mbarrier_arrive_shared",
+      "operation_key": "memory.copy.async.mbarrier.arrive.shared.increment",
+      "family": "cp_async_mbarrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_cp_async_mbarrier_arrive_shared"
+      },
+      "selections": [
+        {
+          "source_record": "CP_ASYNC_MBARRIER_ARRIVE_SHARED",
+          "asm": "cp.async.mbarrier.arrive.shared.b64 \t[$addr];",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0102",
+        "module": "async_copy",
+        "name": "cp_async_mbarrier_arrive_shared",
+        "arguments": [
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0102",
+        "public_path": "cuda_intrinsics::async_copy::cp_async_mbarrier_arrive_shared",
+        "compatibility_paths": [
+          "cuda_device::async_copy::cp_async_mbarrier_arrive_shared"
+        ]
+      },
+      "dialect": {
+        "op_type": "CpAsyncMbarrierArriveSharedOp",
+        "op_name": "nvvm.cp_async_mbarrier_arrive_shared",
+        "operands": [
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.cp.async.mbarrier.arrive.shared",
+        "arguments": [
+          "shared_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.16.18 Parallel Synchronization and Communication Instructions: cp.async.mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-cp-async-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed llvm.nvvm.cp.async.mbarrier.arrive.shared(ptr addrspace(3)) declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM canonicalized the shared-pointer declaration with convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed shared-address cp.async mbarrier arrival",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact cp.async.mbarrier.arrive.shared.b64 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM bridge probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive.shared(i8 addrspace(3)*)",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy typed cp.async mbarrier bridge module",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.shared.b64 with l,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cp_async_mbarrier": {
+        "operation": "arrive",
+        "state_space": "shared",
+        "adapter": "pointer_to_void",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cp_async_mbarrier",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "mbarrier",
+          "arrive",
+          "shared",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Associates this thread's prior asynchronous copies with a shared-address barrier using balanced pending-count accounting."
     },
     {
       "id": "cp_async_wait_all",

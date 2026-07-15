@@ -3019,6 +3019,169 @@ fn lower_all_classic_cp_async(
     Ok((ctx, module_ptr))
 }
 
+fn lower_all_cp_async_mbarrier(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let generic_ty = MirPtrType::get_generic(&mut ctx, u64_ty.into(), true);
+    let shared_ty = MirPtrType::get_shared(&mut ctx, u64_ty.into(), true);
+    let (module_ptr, entry) =
+        build_test_kernel(&mut ctx, vec![generic_ty.into(), shared_ty.into()]);
+    let generic = entry.deref(&ctx).get_argument(0);
+    let shared = entry.deref(&ctx).get_argument(1);
+
+    for bridge in [
+        nvvm::CpAsyncMbarrierArriveOp::build(&mut ctx, shared),
+        nvvm::CpAsyncMbarrierArriveSharedOp::build(&mut ctx, generic),
+        nvvm::CpAsyncMbarrierArriveNoIncOp::build(&mut ctx, shared),
+        nvvm::CpAsyncMbarrierArriveNoIncSharedOp::build(&mut ctx, generic),
+    ] {
+        bridge.insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_generated_cp_async_mbarrier_preserves_backend_and_address_routes()
+-> Result<(), anyhow::Error> {
+    use llvm_export::types::PointerType;
+    use pliron::r#type::Typed;
+
+    let typed = [
+        ("llvm_nvvm_cp_async_mbarrier_arrive", 0),
+        ("llvm_nvvm_cp_async_mbarrier_arrive_shared", 3),
+        ("llvm_nvvm_cp_async_mbarrier_arrive_noinc", 0),
+        ("llvm_nvvm_cp_async_mbarrier_arrive_noinc_shared", 3),
+    ];
+    let templates = [
+        ("cp.async.mbarrier.arrive.b64 [$0];", 0),
+        ("cp.async.mbarrier.arrive.shared.b64 [$0];", 3),
+        ("cp.async.mbarrier.arrive.noinc.b64 [$0];", 0),
+        ("cp.async.mbarrier.arrive.noinc.shared.b64 [$0];", 3),
+    ];
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let (ctx, module_ptr) = lower_all_cp_async_mbarrier(backend)?;
+        let mut call_counts = [0usize; 4];
+        let mut asm_counts = [0usize; 4];
+
+        for op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) {
+                let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+                    continue;
+                };
+                let callee = callee.to_string();
+                let Some(index) = typed.iter().position(|(name, _)| callee == *name) else {
+                    continue;
+                };
+                call_counts[index] += 1;
+                let pointer = op.deref(&ctx).get_operand(0).get_type(&ctx);
+                assert_eq!(
+                    pointer
+                        .deref(&ctx)
+                        .downcast_ref::<PointerType>()
+                        .unwrap()
+                        .address_space(),
+                    typed[index].1
+                );
+            }
+            if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+                let template = inline_asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()))
+                    .unwrap();
+                let Some(index) = templates
+                    .iter()
+                    .position(|(expected, _)| template == *expected)
+                else {
+                    continue;
+                };
+                asm_counts[index] += 1;
+                assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Convergent);
+                assert!(
+                    inline_asm
+                        .get_attr_inline_asm_convergent(&ctx)
+                        .is_some_and(|value| bool::from((*value).clone()))
+                );
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some("l,~{memory}")
+                );
+                let pointer = op.deref(&ctx).get_operand(0).get_type(&ctx);
+                assert_eq!(
+                    pointer
+                        .deref(&ctx)
+                        .downcast_ref::<PointerType>()
+                        .unwrap()
+                        .address_space(),
+                    templates[index].1
+                );
+            }
+        }
+
+        let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => {
+                assert_eq!(call_counts, [1; 4]);
+                assert_eq!(asm_counts, [0; 4]);
+                assert!(
+                    ir.contains("@llvm.nvvm.cp.async.mbarrier.arrive(ptr"),
+                    "{ir}"
+                );
+                assert!(
+                    ir.contains("@llvm.nvvm.cp.async.mbarrier.arrive.shared(ptr addrspace(3)"),
+                    "{ir}"
+                );
+                assert!(
+                    ir.contains("@llvm.nvvm.cp.async.mbarrier.arrive.noinc(ptr"),
+                    "{ir}"
+                );
+                assert!(
+                    ir.contains(
+                        "@llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared(ptr addrspace(3)"
+                    ),
+                    "{ir}"
+                );
+                assert!(!ir.contains("cp.async.mbarrier.arrive.b64 [$0]"), "{ir}");
+            }
+            mir_lower::IntrinsicBackend::LibNvvm => {
+                assert_eq!(call_counts, [0; 4]);
+                assert_eq!(asm_counts, [1; 4]);
+                assert!(!ir.contains("@llvm.nvvm.cp.async.mbarrier"), "{ir}");
+                for (template, _) in templates {
+                    assert!(ir.contains(template), "{ir}");
+                }
+                assert!(ir.contains("asm sideeffect"), "{ir}");
+                assert!(ir.contains("convergent"), "{ir}");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_generated_cp_async_llvm_nvptx_uses_all_typed_intrinsics() -> Result<(), anyhow::Error> {
     use llvm_export::types::PointerType;

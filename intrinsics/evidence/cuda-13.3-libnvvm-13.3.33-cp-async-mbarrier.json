@@ -1,0 +1,234 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "cp_async_mbarrier_arrive",
+      "source_record": "int_nvvm_cp_async_mbarrier_arrive",
+      "llvm_symbol": "llvm.nvvm.cp.async.mbarrier.arrive",
+      "llvm_arguments": ["ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive(i8*)",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "legacy typed cp.async mbarrier bridge module",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.b64 with l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": ["async", "mbarrier", "arrive", "b64"],
+        "operands": [{ "kind": "address" }]
+      }
+    },
+    {
+      "id": "cp_async_mbarrier_arrive_shared",
+      "source_record": "int_nvvm_cp_async_mbarrier_arrive_shared",
+      "llvm_symbol": "llvm.nvvm.cp.async.mbarrier.arrive.shared",
+      "llvm_arguments": ["shared_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive.shared(i8 addrspace(3)*)",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "legacy typed cp.async mbarrier bridge module",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.shared.b64 with l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": ["async", "mbarrier", "arrive", "shared", "b64"],
+        "operands": [{ "kind": "address" }]
+      }
+    },
+    {
+      "id": "cp_async_mbarrier_arrive_noinc",
+      "source_record": "int_nvvm_cp_async_mbarrier_arrive_noinc",
+      "llvm_symbol": "llvm.nvvm.cp.async.mbarrier.arrive.noinc",
+      "llvm_arguments": ["ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive.noinc(i8*)",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "legacy typed cp.async mbarrier bridge module",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.noinc.b64 with l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": ["async", "mbarrier", "arrive", "noinc", "b64"],
+        "operands": [{ "kind": "address" }]
+      }
+    },
+    {
+      "id": "cp_async_mbarrier_arrive_noinc_shared",
+      "source_record": "int_nvvm_cp_async_mbarrier_arrive_noinc_shared",
+      "llvm_symbol": "llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared",
+      "llvm_arguments": ["shared_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_80", "ptx93"],
+          "representation": "legacy typed llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared(i8 addrspace(3)*)",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "libNVVM accepted the four-record diagnostic module and produced 2,108-byte LTOIR with SHA-256 70aee00d5928460cc730c2dcb304d14ada723f9ebd8b863894e15d9a556cb5fb."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "legacy typed cp.async mbarrier bridge module",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "nvJitLink rejected the retained kernel because the typed intrinsic had an incorrect argument type and aborted the broken function."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX cp.async.mbarrier.arrive.noinc.shared.b64 with l,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The generated cp_async_small example produced 10,664-byte LTOIR with SHA-256 71f5f67dd2b32ab2e2dd4b61dc640ae0667de68a171bdde713996c187c2e8ba0."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "generated cp_async_small four-record inline-PTX bridge kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "nvJitLink produced a 12,320-byte cubin with SHA-256 1fe37bd0a57fe25d8354df11995fd6005e598fb7814b0d30b60cc88ead290d2e; SASS contains two pending-count updates and four ARRIVES.LDGSTSBAR.64 instructions.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": ["async", "mbarrier", "arrive", "noinc", "shared", "b64"],
+        "operands": [{ "kind": "address" }]
+      }
+    }
+  ]
+}

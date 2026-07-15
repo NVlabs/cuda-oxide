@@ -1404,7 +1404,8 @@ mod tests {
 
         for marker in [
             "v1:i0086", "v1:i0087", "v1:i0088", "v1:i0089", "v1:i0090", "v1:i0091", "v1:i0092",
-            "v1:i0093", "v1:i0094", "v1:i0095", "v1:i0096",
+            "v1:i0093", "v1:i0094", "v1:i0095", "v1:i0096", "v1:i0101", "v1:i0102", "v1:i0103",
+            "v1:i0104",
         ] {
             let target = generated_intrinsic_target_by_marker(marker).unwrap();
             for backend in [

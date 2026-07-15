@@ -11,10 +11,11 @@ use crate::model::{
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
     CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter, CpAsyncControlOperation,
-    CpAsyncCopySize, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
-    DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceRecord, EvidenceStageKind,
-    ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource,
-    LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
+    CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace,
+    CpAsyncSourceSize, DotProductAdapter, DotProductOperation, DotProductSignedness,
+    EvidenceArtifactKind, EvidenceFile, EvidenceRecord, EvidenceStageKind, ImportedAddressSpace,
+    ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter,
+    LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
     LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
     MatchOperandEncoding, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierStateSpace,
     OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat,
@@ -39,9 +40,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 16;
-const OVERLAY_SHARD_SCHEMA: u32 = 12;
-pub(crate) const CATALOG_SCHEMA: u32 = 15;
+const OVERLAY_SCHEMA: u32 = 17;
+const OVERLAY_SHARD_SCHEMA: u32 = 13;
+pub(crate) const CATALOG_SCHEMA: u32 = 16;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -329,7 +330,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -342,6 +343,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.dot_product,
             record.cp_async_copy,
             record.cp_async_control,
+            record.cp_async_mbarrier,
             record.mbarrier_basic,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
@@ -679,6 +681,10 @@ fn validate_policy(
             policy,
             declaration.context("cp_async_control requires imported LLVM declaration")?,
         )?,
+        "cp_async_mbarrier" => validate_cp_async_mbarrier_policy(
+            policy,
+            declaration.context("cp_async_mbarrier requires imported LLVM declaration")?,
+        )?,
         "mbarrier_basic" => validate_mbarrier_basic_policy(
             policy,
             declaration.context("mbarrier_basic requires imported LLVM declaration")?,
@@ -874,6 +880,16 @@ fn selection_matches_policy(
         };
         return selection.source_record == recipe.selection
             && instruction_matches
+            && selection.constraints.is_empty();
+    }
+
+    if policy.family == "cp_async_mbarrier" {
+        let Some(bridge) = &policy.cp_async_mbarrier else {
+            return false;
+        };
+        let recipe = cp_async_mbarrier_recipe(bridge.operation, bridge.state_space);
+        return selection.source_record == recipe.selection
+            && selection.asm == recipe.selection_asm
             && selection.constraints.is_empty();
     }
 
@@ -4701,6 +4717,234 @@ fn validate_cp_async_control_policy(
     Ok(())
 }
 
+struct CpAsyncMbarrierRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    llvm_argument: &'static str,
+    selection: &'static str,
+    selection_asm: &'static str,
+    modifiers: &'static [&'static str],
+    summary: &'static str,
+}
+
+fn cp_async_mbarrier_recipe(
+    operation: CpAsyncMbarrierOperation,
+    state_space: CpAsyncMbarrierStateSpace,
+) -> CpAsyncMbarrierRecipe {
+    match (operation, state_space) {
+        (CpAsyncMbarrierOperation::Arrive, CpAsyncMbarrierStateSpace::Generic) => {
+            CpAsyncMbarrierRecipe {
+                id: "cp_async_mbarrier_arrive",
+                abi_id: "i0101",
+                operation_key: "memory.copy.async.mbarrier.arrive.generic.increment",
+                dialect_op_type: "CpAsyncMbarrierArriveOp",
+                dialect_op_name: "nvvm.cp_async_mbarrier_arrive",
+                source_record: "int_nvvm_cp_async_mbarrier_arrive",
+                llvm_symbol: "llvm.nvvm.cp.async.mbarrier.arrive",
+                llvm_argument: "ptr",
+                selection: "CP_ASYNC_MBARRIER_ARRIVE",
+                selection_asm: "cp.async.mbarrier.arrive.b64 \t[$addr];",
+                modifiers: &["async", "mbarrier", "arrive", "b64"],
+                summary: "Associates this thread's prior asynchronous copies with a shared-memory barrier using balanced pending-count accounting.",
+            }
+        }
+        (CpAsyncMbarrierOperation::ArriveNoInc, CpAsyncMbarrierStateSpace::Generic) => {
+            CpAsyncMbarrierRecipe {
+                id: "cp_async_mbarrier_arrive_noinc",
+                abi_id: "i0103",
+                operation_key: "memory.copy.async.mbarrier.arrive.generic.no_increment",
+                dialect_op_type: "CpAsyncMbarrierArriveNoIncOp",
+                dialect_op_name: "nvvm.cp_async_mbarrier_arrive_noinc",
+                source_record: "int_nvvm_cp_async_mbarrier_arrive_noinc",
+                llvm_symbol: "llvm.nvvm.cp.async.mbarrier.arrive.noinc",
+                llvm_argument: "ptr",
+                selection: "CP_ASYNC_MBARRIER_ARRIVE_NOINC",
+                selection_asm: "cp.async.mbarrier.arrive.noinc.b64 \t[$addr];",
+                modifiers: &["async", "mbarrier", "arrive", "noinc", "b64"],
+                summary: "Associates this thread's prior asynchronous copies with a shared-memory barrier without incrementing its pending count.",
+            }
+        }
+        (CpAsyncMbarrierOperation::ArriveNoInc, CpAsyncMbarrierStateSpace::Shared) => {
+            CpAsyncMbarrierRecipe {
+                id: "cp_async_mbarrier_arrive_noinc_shared",
+                abi_id: "i0104",
+                operation_key: "memory.copy.async.mbarrier.arrive.shared.no_increment",
+                dialect_op_type: "CpAsyncMbarrierArriveNoIncSharedOp",
+                dialect_op_name: "nvvm.cp_async_mbarrier_arrive_noinc_shared",
+                source_record: "int_nvvm_cp_async_mbarrier_arrive_noinc_shared",
+                llvm_symbol: "llvm.nvvm.cp.async.mbarrier.arrive.noinc.shared",
+                llvm_argument: "shared_ptr",
+                selection: "CP_ASYNC_MBARRIER_ARRIVE_NOINC_SHARED",
+                selection_asm: "cp.async.mbarrier.arrive.noinc.shared.b64 \t[$addr];",
+                modifiers: &["async", "mbarrier", "arrive", "noinc", "shared", "b64"],
+                summary: "Associates this thread's prior asynchronous copies with a shared-address barrier without incrementing its pending count.",
+            }
+        }
+        (CpAsyncMbarrierOperation::Arrive, CpAsyncMbarrierStateSpace::Shared) => {
+            CpAsyncMbarrierRecipe {
+                id: "cp_async_mbarrier_arrive_shared",
+                abi_id: "i0102",
+                operation_key: "memory.copy.async.mbarrier.arrive.shared.increment",
+                dialect_op_type: "CpAsyncMbarrierArriveSharedOp",
+                dialect_op_name: "nvvm.cp_async_mbarrier_arrive_shared",
+                source_record: "int_nvvm_cp_async_mbarrier_arrive_shared",
+                llvm_symbol: "llvm.nvvm.cp.async.mbarrier.arrive.shared",
+                llvm_argument: "shared_ptr",
+                selection: "CP_ASYNC_MBARRIER_ARRIVE_SHARED",
+                selection_asm: "cp.async.mbarrier.arrive.shared.b64 \t[$addr];",
+                modifiers: &["async", "mbarrier", "arrive", "shared", "b64"],
+                summary: "Associates this thread's prior asynchronous copies with a shared-address barrier using balanced pending-count accounting.",
+            }
+        }
+    }
+}
+
+fn validate_cp_async_mbarrier_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let bridge = policy
+        .cp_async_mbarrier
+        .as_ref()
+        .with_context(|| format!("{} has no closed cp.async mbarrier contract", policy.id))?;
+    let recipe = cp_async_mbarrier_recipe(bridge.operation, bridge.state_space);
+    ensure!(
+        bridge.adapter == CpAsyncMbarrierAdapter::PointerToVoid,
+        "{} cp.async mbarrier adapter changed",
+        policy.id
+    );
+    ensure!(
+        bridge.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} cannot claim unrecorded cp.async mbarrier runtime validation",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} cp.async mbarrier identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "async_copy"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == ["*mut u64"]
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::async_copy::{}", recipe.id)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::async_copy::{}", recipe.id)],
+        "{} is outside the closed cp.async mbarrier Rust API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == ["ptr"]
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == [recipe.llvm_argument]
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_cp_async_mbarrier",
+        "{} is outside the closed cp.async mbarrier signature and lowering recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.ptx_result == "()"
+            && policy.targets == "all",
+        "{} cp.async mbarrier effects or target floor disagree with the closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.16.18 Parallel Synchronization and Communication Instructions: cp.async.mbarrier.arrive"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-cp-async-mbarrier-arrive",
+        "{} cp.async mbarrier PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.summary == recipe.summary,
+        "{} cp.async mbarrier summary does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == ["IntrConvergent", "IntrNoCallback"],
+        "{} cp.async mbarrier properties disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "cp"
+            && policy
+                .expected_ptx
+                .modifiers
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.modifiers.iter().copied())
+            && policy.expected_ptx.operands == [OperandPattern::Address],
+        "{} expected PTX does not match its cp.async mbarrier recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.selections.len() == 1
+            && declaration.selections[0].source_record == recipe.selection
+            && declaration.selections[0].asm == recipe.selection_asm
+            && declaration.selections[0].predicates
+                == [
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70",
+                ]
+            && declaration.selections[0].constraints.is_empty(),
+        "{} imported cp.async mbarrier selection changed",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must define the reviewed typed-LLVM and inline-PTX cp.async mbarrier routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "cp_async_mbarrier")?;
+    Ok(())
+}
+
 struct MbarrierBasicRecipe {
     id: &'static str,
     abi_id: &'static str,
@@ -5330,6 +5574,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
             && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
+            && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
             && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
@@ -5997,6 +6242,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(bridge) = &policy.cp_async_mbarrier {
+        match bridge.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} cp.async mbarrier runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} cp.async mbarrier runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -6114,6 +6375,7 @@ fn resolve_record(
         packed_conversion: policy.packed_conversion.clone(),
         cp_async_copy: policy.cp_async_copy.clone(),
         cp_async_control: policy.cp_async_control.clone(),
+        cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
         mbarrier_basic: policy.mbarrier_basic.clone(),
         ldmatrix: policy
             .ldmatrix_variant
@@ -6229,6 +6491,7 @@ mod tests {
             packed_conversion: None,
             cp_async_copy: None,
             cp_async_control: None,
+            cp_async_mbarrier: None,
             mbarrier_basic: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
@@ -6381,6 +6644,30 @@ mod tests {
             .intrinsics
             .into_iter()
             .filter(|record| record.family == "mbarrier_basic")
+            .map(|policy| {
+                let declaration = declarations[policy.source_record.as_deref().unwrap()].clone();
+                (policy.id.clone(), (policy, declaration))
+            })
+            .collect()
+    }
+
+    fn pinned_cp_async_mbarrier_records() -> BTreeMap<String, (OverlayIntrinsic, ImportedIntrinsic)>
+    {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .into_iter()
+            .map(|record| (record.source_record.clone(), record))
+            .collect();
+
+        overlay
+            .intrinsics
+            .into_iter()
+            .filter(|record| record.family == "cp_async_mbarrier")
             .map(|policy| {
                 let declaration = declarations[policy.source_record.as_deref().unwrap()].clone();
                 (policy.id.clone(), (policy, declaration))
@@ -7181,8 +7468,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 16);
-        assert_eq!(overlay.intrinsics.len(), 100);
+        assert_eq!(overlay.shards.len(), 17);
+        assert_eq!(overlay.intrinsics.len(), 104);
         assert_eq!(
             overlay
                 .intrinsics
@@ -7238,6 +7525,14 @@ mod tests {
                 .filter(|record| record.family == "cp_async_control")
                 .count(),
             3
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "cp_async_mbarrier")
+                .count(),
+            4
         );
         assert_eq!(
             overlay
@@ -7419,6 +7714,124 @@ mod tests {
             let declaration = declarations[policy.source_record.as_deref().unwrap()];
             validate_imported_policy(policy, declaration).unwrap();
         }
+    }
+
+    #[test]
+    fn pinned_cp_async_mbarrier_records_match_the_closed_recipes() {
+        let records = pinned_cp_async_mbarrier_records();
+        assert_eq!(records.len(), 4);
+
+        for (policy, declaration) in records.values() {
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+    }
+
+    #[test]
+    fn cp_async_mbarrier_recipes_fail_closed() {
+        let records = pinned_cp_async_mbarrier_records();
+        let (arrive, declaration) = &records["cp_async_mbarrier_arrive"];
+        let reject =
+            |policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic, expected: &str| {
+                let error = validate_imported_policy(policy, declaration).unwrap_err();
+                let message = error.to_string();
+                assert!(message.contains(expected), "unexpected error: {message}");
+            };
+
+        let mut wrong_symbol = arrive.clone();
+        wrong_symbol.llvm_symbol = Some("llvm.nvvm.cp.async.mbarrier.changed".into());
+        reject(&wrong_symbol, declaration, "LLVM symbol mismatch");
+
+        let mut wrong_signature = arrive.clone();
+        wrong_signature.rust_arguments = vec!["*const u64".into()];
+        reject(
+            &wrong_signature,
+            declaration,
+            "closed cp.async mbarrier Rust API",
+        );
+
+        let mut wrong_operation = arrive.clone();
+        wrong_operation
+            .cp_async_mbarrier
+            .as_mut()
+            .unwrap()
+            .operation = CpAsyncMbarrierOperation::ArriveNoInc;
+        reject(&wrong_operation, declaration, "identity does not match");
+
+        let mut wrong_state_space = arrive.clone();
+        wrong_state_space
+            .cp_async_mbarrier
+            .as_mut()
+            .unwrap()
+            .state_space = CpAsyncMbarrierStateSpace::Shared;
+        reject(&wrong_state_space, declaration, "identity does not match");
+
+        let mut wrong_adapter = arrive.clone();
+        wrong_adapter.cp_async_mbarrier.as_mut().unwrap().adapter =
+            CpAsyncMbarrierAdapter::PointerToVoid;
+        wrong_adapter.rust_result = "u64".into();
+        reject(
+            &wrong_adapter,
+            declaration,
+            "closed cp.async mbarrier Rust API",
+        );
+
+        let mut executed_without_evidence = arrive.clone();
+        executed_without_evidence
+            .cp_async_mbarrier
+            .as_mut()
+            .unwrap()
+            .runtime_validation = RuntimeValidation::Executed;
+        reject(
+            &executed_without_evidence,
+            declaration,
+            "unrecorded cp.async mbarrier runtime validation",
+        );
+
+        let mut wrong_properties = declaration.clone();
+        wrong_properties.properties.pop();
+        reject(arrive, &wrong_properties, "cp.async mbarrier properties");
+
+        let mut wrong_selection = declaration.clone();
+        wrong_selection.selections[0].source_record = "CP_ASYNC_MBARRIER_CHANGED".into();
+        reject(
+            arrive,
+            &wrong_selection,
+            "imported cp.async mbarrier selection changed",
+        );
+
+        let mut wrong_floor = arrive.clone();
+        wrong_floor.minimum_sm = Some("sm_90".into());
+        reject(&wrong_floor, declaration, "effects or target floor");
+
+        let mut wrong_llvm_route = arrive.clone();
+        wrong_llvm_route
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+            .unwrap()
+            .mechanism = BackendLoweringMechanism::InlinePtx;
+        reject(&wrong_llvm_route, declaration, "reviewed typed-LLVM");
+
+        let mut wrong_lib_route = arrive.clone();
+        wrong_lib_route
+            .backend_lowerings
+            .iter_mut()
+            .find(|lowering| lowering.backend == IntrinsicBackend::LibNvvm)
+            .unwrap()
+            .mechanism = BackendLoweringMechanism::TypedNvvm;
+        reject(&wrong_lib_route, declaration, "reviewed typed-LLVM");
+
+        let mut mixed_family = arrive.clone();
+        mixed_family.cp_async_control = Some(crate::model::CpAsyncControl {
+            operation: CpAsyncControlOperation::CommitGroup,
+            adapter: CpAsyncControlAdapter::NoOperands,
+            runtime_validation: RuntimeValidation::Unexecuted,
+        });
+        reject(
+            &mixed_family,
+            declaration,
+            "mixes another generated-family contract",
+        );
     }
 
     #[test]

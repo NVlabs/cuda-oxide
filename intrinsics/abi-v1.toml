@@ -707,3 +707,31 @@ status = "active"
 catalog_id = "mbarrier_inval"
 operation_key = "barrier.mbarrier.inval.shared.cta"
 raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0101"
+status = "active"
+catalog_id = "cp_async_mbarrier_arrive"
+operation_key = "memory.copy.async.mbarrier.arrive.generic.increment"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0102"
+status = "active"
+catalog_id = "cp_async_mbarrier_arrive_shared"
+operation_key = "memory.copy.async.mbarrier.arrive.shared.increment"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0103"
+status = "active"
+catalog_id = "cp_async_mbarrier_arrive_noinc"
+operation_key = "memory.copy.async.mbarrier.arrive.generic.no_increment"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0104"
+status = "active"
+catalog_id = "cp_async_mbarrier_arrive_noinc_shared"
+operation_key = "memory.copy.async.mbarrier.arrive.shared.no_increment"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }

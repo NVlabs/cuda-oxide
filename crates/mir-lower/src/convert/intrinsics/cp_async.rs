@@ -5,7 +5,9 @@
 
 //! Lower generated classic `cp.async` operations through the selected backend.
 
-use crate::convert::intrinsics::common::{call_intrinsic, inline_asm_sideeffect};
+use crate::convert::intrinsics::common::{
+    call_intrinsic, inline_asm_convergent, inline_asm_sideeffect,
+};
 use crate::{IntrinsicBackend, context};
 use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::{ops as llvm, types as llvm_types};
@@ -89,6 +91,85 @@ pub(crate) fn convert_generated_cp_async_control(
         }
         IntrinsicBackend::LibNvvm => {
             lower_control_with_inline_ptx(ctx, rewriter, operands, operation);
+        }
+    }
+
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Lower one generated bridge from this thread's classic copies to an mbarrier.
+pub(crate) fn convert_generated_cp_async_mbarrier(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operation: &str,
+    state_space: &str,
+    typed_intrinsic_name: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 || op.deref(ctx).get_num_results() != 0 {
+        return pliron::input_err_noloc!(
+            "cp.async mbarrier bridge requires one operand and no results"
+        );
+    }
+
+    let (template, output_address_space) = match (operation, state_space) {
+        ("arrive", "generic") => (
+            "cp.async.mbarrier.arrive.b64 [$0];",
+            llvm_types::address_space::GENERIC,
+        ),
+        ("arrive", "shared") => (
+            "cp.async.mbarrier.arrive.shared.b64 [$0];",
+            llvm_types::address_space::SHARED,
+        ),
+        ("arrive_no_inc", "generic") => (
+            "cp.async.mbarrier.arrive.noinc.b64 [$0];",
+            llvm_types::address_space::GENERIC,
+        ),
+        ("arrive_no_inc", "shared") => (
+            "cp.async.mbarrier.arrive.noinc.shared.b64 [$0];",
+            llvm_types::address_space::SHARED,
+        ),
+        _ => {
+            return pliron::input_err_noloc!(
+                "unsupported cp.async mbarrier bridge `{operation}` in `{state_space}` space"
+            );
+        }
+    };
+    let barrier = normalize_copy_pointer(
+        ctx,
+        rewriter,
+        operands[0],
+        llvm_types::address_space::SHARED,
+        output_address_space,
+        "mbarrier address",
+    )?;
+    let void_ty = llvm_types::VoidType::get(ctx);
+
+    match context::lowering_options(ctx).intrinsic_backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let pointer_ty = llvm_types::PointerType::get(ctx, output_address_space);
+            let function_ty =
+                llvm_types::FuncType::get(ctx, void_ty.into(), vec![pointer_ty.into()], false);
+            call_intrinsic(
+                ctx,
+                rewriter,
+                op,
+                typed_intrinsic_name,
+                function_ty,
+                vec![barrier],
+            )?;
+        }
+        IntrinsicBackend::LibNvvm => {
+            inline_asm_convergent(
+                ctx,
+                rewriter,
+                void_ty.into(),
+                vec![barrier],
+                template,
+                "l,~{memory}",
+            );
         }
     }
 
