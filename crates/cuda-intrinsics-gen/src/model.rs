@@ -424,6 +424,7 @@ pub enum RegisterMmaShape {
     M16n8k8,
     M16n8k16,
     M16n8k32,
+    M16n8k64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

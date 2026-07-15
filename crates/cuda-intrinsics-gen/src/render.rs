@@ -1034,6 +1034,7 @@ fn register_mma_attr_variants(
         RegisterMmaShape::M16n8k8 => "RegisterMmaShapeAttr::M16n8k8",
         RegisterMmaShape::M16n8k16 => "RegisterMmaShapeAttr::M16n8k16",
         RegisterMmaShape::M16n8k32 => "RegisterMmaShapeAttr::M16n8k32",
+        RegisterMmaShape::M16n8k64 => "RegisterMmaShapeAttr::M16n8k64",
     };
     let accumulator = match mma.accumulator {
         RegisterMmaAccumulator::F32 => "RegisterMmaAccumulatorAttr::F32",
@@ -3187,7 +3188,7 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 #[pliron_attr(name = "nvvm.register_mma_shape", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum RegisterMmaShapeAttr { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32 }
+pub enum RegisterMmaShapeAttr { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32, M16n8k64 }
 
 #[pliron_attr(name = "nvvm.register_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -5484,6 +5485,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             RegisterMmaShape::M16n8k8 => "GeneratedRegisterMmaShape::M16n8k8",
             RegisterMmaShape::M16n8k16 => "GeneratedRegisterMmaShape::M16n8k16",
             RegisterMmaShape::M16n8k32 => "GeneratedRegisterMmaShape::M16n8k32",
+            RegisterMmaShape::M16n8k64 => "GeneratedRegisterMmaShape::M16n8k64",
         };
         let accumulator = match mma.accumulator {
             RegisterMmaAccumulator::F32 => "GeneratedRegisterMmaAccumulator::F32",
@@ -5577,8 +5579,8 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     );
     replace_exact_render_fragment(
         &mut output,
-        "GeneratedRegisterMmaShape { M8n8k4, M16n8k8",
-        "GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8",
+        "GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }",
+        "GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32, M16n8k64 }",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -5625,6 +5627,11 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         &mut output,
         "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8",
         "GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16),\n                GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32),\n                GeneratedRegisterMmaShape::M16n8k8",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };",
+        "GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n                GeneratedRegisterMmaShape::M16n8k64 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k64),\n            };",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -7816,8 +7823,9 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
+        assert_eq!(catalog.intrinsics.len(), 156);
         let records: Vec<_> = register_mmas(&catalog).collect();
-        assert_eq!(records.len(), 36);
+        assert_eq!(records.len(), 52);
         let generated_records = records
             .iter()
             .copied()
@@ -7834,7 +7842,7 @@ mod tests {
                     == RegisterMmaCompatibilitySource::ExistingStub
             })
             .collect::<Vec<_>>();
-        assert_eq!(generated_records.len(), 31);
+        assert_eq!(generated_records.len(), 47);
         assert_eq!(existing_records.len(), 5);
 
         let raw = render_raw_abi(&catalog, "test-hash");
@@ -7846,7 +7854,7 @@ mod tests {
         assert!(raw.contains("Signed accumulator overflow clamps"));
 
         let compatibility = render_compat_register_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 31);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 47);
         for record in generated_records {
             let arguments = ["c", "a", "b"]
                 .into_iter()
@@ -7870,6 +7878,7 @@ mod tests {
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k16"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k32"));
         assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k32"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k64"));
         assert!(dialect.contains("RegisterMmaElementAttr::S4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U4"));
         assert!(dialect.contains("RegisterMmaElementAttr::U8"));
@@ -7912,12 +7921,22 @@ mod tests {
         assert!(lowering.contains("mma.sync.aligned.m16n8k16.row.col.s32.s8.u8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u8.s8.s32"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.s32.s4.u4.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u4.s4.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k64.row.col.s32.s4.u4.s32"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.s4.s32"));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 4, 7, "mma.sync.aligned.m16n8k32.row.col.s32.s4.u4.s32 {$0, $1, $2, $3}, {$8, $9}, {$10}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r")"#
+        ));
+        assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::I32, 4, 10, "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.s4.s32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r")"#
+        ));
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
         assert!(targets.contains("GeneratedRegisterMmaShape::M8n8k4"));
         assert!(targets.contains(
-            "pub enum GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32 }"
+            "pub enum GeneratedRegisterMmaShape { M8n8k4, M8n8k16, M8n8k32, M16n8k8, M16n8k16, M16n8k32, M16n8k64 }"
         ));
         assert!(targets.contains(
             "GeneratedRegisterMmaShape::M8n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k16)"
@@ -7926,6 +7945,9 @@ mod tests {
             "GeneratedRegisterMmaShape::M8n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k32)"
         ));
         assert!(targets.contains("GeneratedRegisterMmaShape::M16n8k32"));
+        assert!(targets.contains(
+            "GeneratedRegisterMmaShape::M16n8k64 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k64)"
+        ));
         assert!(targets.contains("GeneratedRegisterMmaElement::S4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U4"));
         assert!(targets.contains("GeneratedRegisterMmaElement::U8"));

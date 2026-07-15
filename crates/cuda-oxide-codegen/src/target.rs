@@ -228,6 +228,32 @@ fn contains_mma_m8n8k32_int4_features(contents: &str) -> bool {
         .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
 }
 
+/// Checks the dense Ampere INT4 MMA forms (PTX 7.0, sm_80+).
+fn contains_dense_int4_mma_features(contents: &str) -> bool {
+    const MNEMONICS: &[&str] = &[
+        "mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.s32.s4.u4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.s32.u4.s4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.s32.u4.u4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s4.s4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s4.u4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u4.s4.s32",
+        "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.u4.u4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.s32.s4.u4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.s32.u4.s4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.s32.u4.u4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.s4.s4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.s4.u4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.s4.s32",
+        "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.u4.s32",
+    ];
+
+    MNEMONICS
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
 /// Checks for the Ampere FP64 tensor-core MMA operation (PTX 7.0, sm_80+).
 fn contains_mma_m8n8k4_f64_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64")
@@ -336,6 +362,7 @@ fn contains_sm80_features(contents: &str) -> bool {
         || contains_mma_m16n8k16_f32_f16_features(contents)
         || contains_mma_m16n8k8_f32_tf32_features(contents)
         || contains_dense_int8_mma_features(contents)
+        || contains_dense_int4_mma_features(contents)
 }
 
 /// Checks for TMA/mbarrier instructions (Hopper+ compatible with Blackwell).
@@ -827,6 +854,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_mma_m16n8k16_f32_f16_features(contents)
         || contains_mma_m16n8k8_f32_tf32_features(contents)
         || contains_dense_int8_mma_features(contents)
+        || contains_dense_int4_mma_features(contents)
         || contains_mma_m8n8k4_f64_features(contents)
     {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx70);
@@ -2141,6 +2169,153 @@ mod tests {
                 ptx_isa: PtxIsaRequirement::Ptx78,
             }
         );
+    }
+
+    #[test]
+    fn dense_int4_mma_detection_applies_exact_sm80_and_ptx70_floors() {
+        let mut forms = 0;
+        for shape in ["m16n8k32", "m16n8k64"] {
+            for a_type in ["s4", "u4"] {
+                for b_type in ["s4", "u4"] {
+                    for satfinite in [false, true] {
+                        let overflow = if satfinite { ".satfinite" } else { "" };
+                        let spelling = format!(
+                            "mma.sync.aligned.{shape}.row.col{overflow}.s32.{a_type}.{b_type}.s32 {{$0}}, {{$1}}, {{$2}}, {{$3}};"
+                        );
+                        assert!(
+                            contains_dense_int4_mma_features(&spelling),
+                            "missed {spelling:?}"
+                        );
+                        assert!(
+                            !contains_mma_m8n8k32_int4_features(&spelling),
+                            "m16 form entered the m8 INT4 detector: {spelling:?}"
+                        );
+                        assert!(
+                            !contains_dense_int8_mma_features(&spelling),
+                            "INT4 form entered the dense INT8 detector: {spelling:?}"
+                        );
+                        assert_eq!(
+                            detect_module_requirements_in_llvm_text(&spelling),
+                            ModuleRequirements {
+                                features: DetectedFeatures::Sm80,
+                                ptx_isa: PtxIsaRequirement::Ptx70,
+                            },
+                            "{spelling}"
+                        );
+                        forms += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(forms, 16);
+
+        for spelling in [
+            "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s4.u4.s32\t{$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.s32.u4.s4.s32\\09{$0}, {$1}, {$2}, {$3};",
+            ";mma.sync.aligned.m16n8k32.row.col.s32.u4.u4.s32 {$0}, {$1}, {$2}, {$3};",
+            "prefix\\0Amma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.u4.s32 {$0}, {$1}, {$2}, {$3};",
+            "@p mma.sync.aligned.m16n8k32.row.col.s32.s4.u4.s32 {$0}, {$1}, {$2}, {$3};",
+            "@!%p\\09mma.sync.aligned.m16n8k64.row.col.satfinite.s32.u4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                contains_dense_int4_mma_features(spelling),
+                "missed {spelling:?}"
+            );
+        }
+
+        let representative = concat!(
+            "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.s4.u4.s32 ",
+            "{$0, $1, $2, $3}, {$4, $5, $6, $7}, {$8, $9}, {$10, $11, $12, $13};"
+        );
+        let requirements = detect_module_requirements_in_llvm_text(representative);
+        assert_eq!(
+            requirements,
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+        assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+        assert_eq!(
+            required_ptx_feature("sm_75", requirements.ptx_isa),
+            Some("+ptx70")
+        );
+        assert_eq!(required_ptx_feature("sm_80", requirements.ptx_isa), None);
+
+        let sm_75: CudaArch = "sm_75".parse().unwrap();
+        let sm_80: CudaArch = "sm_80".parse().unwrap();
+        assert!(validate_target_features(&sm_75, requirements.features).is_err());
+        assert!(validate_target_features(&sm_80, requirements.features).is_ok());
+        let error = resolve_ptx_target(Some("sm_75"), None, requirements.features)
+            .expect_err("sm_75 must not accept dense m16 INT4 MMA")
+            .to_string();
+        assert!(
+            error.contains("cannot lower detected feature Sm80"),
+            "{error}"
+        );
+
+        for target in [
+            "sm_80", "sm_86", "sm_89", "sm_90", "sm_90a", "sm_100", "sm_100a", "sm_120", "sm_120a",
+        ] {
+            assert!(
+                arch_satisfies(target, requirements.features),
+                "rejected {target}"
+            );
+        }
+
+        let m8_int4 = concat!(
+            "mma.sync.aligned.m8n8k32.row.col.s32.s4.u4.s32 ",
+            "{$0, $1}, {$4}, {$5}, {$2, $3};"
+        );
+        let mixed = format!("{representative}\n{m8_int4}");
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&mixed),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
+                ptx_isa: PtxIsaRequirement::Ptx70,
+            }
+        );
+
+        let newer_ptx = format!("{representative}\nmovmatrix.sync.aligned.m8n8.trans.b16 $0, $1;");
+        assert_eq!(
+            detect_module_requirements_in_llvm_text(&newer_ptx),
+            ModuleRequirements {
+                features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
+                ptx_isa: PtxIsaRequirement::Ptx78,
+            }
+        );
+    }
+
+    #[test]
+    fn dense_int4_mma_detection_rejects_other_mma_families_and_near_misses() {
+        for near_miss in [
+            "mma.sync.aligned.m8n8k32.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k16.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k128.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.s32.b1.b1.s32.xor.popc {$0}, {$1}, {$2}, {$3};",
+            "mma.sp.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "wmma.mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.col.row.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.row.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32.satfinite {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.s32.satfinite.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.satfiniteX.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.satfinite.s32.s4.s4.u32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k32.row.col.s32.s4.u8.s32 {$0}, {$1}, {$2}, {$3};",
+            "mma.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32x {$0}, {$1}, {$2}, {$3};",
+            "not_mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "$mma.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "%mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "@mma.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            "!mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+            ")mma.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32 {$0}, {$1}, {$2}, {$3};",
+        ] {
+            assert!(
+                !contains_dense_int4_mma_features(near_miss),
+                "matched {near_miss:?}"
+            );
+        }
     }
 
     #[test]

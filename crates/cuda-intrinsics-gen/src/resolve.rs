@@ -41,9 +41,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 21;
-const OVERLAY_SHARD_SCHEMA: u32 = 17;
-pub(crate) const CATALOG_SCHEMA: u32 = 20;
+const OVERLAY_SCHEMA: u32 = 22;
+const OVERLAY_SHARD_SCHEMA: u32 = 18;
+pub(crate) const CATALOG_SCHEMA: u32 = 21;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -5576,7 +5576,7 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
     use RegisterMmaCompatibilitySource::{ExistingStub, GeneratedStub};
     use RegisterMmaElement::{S4, S8, U4, U8};
     use RegisterMmaOverflow::{Satfinite, Wrapping};
-    use RegisterMmaShape::{M8n8k16, M8n8k32, M16n8k16, M16n8k32};
+    use RegisterMmaShape::{M8n8k16, M8n8k32, M16n8k16, M16n8k32, M16n8k64};
 
     if !common || mma.accumulator != RegisterMmaAccumulator::S32 {
         return None;
@@ -5840,12 +5840,141 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
                 "llvm.nvvm.mma.m8n8k32.row.col.satfinite.u4.s4",
                 GeneratedStub,
             ),
+            (M16n8k32, S4, S4, Wrapping) => (
+                "mma_m16n8k32_s32_s4",
+                "i0141",
+                "matrix.mma.m16n8k32.row.col.s32.s4.s4.s32.wrapping",
+                "int_nvvm_mma_m16n8k32_row_col_s4",
+                "llvm.nvvm.mma.m16n8k32.row.col.s4",
+                GeneratedStub,
+            ),
+            (M16n8k32, S4, U4, Wrapping) => (
+                "mma_m16n8k32_s32_s4_u4",
+                "i0142",
+                "matrix.mma.m16n8k32.row.col.s32.s4.u4.s32.wrapping",
+                "int_nvvm_mma_m16n8k32_row_col_s4_u4",
+                "llvm.nvvm.mma.m16n8k32.row.col.s4.u4",
+                GeneratedStub,
+            ),
+            (M16n8k32, U4, U4, Wrapping) => (
+                "mma_m16n8k32_s32_u4",
+                "i0143",
+                "matrix.mma.m16n8k32.row.col.s32.u4.u4.s32.wrapping",
+                "int_nvvm_mma_m16n8k32_row_col_u4",
+                "llvm.nvvm.mma.m16n8k32.row.col.u4",
+                GeneratedStub,
+            ),
+            (M16n8k32, U4, S4, Wrapping) => (
+                "mma_m16n8k32_s32_u4_s4",
+                "i0144",
+                "matrix.mma.m16n8k32.row.col.s32.u4.s4.s32.wrapping",
+                "int_nvvm_mma_m16n8k32_row_col_u4_s4",
+                "llvm.nvvm.mma.m16n8k32.row.col.u4.s4",
+                GeneratedStub,
+            ),
+            (M16n8k64, S4, S4, Wrapping) => (
+                "mma_m16n8k64_s32_s4",
+                "i0145",
+                "matrix.mma.m16n8k64.row.col.s32.s4.s4.s32.wrapping",
+                "int_nvvm_mma_m16n8k64_row_col_s4",
+                "llvm.nvvm.mma.m16n8k64.row.col.s4",
+                GeneratedStub,
+            ),
+            (M16n8k64, S4, U4, Wrapping) => (
+                "mma_m16n8k64_s32_s4_u4",
+                "i0146",
+                "matrix.mma.m16n8k64.row.col.s32.s4.u4.s32.wrapping",
+                "int_nvvm_mma_m16n8k64_row_col_s4_u4",
+                "llvm.nvvm.mma.m16n8k64.row.col.s4.u4",
+                GeneratedStub,
+            ),
+            (M16n8k64, U4, U4, Wrapping) => (
+                "mma_m16n8k64_s32_u4",
+                "i0147",
+                "matrix.mma.m16n8k64.row.col.s32.u4.u4.s32.wrapping",
+                "int_nvvm_mma_m16n8k64_row_col_u4",
+                "llvm.nvvm.mma.m16n8k64.row.col.u4",
+                GeneratedStub,
+            ),
+            (M16n8k64, U4, S4, Wrapping) => (
+                "mma_m16n8k64_s32_u4_s4",
+                "i0148",
+                "matrix.mma.m16n8k64.row.col.s32.u4.s4.s32.wrapping",
+                "int_nvvm_mma_m16n8k64_row_col_u4_s4",
+                "llvm.nvvm.mma.m16n8k64.row.col.u4.s4",
+                GeneratedStub,
+            ),
+            (M16n8k32, S4, S4, Satfinite) => (
+                "mma_m16n8k32_s32_s4_satfinite",
+                "i0149",
+                "matrix.mma.m16n8k32.row.col.s32.s4.s4.s32.satfinite",
+                "int_nvvm_mma_m16n8k32_row_col_satfinite_s4",
+                "llvm.nvvm.mma.m16n8k32.row.col.satfinite.s4",
+                GeneratedStub,
+            ),
+            (M16n8k32, S4, U4, Satfinite) => (
+                "mma_m16n8k32_s32_s4_u4_satfinite",
+                "i0150",
+                "matrix.mma.m16n8k32.row.col.s32.s4.u4.s32.satfinite",
+                "int_nvvm_mma_m16n8k32_row_col_satfinite_s4_u4",
+                "llvm.nvvm.mma.m16n8k32.row.col.satfinite.s4.u4",
+                GeneratedStub,
+            ),
+            (M16n8k32, U4, U4, Satfinite) => (
+                "mma_m16n8k32_s32_u4_satfinite",
+                "i0151",
+                "matrix.mma.m16n8k32.row.col.s32.u4.u4.s32.satfinite",
+                "int_nvvm_mma_m16n8k32_row_col_satfinite_u4",
+                "llvm.nvvm.mma.m16n8k32.row.col.satfinite.u4",
+                GeneratedStub,
+            ),
+            (M16n8k32, U4, S4, Satfinite) => (
+                "mma_m16n8k32_s32_u4_s4_satfinite",
+                "i0152",
+                "matrix.mma.m16n8k32.row.col.s32.u4.s4.s32.satfinite",
+                "int_nvvm_mma_m16n8k32_row_col_satfinite_u4_s4",
+                "llvm.nvvm.mma.m16n8k32.row.col.satfinite.u4.s4",
+                GeneratedStub,
+            ),
+            (M16n8k64, S4, S4, Satfinite) => (
+                "mma_m16n8k64_s32_s4_satfinite",
+                "i0153",
+                "matrix.mma.m16n8k64.row.col.s32.s4.s4.s32.satfinite",
+                "int_nvvm_mma_m16n8k64_row_col_satfinite_s4",
+                "llvm.nvvm.mma.m16n8k64.row.col.satfinite.s4",
+                GeneratedStub,
+            ),
+            (M16n8k64, S4, U4, Satfinite) => (
+                "mma_m16n8k64_s32_s4_u4_satfinite",
+                "i0154",
+                "matrix.mma.m16n8k64.row.col.s32.s4.u4.s32.satfinite",
+                "int_nvvm_mma_m16n8k64_row_col_satfinite_s4_u4",
+                "llvm.nvvm.mma.m16n8k64.row.col.satfinite.s4.u4",
+                GeneratedStub,
+            ),
+            (M16n8k64, U4, U4, Satfinite) => (
+                "mma_m16n8k64_s32_u4_satfinite",
+                "i0155",
+                "matrix.mma.m16n8k64.row.col.s32.u4.u4.s32.satfinite",
+                "int_nvvm_mma_m16n8k64_row_col_satfinite_u4",
+                "llvm.nvvm.mma.m16n8k64.row.col.satfinite.u4",
+                GeneratedStub,
+            ),
+            (M16n8k64, U4, S4, Satfinite) => (
+                "mma_m16n8k64_s32_u4_s4_satfinite",
+                "i0156",
+                "matrix.mma.m16n8k64.row.col.s32.u4.s4.s32.satfinite",
+                "int_nvvm_mma_m16n8k64_row_col_satfinite_u4_s4",
+                "llvm.nvvm.mma.m16n8k64.row.col.satfinite.u4.s4",
+                GeneratedStub,
+            ),
             _ => return None,
         };
 
+    let int4 = matches!(mma.a_element, S4 | U4);
     let (rust_arguments, dialect_operands, llvm_arguments, adapter, shape, register_counts) =
-        match mma.shape {
-            M8n8k16 | M8n8k32 => (
+        match (mma.shape, int4) {
+            (M8n8k16, false) | (M8n8k32, true) => (
                 &["[i32; 2]", "u32", "u32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32"] as &'static [&'static str],
@@ -5857,15 +5986,19 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
                 },
                 [2, 1, 1, 2],
             ),
-            M16n8k16 => (
+            (M16n8k16, false) | (M16n8k32, true) => (
                 &["[i32; 4]", "[u32; 2]", "u32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32", "i32", "i32", "i32"] as &'static [&'static str],
                 &["i32", "i32", "i32", "i32", "i32", "i32", "i32"] as &'static [&'static str],
                 C4I32A2U32B1U32ToD4I32,
-                "m16n8k16",
+                match mma.shape {
+                    M16n8k16 => "m16n8k16",
+                    M16n8k32 => "m16n8k32",
+                    _ => unreachable!(),
+                },
                 [4, 2, 1, 4],
             ),
-            M16n8k32 => (
+            (M16n8k32, false) | (M16n8k64, true) => (
                 &["[i32; 4]", "[u32; 4]", "[u32; 2]"] as &'static [&'static str],
                 &[
                     "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32",
@@ -5874,7 +6007,11 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
                     "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32",
                 ] as &'static [&'static str],
                 C4I32A4U32B2U32ToD4I32,
-                "m16n8k32",
+                match mma.shape {
+                    M16n8k32 => "m16n8k32",
+                    M16n8k64 => "m16n8k64",
+                    _ => unreachable!(),
+                },
                 [4, 4, 2, 4],
             ),
             _ => return None,
@@ -5891,7 +6028,7 @@ fn integer_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Regist
             "6.5",
             "sm_75",
         ),
-        M16n8k16 | M16n8k32 => (
+        M16n8k16 | M16n8k32 | M16n8k64 => (
             "[i32; 4]",
             &["i32", "i32", "i32", "i32"] as &'static [&'static str],
             &["i32", "i32", "i32", "i32"] as &'static [&'static str],
@@ -6121,8 +6258,12 @@ impl RegisterMmaIntegerKind {
     fn supports(self, shape: RegisterMmaShape, element: RegisterMmaElement) -> bool {
         match self {
             Self::Int4 => {
-                shape == RegisterMmaShape::M8n8k32
-                    && matches!(element, RegisterMmaElement::S4 | RegisterMmaElement::U4)
+                matches!(
+                    shape,
+                    RegisterMmaShape::M8n8k32
+                        | RegisterMmaShape::M16n8k32
+                        | RegisterMmaShape::M16n8k64
+                ) && matches!(element, RegisterMmaElement::S4 | RegisterMmaElement::U4)
             }
             Self::Int8 => {
                 matches!(
@@ -6146,7 +6287,7 @@ fn expand_register_mma_integer_admission(
     use RegisterMmaCompatibilitySource::GeneratedStub;
     use RegisterMmaLayout::{Col, Row};
     use RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes;
-    use RegisterMmaShape::{M8n8k16, M8n8k32, M16n8k16, M16n8k32};
+    use RegisterMmaShape::{M8n8k16, M8n8k32, M16n8k16, M16n8k32, M16n8k64};
 
     ensure!(
         !admission.variants.is_empty(),
@@ -6178,15 +6319,19 @@ fn expand_register_mma_integer_admission(
             "compact {} MMA admission contains an unsupported shape or element",
             kind.label()
         );
-        let adapter = match variant.shape {
-            M8n8k16 | M8n8k32 => C2I32A1U32B1U32ToD2I32,
-            M16n8k16 => C4I32A2U32B1U32ToD4I32,
-            M16n8k32 => C4I32A4U32B2U32ToD4I32,
-            _ => bail!(
-                "compact {} MMA admission contains an unsupported shape",
-                kind.label()
-            ),
-        };
+        let adapter =
+            match (kind, variant.shape) {
+                (RegisterMmaIntegerKind::Int8, M8n8k16)
+                | (RegisterMmaIntegerKind::Int4, M8n8k32) => C2I32A1U32B1U32ToD2I32,
+                (RegisterMmaIntegerKind::Int8, M16n8k16)
+                | (RegisterMmaIntegerKind::Int4, M16n8k32) => C4I32A2U32B1U32ToD4I32,
+                (RegisterMmaIntegerKind::Int8, M16n8k32)
+                | (RegisterMmaIntegerKind::Int4, M16n8k64) => C4I32A4U32B2U32ToD4I32,
+                _ => bail!(
+                    "compact {} MMA admission contains an unsupported shape",
+                    kind.label()
+                ),
+            };
         let mma = RegisterMma {
             shape: variant.shape,
             accumulator: RegisterMmaAccumulator::S32,
@@ -8426,8 +8571,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 21);
-        assert_eq!(overlay.intrinsics.len(), 140);
+        assert_eq!(overlay.shards.len(), 22);
+        assert_eq!(overlay.intrinsics.len(), 156);
         assert_eq!(
             overlay
                 .intrinsics
@@ -8474,7 +8619,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "register_mma")
                 .count(),
-            36
+            52
         );
         assert_eq!(
             overlay
@@ -8578,7 +8723,7 @@ mod tests {
             .iter()
             .filter(|record| record.family == "register_mma")
             .collect();
-        assert_eq!(records.len(), 36);
+        assert_eq!(records.len(), 52);
 
         let integer_records: Vec<_> = records
             .iter()
@@ -8590,7 +8735,7 @@ mod tests {
                     .is_some_and(|mma| mma.accumulator == RegisterMmaAccumulator::S32)
             })
             .collect();
-        assert_eq!(integer_records.len(), 32);
+        assert_eq!(integer_records.len(), 48);
         let int8_records = integer_records
             .iter()
             .copied()
@@ -8620,7 +8765,7 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        assert_eq!(int4_records.len(), 8);
+        assert_eq!(int4_records.len(), 24);
         let actual_variants = integer_records
             .iter()
             .map(|record| {
@@ -8651,25 +8796,29 @@ mod tests {
                 })
         })
         .collect::<BTreeSet<_>>();
-        let expected_int4_variants = [RegisterMmaShape::M8n8k32]
-            .into_iter()
-            .flat_map(|shape| {
-                [RegisterMmaElement::S4, RegisterMmaElement::U4]
-                    .into_iter()
-                    .flat_map(move |a_element| {
-                        [RegisterMmaElement::S4, RegisterMmaElement::U4]
+        let expected_int4_variants = [
+            RegisterMmaShape::M8n8k32,
+            RegisterMmaShape::M16n8k32,
+            RegisterMmaShape::M16n8k64,
+        ]
+        .into_iter()
+        .flat_map(|shape| {
+            [RegisterMmaElement::S4, RegisterMmaElement::U4]
+                .into_iter()
+                .flat_map(move |a_element| {
+                    [RegisterMmaElement::S4, RegisterMmaElement::U4]
+                        .into_iter()
+                        .flat_map(move |b_element| {
+                            [
+                                RegisterMmaOverflow::Wrapping,
+                                RegisterMmaOverflow::Satfinite,
+                            ]
                             .into_iter()
-                            .flat_map(move |b_element| {
-                                [
-                                    RegisterMmaOverflow::Wrapping,
-                                    RegisterMmaOverflow::Satfinite,
-                                ]
-                                .into_iter()
-                                .map(move |overflow| (shape, a_element, b_element, overflow))
-                            })
-                    })
-            })
-            .collect::<BTreeSet<_>>();
+                            .map(move |overflow| (shape, a_element, b_element, overflow))
+                        })
+                })
+        })
+        .collect::<BTreeSet<_>>();
         let expected_variants = expected_int8_variants
             .union(&expected_int4_variants)
             .copied()
@@ -8683,7 +8832,7 @@ mod tests {
                         == RegisterMmaCompatibilitySource::GeneratedStub
                 })
                 .count(),
-            31
+            47
         );
 
         for record in integer_records.iter().filter(|record| {
@@ -8702,14 +8851,66 @@ mod tests {
             );
         }
 
+        for record in int4_records.iter().filter(|record| {
+            record.register_mma.as_ref().unwrap().shape == RegisterMmaShape::M16n8k32
+        }) {
+            assert_eq!(record.rust_arguments, ["[i32; 4]", "[u32; 2]", "u32"]);
+            assert_eq!(record.rust_result, "[i32; 4]");
+            assert_eq!(record.minimum_ptx, "7.0");
+            assert_eq!(record.minimum_sm.as_deref(), Some("sm_80"));
+            assert_eq!(
+                record.register_mma.as_ref().unwrap().adapter,
+                RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32
+            );
+        }
+
+        for record in int4_records.iter().filter(|record| {
+            record.register_mma.as_ref().unwrap().shape == RegisterMmaShape::M16n8k64
+        }) {
+            assert_eq!(record.rust_arguments, ["[i32; 4]", "[u32; 4]", "[u32; 2]"]);
+            assert_eq!(record.rust_result, "[i32; 4]");
+            assert_eq!(record.minimum_ptx, "7.0");
+            assert_eq!(record.minimum_sm.as_deref(), Some("sm_80"));
+            assert_eq!(
+                record.register_mma.as_ref().unwrap().adapter,
+                RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32
+            );
+        }
+
+        let actual_int4_abi_ids = int4_records
+            .iter()
+            .map(|record| record.abi_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let expected_int4_abi_ids = (133..=156)
+            .map(|id| format!("i{id:04}"))
+            .collect::<BTreeSet<_>>();
         assert_eq!(
-            int4_records
+            actual_int4_abi_ids,
+            expected_int4_abi_ids
                 .iter()
-                .map(|record| record.abi_id.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "i0133", "i0134", "i0135", "i0136", "i0137", "i0138", "i0139", "i0140"
-            ]
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+        );
+
+        let int8_k32 = int8_records
+            .iter()
+            .find(|record| {
+                record.register_mma.as_ref().unwrap().shape == RegisterMmaShape::M16n8k32
+            })
+            .unwrap();
+        let int4_k32 = int4_records
+            .iter()
+            .find(|record| {
+                record.register_mma.as_ref().unwrap().shape == RegisterMmaShape::M16n8k32
+            })
+            .unwrap();
+        assert_eq!(
+            int8_k32.register_mma.as_ref().unwrap().adapter,
+            RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32
+        );
+        assert_eq!(
+            int4_k32.register_mma.as_ref().unwrap().adapter,
+            RegisterMmaAdapter::C4I32A2U32B1U32ToD4I32
         );
 
         for policy in &records {

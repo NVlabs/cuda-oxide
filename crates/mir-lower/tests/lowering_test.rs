@@ -4830,40 +4830,101 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
         }
     }
 
-    for (a_name, a_element) in [
-        ("s4", nvvm::RegisterMmaElementAttr::S4),
-        ("u4", nvvm::RegisterMmaElementAttr::U4),
+    for (shape, shape_attr, operands, results, accumulator_count, a_count, b_count, constraints) in [
+        (
+            "m8n8k32",
+            nvvm::RegisterMmaShapeAttr::M8n8k32,
+            &[Carrier::I32, Carrier::I32, Carrier::U32, Carrier::U32] as &'static [Carrier],
+            &[Carrier::I32; 2] as &'static [Carrier],
+            2,
+            1,
+            1,
+            "=r,=r,r,r,r,r",
+        ),
+        (
+            "m16n8k32",
+            nvvm::RegisterMmaShapeAttr::M16n8k32,
+            &[
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ],
+            &[Carrier::I32; 4],
+            4,
+            2,
+            1,
+            "=r,=r,=r,=r,r,r,r,r,r,r,r",
+        ),
+        (
+            "m16n8k64",
+            nvvm::RegisterMmaShapeAttr::M16n8k64,
+            &[
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ],
+            &[Carrier::I32; 4],
+            4,
+            4,
+            2,
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r",
+        ),
     ] {
-        for (b_name, b_element) in [
+        for (a_name, a_element) in [
             ("s4", nvvm::RegisterMmaElementAttr::S4),
             ("u4", nvvm::RegisterMmaElementAttr::U4),
         ] {
-            for (overflow_name, overflow) in [
-                ("", nvvm::RegisterMmaOverflowAttr::Wrapping),
-                (".satfinite", nvvm::RegisterMmaOverflowAttr::Satfinite),
+            for (b_name, b_element) in [
+                ("s4", nvvm::RegisterMmaElementAttr::S4),
+                ("u4", nvvm::RegisterMmaElementAttr::U4),
             ] {
-                cases.push(Case {
-                    shape: nvvm::RegisterMmaShapeAttr::M8n8k32,
-                    accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
-                    a_element: a_element.clone(),
-                    b_element: b_element.clone(),
-                    overflow,
-                    operands: &[
-                        Carrier::I32,
-                        Carrier::I32,
-                        Carrier::U32,
-                        Carrier::U32,
-                    ],
-                    results: &[Carrier::I32; 2],
-                    template: format!(
-                        "mma.sync.aligned.m8n8k32.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1}}, {{$4}}, {{$5}}, {{$2, $3}};"
-                    ),
-                    constraints: "=r,=r,r,r,r,r",
-                });
+                for (overflow_name, overflow) in [
+                    ("", nvvm::RegisterMmaOverflowAttr::Wrapping),
+                    (".satfinite", nvvm::RegisterMmaOverflowAttr::Satfinite),
+                ] {
+                    let register_list = |first, count| {
+                        format!(
+                            "{{{}}}",
+                            (first..first + count)
+                                .map(|index| format!("${index}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    };
+                    let result_count = results.len();
+                    let d = register_list(0, result_count);
+                    let c = register_list(result_count, accumulator_count);
+                    let a = register_list(result_count + accumulator_count, a_count);
+                    let b = register_list(result_count + accumulator_count + a_count, b_count);
+                    cases.push(Case {
+                        shape: shape_attr.clone(),
+                        accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
+                        a_element: a_element.clone(),
+                        b_element: b_element.clone(),
+                        overflow,
+                        operands,
+                        results,
+                        template: format!(
+                            "mma.sync.aligned.{shape}.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {d}, {a}, {b}, {c};"
+                        ),
+                        constraints,
+                    });
+                }
             }
         }
     }
-    assert_eq!(cases.len(), 36);
+    assert_eq!(cases.len(), 52);
 
     let carrier_type = |ctx: &Context, carrier: Carrier| -> TypeHandle {
         match carrier {
