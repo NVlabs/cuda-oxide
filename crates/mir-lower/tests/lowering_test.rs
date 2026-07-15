@@ -810,8 +810,8 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let i64_ty = IntegerType::get(&mut ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     // Kernel args: [mask (i32), value (i64), lane/delta (i32)].
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i64_ty.into(), i32_ty.into()]);
@@ -1887,7 +1887,7 @@ fn test_cvt_rz_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
 
     let lo_val = entry.deref(&ctx).get_argument(0);
@@ -1913,7 +1913,7 @@ fn test_cvt_rn_relu_f16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
 
     let lo_val = entry.deref(&ctx).get_argument(0);
@@ -1939,7 +1939,7 @@ fn test_cvt_rn_relu_bf16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Erro
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
 
     let lo_val = entry.deref(&ctx).get_argument(0);
@@ -1965,7 +1965,7 @@ fn test_cvt_rz_bf16x2_f32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     let mut ctx = make_test_ctx();
     let f32_ty = FP32Type::get(&ctx);
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
 
     let lo_val = entry.deref(&ctx).get_argument(0);
@@ -2294,7 +2294,7 @@ fn test_dp4a_s32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
 
@@ -2321,7 +2321,7 @@ fn test_dp4a_u32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
 
@@ -2348,7 +2348,7 @@ fn test_dp2a_s32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
 
@@ -2375,7 +2375,7 @@ fn test_dp2a_u32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
 
