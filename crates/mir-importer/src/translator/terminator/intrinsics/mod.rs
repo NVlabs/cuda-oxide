@@ -38,7 +38,6 @@
 // Submodules for intrinsic categories (to be populated incrementally)
 pub mod asm;
 pub mod atomic;
-pub mod bf16x2;
 pub mod bigint;
 pub mod bitops;
 pub mod clc;

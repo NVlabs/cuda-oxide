@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for synchronized warp matching.
 
-schema = 7
+schema = 8
 family = "warp_match"
 
 [[intrinsic]]

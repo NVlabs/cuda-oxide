@@ -8,9 +8,11 @@ use crate::model::{
     CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, DotProductAdapter,
     DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind,
     ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter,
-    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
-    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAluAdapter, PackedAluFormat,
+    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
+    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSourceFormat,
+    ReduxAdapter, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode,
+    WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,6 +48,14 @@ pub fn all_outputs(
         render_compat_dotprod(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/cuda-device/src/generated/bf16x2.rs".into(),
+        render_compat_packed_alu(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/tcgen05_conversion.rs".into(),
+        render_compat_packed_conversion(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/mod.rs".into(),
         render_dialect_mod(catalog, catalog_sha256),
     );
@@ -64,6 +74,14 @@ pub fn all_outputs(
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/packed_atomic.rs".into(),
         render_dialect_packed_atomic(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/packed_alu.rs".into(),
+        render_dialect_packed_alu(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/packed_conversion.rs".into(),
+        render_dialect_packed_conversion(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/redux.rs".into(),
@@ -206,6 +224,44 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_dotprod"
                     && record.dot_product.is_some(),
                 "{} is outside the closed generated dot-product recipe",
+                record.id
+            ),
+            "packed_alu" => ensure!(
+                record.rust.module == "bf16x2"
+                    && (1..=3).contains(&record.rust.arguments.len())
+                    && record.rust.arguments.iter().all(|argument| argument == "u32")
+                    && record.rust.result == "u32"
+                    && record.rust.safe
+                    && !record.rust.must_use
+                    && record.dialect.operands.len() == record.rust.arguments.len()
+                    && record.dialect.operands.iter().all(|operand| operand == "i32")
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_packed_alu_inline_ptx"
+                    && record.packed_alu.as_ref().is_some_and(|packed| {
+                        packed.format == PackedAluFormat::Bf16x2
+                            && packed.adapter == PackedAluAdapter::DirectPackedU32
+                    }),
+                "{} is outside the closed generated packed-ALU recipe",
+                record.id
+            ),
+            "packed_conversion" => ensure!(
+                record.rust.module == "convert"
+                    && record.rust.arguments == ["f32", "f32"]
+                    && record.rust.result == "u32"
+                    && record.rust.safe
+                    && !record.rust.must_use
+                    && record.dialect.operands == ["f32", "f32"]
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_packed_conversion_inline_ptx"
+                    && record.packed_conversion.as_ref().is_some_and(|conversion| {
+                        conversion.source_format == PackedConversionSourceFormat::F32x2
+                            && conversion.destination_format
+                                == PackedConversionDestinationFormat::Bf16x2
+                            && conversion.rounding == PackedConversionRounding::NearestEven
+                            && conversion.adapter
+                                == PackedConversionAdapter::ReverseHighLowOperands
+                    }),
+                "{} is outside the closed generated packed-conversion recipe",
                 record.id
             ),
             "sync" => ensure!(
@@ -448,6 +504,20 @@ fn dot_products(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic
         .filter(|record| record.family == "dotprod")
 }
 
+fn packed_alus(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "packed_alu")
+}
+
+fn packed_conversions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "packed_conversion")
+}
+
 fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
     catalog
         .intrinsics
@@ -514,6 +584,42 @@ fn dot_product_ptx(record: &CatalogIntrinsic) -> &'static str {
             DotProductAdapter::InsertLowHalfFalse,
         ) => "dp2a.lo.u32.u32 $0, $1, $2, $3;",
         combination => panic!("unsupported generated dot-product recipe {combination:?}"),
+    }
+}
+
+fn packed_alu_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
+    let packed = record.packed_alu.as_ref().expect("packed-ALU record");
+    match (packed.format, packed.operation, packed.adapter) {
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Add, PackedAluAdapter::DirectPackedU32) => {
+            "add.rn.bf16x2"
+        }
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Sub, PackedAluAdapter::DirectPackedU32) => {
+            "sub.rn.bf16x2"
+        }
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Mul, PackedAluAdapter::DirectPackedU32) => {
+            "mul.rn.bf16x2"
+        }
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Fma, PackedAluAdapter::DirectPackedU32) => {
+            "fma.rn.bf16x2"
+        }
+        (
+            PackedAluFormat::Bf16x2,
+            PackedAluOperation::FmaRelu,
+            PackedAluAdapter::DirectPackedU32,
+        ) => "fma.rn.relu.bf16x2",
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Min, PackedAluAdapter::DirectPackedU32) => {
+            "min.bf16x2"
+        }
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Max, PackedAluAdapter::DirectPackedU32) => {
+            "max.bf16x2"
+        }
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Neg, PackedAluAdapter::DirectPackedU32) => {
+            "neg.bf16x2"
+        }
+        (PackedAluFormat::Bf16x2, PackedAluOperation::Abs, PackedAluAdapter::DirectPackedU32) => {
+            "abs.bf16x2"
+        }
+        combination => panic!("unsupported generated packed-ALU recipe {combination:?}"),
     }
 }
 
@@ -888,7 +994,82 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
             record.rust.name, record.rust.result
         )
         .unwrap();
-        writeln!(output, "    let _ = ({values});").unwrap();
+        if record.rust.arguments.len() == 1 {
+            writeln!(output, "    let _ = {values};").unwrap();
+        } else {
+            writeln!(output, "    let _ = ({values});").unwrap();
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::bf16x2` to keep existing paths stable.\n\n");
+    for record in packed_alus(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::bf16x2::"))
+            .expect("packed-ALU compatibility path");
+        let arguments = record
+            .rust
+            .arguments
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| format!("arg{index}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let values = (0..record.rust.arguments.len())
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[inline(never)]\n");
+        writeln!(output, "pub fn {}({arguments}) -> u32 {{", record.rust.name).unwrap();
+        if record.rust.arguments.len() == 1 {
+            writeln!(output, "    let _ = {values};").unwrap();
+        } else {
+            writeln!(output, "    let _ = ({values});").unwrap();
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_packed_conversion(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "// Included inside `cuda_device::tcgen05` to keep the existing path stable.\n\n",
+    );
+    for record in packed_conversions(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::tcgen05::"))
+            .expect("packed-conversion compatibility path");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub fn {}(a: f32, b: f32) -> u32 {{",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("    let _ = (a, b);\n");
         writeln!(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
@@ -902,7 +1083,7 @@ fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod dotprod;\nmod ldmatrix;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -1694,6 +1875,158 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operations for generated packed floating-point arithmetic.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+    );
+    for record in packed_alus(catalog) {
+        let arity = record.rust.arguments.len();
+        let parameters = (0..arity)
+            .map(|index| format!("arg{index}: Value"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let operands = (0..arity)
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "///\n/// Lowers to `{}`.",
+            packed_alu_ptx_mnemonic(record)
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{arity}>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, {parameters}) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![{operands}],\n            vec![],\n            0,\n        )\n    }}\n}}"
+        )
+        .unwrap();
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != {arity} || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !(0..{arity}).all(|index| is_i32(ctx, op.get_operand(index).get_type(ctx)))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!(
+                "{} requires exactly {arity} operands and one result",
+                record.dialect.op_name
+            ),
+            format!(
+                "{} operands and result must be 32-bit integers",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in packed_alus(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operation for generated packed conversion.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{FP32Type, IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_f32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx).downcast_ref::<FP32Type>().is_some()\n}\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+    );
+    for record in packed_conversions(catalog) {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n/// The first input becomes the low bf16 lane; the second becomes the high lane.\n",
+        );
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    pub fn new(op: Ptr<Operation>) -> Self {\n        Self { op }\n    }\n\n    pub fn build(ctx: &mut Context, low: Value, high: Value) -> Ptr<Operation> {\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![low, high],\n            vec![],\n            0,\n        )\n    }\n}\n",
+        );
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_f32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_f32(ctx, op.get_operand(1).get_type(ctx))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!("{} requires two operands and one result", record.dialect.op_name),
+            format!(
+                "{} requires f32 operands and one 32-bit integer result",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in packed_conversions(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_importer_pure_value_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    writeln!(
+        output,
+        "            require_arity(name, args.len(), {}, &loc)?;",
+        record.rust.arguments.len()
+    )
+    .unwrap();
+    for index in 0..record.rust.arguments.len() {
+        let previous = if index == 0 { "prev_op" } else { "last_op" };
+        writeln!(
+            output,
+            "            let (arg{index}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
+        )
+        .unwrap();
+    }
+    let arguments = (0..record.rust.arguments.len())
+        .map(|index| format!("arg{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        output,
+        "            let intrinsic = {}::build(ctx, {arguments});",
+        record.dialect.op_type
+    )
+    .unwrap();
+    output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+    writeln!(
+        output,
+        "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    output.push_str(
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            let result = intrinsic.deref(ctx).get_result(0);\n",
+    );
+    writeln!(
+        output,
+        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        format!("{} call without target block", record.rust.name)
+    )
+    .unwrap();
+    output.push_str("        }\n");
+}
+
 fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -1782,12 +2115,55 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if packed_alus(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+            || vote_intrinsics(catalog).next().is_some()
+            || active_masks(catalog).next().is_some()
+            || warp_matches(catalog).next().is_some()
+            || warp_barriers(catalog).next().is_some()
+            || warp_shuffles(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in packed_alus(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if packed_conversions(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+            || vote_intrinsics(catalog).next().is_some()
+            || active_masks(catalog).next().is_some()
+            || warp_matches(catalog).next().is_some()
+            || warp_barriers(catalog).next().is_some()
+            || warp_shuffles(catalog).next().is_some()
+            || packed_alus(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in packed_conversions(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     if dot_products(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
             || packed_atomics(catalog).next().is_some()
             || redux(catalog).next().is_some()
             || vote_intrinsics(catalog).next().is_some()
+            || packed_alus(catalog).next().is_some()
+            || packed_conversions(catalog).next().is_some()
         {
             output.push_str(", ");
         }
@@ -1805,6 +2181,8 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             || redux(catalog).next().is_some()
             || vote_intrinsics(catalog).next().is_some()
             || dot_products(catalog).next().is_some()
+            || packed_alus(catalog).next().is_some()
+            || packed_conversions(catalog).next().is_some()
         {
             output.push_str(", ");
         }
@@ -2244,6 +2622,12 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    for record in packed_alus(catalog) {
+        render_importer_pure_value_dispatch(&mut output, catalog, record);
+    }
+    for record in packed_conversions(catalog) {
+        render_importer_pure_value_dispatch(&mut output, catalog, record);
+    }
     for record in sync_intrinsics(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -2345,7 +2729,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -2457,6 +2841,36 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if warp_shuffles(catalog).next().is_some() {
         output.push_str(", ");
         for (index, record) in warp_shuffles(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if packed_alus(catalog).next().is_some() {
+        if catalog
+            .intrinsics
+            .iter()
+            .any(|record| record.family != "packed_alu")
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in packed_alus(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if packed_conversions(catalog).next().is_some() {
+        if catalog
+            .intrinsics
+            .iter()
+            .any(|record| record.family != "packed_conversion")
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in packed_conversions(catalog).enumerate() {
             if index != 0 {
                 output.push_str(", ");
             }
@@ -2679,6 +3093,43 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             }
         }
         output.push_str("    }\n}\n\n");
+    }
+    for record in packed_alus(catalog) {
+        debug_assert_eq!(
+            record.packed_alu.as_ref().unwrap().adapter,
+            PackedAluAdapter::DirectPackedU32
+        );
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_generated_packed_alu(ctx, rewriter, self.get_operation(), {:?})",
+            packed_alu_ptx_mnemonic(record)
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
+    for record in packed_conversions(catalog) {
+        debug_assert_eq!(
+            record.packed_conversion.as_ref().unwrap().adapter,
+            PackedConversionAdapter::ReverseHighLowOperands
+        );
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), \"bf16x2\")\n    }\n}\n\n",
+        );
     }
     for record in dot_products(catalog) {
         let insert_low_half_selector = matches!(
@@ -2952,7 +3403,43 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
 pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: &str) -> String {
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
-    if let Some(packed) = &record.packed_atomic {
+    if record.packed_alu.is_some() {
+        let arity = record.rust.arguments.len();
+        let parameters = (0..arity)
+            .map(|index| format!("i32 %arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = (0..arity)
+            .map(|index| format!("i32 %arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let operands = (0..=arity)
+            .map(|index| format!("${index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let constraints = std::iter::once("=r")
+            .chain(std::iter::repeat_n("r", arity))
+            .collect::<Vec<_>>()
+            .join(",");
+        writeln!(output, "define i32 @probe_{}({parameters}) {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call i32 asm \"{} {operands};\", \"{constraints}\"({arguments})",
+            packed_alu_ptx_mnemonic(record)
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n");
+    } else if record.packed_conversion.is_some() {
+        writeln!(
+            output,
+            "define i32 @probe_{}(float %low, float %high) {{",
+            record.id
+        )
+        .unwrap();
+        output.push_str(
+            "  %result = call i32 asm \"cvt.rn.bf16x2.f32 $0, $2, $1;\", \"=r,f,f\"(float %low, float %high)\n  ret i32 %result\n}\n",
+        );
+    } else if let Some(packed) = &record.packed_atomic {
         let format = match packed.format {
             PackedAtomicFormat::F16x2 => "f16x2",
             PackedAtomicFormat::Bf16x2 => "bf16x2",
@@ -3356,6 +3843,25 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
     }
+    output.push_str("\n## Packed-ALU contracts\n\n");
+    for record in packed_alus(catalog) {
+        writeln!(
+            output,
+            "- `{}` carries two bf16 lanes in one `u32` and lowers to one pure `{}` instruction.",
+            record.id,
+            packed_alu_ptx_mnemonic(record),
+        )
+        .unwrap();
+    }
+    output.push_str("\n## Packed-conversion contract\n\n");
+    for record in packed_conversions(catalog) {
+        writeln!(
+            output,
+            "- `{}` converts two `f32` inputs to packed bf16x2. The first input becomes the low lane and the second becomes the high lane; generated inline PTX reverses their printed operand order.",
+            record.id,
+        )
+        .unwrap();
+    }
     output.push_str("\n## Warp vote contracts\n\n");
     for record in vote_intrinsics(catalog) {
         writeln!(
@@ -3628,6 +4134,89 @@ mod tests {
         assert!(rendered.contains(
             "source_record: \"SELECT_B\", asm: \"op.b $dst;\", predicates: &[\"HasB\"], constraints: GeneratedSelectionConstraints { address_space: Some(GeneratedSelectionAddressSpace::Shared), immediate_bindings: &[] }"
         ));
+    }
+
+    #[test]
+    fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(packed_alus(&catalog).count(), 9);
+        assert_eq!(packed_conversions(&catalog).count(), 1);
+
+        let dialect = render_dialect_packed_alu(&catalog, "test-hash");
+        for op in [
+            "FmaBf16x2Op",
+            "FmaReluBf16x2Op",
+            "AddBf16x2Op",
+            "SubBf16x2Op",
+            "MulBf16x2Op",
+            "MinBf16x2Op",
+            "MaxBf16x2Op",
+            "NegBf16x2Op",
+            "AbsBf16x2Op",
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op}")));
+            assert!(dialect.contains(&format!("{op}::register(ctx)")));
+        }
+        let conversion_dialect = render_dialect_packed_conversion(&catalog, "test-hash");
+        assert!(conversion_dialect.contains("pub struct CvtF32x2Bf16x2Op"));
+        assert!(conversion_dialect.contains("vec![low, high]"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::bf16x2::fma_bf16x2"));
+        assert!(importer.contains("cuda_device::tcgen05::cvt_f32x2_bf16x2"));
+        assert!(importer.contains("FmaBf16x2Op::build(ctx, arg0, arg1, arg2)"));
+        assert!(importer.contains("CvtF32x2Bf16x2Op::build(ctx, arg0, arg1)"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        for mnemonic in [
+            "fma.rn.bf16x2",
+            "fma.rn.relu.bf16x2",
+            "add.rn.bf16x2",
+            "sub.rn.bf16x2",
+            "mul.rn.bf16x2",
+            "min.bf16x2",
+            "max.bf16x2",
+            "neg.bf16x2",
+            "abs.bf16x2",
+        ] {
+            assert!(lowering.contains(&format!(
+                "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\")"
+            )));
+        }
+        assert!(lowering.contains(
+            "convert_generated_packed_f32x2(ctx, rewriter, self.get_operation(), \"bf16x2\")"
+        ));
+
+        for record in packed_alus(&catalog) {
+            let probe = render_probe(&catalog, record, "test-hash");
+            let constraints = std::iter::once("=r")
+                .chain(std::iter::repeat_n("r", record.rust.arguments.len()))
+                .collect::<Vec<_>>()
+                .join(",");
+            assert!(probe.contains(&format!("\", \"{constraints}\"")));
+            assert!(!probe.contains("asm sideeffect"));
+            assert!(!probe.contains("~{memory}"));
+        }
+        let conversion = packed_conversions(&catalog).next().unwrap();
+        let probe = render_probe(&catalog, conversion, "test-hash");
+        assert!(probe.contains(
+            "asm \"cvt.rn.bf16x2.f32 $0, $2, $1;\", \"=r,f,f\"(float %low, float %high)"
+        ));
+        assert!(!probe.contains("asm sideeffect"));
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub fn i0062(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
+        assert!(raw.contains("pub fn i0071(_arg0: f32, _arg1: f32) -> u32"));
+        assert!(!raw.contains("#[must_use]\n#[inline(never)]\npub fn i0062"));
+
+        let compatibility = render_compat_packed_alu(&catalog, "test-hash");
+        assert!(compatibility.contains("pub fn fma_bf16x2(arg0: u32, arg1: u32, arg2: u32)"));
+        assert!(compatibility.contains("let _ = arg0;"));
+        assert!(!compatibility.contains("let _ = (arg0);"));
+        let compatibility = render_compat_packed_conversion(&catalog, "test-hash");
+        assert!(compatibility.contains("pub fn cvt_f32x2_bf16x2(a: f32, b: f32) -> u32"));
     }
 
     #[test]

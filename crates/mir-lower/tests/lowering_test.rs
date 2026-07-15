@@ -3431,6 +3431,74 @@ fn test_bf16x2_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<(), anyhow
 }
 
 #[test]
+fn test_f32x2_bf16x2_conversion_keeps_lane_order() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into(), f32_ty.into()]);
+    let low = entry.deref(&ctx).get_argument(0);
+    let high = entry.deref(&ctx).get_argument(1);
+    let op = Operation::new(
+        &mut ctx,
+        nvvm::CvtF32x2Bf16x2Op::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![low, high],
+        vec![],
+        0,
+    );
+    op.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let mut matches = 0;
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    for op in module_block.deref(&ctx).iter(&ctx) {
+        let Some(func) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+            continue;
+        };
+        if func.get_symbol_name(&ctx).to_string() != "kernel_func" {
+            continue;
+        }
+        let region = func.get_operation().deref(&ctx).get_region(0);
+        for block in region.deref(&ctx).iter(&ctx) {
+            for body_op in block.deref(&ctx).iter(&ctx) {
+                let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
+                    continue;
+                };
+                let template = asm
+                    .get_attr_inline_asm_template(&ctx)
+                    .map(|value| String::from((*value).clone()));
+                if template.as_deref() != Some("cvt.rn.bf16x2.f32 $0, $2, $1;") {
+                    continue;
+                }
+                matches += 1;
+                assert_eq!(
+                    asm.get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some("=r,f,f")
+                );
+                assert_eq!(llvm::asm_kind_opt(&ctx, &asm), Some(llvm::AsmKind::Pure));
+                assert_eq!(
+                    asm.get_attr_inline_asm_convergent(&ctx)
+                        .map(|value| bool::from((*value).clone())),
+                    Some(false)
+                );
+                assert_eq!(asm.get_operation().deref(&ctx).operands().count(), 2);
+                assert_eq!(asm.get_operation().deref(&ctx).get_num_results(), 1);
+            }
+        }
+    }
+
+    assert_eq!(matches, 1, "conversion must lower to one reversed-lane asm");
+    Ok(())
+}
+
+#[test]
 fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};

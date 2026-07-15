@@ -2998,6 +2998,609 @@
           { "kind": "register" }
         ]
       }
+    },
+    {
+      "id": "fma_bf16x2",
+      "source_record": "int_nvvm_fma_rn_bf16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.bf16x2",
+      "llvm_arguments": [
+        "v2bf16",
+        "v2bf16",
+        "v2bf16"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX fma.rn.bf16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact fma.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fma_relu_bf16x2",
+      "source_record": "int_nvvm_fma_rn_relu_bf16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.relu.bf16x2",
+      "llvm_arguments": [
+        "v2bf16",
+        "v2bf16",
+        "v2bf16"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX fma.rn.relu.bf16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact fma.rn.relu.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "relu",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "add_bf16x2",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "add.rn.bf16x2"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx78",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
+          "representation": "pure inline PTX add.rn.bf16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact add.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
+          "representation": "PTX emitted by the combined three-form sm_90 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,071-byte PTX 7.8 module for sm_90 and produced a 3,832-byte cubin (SHA-256 a498ca833a4c45100c3e80c165999e4d9389d263e47a909a7f97a25c114822c0).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "add",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub_bf16x2",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "sub.rn.bf16x2"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx78",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
+          "representation": "pure inline PTX sub.rn.bf16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact sub.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
+          "representation": "PTX emitted by the combined three-form sm_90 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,071-byte PTX 7.8 module for sm_90 and produced a 3,832-byte cubin (SHA-256 a498ca833a4c45100c3e80c165999e4d9389d263e47a909a7f97a25c114822c0).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "sub",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mul_bf16x2",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mul.rn.bf16x2"
+      },
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx78",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
+          "representation": "pure inline PTX mul.rn.bf16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact mul.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
+          "representation": "PTX emitted by the combined three-form sm_90 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,071-byte PTX 7.8 module for sm_90 and produced a 3,832-byte cubin (SHA-256 a498ca833a4c45100c3e80c165999e4d9389d263e47a909a7f97a25c114822c0).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mul",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "min_bf16x2",
+      "source_record": "int_nvvm_fmin_bf16x2",
+      "llvm_symbol": "llvm.nvvm.fmin.bf16x2",
+      "llvm_arguments": [
+        "v2bf16",
+        "v2bf16"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX min.bf16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact min.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "min",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "max_bf16x2",
+      "source_record": "int_nvvm_fmax_bf16x2",
+      "llvm_symbol": "llvm.nvvm.fmax.bf16x2",
+      "llvm_arguments": [
+        "v2bf16",
+        "v2bf16"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX max.bf16x2 with =r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact max.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "max",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "neg_bf16x2",
+      "source_record": "int_nvvm_neg_bf16x2",
+      "llvm_symbol": "llvm.nvvm.neg.bf16x2",
+      "llvm_arguments": [
+        "v2bf16"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX neg.bf16x2 with =r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact neg.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "neg",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "abs_bf16x2",
+      "source_record": "int_nvvm_fabs",
+      "llvm_symbol": "llvm.nvvm.fabs",
+      "llvm_arguments": [
+        "anonymous_14"
+      ],
+      "llvm_results": [
+        "anyfloat"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX abs.bf16x2 with =r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact abs.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "abs",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cvt_f32x2_bf16x2",
+      "source_record": "int_nvvm_ff2bf16x2_rn",
+      "llvm_symbol": "llvm.nvvm.ff2bf16x2.rn",
+      "llvm_arguments": [
+        "f32",
+        "f32"
+      ],
+      "llvm_results": [
+        "v2bf16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX cvt.rn.bf16x2.f32 with =r,f,f",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact cvt.rn.bf16x2.f32 instruction at its native floor as part of the combined packed-bf16x2 probe."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "bf16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
     }
   ]
 }

@@ -3390,7 +3390,7 @@ fn try_dispatch_intrinsic(
 
         // =================================================================
         // Memory Operations (from intrinsics::memory)
-        // Note: stmatrix and cvt are under cuda_device::tcgen05::
+        // Note: stmatrix is under cuda_device::tcgen05::
         // =================================================================
         "cuda_device::tcgen05::stmatrix_m8n8_x4" => {
             Ok(Some(intrinsics::memory::emit_stmatrix_m8n8_x4(
@@ -3412,21 +3412,6 @@ fn try_dispatch_intrinsic(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }
-        "cuda_device::tcgen05::cvt_f32x2_bf16x2" => {
-            Ok(Some(intrinsics::memory::emit_cvt_f32x2_bf16x2(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-
         // =================================================================
         // Warp-level matrix operations (from intrinsics::wmma)
         // =================================================================
@@ -3444,123 +3429,6 @@ fn try_dispatch_intrinsic(
                 loc,
             )?))
         }
-
-        // =================================================================
-        // bf16x2 packed arithmetic (from intrinsics::bf16x2)
-        // =================================================================
-        "cuda_device::bf16x2::fma_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_fma_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        // =================================================================
-        // bf16x2 packed arithmetic (from intrinsics::bf16x2)
-        // =================================================================
-        "cuda_device::bf16x2::fma_relu_bf16x2" => {
-            Ok(Some(intrinsics::bf16x2::emit_fma_relu_bf16x2(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::bf16x2::add_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_add_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::bf16x2::sub_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_sub_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::bf16x2::mul_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_mul_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::bf16x2::min_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_min_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::bf16x2::max_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_max_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::bf16x2::neg_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_neg_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::bf16x2::abs_bf16x2" => Ok(Some(intrinsics::bf16x2::emit_abs_bf16x2(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
 
         // =================================================================
         // Packed atomic add (from intrinsics::atomic)

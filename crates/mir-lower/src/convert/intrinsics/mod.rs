@@ -73,7 +73,6 @@
 pub mod asm;
 pub mod atomic;
 pub mod basic;
-pub mod bf16x2;
 pub mod clc;
 pub mod cluster;
 pub mod common;
@@ -83,6 +82,7 @@ pub mod debug;
 pub mod dotprod;
 pub mod ldmatrix;
 pub mod mbarrier;
+pub mod packed;
 pub mod stmatrix;
 pub mod tcgen05;
 pub mod tma;

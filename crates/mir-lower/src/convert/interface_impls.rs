@@ -39,26 +39,24 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    AbsBf16x2Op, AddBf16x2Op, BreakpointOp, ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp,
-    ClcQueryGetFirstCtaidZOp, ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp,
-    ClusterSyncOp, CpAsyncBulkCommitGroupOp, CpAsyncBulkTensorG2sTile1dOp,
+    BreakpointOp, ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp,
+    ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp, ClusterSyncOp,
+    CpAsyncBulkCommitGroupOp, CpAsyncBulkTensorG2sTile1dOp,
     CpAsyncBulkTensorG2sTile2dMulticastCg2Op, CpAsyncBulkTensorG2sTile2dMulticastOp,
     CpAsyncBulkTensorG2sTile2dOp, CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp,
     CpAsyncBulkTensorG2sTile5dOp, CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp,
     CpAsyncBulkTensorS2gTile3dOp, CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp,
     CpAsyncBulkWaitGroupOp, CpAsyncBulkWaitGroupReadOp, CpAsyncCa4Op, CpAsyncCa8Op,
-    CpAsyncCaZfill4Op, CpAsyncCaZfill8Op, CpAsyncCaZfill16Op, CvtF16x2F32Op, CvtF32x2Bf16x2Op,
-    CvtRnReluBf16x2F32Op, CvtRnReluF16x2F32Op, CvtRzBf16x2F32Op, CvtRzF16x2F32Op, DsmemReadU32Op,
-    ElectSyncOp, FenceMbarrierInitReleaseClusterOp,
-    FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
-    FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, FmaBf16x2Op,
-    FmaReluBf16x2Op, InlinePtxOp, MapaSharedClusterOp, MaxBf16x2Op, MbarrierArriveClusterOp,
-    MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp,
-    MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
-    MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp,
-    MinBf16x2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, MulBf16x2Op, NanosleepOp, NegBf16x2Op,
-    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
+    CpAsyncCaZfill4Op, CpAsyncCaZfill8Op, CpAsyncCaZfill16Op, CvtF16x2F32Op, CvtRnReluBf16x2F32Op,
+    CvtRnReluF16x2F32Op, CvtRzBf16x2F32Op, CvtRzF16x2F32Op, DsmemReadU32Op, ElectSyncOp,
+    FenceMbarrierInitReleaseClusterOp, FenceProxyAsyncGenericAcquireSharedClusterClusterOp,
+    FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp, InlinePtxOp,
+    MapaSharedClusterOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
+    MbarrierArriveExpectTxSharedOp, MbarrierArriveSharedOp, MbarrierInitSharedOp,
+    MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MbarrierTryWaitParityClusterOp,
+    MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
+    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
+    NanosleepOp, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp,
     NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp,
     ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp,
     ReadPtxSregClusterIdxOp, ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp,
@@ -66,7 +64,7 @@ use dialect_nvvm::ops::{
     ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregNclusterIdOp,
     ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp,
     ReadPtxSregWarpIdOp, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp, SubBf16x2Op, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
+    StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
     Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
     Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
     Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
@@ -2223,177 +2221,6 @@ impl MirToLlvmConversion for Tcgen05Ld16x256bPureOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::tcgen05::convert_ld_16x256b_pure(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for CvtF32x2Bf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::tcgen05::convert_cvt_f32x2_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-// ---- NVVM bf16x2 arithmetic ops -------------------------------------------
-#[op_interface_impl]
-impl MirToLlvmConversion for FmaBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_fma_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for FmaReluBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_fma_relu_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for AddBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_add_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for SubBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_sub_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MulBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_mul_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MinBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_min_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MaxBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_max_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for NegBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_neg_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for AbsBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::bf16x2::convert_abs_bf16x2(
             ctx,
             rewriter,
             self.get_operation(),

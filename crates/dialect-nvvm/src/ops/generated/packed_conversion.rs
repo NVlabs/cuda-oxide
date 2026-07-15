@@ -7,12 +7,12 @@
 // Catalog schema/version: 11/0.1.0; intrinsic ABI: v1; catalog SHA-256: a59beb024348e14101553da10c2c9145ece6ecce9252ac93217d4af1e407ed97.
 // LLVM source: 1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e.
 
-//! Structural operation for generated warp synchronization.
+//! Structural operation for generated packed conversion.
 
 use pliron::{
     builtin::{
         op_interfaces::{NOpdsInterface, NResultsInterface},
-        types::IntegerType,
+        types::{FP32Type, IntegerType, Signedness},
     },
     common_traits::Verify,
     context::{Context, Ptr},
@@ -26,55 +26,66 @@ use pliron::{
 };
 use pliron_derive::pliron_op;
 
+fn is_f32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
+    ty.deref(ctx).downcast_ref::<FP32Type>().is_some()
+}
+
 fn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
     ty.deref(ctx)
         .downcast_ref::<IntegerType>()
         .is_some_and(|integer| integer.width() == 32)
 }
 
-/// Synchronize and order memory for the named warp lanes.
+/// Converts two f32 values to packed bf16x2 with the first argument in the low half.
 ///
-/// The operand is the 32-bit warp participation mask.
+/// The first input becomes the low bf16 lane; the second becomes the high lane.
 #[pliron_op(
-    name = "nvvm.bar_warp_sync",
+    name = "nvvm.cvt_f32x2_bf16x2",
     format,
-    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
 )]
-pub struct BarWarpSyncOp;
+pub struct CvtF32x2Bf16x2Op;
 
-impl BarWarpSyncOp {
+impl CvtF32x2Bf16x2Op {
     pub fn new(op: Ptr<Operation>) -> Self {
         Self { op }
     }
 
-    pub fn build(ctx: &mut Context, member_mask: Value) -> Ptr<Operation> {
+    pub fn build(ctx: &mut Context, low: Value, high: Value) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![],
-            vec![member_mask],
+            vec![result_ty.into()],
+            vec![low, high],
             vec![],
             0,
         )
     }
 }
 
-impl Verify for BarWarpSyncOp {
+impl Verify for CvtF32x2Bf16x2Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
-        if op.get_num_operands() != 1 || op.get_num_results() != 0 {
+        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
             return verify_err!(
                 op.loc(),
-                "nvvm.bar_warp_sync requires exactly one member-mask operand and no results"
+                "nvvm.cvt_f32x2_bf16x2 requires two operands and one result"
             );
         }
-        if !is_i32(ctx, op.get_operand(0).get_type(ctx)) {
-            return verify_err!(op.loc(), "nvvm.bar_warp_sync member mask must be i32");
+        if !is_f32(ctx, op.get_operand(0).get_type(ctx))
+            || !is_f32(ctx, op.get_operand(1).get_type(ctx))
+            || !is_i32(ctx, op.get_result(0).get_type(ctx))
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.cvt_f32x2_bf16x2 requires f32 operands and one 32-bit integer result"
+            );
         }
         Ok(())
     }
 }
 
 pub(super) fn register(ctx: &mut Context) {
-    BarWarpSyncOp::register(ctx);
+    CvtF32x2Bf16x2Op::register(ctx);
 }

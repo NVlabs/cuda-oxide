@@ -1,0 +1,46 @@
+# Reviewed packed floating-point conversions.
+
+schema = 8
+family = "packed_conversion"
+
+[[intrinsic]]
+id = "cvt_f32x2_bf16x2"
+abi_id = "i0071"
+operation_key = "packed.convert.f32x2.bf16x2.nearest_even"
+family = "packed_conversion"
+source_record = "int_nvvm_ff2bf16x2_rn"
+rust_module = "convert"
+rust_name = "cvt_f32x2_bf16x2"
+rust_arguments = ["f32", "f32"]
+rust_result = "u32"
+safe = true
+must_use = false
+safe_allowlist_reason = "Packed conversion has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::convert::cvt_f32x2_bf16x2"
+compatibility_rust_paths = ["cuda_device::tcgen05::cvt_f32x2_bf16x2"]
+dialect_op_type = "CvtF32x2Bf16x2Op"
+dialect_op_name = "nvvm.cvt_f32x2_bf16x2"
+dialect_operands = ["f32", "f32"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.ff2bf16x2.rn"
+llvm_arguments = ["f32", "f32"]
+llvm_results = ["v2bf16"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.9.22 Data Movement and Conversion Instructions: cvt"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cvt"
+lowering = "generated_packed_conversion_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "7.0", minimum_sm = "sm_80" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-13.3-libnvvm-13.3.33", minimum_ptx = "7.0", minimum_sm = "sm_80" },
+]
+packed_conversion = { source_format = "f32x2", destination_format = "bf16x2", rounding = "nearest_even", adapter = "reverse_high_low_operands" }
+expected_ptx = { mnemonic = "cvt", modifiers = ["rn", "bf16x2", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Converts two f32 values to packed bf16x2 with the first argument in the low half."

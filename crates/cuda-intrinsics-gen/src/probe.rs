@@ -4,7 +4,8 @@
  */
 
 use crate::model::{
-    CatalogIntrinsic, CatalogLlvm, EvidenceStageKind, IntrinsicBackend, WarpShuffleAdapter,
+    BackendLoweringMechanism, CatalogIntrinsic, CatalogLlvm, EvidenceStageKind, IntrinsicBackend,
+    WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
@@ -59,7 +60,10 @@ pub fn run(
     let input = output_dir.join(format!("{intrinsic_id}.ll"));
     fs::write(&input, render_probe(&catalog, record, &catalog_hash))
         .with_context(|| format!("write in-memory probe {}", input.display()))?;
-    if record.llvm.is_some() && mode == ProbeMode::SelectedEvidence {
+    if record.llvm.is_some()
+        && mode == ProbeMode::SelectedEvidence
+        && uses_typed_llvm_nvptx_lowering(record)
+    {
         assert_intrinsic_declaration_canonicalizes(
             &llc,
             &input,
@@ -149,6 +153,41 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
             }
         }
     }
+    if record.packed_alu.is_some() || record.packed_conversion.is_some() {
+        validate_exact_pure_instruction(&record.expected_ptx, ptx)?;
+    }
+    Ok(())
+}
+
+fn uses_typed_llvm_nvptx_lowering(record: &CatalogIntrinsic) -> bool {
+    record.backend_lowerings.is_empty()
+        || record.backend_lowerings.iter().any(|lowering| {
+            lowering.backend == IntrinsicBackend::LlvmNvptx
+                && lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+        })
+}
+
+fn validate_exact_pure_instruction(expected: &InstructionPattern, ptx: &str) -> Result<()> {
+    let instructions = instructions_with_matching_head(ptx, expected);
+    ensure!(
+        instructions.len() == 1,
+        "packed pure probe must contain exactly one `{}` instruction; found {}",
+        expected
+            .modifiers
+            .iter()
+            .fold(expected.mnemonic.clone(), |head, modifier| format!(
+                "{head}.{modifier}"
+            )),
+        instructions.len()
+    );
+    ensure!(
+        matching_instructions(ptx, expected).len() == 1,
+        "packed pure probe instruction does not match `{expected}`"
+    );
+    ensure!(
+        instructions[0].prefix.is_empty(),
+        "packed pure probe instruction must be unguarded"
+    );
     Ok(())
 }
 
@@ -1448,5 +1487,25 @@ attributes #0 = { nounwind }
                 .to_string()
                 .contains("unsupported imported LLVM property")
         );
+    }
+
+    #[test]
+    fn packed_pure_probe_requires_one_exact_unguarded_instruction() {
+        let expected =
+            InstructionPattern::new("fma", &["rn", "bf16x2"], vec![OperandPattern::Register; 4]);
+        let exact = "fma.rn.bf16x2 %r1, %r2, %r3, %r4;";
+        validate_exact_pure_instruction(&expected, exact).unwrap();
+
+        for invalid in [
+            format!("{exact}\n{exact}"),
+            format!("@%p0 {exact}"),
+            "fma.rn.bf16x2 %r1, %r2, %r3;".into(),
+            "fma.rn.relu.bf16x2 %r1, %r2, %r3, %r4;".into(),
+        ] {
+            assert!(
+                validate_exact_pure_instruction(&expected, &invalid).is_err(),
+                "{invalid}"
+            );
+        }
     }
 }

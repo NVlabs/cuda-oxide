@@ -13,22 +13,21 @@ use crate::translator::rvalue;
 use crate::translator::types;
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
-    CvtF32x2Bf16x2Op, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
-    Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
-    Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
-    Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
-    Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
-    Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
-    Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
-    Tcgen05StoreWaitOp,
+    StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp,
+    Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op,
+    Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp,
+    Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp,
+    Tcgen05FenceAfterThreadSyncOp, Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp,
+    Tcgen05Ld16x256bX8PureOp, Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op,
+    Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op, Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op,
+    Tcgen05RelinquishAllocPermitOp, Tcgen05StoreWaitOp,
 };
 // NOTE: Removed imports for deprecated ops (now in cuda-core as builders):
 // Tcgen05MakeSmemDescOp, Tcgen05MakeSmemDescStridedOp, Tcgen05StTmemToSmemOp,
 // Tcgen05StTmemToSmemOffsetOp, Tcgen05Ld16x256bX4Op, Tcgen05Ld16x256bX8Op,
 // Tcgen05Ld16x256bX16Op, Tcgen05Ld16x256bX32Op, Tcgen05Ld32x32bX64Op
 use pliron::basic_block::BasicBlock;
-use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+use pliron::builtin::types::FP32Type;
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
 use pliron::location::{Located, Location};
@@ -1616,94 +1615,6 @@ pub fn emit_stmatrix_m8n8_x2_trans(
             )
         )
     }
-}
-
-/// Emit cvt_f32x2_bf16x2: Convert two f32 to packed bf16x2.
-///
-/// Args: (a: f32, b: f32)
-/// Returns: u32 (packed bf16x2)
-pub fn emit_cvt_f32x2_bf16x2(
-    ctx: &mut Context,
-    body: &mir::Body,
-    args: &[mir::Operand],
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    if args.len() != 2 {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(format!(
-                "cvt_f32x2_bf16x2 expects 2 arguments (a: f32, b: f32), got {}",
-                args.len()
-            ))
-        );
-    }
-
-    let mut last_op = prev_op;
-
-    // arg[0]: a (f32)
-    let (a_val, last_op_after) = rvalue::translate_operand(
-        ctx,
-        body,
-        &args[0],
-        value_map,
-        block_ptr,
-        last_op,
-        loc.clone(),
-    )?;
-    last_op = last_op_after;
-
-    // arg[1]: b (f32)
-    let (b_val, last_op_after) = rvalue::translate_operand(
-        ctx,
-        body,
-        &args[1],
-        value_map,
-        block_ptr,
-        last_op,
-        loc.clone(),
-    )?;
-    last_op = last_op_after;
-
-    // Result is u32 (packed bf16x2); Rust-side signature is `u32` and the
-    // destination local is unsigned, so match that here to avoid the
-    // MirStoreOp verifier flagging a signless-vs-unsigned mismatch.
-    let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
-
-    let cvt_op = Operation::new(
-        ctx,
-        CvtF32x2Bf16x2Op::get_concrete_op_info(),
-        vec![u32_ty.into()],
-        vec![a_val, b_val],
-        vec![],
-        0,
-    );
-    cvt_op.deref_mut(ctx).set_loc(loc.clone());
-
-    if let Some(prev) = last_op {
-        cvt_op.insert_after(ctx, prev);
-    } else {
-        cvt_op.insert_at_front(block_ptr, ctx);
-    }
-
-    let result = cvt_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
-        ctx,
-        destination,
-        result,
-        target,
-        block_ptr,
-        cvt_op,
-        value_map,
-        block_map,
-        loc,
-        "cvt_f32x2_bf16x2 call without target block",
-    )
 }
 
 /// Emit tcgen05_load_wait: Wait for tcgen05.ld operations to complete.

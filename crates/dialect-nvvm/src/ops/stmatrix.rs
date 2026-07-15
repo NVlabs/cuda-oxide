@@ -25,10 +25,6 @@
 //! └─────────────────────┴───────┴──────────┴───────────┴────────────────────┘
 //! ```
 //!
-//! # Type Conversion
-//!
-//! - `CvtF32x2Bf16x2Op`: Convert two f32 values to packed bf16x2 (round-to-nearest-even)
-//!
 //! # Requirements
 //!
 //! - **Execution**: Warp-synchronous (all 32 threads must participate)
@@ -256,39 +252,6 @@ impl Verify for StmatrixM8n8X2TransOp {
     }
 }
 
-// =============================================================================
-// Type Conversion Operations
-// =============================================================================
-
-/// Convert two f32 values to packed bf16x2 using round-to-nearest-even.
-///
-/// Uses PTX `cvt.rn.bf16x2.f32` instruction for proper IEEE rounding.
-///
-/// PTX: `cvt.rn.bf16x2.f32 %result, %b, %a;`
-///
-/// # Operands
-///
-/// - `a` (f32): first value (goes to low 16 bits of result)
-/// - `b` (f32): second value (goes to high 16 bits of result)
-///
-/// # Results
-///
-/// - `packed` (i32): packed bf16x2 as `(bf16(b) << 16) | bf16(a)`
-#[pliron_op(
-    name = "nvvm.cvt_f32x2_bf16x2",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct CvtF32x2Bf16x2Op;
-
-impl CvtF32x2Bf16x2Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        CvtF32x2Bf16x2Op { op }
-    }
-}
-
 /// Register stmatrix operations with the context.
 pub(super) fn register(ctx: &mut Context) {
     // 4-tile store
@@ -297,6 +260,4 @@ pub(super) fn register(ctx: &mut Context) {
     // 2-tile store
     StmatrixM8n8X2Op::register(ctx);
     StmatrixM8n8X2TransOp::register(ctx);
-    // Type conversion
-    CvtF32x2Bf16x2Op::register(ctx);
 }

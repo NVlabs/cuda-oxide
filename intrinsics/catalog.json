@@ -1,5 +1,5 @@
 {
-  "schema": 10,
+  "schema": 11,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,14 +11,241 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "507581bb8fd653913afd73a6f6d4ec6b06a68e43652652a17db38d76a7dc85db",
-    "abi_ledger_sha256": "8be1321895ca2145dd18778418d63f85a74d4f59615b259c004876cc758368d2",
+    "overlay_sha256": "6a9a7d3e4c90f083a910e92c11c5e8d1d6f1aa86a59b066f0bd90b3db83bab7b",
+    "abi_ledger_sha256": "50fc0e93cee4871e5aaff0c23c03d5956792e4b430ae301fd6e8deccb0d5a168",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:97905f54727ecf57405ba3f4e744846dc01ed69b201166f7c571186a226f545a",
-      "rust-llvm-22.1.2-1cb4e383.json:7a55ae73708050e643dc3468dc9048bf16e037fd9bfc665470f538df988bde60"
+      "cuda-13.3-libnvvm-13.3.33.json:d140a869f3a6c9ec34c7b4a3e3a334ce1305ac7336f8d73fbd9b6ddf398e3aee",
+      "rust-llvm-22.1.2-1cb4e383.json:b75357b86dfcc196fd1ccc56603d879f2b82866310f7591e18ebb3e76559b718"
     ]
   },
   "intrinsics": [
+    {
+      "id": "abs_bf16x2",
+      "operation_key": "packed.alu.bf16x2.abs",
+      "family": "packed_alu",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fabs"
+      },
+      "selections": [
+        {
+          "source_record": "ABS_BF16X2",
+          "asm": "abs.bf16x2 \t$dst, $src0;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0070",
+        "module": "bf16x2",
+        "name": "abs_bf16x2",
+        "arguments": [
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0070",
+        "public_path": "cuda_intrinsics::bf16x2::abs_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::abs_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "AbsBf16x2Op",
+        "op_name": "nvvm.abs_bf16x2",
+        "operands": [
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fabs",
+        "resolved_symbol": "llvm.nvvm.fabs.v2bf16",
+        "arguments": [
+          "anonymous_14"
+        ],
+        "results": [
+          "anyfloat"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.6 Half Precision Floating Point Instructions: abs",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-abs"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX abs.bf16x2 with =r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact abs.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX abs.bf16x2 with =r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact abs.bf16x2 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "abs",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "abs",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Takes the absolute value of both packed bf16x2 lanes."
+    },
     {
       "id": "active_mask",
       "operation_key": "warp.active_mask",
@@ -236,6 +463,212 @@
         ]
       },
       "summary": "Returns the lanes active at this instruction in the current warp."
+    },
+    {
+      "id": "add_bf16x2",
+      "operation_key": "packed.alu.bf16x2.add",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "add.rn.bf16x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0064",
+        "module": "bf16x2",
+        "name": "add_bf16x2",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0064",
+        "public_path": "cuda_intrinsics::bf16x2::add_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::add_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "AddBf16x2Op",
+        "op_name": "nvvm.add_bf16x2",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.1 Half Precision Floating Point Instructions: add",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-add"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "pure inline PTX add.rn.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact add.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "PTX emitted by the combined three-form sm_90 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,071-byte PTX 7.8 module for sm_90 and produced a 3,832-byte cubin (SHA-256 a498ca833a4c45100c3e80c165999e4d9389d263e47a909a7f97a25c114822c0).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX add.rn.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact add.rn.bf16x2 route at compute_90 as part of the combined three-form probe and produced 1,904-byte LTOIR (SHA-256 87cd4ca7b61dab71aac8885db949e21fbcfbf3bb59ca560c67084d7901ddf60b).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_90 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,832-byte sm_90 cubin (SHA-256 b0715cda56457dd1b90115ad52c73c8bb920df6f0f4e08df60410cfb4a57635a); cuobjdump showed HFMA2.MMA.BF16_V2 for add, HADD2.BF16_V2 with a negated RHS for sub, and HMUL2.BF16_V2 for mul.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "add",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "add",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Adds two packed bf16x2 values."
     },
     {
       "id": "all_sync",
@@ -1259,6 +1692,232 @@
         ]
       },
       "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "cvt_f32x2_bf16x2",
+      "operation_key": "packed.convert.f32x2.bf16x2.nearest_even",
+      "family": "packed_conversion",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ff2bf16x2_rn"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0071",
+        "module": "convert",
+        "name": "cvt_f32x2_bf16x2",
+        "arguments": [
+          "f32",
+          "f32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed conversion has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0071",
+        "public_path": "cuda_intrinsics::convert::cvt_f32x2_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::tcgen05::cvt_f32x2_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "CvtF32x2Bf16x2Op",
+        "op_name": "nvvm.cvt_f32x2_bf16x2",
+        "operands": [
+          "f32",
+          "f32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ff2bf16x2.rn",
+        "arguments": [
+          "f32",
+          "f32"
+        ],
+        "results": [
+          "v2bf16"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.22 Data Movement and Conversion Instructions: cvt",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cvt"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX cvt.rn.bf16x2.f32 with =r,f,f",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact cvt.rn.bf16x2.f32 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX cvt.rn.bf16x2.f32 with =r,f,f",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact cvt.rn.bf16x2.f32 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_conversion": {
+        "source_format": "f32x2",
+        "destination_format": "bf16x2",
+        "rounding": "nearest_even",
+        "adapter": "reverse_high_low_operands"
+      },
+      "lowering": "generated_packed_conversion_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": [
+          "rn",
+          "bf16x2",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Converts two f32 values to packed bf16x2 with the first argument in the low half."
     },
     {
       "id": "dp2a_s32",
@@ -2289,6 +2948,485 @@
         ]
       },
       "summary": "Multiplies four pairs of packed unsigned bytes, sums them, and adds an unsigned accumulator."
+    },
+    {
+      "id": "fma_bf16x2",
+      "operation_key": "packed.alu.bf16x2.fma",
+      "family": "packed_alu",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fma_rn_bf16x2"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_FMA_rn_bf16x2",
+          "asm": "fma.rn.bf16x2 \t$dst, $src0, $src1, $src2;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0062",
+        "module": "bf16x2",
+        "name": "fma_bf16x2",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0062",
+        "public_path": "cuda_intrinsics::bf16x2::fma_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::fma_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "FmaBf16x2Op",
+        "op_name": "nvvm.fma_bf16x2",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fma.rn.bf16x2",
+        "arguments": [
+          "v2bf16",
+          "v2bf16",
+          "v2bf16"
+        ],
+        "results": [
+          "v2bf16"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.4 Half Precision Floating Point Instructions: fma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX fma.rn.bf16x2 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact fma.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX fma.rn.bf16x2 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact fma.rn.bf16x2 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "fma",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Computes a packed bf16x2 fused multiply-add."
+    },
+    {
+      "id": "fma_relu_bf16x2",
+      "operation_key": "packed.alu.bf16x2.fma.relu",
+      "family": "packed_alu",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fma_rn_relu_bf16x2"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_FMA_rn_relu_bf16x2",
+          "asm": "fma.rn.relu.bf16x2 \t$dst, $src0, $src1, $src2;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0063",
+        "module": "bf16x2",
+        "name": "fma_relu_bf16x2",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0063",
+        "public_path": "cuda_intrinsics::bf16x2::fma_relu_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::fma_relu_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "FmaReluBf16x2Op",
+        "op_name": "nvvm.fma_relu_bf16x2",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fma.rn.relu.bf16x2",
+        "arguments": [
+          "v2bf16",
+          "v2bf16",
+          "v2bf16"
+        ],
+        "results": [
+          "v2bf16"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.4 Half Precision Floating Point Instructions: fma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX fma.rn.relu.bf16x2 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact fma.rn.relu.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX fma.rn.relu.bf16x2 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact fma.rn.relu.bf16x2 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "fma_relu",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "relu",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Computes a packed bf16x2 fused multiply-add and applies ReLU."
     },
     {
       "id": "grid_dim_x",
@@ -5498,6 +6636,904 @@
         ]
       },
       "summary": "Returns the named warp lanes whose 32-bit value equals this lane's value."
+    },
+    {
+      "id": "max_bf16x2",
+      "operation_key": "packed.alu.bf16x2.max",
+      "family": "packed_alu",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fmax_bf16x2"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_FMAN_bf16x2",
+          "asm": "max.bf16x2 \t$dst, $src0, $src1;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0068",
+        "module": "bf16x2",
+        "name": "max_bf16x2",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0068",
+        "public_path": "cuda_intrinsics::bf16x2::max_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::max_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "MaxBf16x2Op",
+        "op_name": "nvvm.max_bf16x2",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fmax.bf16x2",
+        "arguments": [
+          "v2bf16",
+          "v2bf16"
+        ],
+        "results": [
+          "v2bf16"
+        ],
+        "properties": [
+          "Commutative",
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.8 Half Precision Floating Point Instructions: max",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-max"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX max.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact max.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX max.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact max.bf16x2 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "max",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "max",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Selects the maximum in each packed bf16x2 lane."
+    },
+    {
+      "id": "min_bf16x2",
+      "operation_key": "packed.alu.bf16x2.min",
+      "family": "packed_alu",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_fmin_bf16x2"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_FMIN_bf16x2",
+          "asm": "min.bf16x2 \t$dst, $src0, $src1;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0067",
+        "module": "bf16x2",
+        "name": "min_bf16x2",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0067",
+        "public_path": "cuda_intrinsics::bf16x2::min_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::min_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "MinBf16x2Op",
+        "op_name": "nvvm.min_bf16x2",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.fmin.bf16x2",
+        "arguments": [
+          "v2bf16",
+          "v2bf16"
+        ],
+        "results": [
+          "v2bf16"
+        ],
+        "properties": [
+          "Commutative",
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.7 Half Precision Floating Point Instructions: min",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-min"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX min.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact min.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX min.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact min.bf16x2 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "min",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "min",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Selects the minimum in each packed bf16x2 lane."
+    },
+    {
+      "id": "mul_bf16x2",
+      "operation_key": "packed.alu.bf16x2.mul",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mul.rn.bf16x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0066",
+        "module": "bf16x2",
+        "name": "mul_bf16x2",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0066",
+        "public_path": "cuda_intrinsics::bf16x2::mul_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::mul_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "MulBf16x2Op",
+        "op_name": "nvvm.mul_bf16x2",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.3 Half Precision Floating Point Instructions: mul",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-mul"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "pure inline PTX mul.rn.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact mul.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "PTX emitted by the combined three-form sm_90 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,071-byte PTX 7.8 module for sm_90 and produced a 3,832-byte cubin (SHA-256 a498ca833a4c45100c3e80c165999e4d9389d263e47a909a7f97a25c114822c0).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX mul.rn.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact mul.rn.bf16x2 route at compute_90 as part of the combined three-form probe and produced 1,904-byte LTOIR (SHA-256 87cd4ca7b61dab71aac8885db949e21fbcfbf3bb59ca560c67084d7901ddf60b).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_90 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,832-byte sm_90 cubin (SHA-256 b0715cda56457dd1b90115ad52c73c8bb920df6f0f4e08df60410cfb4a57635a); cuobjdump showed HFMA2.MMA.BF16_V2 for add, HADD2.BF16_V2 with a negated RHS for sub, and HMUL2.BF16_V2 for mul.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "mul",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mul",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies two packed bf16x2 values."
+    },
+    {
+      "id": "neg_bf16x2",
+      "operation_key": "packed.alu.bf16x2.neg",
+      "family": "packed_alu",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_neg_bf16x2"
+      },
+      "selections": [
+        {
+          "source_record": "INT_NVVM_NEG_BF16X2",
+          "asm": "neg.bf16x2 \t$dst, $src0;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0069",
+        "module": "bf16x2",
+        "name": "neg_bf16x2",
+        "arguments": [
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0069",
+        "public_path": "cuda_intrinsics::bf16x2::neg_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::neg_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "NegBf16x2Op",
+        "op_name": "nvvm.neg_bf16x2",
+        "operands": [
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.neg.bf16x2",
+        "arguments": [
+          "v2bf16"
+        ],
+        "results": [
+          "v2bf16"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.5 Half Precision Floating Point Instructions: neg",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-neg"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "pure inline PTX neg.bf16x2 with =r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact neg.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the combined seven-form sm_80 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,792-byte PTX 7.0 module for sm_80 and produced a 3,624-byte cubin (SHA-256 0a1a7b10c48e32f35b3cdce0f228a2fdf5d964570c023f3bbd34a09f1ebb7d9d).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX neg.bf16x2 with =r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact neg.bf16x2 route at compute_80 as part of the combined seven-form probe and produced 2,256-byte LTOIR (SHA-256 a9394a9ba0813c36f65bfc2636d7e80b27ab2ffcb6ded14a420d4127a824028d).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_80 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,624-byte sm_80 cubin (SHA-256 1c8ff2eeb9e58f8b3defc22ed929cd48ec2e2f2beab30747f937a9a7869d74d3); cuobjdump showed HFMA2.BF16_V2, HFMA2.BF16_V2.RELU, HMNMX2.BF16_V2, sign/absolute HFMA2 forms, and F2FP.BF16.PACK_AB.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "neg",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "neg",
+        "modifiers": [
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Negates both packed bf16x2 lanes."
     },
     {
       "id": "packed_atomic_add_bf16x2",
@@ -10540,6 +12576,212 @@
         ]
       },
       "summary": "Exchange a 64-bit value with a named XOR partner using two 32-bit shuffles."
+    },
+    {
+      "id": "sub_bf16x2",
+      "operation_key": "packed.alu.bf16x2.sub",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "sub.rn.bf16x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0065",
+        "module": "bf16x2",
+        "name": "sub_bf16x2",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0065",
+        "public_path": "cuda_intrinsics::bf16x2::sub_bf16x2",
+        "compatibility_paths": [
+          "cuda_device::bf16x2::sub_bf16x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "SubBf16x2Op",
+        "op_name": "nvvm.sub_bf16x2",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.2 Half Precision Floating Point Instructions: sub",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-sub"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "pure inline PTX sub.rn.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM 22.1.2 backend emitted the exact sub.rn.bf16x2 instruction at its native floor as part of the combined packed-bf16x2 probe.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "PTX emitted by the combined three-form sm_90 packed-bf16x2 probe",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the 1,071-byte PTX 7.8 module for sm_90 and produced a 3,832-byte cubin (SHA-256 a498ca833a4c45100c3e80c165999e4d9389d263e47a909a7f97a25c114822c0).",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX sub.rn.bf16x2 with =r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact sub.rn.bf16x2 route at compute_90 as part of the combined three-form probe and produced 1,904-byte LTOIR (SHA-256 87cd4ca7b61dab71aac8885db949e21fbcfbf3bb59ca560c67084d7901ddf60b).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "retained combined packed-bf16x2 sm_90 kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "nvJitLink produced a 3,832-byte sm_90 cubin (SHA-256 b0715cda56457dd1b90115ad52c73c8bb920df6f0f4e08df60410cfb4a57635a); cuobjdump showed HFMA2.MMA.BF16_V2 for add, HADD2.BF16_V2 with a negated RHS for sub, and HMUL2.BF16_V2 for mul.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/targets/x86_64-linux/lib/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "bf16x2",
+        "operation": "sub",
+        "adapter": "direct_packed_u32"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "sub",
+        "modifiers": [
+          "rn",
+          "bf16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Subtracts two packed bf16x2 values."
     },
     {
       "id": "sync_mask",

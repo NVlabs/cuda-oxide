@@ -31,7 +31,7 @@ use crate::convert::intrinsics::common::*;
 use llvm_export::ops as llvm;
 use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
-use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+use pliron::builtin::types::FP32Type;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
@@ -501,48 +501,6 @@ pub(crate) fn convert_ld_16x256b_pure(
     }
     rewriter.replace_operation_with_values(ctx, op, extracted_values);
 
-    Ok(())
-}
-
-// ============================================================================
-// Conversion and synchronization operations
-// ============================================================================
-
-/// Convert nvvm.cvt_f32x2_bf16x2 to inline PTX.
-///
-/// Converts two f32 values to packed bf16x2 using PTX cvt instruction.
-/// PTX: cvt.rn.bf16x2.f32 %result, %b, %a;
-///
-/// The result is a u32 with two bf16 values: (bf16(b) << 16) | bf16(a)
-pub(crate) fn convert_cvt_f32x2_bf16x2(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() < 2 {
-        return pliron::input_err_noloc!("cvt_f32x2_bf16x2 requires 2 operands");
-    }
-
-    let a_val = operands[0];
-    let b_val = operands[1];
-
-    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-
-    // Pure inline asm (data conversion, not a collective op)
-    let inline_asm = llvm::InlineAsmOp::build(
-        ctx,
-        i32_ty.into(),
-        vec![a_val, b_val],
-        "cvt.rn.bf16x2.f32 $0, $2, $1;",
-        "=r,f,f",
-        AsmKind::Pure,
-    );
-
-    let asm_op = inline_asm.get_operation();
-    rewriter.insert_operation(ctx, asm_op);
-    rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
 }
 

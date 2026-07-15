@@ -1742,56 +1742,7 @@ pub unsafe fn tcgen05_ld_16x256b_pure(tmem_addr: u32) -> TmemF32x4 {
 // PTX Type Conversion Intrinsics
 // =============================================================================
 
-/// Convert two f32 values to packed bf16x2 using PTX.
-///
-/// This is the **proper** way to convert f32 → bf16 for stmatrix.
-/// Uses the PTX `cvt.rn.bf16x2.f32` instruction which:
-/// - Converts with round-to-nearest-even
-/// - Packs two bf16 into one u32 register
-///
-/// # PTX
-///
-/// ```ptx
-/// cvt.rn.bf16x2.f32 %result, %b, %a;
-/// // Result: lower 16 bits = bf16(a), upper 16 bits = bf16(b)
-/// ```
-///
-/// # Arguments
-///
-/// - `a`: First f32 value (goes to lower 16 bits)
-/// - `b`: Second f32 value (goes to upper 16 bits)
-///
-/// # Returns
-///
-/// Packed u32 with two bf16 values: `(bf16(b) << 16) | bf16(a)`
-///
-/// Lane placement: the first argument (`a`) fills bits `[15:0]` and the
-/// second argument (`b`) fills bits `[31:16]`, even though the PTX
-/// operand list prints `b` first. This is the same first-arg-low
-/// convention as [`cvt_f16x2_f32`](crate::convert::cvt_f16x2_f32),
-/// which differs only in its destination element type (f16, not bf16)
-/// and its `lo`/`hi` argument naming.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let regs = tcgen05_ld_16x256b_x8_pure(addr);
-/// tcgen05_load_wait();
-///
-/// // Convert pairs of f32 to packed bf16
-/// let p0 = cvt_f32x2_bf16x2(regs[0], regs[1]);
-/// let p1 = cvt_f32x2_bf16x2(regs[2], regs[3]);
-/// let p2 = cvt_f32x2_bf16x2(regs[4], regs[5]);
-/// let p3 = cvt_f32x2_bf16x2(regs[6], regs[7]);
-///
-/// // Store via stmatrix
-/// stmatrix_m8n8_x4_trans(smem_ptr, p0, p1, p2, p3);
-/// ```
-#[inline(never)]
-pub fn cvt_f32x2_bf16x2(a: f32, b: f32) -> u32 {
-    let _ = (a, b);
-    unreachable!("cvt_f32x2_bf16x2 called outside CUDA kernel context")
-}
+include!("generated/tcgen05_conversion.rs");
 
 // =============================================================================
 // TMEM Load/Store Synchronization

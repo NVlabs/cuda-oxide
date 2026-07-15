@@ -221,6 +221,10 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub dot_product: Option<DotProduct>,
     #[serde(default)]
+    pub packed_alu: Option<PackedAlu>,
+    #[serde(default)]
+    pub packed_conversion: Option<PackedConversion>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -761,6 +765,76 @@ pub enum DotProductAdapter {
     InsertLowHalfFalse,
 }
 
+/// Closed identity and carrier contract for packed floating-point ALU ops.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedAlu {
+    pub format: PackedAluFormat,
+    pub operation: PackedAluOperation,
+    pub adapter: PackedAluAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAluFormat {
+    Bf16x2,
+    F16x2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAluOperation {
+    Add,
+    Sub,
+    Mul,
+    Fma,
+    FmaRelu,
+    Min,
+    Max,
+    Neg,
+    Abs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedAluAdapter {
+    DirectPackedU32,
+}
+
+/// Closed contract for converting two scalar values into one packed value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackedConversion {
+    pub source_format: PackedConversionSourceFormat,
+    pub destination_format: PackedConversionDestinationFormat,
+    pub rounding: PackedConversionRounding,
+    pub adapter: PackedConversionAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionSourceFormat {
+    F32x2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionDestinationFormat {
+    Bf16x2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionRounding {
+    NearestEven,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackedConversionAdapter {
+    ReverseHighLowOperands,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiLedgerFile {
@@ -937,6 +1011,10 @@ pub struct CatalogIntrinsic {
     pub warp_shuffle: Option<WarpShuffle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dot_product: Option<DotProduct>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packed_alu: Option<PackedAlu>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packed_conversion: Option<PackedConversion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
@@ -1252,6 +1330,56 @@ adapter = "mask_value_direct"
 "#;
         let error = toml::from_str::<Redux>(input).unwrap_err();
         assert!(error.to_string().contains("mask_value_direct"));
+    }
+
+    #[test]
+    fn packed_alu_contract_rejects_unknown_format_operation_and_adapter() {
+        let valid = r#"
+format = "bf16x2"
+operation = "fma"
+adapter = "direct_packed_u32"
+"#;
+        toml::from_str::<PackedAlu>(valid).unwrap();
+        for invalid in [
+            valid.replace("format = \"bf16x2\"", "format = \"bf16\""),
+            valid.replace("operation = \"fma\"", "operation = \"mad\""),
+            valid.replace(
+                "adapter = \"direct_packed_u32\"",
+                "adapter = \"bitcast_any\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<PackedAlu>(&invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn packed_conversion_contract_rejects_open_ended_policy() {
+        let valid = r#"
+source_format = "f32x2"
+destination_format = "bf16x2"
+rounding = "nearest_even"
+adapter = "reverse_high_low_operands"
+"#;
+        toml::from_str::<PackedConversion>(valid).unwrap();
+        for invalid in [
+            valid.replace("source_format = \"f32x2\"", "source_format = \"f16x2\""),
+            valid.replace(
+                "destination_format = \"bf16x2\"",
+                "destination_format = \"f16x2\"",
+            ),
+            valid.replace("rounding = \"nearest_even\"", "rounding = \"zero\""),
+            valid.replace(
+                "adapter = \"reverse_high_low_operands\"",
+                "adapter = \"direct\"",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<PackedConversion>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
