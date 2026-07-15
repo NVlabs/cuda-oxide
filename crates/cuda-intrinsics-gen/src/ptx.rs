@@ -612,6 +612,25 @@ mod tests {
     }
 
     #[test]
+    fn ordered_sparse_mma_qualifier_is_one_exact_modifier() {
+        let pattern =
+            InstructionPattern::new("mma", &["sp::ordered_metadata", "sync", "aligned"], vec![]);
+        pattern.validate().unwrap();
+        assert_eq!(
+            pattern.to_string(),
+            "mma.sp::ordered_metadata.sync.aligned;"
+        );
+        assert!(pattern.matches("mma.sp::ordered_metadata.sync.aligned;"));
+        for invalid in [
+            "mma.sp.sync.aligned;",
+            "mma.sp.ordered_metadata.sync.aligned;",
+            "mma.sp::ordered_metadata.sync.aligned.extra;",
+        ] {
+            assert!(!pattern.matches(invalid), "{invalid}");
+        }
+    }
+
+    #[test]
     fn rejects_missing_shared_and_transposed_variant() {
         assert!(
             !ldmatrix_x4()

@@ -1,6 +1,6 @@
 # Reviewed classic cp.async-to-mbarrier bridges.
 
-schema = 20
+schema = 21
 family = "cp_async_mbarrier"
 
 [[intrinsic]]

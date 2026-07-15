@@ -1,6 +1,6 @@
 # Reviewed packed floating-point conversions.
 
-schema = 20
+schema = 21
 family = "packed_conversion"
 
 [[intrinsic]]

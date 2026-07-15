@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for packed integer dot products.
 
-schema = 20
+schema = 21
 family = "dotprod"
 
 [[intrinsic]]

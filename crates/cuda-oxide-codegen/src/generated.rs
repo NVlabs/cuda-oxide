@@ -753,6 +753,7 @@ mod tests {
             a_element: SparseMmaElementAttr,
             b_element: SparseMmaElementAttr,
             overflow: SparseMmaOverflowAttr,
+            metadata: SparseMmaMetadataAttr,
             marker: Option<&str>,
         ) -> Ptr<Operation> {
             let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
@@ -781,7 +782,7 @@ mod tests {
             mma.set_attr_nvvm_sparse_mma_a_layout(ctx, SparseMmaLayoutAttr::Row);
             mma.set_attr_nvvm_sparse_mma_b_layout(ctx, SparseMmaLayoutAttr::Col);
             mma.set_attr_nvvm_sparse_mma_overflow(ctx, overflow);
-            mma.set_attr_nvvm_sparse_mma_metadata(ctx, SparseMmaMetadataAttr::Standard);
+            mma.set_attr_nvvm_sparse_mma_metadata(ctx, metadata);
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             if let Some(marker) = marker {
                 operation.deref_mut(ctx).attributes.set(
@@ -849,11 +850,12 @@ mod tests {
 
         let mut ctx = Context::new();
         register_dialects(&mut ctx);
-        for (a_element, b_element, overflow, marker, id) in [
+        for (a_element, b_element, overflow, metadata, marker, id) in [
             (
                 SparseMmaElementAttr::S8,
                 SparseMmaElementAttr::S8,
                 SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0163",
                 "mma_sp_m16n8k32_s32_s8",
             ),
@@ -861,6 +863,7 @@ mod tests {
                 SparseMmaElementAttr::S8,
                 SparseMmaElementAttr::U8,
                 SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0164",
                 "mma_sp_m16n8k32_s32_s8_u8",
             ),
@@ -868,6 +871,7 @@ mod tests {
                 SparseMmaElementAttr::U8,
                 SparseMmaElementAttr::U8,
                 SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0165",
                 "mma_sp_m16n8k32_s32_u8",
             ),
@@ -875,6 +879,7 @@ mod tests {
                 SparseMmaElementAttr::U8,
                 SparseMmaElementAttr::S8,
                 SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0166",
                 "mma_sp_m16n8k32_s32_u8_s8",
             ),
@@ -882,6 +887,7 @@ mod tests {
                 SparseMmaElementAttr::S8,
                 SparseMmaElementAttr::S8,
                 SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0167",
                 "mma_sp_m16n8k32_s32_s8_satfinite",
             ),
@@ -889,6 +895,7 @@ mod tests {
                 SparseMmaElementAttr::S8,
                 SparseMmaElementAttr::U8,
                 SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0168",
                 "mma_sp_m16n8k32_s32_s8_u8_satfinite",
             ),
@@ -896,6 +903,7 @@ mod tests {
                 SparseMmaElementAttr::U8,
                 SparseMmaElementAttr::U8,
                 SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0169",
                 "mma_sp_m16n8k32_s32_u8_satfinite",
             ),
@@ -903,11 +911,83 @@ mod tests {
                 SparseMmaElementAttr::U8,
                 SparseMmaElementAttr::S8,
                 SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Standard,
                 "v1:i0170",
                 "mma_sp_m16n8k32_s32_u8_s8_satfinite",
             ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0171",
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8",
+            ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0172",
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8_u8",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0173",
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0174",
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8_s8",
+            ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0175",
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8_satfinite",
+            ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0176",
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8_u8_satfinite",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0177",
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8_satfinite",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Satfinite,
+                SparseMmaMetadataAttr::Ordered,
+                "v1:i0178",
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8_s8_satfinite",
+            ),
         ] {
-            let op = sparse_mma(&mut ctx, a_element, b_element, overflow, Some(marker));
+            let op = sparse_mma(
+                &mut ctx,
+                a_element,
+                b_element,
+                overflow,
+                metadata,
+                Some(marker),
+            );
             require_marker(&ctx, op, marker, id);
         }
 
@@ -916,6 +996,7 @@ mod tests {
             SparseMmaElementAttr::U8,
             SparseMmaElementAttr::S8,
             SparseMmaOverflowAttr::Satfinite,
+            SparseMmaMetadataAttr::Standard,
             None,
         );
         let requirements = collect_generated_intrinsic_requirements(
@@ -932,6 +1013,7 @@ mod tests {
             SparseMmaElementAttr::S8,
             SparseMmaElementAttr::U8,
             SparseMmaOverflowAttr::Wrapping,
+            SparseMmaMetadataAttr::Standard,
             Some("v1:i0163"),
         );
         reject_marker(&ctx, wrong_element);
@@ -941,15 +1023,37 @@ mod tests {
             SparseMmaElementAttr::S8,
             SparseMmaElementAttr::S8,
             SparseMmaOverflowAttr::Satfinite,
+            SparseMmaMetadataAttr::Standard,
             Some("v1:i0163"),
         );
         reject_marker(&ctx, wrong_overflow);
+
+        let standard_with_ordered_marker = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::S8,
+            SparseMmaElementAttr::S8,
+            SparseMmaOverflowAttr::Wrapping,
+            SparseMmaMetadataAttr::Standard,
+            Some("v1:i0171"),
+        );
+        reject_marker(&ctx, standard_with_ordered_marker);
+
+        let ordered_with_standard_marker = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::S8,
+            SparseMmaElementAttr::S8,
+            SparseMmaOverflowAttr::Wrapping,
+            SparseMmaMetadataAttr::Ordered,
+            Some("v1:i0163"),
+        );
+        reject_marker(&ctx, ordered_with_standard_marker);
 
         let wrong_layout = sparse_mma(
             &mut ctx,
             SparseMmaElementAttr::S8,
             SparseMmaElementAttr::S8,
             SparseMmaOverflowAttr::Wrapping,
+            SparseMmaMetadataAttr::Standard,
             Some("v1:i0163"),
         );
         SparseMmaOp::new(wrong_layout)
@@ -961,6 +1065,7 @@ mod tests {
             SparseMmaElementAttr::U8,
             SparseMmaElementAttr::S8,
             SparseMmaOverflowAttr::Wrapping,
+            SparseMmaMetadataAttr::Standard,
             Some("v1:i0116"),
         );
         let error = collect_generated_intrinsic_requirements(
@@ -983,14 +1088,28 @@ mod tests {
     }
 
     #[test]
-    fn sparse_mma_targets_require_ptx_71_and_ampere_on_both_backends() {
+    fn sparse_mma_targets_require_metadata_specific_ptx_and_ampere() {
         use crate::generated_intrinsic_targets::{
             GeneratedHardwareAlternative, GeneratedHardwareTarget,
         };
 
-        for marker in [
-            "v1:i0163", "v1:i0164", "v1:i0165", "v1:i0166", "v1:i0167", "v1:i0168", "v1:i0169",
-            "v1:i0170",
+        for (marker, minimum_ptx) in [
+            ("v1:i0163", 71),
+            ("v1:i0164", 71),
+            ("v1:i0165", 71),
+            ("v1:i0166", 71),
+            ("v1:i0167", 71),
+            ("v1:i0168", 71),
+            ("v1:i0169", 71),
+            ("v1:i0170", 71),
+            ("v1:i0171", 85),
+            ("v1:i0172", 85),
+            ("v1:i0173", 85),
+            ("v1:i0174", 85),
+            ("v1:i0175", 85),
+            ("v1:i0176", 85),
+            ("v1:i0177", 85),
+            ("v1:i0178", 85),
         ] {
             let target = generated_intrinsic_target_by_marker(marker).unwrap();
             for backend in [
@@ -998,7 +1117,7 @@ mod tests {
                 GeneratedIntrinsicBackend::LibNvvm,
             ] {
                 let requirement = target.requirement_for_backend(backend);
-                assert_eq!(requirement.minimum_ptx.encoded(), 71, "{marker}");
+                assert_eq!(requirement.minimum_ptx.encoded(), minimum_ptx, "{marker}");
                 assert_eq!(
                     requirement.hardware,
                     GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)]),

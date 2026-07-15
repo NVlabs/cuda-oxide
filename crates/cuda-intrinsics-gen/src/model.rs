@@ -199,18 +199,19 @@ pub struct RegisterMmaBinaryVariant {
     pub operation: RegisterMmaOperation,
 }
 
-/// Compact admission for the base sparse INT8 register-MMA family.
+/// Compact admission for a sparse INT8 register-MMA family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SparseMmaIntegerAdmission {
     pub llvm_evidence_profile: String,
     pub libnvvm_evidence_profile: String,
     pub runtime_validation: RuntimeValidation,
+    pub metadata: SparseMmaMetadata,
     #[serde(rename = "variant")]
     pub variants: Vec<SparseMmaIntegerVariant>,
 }
 
-/// One reviewed member of the base sparse INT8 register-MMA family.
+/// One reviewed member of a sparse INT8 register-MMA family.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SparseMmaIntegerVariant {
@@ -603,6 +604,7 @@ pub enum SparseMmaOverflow {
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaMetadata {
     Standard,
+    Ordered,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2077,12 +2079,18 @@ runtime_validation = "unexecuted"
         assert_eq!(parsed.metadata, SparseMmaMetadata::Standard);
         assert_eq!(parsed.selector, SparseMmaSelector::ImmediateZeroOrOne);
 
+        let ordered = valid.replace("metadata = \"standard\"", "metadata = \"ordered\"");
+        assert_eq!(
+            toml::from_str::<SparseMma>(&ordered).unwrap().metadata,
+            SparseMmaMetadata::Ordered
+        );
+
         for invalid in [
             valid.replace(
                 "selector = \"immediate_zero_or_one\"",
                 "selector = \"runtime\"",
             ),
-            valid.replace("metadata = \"standard\"", "metadata = \"ordered\""),
+            valid.replace("metadata = \"standard\"", "metadata = \"unreviewed\""),
             valid.replace("shape = \"m16n8k32\"", "shape = \"m16n8k64\""),
             format!("{valid}unreviewed = true\n"),
         ] {

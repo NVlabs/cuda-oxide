@@ -45,9 +45,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 24;
-const OVERLAY_SHARD_SCHEMA: u32 = 20;
-pub(crate) const CATALOG_SCHEMA: u32 = 23;
+const OVERLAY_SCHEMA: u32 = 25;
+const OVERLAY_SHARD_SCHEMA: u32 = 21;
+pub(crate) const CATALOG_SCHEMA: u32 = 24;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -6888,13 +6888,13 @@ struct SparseMmaRecipe {
 
 fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
     use SparseMmaElement::{S8, U8};
+    use SparseMmaMetadata::{Ordered, Standard};
     use SparseMmaOverflow::{Satfinite, Wrapping};
 
     if mma.shape != SparseMmaShape::M16n8k32
         || mma.accumulator != SparseMmaAccumulator::S32
         || mma.a_layout != SparseMmaLayout::Row
         || mma.b_layout != SparseMmaLayout::Col
-        || mma.metadata != SparseMmaMetadata::Standard
         || mma.selector != SparseMmaSelector::ImmediateZeroOrOne
         || mma.participation
             != SparseMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
@@ -6905,65 +6905,131 @@ fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
     }
 
     let (id, abi_id, operation_key, source_record, llvm_symbol) =
-        match (mma.a_element, mma.b_element, mma.overflow) {
-            (S8, S8, Wrapping) => (
+        match (mma.a_element, mma.b_element, mma.overflow, mma.metadata) {
+            (S8, S8, Wrapping, Standard) => (
                 "mma_sp_m16n8k32_s32_s8",
                 "i0163",
                 "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.wrapping.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_s8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.s8",
             ),
-            (S8, U8, Wrapping) => (
+            (S8, U8, Wrapping, Standard) => (
                 "mma_sp_m16n8k32_s32_s8_u8",
                 "i0164",
                 "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.wrapping.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_s8_u8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.s8.u8",
             ),
-            (U8, U8, Wrapping) => (
+            (U8, U8, Wrapping, Standard) => (
                 "mma_sp_m16n8k32_s32_u8",
                 "i0165",
                 "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.wrapping.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_u8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.u8",
             ),
-            (U8, S8, Wrapping) => (
+            (U8, S8, Wrapping, Standard) => (
                 "mma_sp_m16n8k32_s32_u8_s8",
                 "i0166",
                 "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.wrapping.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_u8_s8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.u8.s8",
             ),
-            (S8, S8, Satfinite) => (
+            (S8, S8, Satfinite, Standard) => (
                 "mma_sp_m16n8k32_s32_s8_satfinite",
                 "i0167",
                 "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.satfinite.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_s8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.s8",
             ),
-            (S8, U8, Satfinite) => (
+            (S8, U8, Satfinite, Standard) => (
                 "mma_sp_m16n8k32_s32_s8_u8_satfinite",
                 "i0168",
                 "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.satfinite.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_s8_u8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.s8.u8",
             ),
-            (U8, U8, Satfinite) => (
+            (U8, U8, Satfinite, Standard) => (
                 "mma_sp_m16n8k32_s32_u8_satfinite",
                 "i0169",
                 "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.satfinite.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_u8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.u8",
             ),
-            (U8, S8, Satfinite) => (
+            (U8, S8, Satfinite, Standard) => (
                 "mma_sp_m16n8k32_s32_u8_s8_satfinite",
                 "i0170",
                 "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.satfinite.standard_metadata",
                 "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_u8_s8",
                 "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.u8.s8",
             ),
+            (S8, S8, Wrapping, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8",
+                "i0171",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.wrapping.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_s8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.s8",
+            ),
+            (S8, U8, Wrapping, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8_u8",
+                "i0172",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.wrapping.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_s8_u8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.s8.u8",
+            ),
+            (U8, U8, Wrapping, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8",
+                "i0173",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.wrapping.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_u8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.u8",
+            ),
+            (U8, S8, Wrapping, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8_s8",
+                "i0174",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.wrapping.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_u8_s8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.u8.s8",
+            ),
+            (S8, S8, Satfinite, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8_satfinite",
+                "i0175",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.satfinite.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_s8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.s8",
+            ),
+            (S8, U8, Satfinite, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_s8_u8_satfinite",
+                "i0176",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.satfinite.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_s8_u8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.s8.u8",
+            ),
+            (U8, U8, Satfinite, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8_satfinite",
+                "i0177",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.satfinite.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_u8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.u8",
+            ),
+            (U8, S8, Satfinite, Ordered) => (
+                "mma_sp_ordered_metadata_m16n8k32_s32_u8_s8_satfinite",
+                "i0178",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.satfinite.ordered_metadata",
+                "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_u8_s8",
+                "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.u8.s8",
+            ),
         };
-    let mut ptx_modifiers = vec!["sp", "sync", "aligned", "m16n8k32", "row", "col"];
+    let mut ptx_modifiers = vec![
+        match mma.metadata {
+            Standard => "sp",
+            Ordered => "sp::ordered_metadata",
+        },
+        "sync",
+        "aligned",
+        "m16n8k32",
+        "row",
+        "col",
+    ];
     if mma.overflow == Satfinite {
         ptx_modifiers.push("satfinite");
     }
@@ -6987,6 +7053,17 @@ fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
         llvm_symbol,
         ptx_modifiers,
     })
+}
+
+fn sparse_mma_minimum_ptx(metadata: SparseMmaMetadata) -> &'static str {
+    match metadata {
+        SparseMmaMetadata::Standard => "7.1",
+        SparseMmaMetadata::Ordered => "8.5",
+    }
+}
+
+fn sparse_mma_ptx_section(_: SparseMmaMetadata) -> &'static str {
+    "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp"
 }
 
 fn expand_sparse_mma_integer_admission(
@@ -7021,7 +7098,7 @@ fn expand_sparse_mma_integer_admission(
             a_layout: SparseMmaLayout::Row,
             b_layout: SparseMmaLayout::Col,
             overflow: variant.overflow,
-            metadata: SparseMmaMetadata::Standard,
+            metadata: admission.metadata,
             selector: SparseMmaSelector::ImmediateZeroOrOne,
             participation:
                 SparseMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
@@ -7040,8 +7117,12 @@ fn expand_sparse_mma_integer_admission(
             SparseMmaOverflow::Wrapping => "wrapping",
             SparseMmaOverflow::Satfinite => "saturating",
         };
+        let metadata = match admission.metadata {
+            SparseMmaMetadata::Standard => "",
+            SparseMmaMetadata::Ordered => " with ordered sparsity metadata",
+        };
         let summary = format!(
-            "Multiplies warp-distributed sparse {} A and {} B INT8 fragments and adds a {overflow} s32 accumulator.",
+            "Multiplies warp-distributed sparse {} A and {} B INT8 fragments{metadata} and adds a {overflow} s32 accumulator.",
             signedness(variant.a_element),
             signedness(variant.b_element),
         );
@@ -7083,12 +7164,12 @@ fn expand_sparse_mma_integer_admission(
             memory: "none".into(),
             convergent: true,
             execution_scope: "warp".into(),
-            minimum_ptx: "7.1".into(),
+            minimum_ptx: sparse_mma_minimum_ptx(mma.metadata).into(),
             minimum_sm: Some("sm_80".into()),
             ptx_result: "[i32; 4]".into(),
             targets: "all".into(),
             ptx_isa_version: "9.3".into(),
-            ptx_isa_section: "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp".into(),
+            ptx_isa_section: sparse_mma_ptx_section(mma.metadata).into(),
             ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp".into(),
             lowering: "generated_sparse_mma".into(),
             backend_lowerings: vec![
@@ -7096,14 +7177,14 @@ fn expand_sparse_mma_integer_admission(
                     backend: IntrinsicBackend::LlvmNvptx,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.llvm_evidence_profile.clone(),
-                    minimum_ptx: Some("7.1".into()),
+                    minimum_ptx: Some(sparse_mma_minimum_ptx(mma.metadata).into()),
                     minimum_sm: Some("sm_80".into()),
                 },
                 OverlayBackendLowering {
                     backend: IntrinsicBackend::LibNvvm,
                     mechanism: BackendLoweringMechanism::InlinePtx,
                     evidence_profile: admission.libnvvm_evidence_profile.clone(),
-                    minimum_ptx: Some("7.1".into()),
+                    minimum_ptx: Some(sparse_mma_minimum_ptx(mma.metadata).into()),
                     minimum_sm: Some("sm_80".into()),
                 },
             ],
@@ -7203,7 +7284,7 @@ fn validate_sparse_mma_policy(
             && policy.memory == "none"
             && policy.convergent
             && policy.execution_scope == "warp"
-            && policy.minimum_ptx == "7.1"
+            && policy.minimum_ptx == sparse_mma_minimum_ptx(mma.metadata)
             && policy.minimum_sm.as_deref() == Some("sm_80")
             && policy.targets == "all",
         "{} sparse-MMA effects or target floor disagree with PTX",
@@ -7211,7 +7292,7 @@ fn validate_sparse_mma_policy(
     );
     ensure!(
         policy.ptx_isa_version == "9.3"
-            && policy.ptx_isa_section == "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp"
+            && policy.ptx_isa_section == sparse_mma_ptx_section(mma.metadata)
             && policy.ptx_isa_url
                 == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp",
         "{} sparse-MMA PTX provenance disagrees with the reviewed recipe",
@@ -7248,8 +7329,16 @@ fn validate_sparse_mma_policy(
     ensure_exact_inline_ptx_backends(
         policy,
         [
-            (IntrinsicBackend::LlvmNvptx, "7.1", "sm_80"),
-            (IntrinsicBackend::LibNvvm, "7.1", "sm_80"),
+            (
+                IntrinsicBackend::LlvmNvptx,
+                sparse_mma_minimum_ptx(mma.metadata),
+                "sm_80",
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                sparse_mma_minimum_ptx(mma.metadata),
+                "sm_80",
+            ),
         ],
         "sparse MMA",
     )?;
@@ -9354,8 +9443,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 24);
-        assert_eq!(overlay.intrinsics.len(), 170);
+        assert_eq!(overlay.shards.len(), 25);
+        assert_eq!(overlay.intrinsics.len(), 178);
         assert_eq!(
             overlay
                 .intrinsics
@@ -9410,7 +9499,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "sparse_mma")
                 .count(),
-            8
+            16
         );
         assert_eq!(
             overlay
@@ -9888,13 +9977,13 @@ mod tests {
             .iter()
             .filter(|record| record.family == "sparse_mma")
             .collect::<Vec<_>>();
-        assert_eq!(records.len(), 8);
+        assert_eq!(records.len(), 16);
         assert_eq!(
             records
                 .iter()
                 .map(|record| record.abi_id.as_str())
                 .collect::<BTreeSet<_>>(),
-            (163..=170)
+            (163..=178)
                 .map(|id| format!("i{id:04}"))
                 .collect::<BTreeSet<_>>()
                 .iter()
@@ -9908,19 +9997,25 @@ mod tests {
                 let mma = record.sparse_mma.as_ref().unwrap();
                 assert_eq!(mma.shape, SparseMmaShape::M16n8k32);
                 assert_eq!(mma.accumulator, SparseMmaAccumulator::S32);
-                assert_eq!(mma.metadata, SparseMmaMetadata::Standard);
                 assert_eq!(mma.selector, SparseMmaSelector::ImmediateZeroOrOne);
                 assert_eq!(
                     mma.adapter,
                     SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
                 );
-                assert_eq!(record.minimum_ptx, "7.1");
+                assert_eq!(record.minimum_ptx, sparse_mma_minimum_ptx(mma.metadata));
                 assert_eq!(record.minimum_sm.as_deref(), Some("sm_80"));
                 assert_eq!(
                     record.expected_ptx.operands.last(),
                     Some(&OperandPattern::Immediate)
                 );
-                (mma.a_element, mma.b_element, mma.overflow)
+                assert_eq!(
+                    record.expected_ptx.modifiers.first().map(String::as_str),
+                    Some(match mma.metadata {
+                        SparseMmaMetadata::Standard => "sp",
+                        SparseMmaMetadata::Ordered => "sp::ordered_metadata",
+                    })
+                );
+                (mma.a_element, mma.b_element, mma.overflow, mma.metadata)
             })
             .collect::<BTreeSet<_>>();
         let expected_variants = [SparseMmaElement::S8, SparseMmaElement::U8]
@@ -9931,7 +10026,11 @@ mod tests {
                     .flat_map(move |b_element| {
                         [SparseMmaOverflow::Wrapping, SparseMmaOverflow::Satfinite]
                             .into_iter()
-                            .map(move |overflow| (a_element, b_element, overflow))
+                            .flat_map(move |overflow| {
+                                [SparseMmaMetadata::Standard, SparseMmaMetadata::Ordered]
+                                    .into_iter()
+                                    .map(move |metadata| (a_element, b_element, overflow, metadata))
+                            })
                     })
             })
             .collect::<BTreeSet<_>>();

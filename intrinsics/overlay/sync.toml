@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for CTA synchronization.
 
-schema = 20
+schema = 21
 family = "sync"
 
 [[intrinsic]]

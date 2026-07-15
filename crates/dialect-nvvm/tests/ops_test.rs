@@ -1476,7 +1476,7 @@ fn generated_register_mma_verifies_dense_b1_families() {
 }
 
 #[test]
-fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
+fn generated_sparse_mma_verifies_all_int8_variants_and_metadata_modes() {
     use dialect_mir::ops::MirConstantOp;
     use pliron::builtin::{attributes::IntegerAttr, ops::ConstantOp};
     use pliron::utils::apint::APInt;
@@ -1520,7 +1520,7 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
     let mir_one = mir_one.deref(&ctx).get_result(0);
 
     macro_rules! sparse_mma {
-        ($operands:expr, $results:expr, $a:expr, $b:expr, $overflow:expr) => {{
+        ($operands:expr, $results:expr, $a:expr, $b:expr, $overflow:expr, $metadata:expr) => {{
             let operation = Operation::new(
                 &mut ctx,
                 SparseMmaOp::get_concrete_op_info(),
@@ -1537,7 +1537,7 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
             mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, SparseMmaLayoutAttr::Row);
             mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Col);
             mma.set_attr_nvvm_sparse_mma_overflow(&ctx, $overflow);
-            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, SparseMmaMetadataAttr::Standard);
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, $metadata);
             mma.set_attr_nvvm_sparse_mma_selector(&ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             mma
         }};
@@ -1585,47 +1585,63 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
             SparseMmaOverflowAttr::Satfinite,
         ),
     ];
-    for (index, (a_element, b_element, overflow)) in variants.into_iter().enumerate() {
-        let selector = if index % 2 == 0 {
-            builtin_zero
-        } else {
-            mir_one
-        };
-        let operands = [vec![i32_value; 4], vec![u32_value; 5], vec![selector]].concat();
-        let mma = sparse_mma!(
-            operands,
-            vec![i32_ty.into(); 4],
-            a_element.clone(),
-            b_element.clone(),
-            overflow.clone()
-        );
-        assert_eq!(
-            mma.get_attr_nvvm_sparse_mma_a_element(&ctx).as_deref(),
-            Some(&a_element)
-        );
-        assert_eq!(
-            mma.get_attr_nvvm_sparse_mma_b_element(&ctx).as_deref(),
-            Some(&b_element)
-        );
-        assert_eq!(
-            mma.get_attr_nvvm_sparse_mma_overflow(&ctx).as_deref(),
-            Some(&overflow)
-        );
-        assert!(
-            verify_op(&mma, &ctx).is_ok(),
-            "rejected sparse {a_element:?}x{b_element:?} {overflow:?}"
-        );
+    for metadata in [
+        SparseMmaMetadataAttr::Standard,
+        SparseMmaMetadataAttr::Ordered,
+    ] {
+        for (index, (a_element, b_element, overflow)) in variants.iter().enumerate() {
+            let selector = if index % 2 == 0 {
+                builtin_zero
+            } else {
+                mir_one
+            };
+            let operands = [vec![i32_value; 4], vec![u32_value; 5], vec![selector]].concat();
+            let mma = sparse_mma!(
+                operands,
+                vec![i32_ty.into(); 4],
+                a_element.clone(),
+                b_element.clone(),
+                overflow.clone(),
+                metadata.clone()
+            );
+            assert_eq!(
+                mma.get_attr_nvvm_sparse_mma_a_element(&ctx).as_deref(),
+                Some(a_element)
+            );
+            assert_eq!(
+                mma.get_attr_nvvm_sparse_mma_b_element(&ctx).as_deref(),
+                Some(b_element)
+            );
+            assert_eq!(
+                mma.get_attr_nvvm_sparse_mma_overflow(&ctx).as_deref(),
+                Some(overflow)
+            );
+            assert_eq!(
+                mma.get_attr_nvvm_sparse_mma_metadata(&ctx).as_deref(),
+                Some(&metadata)
+            );
+            assert!(
+                verify_op(&mma, &ctx).is_ok(),
+                "rejected sparse {metadata:?} {a_element:?}x{b_element:?} {overflow:?}"
+            );
+        }
     }
 
-    for selector in [u32_value, builtin_two] {
-        let invalid = sparse_mma!(
-            [vec![i32_value; 4], vec![u32_value; 5], vec![selector],].concat(),
-            vec![i32_ty.into(); 4],
-            SparseMmaElementAttr::S8,
-            SparseMmaElementAttr::U8,
-            SparseMmaOverflowAttr::Wrapping
-        );
-        assert!(verify_op(&invalid, &ctx).is_err());
+    for metadata in [
+        SparseMmaMetadataAttr::Standard,
+        SparseMmaMetadataAttr::Ordered,
+    ] {
+        for selector in [u32_value, builtin_two] {
+            let invalid = sparse_mma!(
+                [vec![i32_value; 4], vec![u32_value; 5], vec![selector],].concat(),
+                vec![i32_ty.into(); 4],
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping,
+                metadata.clone()
+            );
+            assert!(verify_op(&invalid, &ctx).is_err());
+        }
     }
 
     let wrong_accumulator_type = sparse_mma!(
@@ -1638,7 +1654,8 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
         vec![i32_ty.into(); 4],
         SparseMmaElementAttr::U8,
         SparseMmaElementAttr::S8,
-        SparseMmaOverflowAttr::Satfinite
+        SparseMmaOverflowAttr::Satfinite,
+        SparseMmaMetadataAttr::Standard
     );
     assert!(verify_op(&wrong_accumulator_type, &ctx).is_err());
 
@@ -1647,7 +1664,8 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
         vec![i32_ty.into(); 4],
         SparseMmaElementAttr::S8,
         SparseMmaElementAttr::S8,
-        SparseMmaOverflowAttr::Wrapping
+        SparseMmaOverflowAttr::Wrapping,
+        SparseMmaMetadataAttr::Standard
     );
     assert!(verify_op(&wrong_count, &ctx).is_err());
 
@@ -1656,7 +1674,8 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
         vec![signless_i32_ty.into(); 4],
         SparseMmaElementAttr::U8,
         SparseMmaElementAttr::U8,
-        SparseMmaOverflowAttr::Wrapping
+        SparseMmaOverflowAttr::Wrapping,
+        SparseMmaMetadataAttr::Standard
     );
     assert!(verify_op(&wrong_results, &ctx).is_err());
 
@@ -1665,7 +1684,8 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_selector_constants() {
         vec![i32_ty.into(); 4],
         SparseMmaElementAttr::S8,
         SparseMmaElementAttr::U8,
-        SparseMmaOverflowAttr::Satfinite
+        SparseMmaOverflowAttr::Satfinite,
+        SparseMmaMetadataAttr::Standard
     );
     wrong_layout.set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Row);
     assert!(verify_op(&wrong_layout, &ctx).is_err());

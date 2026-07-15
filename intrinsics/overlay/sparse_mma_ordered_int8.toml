@@ -1,4 +1,4 @@
-# Reviewed base sparse INT8 register-MMA family.
+# Reviewed ordered-metadata sparse INT8 register-MMA family.
 
 schema = 21
 family = "sparse_mma"
@@ -7,7 +7,7 @@ family = "sparse_mma"
 llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
 libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33"
 runtime_validation = "unexecuted"
-metadata = "standard"
+metadata = "ordered"
 
 [[sparse_mma_int8.variant]]
 shape = "m16n8k32"

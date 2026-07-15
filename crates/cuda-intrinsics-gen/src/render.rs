@@ -1216,6 +1216,7 @@ fn sparse_mma_attr_variants(
     };
     let metadata = match mma.metadata {
         SparseMmaMetadata::Standard => "SparseMmaMetadataAttr::Standard",
+        SparseMmaMetadata::Ordered => "SparseMmaMetadataAttr::Ordered",
     };
     let selector = match mma.selector {
         SparseMmaSelector::ImmediateZeroOrOne => "SparseMmaSelectorAttr::ImmediateZeroOrOne",
@@ -1429,11 +1430,16 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 );
             } else if let Some(mma) = &record.sparse_mma {
                 output.push_str(
-                    "/// All 32 warp lanes must execute the same `mma.sp.sync.aligned` instruction with the same qualifiers, and no lane may have exited.\n\
+                    "/// All 32 warp lanes must execute the same sparse MMA instruction with the same qualifiers, and no lane may have exited.\n\
                      /// `_arg0`, `_arg1`, `_arg2`, and `_arg3` must contain this lane's C, A, B, and sparse metadata fragments in the documented PTX layout.\n\
                      /// `_arg4` must be the compile-time constant `0` or `1`.\n\
                      /// The operation is register-only and is not a memory fence.\n",
                 );
+                if mma.metadata == SparseMmaMetadata::Ordered {
+                    output.push_str(
+                        "/// Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.\n",
+                    );
+                }
                 writeln!(
                     output,
                     "/// See the [PTX sparse MMA fragment layouts]({}).",
@@ -1751,6 +1757,11 @@ fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "/// `c`, `a`, `b`, and `metadata` must contain this lane's fragments in the documented PTX layout.\n",
         );
+        if mma.metadata == SparseMmaMetadata::Ordered {
+            output.push_str(
+                "/// Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.\n",
+            );
+        }
         output.push_str("/// `selector` must be the compile-time constant `0` or `1`.\n");
         writeln!(
             output,
@@ -3543,7 +3554,7 @@ pub(super) fn register(ctx: &mut Context) {
 fn render_dialect_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        r#"//! One structural operation for generated `mma.sp.sync` variants.
+        r#"//! One structural operation for generated sparse MMA variants.
 
 use dialect_mir::ops::MirConstantOp;
 use pliron::{
@@ -3583,7 +3594,7 @@ pub enum SparseMmaOverflowAttr { Wrapping, Satfinite }
 
 #[pliron_attr(name = "nvvm.sparse_mma_metadata", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaMetadataAttr { Standard }
+pub enum SparseMmaMetadataAttr { Standard, Ordered }
 
 #[pliron_attr(name = "nvvm.sparse_mma_selector", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -6042,6 +6053,7 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
         };
         let metadata = match mma.metadata {
             SparseMmaMetadata::Standard => "GeneratedSparseMmaMetadata::Standard",
+            SparseMmaMetadata::Ordered => "GeneratedSparseMmaMetadata::Ordered",
         };
         let selector = match mma.selector {
             SparseMmaSelector::ImmediateZeroOrOne => {
@@ -6137,7 +6149,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -6213,7 +6225,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "                && overflow_matches\n        }\n    }\n}\n",
-        "                && overflow_matches\n        }\n        GeneratedIntrinsicVariant::SparseMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow, metadata, selector } => {\n            let Some(op) = Operation::get_op::<SparseMmaOp>(operation, ctx) else { return false; };\n            let element_matches = |expected, actual: Option<&SparseMmaElementAttr>| match expected {\n                GeneratedSparseMmaElement::S8 => actual == Some(&SparseMmaElementAttr::S8),\n                GeneratedSparseMmaElement::U8 => actual == Some(&SparseMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&SparseMmaLayoutAttr>| match expected {\n                GeneratedSparseMmaLayout::Row => actual == Some(&SparseMmaLayoutAttr::Row),\n                GeneratedSparseMmaLayout::Col => actual == Some(&SparseMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedSparseMmaOverflow::Wrapping => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Wrapping),\n                GeneratedSparseMmaOverflow::Satfinite => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Satfinite),\n            };\n            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)\n                && element_matches(a_element, op.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n                && matches!(metadata, GeneratedSparseMmaMetadata::Standard)\n                && op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Standard)\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)\n        }\n    }\n}\n",
+        "                && overflow_matches\n        }\n        GeneratedIntrinsicVariant::SparseMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow, metadata, selector } => {\n            let Some(op) = Operation::get_op::<SparseMmaOp>(operation, ctx) else { return false; };\n            let element_matches = |expected, actual: Option<&SparseMmaElementAttr>| match expected {\n                GeneratedSparseMmaElement::S8 => actual == Some(&SparseMmaElementAttr::S8),\n                GeneratedSparseMmaElement::U8 => actual == Some(&SparseMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&SparseMmaLayoutAttr>| match expected {\n                GeneratedSparseMmaLayout::Row => actual == Some(&SparseMmaLayoutAttr::Row),\n                GeneratedSparseMmaLayout::Col => actual == Some(&SparseMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedSparseMmaOverflow::Wrapping => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Wrapping),\n                GeneratedSparseMmaOverflow::Satfinite => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Satfinite),\n            };\n            let metadata_matches = match metadata {\n                GeneratedSparseMmaMetadata::Standard => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Standard),\n                GeneratedSparseMmaMetadata::Ordered => op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Ordered),\n            };\n            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)\n                && element_matches(a_element, op.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n                && metadata_matches\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)\n        }\n    }\n}\n",
     );
     output.push_str(
         "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
@@ -6998,9 +7010,15 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             RuntimeValidation::Unexecuted => "not executed on a GPU",
             RuntimeValidation::Executed => "executed on a GPU",
         };
+        let metadata = match mma.metadata {
+            SparseMmaMetadata::Standard => "",
+            SparseMmaMetadata::Ordered => {
+                " Each 4-bit metadata index pair must be 0x4, 0x8, 0x9, 0xc, 0xd, or 0xe; any other value is undefined behavior."
+            }
+        };
         writeln!(
             output,
-            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. The selector must be the compile-time constant `0` or `1`. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. The selector must be the compile-time constant `0` or `1`. Every non-exited warp lane must execute the same instruction and qualifiers.{metadata} Integer overflow is {overflow}; runtime validation is {runtime}.",
             record.id,
             sparse_mma_ptx_head(record),
         )
@@ -8463,7 +8481,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 170);
+        assert_eq!(catalog.intrinsics.len(), 178);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -8680,7 +8698,7 @@ mod tests {
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         let records = sparse_mmas(&catalog).collect::<Vec<_>>();
-        assert_eq!(records.len(), 8);
+        assert_eq!(records.len(), 16);
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
@@ -8692,7 +8710,7 @@ mod tests {
         }
 
         let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 8);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 16);
         assert!(
             compatibility
                 .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
@@ -8706,6 +8724,7 @@ mod tests {
         assert!(dialect.contains("SparseMmaElementAttr::U8"));
         assert!(dialect.contains("SparseMmaOverflowAttr::Wrapping"));
         assert!(dialect.contains("SparseMmaOverflowAttr::Satfinite"));
+        assert!(dialect.contains("SparseMmaMetadataAttr { Standard, Ordered }"));
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("sparse MMA selector must be the compile-time constant 0 or 1"));
@@ -8732,6 +8751,16 @@ mod tests {
         assert!(targets.contains("Operation::get_op::<SparseMmaOp>"));
         assert!(targets.contains("get_attr_nvvm_sparse_mma_selector"));
         assert!(targets.contains("GeneratedSparseMmaSelector::ImmediateZeroOrOne"));
+        assert!(targets.contains("GeneratedSparseMmaMetadata::Ordered"));
+        assert!(targets.contains("SparseMmaMetadataAttr::Ordered"));
+
+        assert!(compatibility.contains(
+            "Each 4-bit metadata index pair must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior."
+        ));
+        assert!(
+            lowering
+                .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32")
+        );
 
         for record in &records {
             let probe = render_probe(&catalog, record, "test-hash");
