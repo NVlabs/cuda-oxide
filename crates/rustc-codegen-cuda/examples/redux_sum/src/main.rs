@@ -7,7 +7,7 @@
 //!
 //! Whereas `warp_reduce` builds a log-tree sum out of 5 `shfl` + 5 `add`, this
 //! example performs the whole warp reduction with one hardware instruction:
-//! PTX `redux.sync.add.u32`, lowered from `warp::redux_sync_add`.
+//! PTX `redux.sync.add.s32` (bit-identical wrapping sum for `u32`), lowered from `warp::redux_sync_add`.
 //!
 //! Build and run with:
 //!   cargo oxide run redux_sum

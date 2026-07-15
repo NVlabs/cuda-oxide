@@ -7,7 +7,7 @@ use crate::model::{
     BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative, CatalogHardwareTarget,
     CatalogIntrinsic, CatalogLlvm, CatalogSelection, EvidenceArtifactKind, EvidenceStageKind,
     ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat,
+    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -55,6 +55,10 @@ pub fn all_outputs(
         render_dialect_packed_atomic(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/redux.rs".into(),
+        render_dialect_redux(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/mir-importer/src/translator/terminator/intrinsics/generated.rs".into(),
         render_importer(catalog, catalog_sha256),
     );
@@ -92,7 +96,8 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
         if !record.rust.safe {
             ensure!(
                 (record.family == "ldmatrix" && record.ldmatrix.is_some())
-                    || (record.family == "packed_atomic" && record.packed_atomic.is_some()),
+                    || (record.family == "packed_atomic" && record.packed_atomic.is_some())
+                    || (record.family == "redux" && record.redux.is_some()),
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
             );
@@ -124,6 +129,22 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_packed_atomic_inline_ptx"
                     && record.packed_atomic.is_some(),
                 "{} is outside the closed generated packed-atomic recipe",
+                record.id
+            ),
+            "redux" => ensure!(
+                record.rust.module == "warp"
+                    && matches!(record.rust.arguments.as_slice(), [mask, value]
+                        if mask == "u32" && value == &record.rust.result)
+                    && matches!(record.rust.result.as_str(), "u32" | "i32")
+                    && !record.rust.safe
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.arguments == ["i32", "i32"] && llvm.results == ["i32"]
+                    })
+                    && record.dialect.operands == ["i32", "i32"]
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_redux"
+                    && record.redux.is_some(),
+                "{} is outside the closed generated redux recipe",
                 record.id
             ),
             family => ensure!(false, "{} has unrenderable family {family}", record.id),
@@ -187,6 +208,13 @@ fn packed_atomics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "packed_atomic")
+}
+
+fn redux(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "redux")
 }
 
 fn llvm(record: &CatalogIntrinsic) -> &CatalogLlvm {
@@ -406,6 +434,11 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// This weak memory operation does not replace a required barrier or fence.\n",
                 );
+            } else if record.redux.is_some() {
+                output.push_str(
+                    "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `redux.sync` operation with the same qualifiers and mask.\n\
+                     /// The instruction waits for those lanes; violating this participation contract makes the PTX operation undefined.\n",
+                );
             } else {
                 output.push_str(
                     "/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.\n\
@@ -492,7 +525,7 @@ fn render_compat_sreg(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod ldmatrix;\nmod packed_atomic;\nmod sreg;\n\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use sreg::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    sreg::register(ctx);\n}\n",
+        "mod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\n\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n}\n",
     );
     output
 }
@@ -537,6 +570,57 @@ fn render_dialect_sreg(catalog: &CatalogFile, hash: &str) -> String {
         "fn verify_scalar_result(\n    ctx: &Context,\n    op: Ptr<Operation>,\n    name: &str,\n    width: u32,\n) -> Result<(), Error> {\n    let op = op.deref(ctx);\n    let ty = op.get_result(0).get_type(ctx);\n    let ty_object = ty.deref(ctx);\n    let Some(integer) = ty_object.downcast_ref::<IntegerType>() else {\n        return verify_err!(op.loc(), \"{} result must be an integer\", name);\n    };\n    if integer.width() != width {\n        return verify_err!(\n            op.loc(),\n            \"{} result must be a {}-bit integer\",\n            name,\n            width\n        );\n    }\n    Ok(())\n}\n\npub(super) fn register(ctx: &mut Context) {\n",
     );
     for record in sregs(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural NVVM operations for the closed generated `redux.sync` family.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+    );
+    for record in redux(catalog) {
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str(
+            "///\n/// Dialect operands are `[member_mask, value]`; generated lowering adapts\n/// them to LLVM's `(value, member_mask)` signature.\n",
+        );
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        let result_signedness = match record.rust.result.as_str() {
+            "u32" => "Unsigned",
+            "i32" => "Signed",
+            result => panic!("unsupported redux result {result}"),
+        };
+        writeln!(
+            output,
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::{result_signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![member_mask, value],\n            vec![],\n            0,\n        )\n    }}\n}}"
+        )
+        .unwrap();
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_i32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_i32(ctx, op.get_operand(1).get_type(ctx))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!(
+                "{} requires exactly two operands [member_mask, value] and one result",
+                record.dialect.op_name
+            ),
+            format!(
+                "{} member mask, value, and result must be 32-bit integers",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in redux(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -911,6 +995,20 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("PackedAtomicAddOp, PackedAtomicFormatAttr");
     }
+    if redux(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in redux(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
@@ -1060,6 +1158,47 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    for record in redux(catalog) {
+        debug_assert_eq!(
+            record.redux.as_ref().unwrap().adapter,
+            ReduxAdapter::MaskValueToSourceMemberMask
+        );
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 2, &loc)?;\n");
+        output.push_str(
+            "            let (member_mask, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (value, last_op) = rvalue::translate_operand(\n                ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        writeln!(
+            output,
+            "            let reduction = {}::build(ctx, member_mask, value);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            reduction.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, reduction, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, reduction, block_ptr, last_op);\n            let result = reduction.deref(ctx).get_result(0);\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, reduction, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
     output.push_str("        _ => Ok(None),\n    }\n}\n\n");
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
@@ -1130,7 +1269,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated direct-NVVM, ldmatrix, and packed-atomic conversion interfaces.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::call_intrinsic, ldmatrix::convert_generated_ldmatrix};\nuse dialect_nvvm::ops::{",
+        "//! Generated direct-NVVM, ldmatrix, packed-atomic, and redux conversion interfaces.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::call_intrinsic, ldmatrix::convert_generated_ldmatrix, warp::convert_redux};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -1149,6 +1288,20 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         output.push_str("PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr");
+    }
+    if redux(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in redux(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
     }
     output.push_str(
         "};\nuse llvm_export::types as llvm_types;\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
@@ -1212,6 +1365,28 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "        convert_packed_atom_add(ctx, rewriter, self.get_operation(), ptx_type)",
             "        drop((format, state_space, ordering, scope, rounding, subnormal, atomicity));\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), ptx_type)",
         );
+    }
+    for record in redux(catalog) {
+        debug_assert_eq!(
+            record.redux.as_ref().unwrap().adapter,
+            ReduxAdapter::MaskValueToSourceMemberMask
+        );
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_redux(ctx, rewriter, self.get_operation(), operands_info, {:?})",
+            record.llvm_identifier()
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
     }
     output
 }
@@ -1445,6 +1620,23 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %old\n}\n");
+    } else if let Some(redux) = &record.redux {
+        debug_assert_eq!(redux.adapter, ReduxAdapter::MaskValueToSourceMemberMask);
+        writeln!(output, "declare i32 @{}(i32, i32)", llvm(record).symbol).unwrap();
+        output.push('\n');
+        writeln!(
+            output,
+            "define i32 @probe_{}(i32 %member_mask, i32 %value) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  %result = call i32 @{}(i32 %value, i32 %member_mask)",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n");
     } else if let Some(width) = record.scalar_width() {
         writeln!(output, "declare i{width} @{}()", llvm(record).symbol).unwrap();
         output.push('\n');
@@ -1558,6 +1750,15 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             record.id,
             packed.native_minimum_sm,
             hardware_target_label(&record.target.hardware),
+        )
+        .unwrap();
+    }
+    output.push_str("\n## Redux contracts\n\n");
+    for record in redux(catalog) {
+        writeln!(
+            output,
+            "- `{}`: raw and dialect operands are `[member_mask, value]`, adapted to LLVM `(value, membermask)`. The executing lane must be named in the mask, and every non-exited named lane must execute the same instruction with the same qualifiers and mask.",
+            record.id,
         )
         .unwrap();
     }
@@ -1820,11 +2021,58 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         let rendered = render_raw_abi(&catalog, "test-hash");
-        assert_eq!(rendered.matches("#[must_use]").count(), 2);
         for abi_id in ["i0014", "i0015"] {
             let signature = format!("pub unsafe fn {abi_id}(_arg0: *mut u32, _arg1: u32) -> u32");
             let index = rendered.find(&signature).unwrap();
             assert!(rendered[..index].ends_with("#[must_use]\n#[inline(never)]\n"));
         }
+    }
+
+    #[test]
+    fn redux_rendering_preserves_mask_first_api_and_source_first_llvm_order() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+
+        assert_eq!(redux(&catalog).count(), 8);
+        let record = redux(&catalog).next().unwrap();
+        assert_eq!(
+            record.redux.as_ref().unwrap().adapter,
+            ReduxAdapter::MaskValueToSourceMemberMask
+        );
+
+        let dialect = render_dialect_redux(&catalog, "test-hash");
+        assert!(dialect.contains("name = \"nvvm.redux_sync_add\""));
+        assert!(dialect.contains("name = \"nvvm.redux_sync_min\""));
+        assert!(dialect.contains("vec![member_mask, value]"));
+        assert!(dialect.contains("ReduxSyncAddOp::register(ctx)"));
+        assert!(dialect.contains("Signedness::Signed"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::warp::redux_sync_add"));
+        assert!(importer.contains("let (member_mask, last_op)"));
+        assert!(
+            importer.contains("let reduction = ReduxSyncAddOp::build(ctx, member_mask, value)")
+        );
+        assert!(importer.contains("set_generated_intrinsic_marker(ctx, reduction, \"v1:i0017\")"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("impl MirToLlvmConversion for ReduxSyncAddOp"));
+        assert!(
+            lowering.contains("convert_redux(ctx, rewriter, self.get_operation(), operands_info")
+        );
+        assert!(lowering.contains("\"llvm_nvvm_redux_sync_add\""));
+
+        let probe = render_probe(&catalog, record, "test-hash");
+        assert!(probe.contains("define i32 @probe_redux_sync_add(i32 %member_mask, i32 %value)"));
+        assert!(probe.contains("call i32 @llvm.nvvm.redux.sync.add(i32 %value, i32 %member_mask)"));
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        let signature = "pub unsafe fn i0017(_arg0: u32, _arg1: u32) -> u32";
+        let index = raw.find(signature).unwrap();
+        assert!(raw[..index].ends_with("#[must_use]\n#[inline(never)]\n"));
+        assert!(raw.contains("pub unsafe fn i0019(_arg0: u32, _arg1: i32) -> i32"));
+        assert!(raw.contains("pub unsafe fn i0024(_arg0: u32, _arg1: u32) -> u32"));
+        assert!(raw.contains("The executing lane must be named in `mask`"));
     }
 }

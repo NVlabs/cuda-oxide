@@ -112,3 +112,66 @@ status = "active"
 catalog_id = "packed_atomic_add_bf16x2"
 operation_key = "atomic.add.bf16x2.global.relaxed.gpu.nearest_even.preserve.per_element"
 raw_rust_signature = { safe = false, arguments = ["*mut u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0016"
+status = "active"
+catalog_id = "lane_id"
+operation_key = "warp.lane_identifier"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0017"
+status = "active"
+catalog_id = "redux_sync_add"
+operation_key = "warp.redux.sync.add.wrap32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0018"
+status = "active"
+catalog_id = "redux_sync_min_u32"
+operation_key = "warp.redux.sync.min.u32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0019"
+status = "active"
+catalog_id = "redux_sync_min_i32"
+operation_key = "warp.redux.sync.min.s32"
+raw_rust_signature = { safe = false, arguments = ["u32", "i32"], result = "i32" }
+
+[[entry]]
+abi_id = "i0020"
+status = "active"
+catalog_id = "redux_sync_max_u32"
+operation_key = "warp.redux.sync.max.u32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0021"
+status = "active"
+catalog_id = "redux_sync_max_i32"
+operation_key = "warp.redux.sync.max.s32"
+raw_rust_signature = { safe = false, arguments = ["u32", "i32"], result = "i32" }
+
+[[entry]]
+abi_id = "i0022"
+status = "active"
+catalog_id = "redux_sync_and"
+operation_key = "warp.redux.sync.and.b32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0023"
+status = "active"
+catalog_id = "redux_sync_or"
+operation_key = "warp.redux.sync.or.b32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0024"
+status = "active"
+catalog_id = "redux_sync_xor"
+operation_key = "warp.redux.sync.xor.b32"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "u32" }

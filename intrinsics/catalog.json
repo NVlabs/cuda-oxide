@@ -11,11 +11,11 @@
   },
   "inputs": {
     "imported_sha256": "af01e769cd916c902bf6b26b1fb723516b58c5a842fe482142402fdeda9ab487",
-    "overlay_sha256": "f804ae5ca55bd49947d35f605b14ef87793dd19e052f9d4cd4be4b054076276e",
-    "abi_ledger_sha256": "89063067d4d07be615cecc852d5f6ec84ffed8ef1279e67ab23bd7ed6730585d",
+    "overlay_sha256": "3bd05a55bf02d1c93ff012f256a88817e686d37a4a70c5e0802cb8307f82b84e",
+    "abi_ledger_sha256": "bdc9e81588656b983f709cb73e5294fb2b05a6a3afb90993d54833af70a587f3",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33.json:41138415f91fdcde3be04d417f38d3f0609754533e700dcaa9d460afb4c1ffeb",
-      "rust-llvm-22.1.2-1cb4e383.json:29ac7f6146433daf5148babc8b7ef53c5a413bc0fbae8e0a00c298e8dbd54e7e"
+      "rust-llvm-22.1.2-1cb4e383.json:140133198b49f22a9ee3ac84e5d082fab15139cf68ef84c39d48789d898e0489"
     ]
   },
   "intrinsics": [
@@ -947,6 +947,108 @@
       "summary": "Returns the number of cooperative thread arrays (CTAs) in the grid's Z dimension."
     },
     {
+      "id": "lane_id",
+      "operation_key": "warp.lane_identifier",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_laneid"
+      },
+      "selections": [
+        {
+          "source_record": "SREG_LANEID",
+          "asm": "mov.u32 \t$d, %laneid;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i0016",
+        "module": "sreg",
+        "name": "lane_id",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only lane identifier has no memory, participation, synchronization, or pointer-validity preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0016",
+        "public_path": "cuda_intrinsics::sreg::lane_id",
+        "compatibility_paths": [
+          "cuda_device::warp::lane_id"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregLaneIdOp",
+        "op_name": "nvvm.read_ptx_sreg_laneid",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.laneid",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,32>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "32"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "1.3",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.3 Special Registers: %laneid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-laneid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_70",
+        "ptx_feature": "+ptx60"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%laneid"
+          }
+        ]
+      },
+      "summary": "Returns this thread's lane identifier within its warp."
+    },
+    {
       "id": "ldmatrix_m8n8_x4_b16",
       "operation_key": "matrix.ldmatrix.m8n8.x4.normal.b16.shared",
       "family": "ldmatrix",
@@ -1710,6 +1812,1006 @@
         ]
       },
       "summary": "Atomically adds two packed f16 lanes in global memory and returns the two independently observed old lane values."
+    },
+    {
+      "id": "redux_sync_add",
+      "operation_key": "warp.redux.sync.add.wrap32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_add"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15029",
+          "asm": "redux.sync.add.s32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0017",
+        "module": "warp",
+        "name": "redux_sync_add",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0017",
+        "public_path": "cuda_intrinsics::warp::redux_sync_add",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_add"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncAddOp",
+        "op_name": "nvvm.redux_sync_add",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.add",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "add",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "add",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, adds their 32-bit values modulo 2^32, and broadcasts the result to each participating lane."
+    },
+    {
+      "id": "redux_sync_and",
+      "operation_key": "warp.redux.sync.and.b32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_and"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15032",
+          "asm": "redux.sync.and.b32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0022",
+        "module": "warp",
+        "name": "redux_sync_and",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0022",
+        "public_path": "cuda_intrinsics::warp::redux_sync_and",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_and"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncAndOp",
+        "op_name": "nvvm.redux_sync_and",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.and",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "and",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "and",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise AND, and broadcasts the result."
+    },
+    {
+      "id": "redux_sync_max_i32",
+      "operation_key": "warp.redux.sync.max.s32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_max"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15031",
+          "asm": "redux.sync.max.s32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0021",
+        "module": "warp",
+        "name": "redux_sync_max_i32",
+        "arguments": [
+          "u32",
+          "i32"
+        ],
+        "result": "i32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0021",
+        "public_path": "cuda_intrinsics::warp::redux_sync_max_i32",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_max_i32"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncMaxOp",
+        "op_name": "nvvm.redux_sync_max",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.max",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "i32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "max",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "max",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, selects their signed 32-bit maximum, and broadcasts it to each participating lane."
+    },
+    {
+      "id": "redux_sync_max_u32",
+      "operation_key": "warp.redux.sync.max.u32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_umax"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15028",
+          "asm": "redux.sync.max.u32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0020",
+        "module": "warp",
+        "name": "redux_sync_max_u32",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0020",
+        "public_path": "cuda_intrinsics::warp::redux_sync_max_u32",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_max_u32"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncUmaxOp",
+        "op_name": "nvvm.redux_sync_umax",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.umax",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "umax",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "max",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, selects their unsigned 32-bit maximum, and broadcasts it to each participating lane."
+    },
+    {
+      "id": "redux_sync_min_i32",
+      "operation_key": "warp.redux.sync.min.s32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_min"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15030",
+          "asm": "redux.sync.min.s32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0019",
+        "module": "warp",
+        "name": "redux_sync_min_i32",
+        "arguments": [
+          "u32",
+          "i32"
+        ],
+        "result": "i32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0019",
+        "public_path": "cuda_intrinsics::warp::redux_sync_min_i32",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_min_i32"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncMinOp",
+        "op_name": "nvvm.redux_sync_min",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.min",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "i32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "min",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "min",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, selects their signed 32-bit minimum, and broadcasts it to each participating lane."
+    },
+    {
+      "id": "redux_sync_min_u32",
+      "operation_key": "warp.redux.sync.min.u32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_umin"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15027",
+          "asm": "redux.sync.min.u32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0018",
+        "module": "warp",
+        "name": "redux_sync_min_u32",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0018",
+        "public_path": "cuda_intrinsics::warp::redux_sync_min_u32",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_min_u32"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncUminOp",
+        "op_name": "nvvm.redux_sync_umin",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.umin",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "umin",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "min",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, selects their unsigned 32-bit minimum, and broadcasts it to each participating lane."
+    },
+    {
+      "id": "redux_sync_or",
+      "operation_key": "warp.redux.sync.or.b32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_or"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15034",
+          "asm": "redux.sync.or.b32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0023",
+        "module": "warp",
+        "name": "redux_sync_or",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0023",
+        "public_path": "cuda_intrinsics::warp::redux_sync_or",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_or"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncOrOp",
+        "op_name": "nvvm.redux_sync_or",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.or",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "or",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "or",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise OR, and broadcasts the result."
+    },
+    {
+      "id": "redux_sync_xor",
+      "operation_key": "warp.redux.sync.xor.b32",
+      "family": "redux",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_redux_sync_xor"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_15033",
+          "asm": "redux.sync.xor.b32 \t$dst, $src, $mask;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0024",
+        "module": "warp",
+        "name": "redux_sync_xor",
+        "arguments": [
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0024",
+        "public_path": "cuda_intrinsics::warp::redux_sync_xor",
+        "compatibility_paths": [
+          "cuda_device::warp::redux_sync_xor"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReduxSyncXorOp",
+        "op_name": "nvvm.redux_sync_xor",
+        "operands": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.redux.sync.xor",
+        "arguments": [
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "redux": {
+        "operation": "xor",
+        "participation": "executing_lane_named_all_named_lanes_same_instruction_and_mask",
+        "adapter": "mask_value_to_source_member_mask"
+      },
+      "lowering": "generated_redux",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "xor",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise XOR, and broadcasts the result."
     },
     {
       "id": "thread_idx_x",

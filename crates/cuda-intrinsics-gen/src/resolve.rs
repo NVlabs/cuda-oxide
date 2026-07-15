@@ -14,30 +14,27 @@ use crate::model::{
     ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract,
     LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder, LdmatrixMultiplicity,
     LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, OverlayFile, OverlayIntrinsic,
-    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
+    OverlayShardFile, PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
     PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
     PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
     PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
-    PtxVersion, RuntimeValidation,
+    PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RuntimeValidation,
 };
 #[cfg(test)]
 use crate::ptx::InstructionPattern;
 use crate::ptx::OperandPattern;
-use crate::util::{read_json, sha256_file};
+use crate::util::{read_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, bail, ensure};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
     let imported_path = repo_root.join("intrinsics/imported.json");
     let overlay_path = repo_root.join("intrinsics/overlay.toml");
     let imported: ImportedFile = read_json(&imported_path)?;
-    let overlay_text = fs::read_to_string(&overlay_path)
-        .with_context(|| format!("read {}", overlay_path.display()))?;
-    let mut overlay: OverlayFile = toml::from_str(&overlay_text)
-        .with_context(|| format!("parse {}", overlay_path.display()))?;
+    let (mut overlay, overlay_sha256) = read_overlay(repo_root, &overlay_path)?;
     let ledger_path = repo_root.join(format!("intrinsics/abi-v{}.toml", overlay.intrinsic_abi));
     let ledger_text = fs::read_to_string(&ledger_path)
         .with_context(|| format!("read {}", ledger_path.display()))?;
@@ -50,7 +47,7 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         imported.schema
     );
     ensure!(
-        overlay.schema == 4,
+        overlay.schema == 5,
         "unsupported overlay.toml schema {}",
         overlay.schema
     );
@@ -173,12 +170,116 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         },
         inputs: CatalogInputs {
             imported_sha256,
-            overlay_sha256: sha256_file(&overlay_path)?,
+            overlay_sha256,
             abi_ledger_sha256: sha256_file(&ledger_path)?,
             evidence_sha256: evidence_hashes,
         },
         intrinsics,
     })
+}
+
+fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, String)> {
+    let manifest_bytes =
+        fs::read(manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
+    let mut overlay: OverlayFile = toml::from_slice(&manifest_bytes)
+        .with_context(|| format!("parse {}", manifest_path.display()))?;
+
+    ensure!(
+        overlay.intrinsics.is_empty(),
+        "overlay.toml must list family shards instead of inline intrinsic records"
+    );
+    ensure!(
+        !overlay.shards.is_empty(),
+        "overlay.toml must list at least one family shard"
+    );
+
+    let mut previous = None;
+    let mut seen = BTreeSet::new();
+    let mut hash_input = Vec::new();
+    append_overlay_hash_input(&mut hash_input, "intrinsics/overlay.toml", &manifest_bytes);
+
+    for shard_name in &overlay.shards {
+        validate_overlay_shard_path(shard_name)?;
+        ensure!(
+            seen.insert(shard_name.as_str()),
+            "overlay.toml lists duplicate shard {shard_name}"
+        );
+        if let Some(previous) = previous {
+            ensure!(
+                previous < shard_name.as_str(),
+                "overlay.toml shards must be sorted"
+            );
+        }
+        previous = Some(shard_name.as_str());
+
+        let relative = Path::new("intrinsics").join(shard_name);
+        let path = repo_root.join(&relative);
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let shard: OverlayShardFile =
+            toml::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+        ensure!(
+            shard.schema == 1,
+            "unsupported overlay shard schema {} in {}",
+            shard.schema,
+            path.display()
+        );
+        ensure!(
+            !shard.intrinsics.is_empty(),
+            "overlay shard {} contains no intrinsic records",
+            path.display()
+        );
+        for record in &shard.intrinsics {
+            ensure!(
+                record.family == shard.family,
+                "overlay shard {} declares family {}, but intrinsic {} uses family {}",
+                path.display(),
+                shard.family,
+                record.id,
+                record.family
+            );
+        }
+
+        append_overlay_hash_input(
+            &mut hash_input,
+            relative
+                .to_str()
+                .context("overlay shard path is not valid UTF-8")?,
+            &bytes,
+        );
+        overlay.intrinsics.extend(shard.intrinsics);
+    }
+
+    Ok((overlay, sha256_bytes(&hash_input)))
+}
+
+fn validate_overlay_shard_path(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    ensure!(
+        path.extension().and_then(|extension| extension.to_str()) == Some("toml"),
+        "overlay shard path must name a TOML file: {}",
+        path.display()
+    );
+    let components: Vec<_> = path.components().collect();
+    ensure!(
+        components.len() >= 2 && components[0] == Component::Normal("overlay".as_ref()),
+        "overlay shard path must stay under intrinsics/overlay: {}",
+        path.display()
+    );
+    ensure!(
+        components
+            .iter()
+            .all(|component| matches!(component, Component::Normal(_))),
+        "overlay shard path contains a non-normal component: {}",
+        path.display()
+    );
+    Ok(())
+}
+
+fn append_overlay_hash_input(output: &mut Vec<u8>, path: &str, contents: &[u8]) {
+    output.extend_from_slice(&(path.len() as u64).to_le_bytes());
+    output.extend_from_slice(path.as_bytes());
+    output.extend_from_slice(&(contents.len() as u64).to_le_bytes());
+    output.extend_from_slice(contents);
 }
 
 fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> Result<()> {
@@ -213,8 +314,8 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}",
-            record.dialect_op_name, record.ldmatrix_variant, record.packed_atomic
+            "{}:{:?}:{:?}:{:?}",
+            record.dialect_op_name, record.ldmatrix_variant, record.packed_atomic, record.redux,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -498,6 +599,10 @@ fn validate_policy(
             declaration.context("ldmatrix requires imported LLVM declaration")?,
         )?,
         "packed_atomic" => validate_packed_atomic_policy(policy, source)?,
+        "redux" => validate_redux_policy(
+            policy,
+            declaration.context("redux requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -678,11 +783,230 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic) -> Result<()> {
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
             && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
             && policy.selected_address_space.is_none(),
-        "{} mixes ldmatrix-only policy with an sreg",
+        "{} mixes another generated-family contract with an sreg",
         policy.id
     );
     Ok(())
+}
+
+fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    let redux = policy
+        .redux
+        .as_ref()
+        .with_context(|| format!("{} has no closed redux contract", policy.id))?;
+    let recipe = redux_recipe(redux.operation);
+    ensure!(
+        redux.participation
+            == ReduxParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask
+            && redux.adapter == ReduxAdapter::MaskValueToSourceMemberMask,
+        "{} requests an unsupported redux participation contract or operand adapter",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.operation_key == recipe.operation_key
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} redux identity does not match its closed operation recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "warp"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == ["u32", recipe.rust_value]
+            && policy.rust_result == recipe.rust_value
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::warp::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::warp::{}", recipe.rust_name)],
+        "{} must preserve the unsafe must-use redux raw API and legacy cuda-device compatibility DefPath",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == ["i32", "i32"]
+            && policy.dialect_results == ["i32"]
+            && policy.llvm_arguments == ["i32", "i32"]
+            && policy.llvm_results == ["i32"]
+            && policy.lowering == "generated_redux",
+        "{} is outside the generated two-operand redux recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "inaccessible_read_write"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.ptx_result == recipe.rust_value
+            && policy.targets == "all",
+        "{} redux effects, carrier, or target floor disagree with its operation recipe",
+        policy.id
+    );
+    ensure!(
+        declaration
+            .properties
+            .iter()
+            .any(|property| property == "IntrConvergent")
+            && declaration
+                .properties
+                .iter()
+                .any(|property| property == "IntrInaccessibleMemOnly")
+            && declaration
+                .properties
+                .iter()
+                .any(|property| property == "IntrNoCallback")
+            && !declaration.properties.iter().any(|property| matches!(
+                property.as_str(),
+                "IntrNoMem" | "IntrReadMem" | "IntrWriteMem"
+            )),
+        "{} redux memory and convergence effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.is_empty()
+            && policy.packed_atomic.is_none()
+            && policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with redux",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "redux"
+            && policy.expected_ptx.modifiers == ["sync", recipe.ptx_operation, recipe.ptx_type]
+            && policy.expected_ptx.operands
+                == [
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                ],
+        "{} expected PTX does not match its closed redux operation recipe",
+        policy.id
+    );
+    Ok(())
+}
+
+struct ReduxRecipe {
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_name: &'static str,
+    rust_value: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    ptx_operation: &'static str,
+    ptx_type: &'static str,
+}
+
+fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
+    match operation {
+        ReduxOperation::Add => ReduxRecipe {
+            id: "redux_sync_add",
+            operation_key: "warp.redux.sync.add.wrap32",
+            source_record: "int_nvvm_redux_sync_add",
+            llvm_symbol: "llvm.nvvm.redux.sync.add",
+            rust_name: "redux_sync_add",
+            rust_value: "u32",
+            dialect_op_type: "ReduxSyncAddOp",
+            dialect_op_name: "nvvm.redux_sync_add",
+            ptx_operation: "add",
+            ptx_type: "s32",
+        },
+        ReduxOperation::Umin => ReduxRecipe {
+            id: "redux_sync_min_u32",
+            operation_key: "warp.redux.sync.min.u32",
+            source_record: "int_nvvm_redux_sync_umin",
+            llvm_symbol: "llvm.nvvm.redux.sync.umin",
+            rust_name: "redux_sync_min_u32",
+            rust_value: "u32",
+            dialect_op_type: "ReduxSyncUminOp",
+            dialect_op_name: "nvvm.redux_sync_umin",
+            ptx_operation: "min",
+            ptx_type: "u32",
+        },
+        ReduxOperation::Min => ReduxRecipe {
+            id: "redux_sync_min_i32",
+            operation_key: "warp.redux.sync.min.s32",
+            source_record: "int_nvvm_redux_sync_min",
+            llvm_symbol: "llvm.nvvm.redux.sync.min",
+            rust_name: "redux_sync_min_i32",
+            rust_value: "i32",
+            dialect_op_type: "ReduxSyncMinOp",
+            dialect_op_name: "nvvm.redux_sync_min",
+            ptx_operation: "min",
+            ptx_type: "s32",
+        },
+        ReduxOperation::Umax => ReduxRecipe {
+            id: "redux_sync_max_u32",
+            operation_key: "warp.redux.sync.max.u32",
+            source_record: "int_nvvm_redux_sync_umax",
+            llvm_symbol: "llvm.nvvm.redux.sync.umax",
+            rust_name: "redux_sync_max_u32",
+            rust_value: "u32",
+            dialect_op_type: "ReduxSyncUmaxOp",
+            dialect_op_name: "nvvm.redux_sync_umax",
+            ptx_operation: "max",
+            ptx_type: "u32",
+        },
+        ReduxOperation::Max => ReduxRecipe {
+            id: "redux_sync_max_i32",
+            operation_key: "warp.redux.sync.max.s32",
+            source_record: "int_nvvm_redux_sync_max",
+            llvm_symbol: "llvm.nvvm.redux.sync.max",
+            rust_name: "redux_sync_max_i32",
+            rust_value: "i32",
+            dialect_op_type: "ReduxSyncMaxOp",
+            dialect_op_name: "nvvm.redux_sync_max",
+            ptx_operation: "max",
+            ptx_type: "s32",
+        },
+        ReduxOperation::And => ReduxRecipe {
+            id: "redux_sync_and",
+            operation_key: "warp.redux.sync.and.b32",
+            source_record: "int_nvvm_redux_sync_and",
+            llvm_symbol: "llvm.nvvm.redux.sync.and",
+            rust_name: "redux_sync_and",
+            rust_value: "u32",
+            dialect_op_type: "ReduxSyncAndOp",
+            dialect_op_name: "nvvm.redux_sync_and",
+            ptx_operation: "and",
+            ptx_type: "b32",
+        },
+        ReduxOperation::Or => ReduxRecipe {
+            id: "redux_sync_or",
+            operation_key: "warp.redux.sync.or.b32",
+            source_record: "int_nvvm_redux_sync_or",
+            llvm_symbol: "llvm.nvvm.redux.sync.or",
+            rust_name: "redux_sync_or",
+            rust_value: "u32",
+            dialect_op_type: "ReduxSyncOrOp",
+            dialect_op_name: "nvvm.redux_sync_or",
+            ptx_operation: "or",
+            ptx_type: "b32",
+        },
+        ReduxOperation::Xor => ReduxRecipe {
+            id: "redux_sync_xor",
+            operation_key: "warp.redux.sync.xor.b32",
+            source_record: "int_nvvm_redux_sync_xor",
+            llvm_symbol: "llvm.nvvm.redux.sync.xor",
+            rust_name: "redux_sync_xor",
+            rust_value: "u32",
+            dialect_op_type: "ReduxSyncXorOp",
+            dialect_op_name: "nvvm.redux_sync_xor",
+            ptx_operation: "xor",
+            ptx_type: "b32",
+        },
+    }
 }
 
 fn validate_ldmatrix_policy(
@@ -804,6 +1128,11 @@ fn validate_ldmatrix_policy(
         "{} backend lowering omits its evidence profile",
         policy.id
     );
+    ensure!(
+        policy.packed_atomic.is_none() && policy.redux.is_none(),
+        "{} mixes another generated-family contract with ldmatrix",
+        policy.id
+    );
     Ok(())
 }
 
@@ -885,6 +1214,7 @@ fn validate_packed_atomic_policy(
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
+            && policy.redux.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
         policy.id
@@ -1598,6 +1928,7 @@ fn resolve_record(
         },
         backend_lowerings,
         packed_atomic: policy.packed_atomic.clone(),
+        redux: policy.redux.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -1701,6 +2032,7 @@ mod tests {
             lowering: "direct_nvvm".into(),
             backend_lowerings: vec![],
             packed_atomic: None,
+            redux: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -1795,10 +2127,11 @@ mod tests {
 
     fn overlay_file(records: Vec<OverlayIntrinsic>) -> OverlayFile {
         OverlayFile {
-            schema: 4,
+            schema: 5,
             catalog_version: "test".into(),
             intrinsic_abi: 1,
             backend_profile: "test".into(),
+            shards: vec![],
             intrinsics: records,
         }
     }
@@ -1813,12 +2146,34 @@ mod tests {
 
     fn packed_policy(id: &str) -> OverlayIntrinsic {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let text = std::fs::read_to_string(repo_root.join("intrinsics/overlay.toml")).unwrap();
-        toml::from_str::<OverlayFile>(&text)
+        read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml"))
             .unwrap()
+            .0
             .intrinsics
             .into_iter()
             .find(|record| record.id == id)
+            .unwrap()
+    }
+
+    fn redux_policy() -> OverlayIntrinsic {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml"))
+            .unwrap()
+            .0
+            .intrinsics
+            .into_iter()
+            .find(|record| record.id == "redux_sync_add")
+            .unwrap()
+    }
+
+    fn redux_declaration() -> ImportedIntrinsic {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let text = std::fs::read_to_string(repo_root.join("intrinsics/imported.json")).unwrap();
+        serde_json::from_str::<ImportedFile>(&text)
+            .unwrap()
+            .intrinsics
+            .into_iter()
+            .find(|record| record.source_record == "int_nvvm_redux_sync_add")
             .unwrap()
     }
 
@@ -1851,6 +2206,27 @@ mod tests {
         insert_unique(&mut values, "thread_idx_x", "catalog ID").unwrap();
         let error = insert_unique(&mut values, "thread_idx_x", "catalog ID").unwrap_err();
         assert!(error.to_string().contains("duplicate catalog ID"));
+    }
+
+    #[test]
+    fn overlay_manifest_loads_sorted_family_shards() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, hash) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        assert_eq!(overlay.schema, 5);
+        assert_eq!(overlay.shards.len(), 4);
+        assert_eq!(overlay.intrinsics.len(), 24);
+        assert_eq!(hash.len(), 64);
+
+        for invalid in [
+            "../outside.toml",
+            "/absolute.toml",
+            "other/family.toml",
+            "overlay/../outside.toml",
+            "overlay/not-toml.json",
+        ] {
+            assert!(validate_overlay_shard_path(invalid).is_err(), "{invalid}");
+        }
     }
 
     #[test]
@@ -1904,7 +2280,9 @@ mod tests {
         validate_ptx_native_policy(&valid).unwrap();
 
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let overlay = std::fs::read_to_string(repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let overlay =
+            std::fs::read_to_string(repo_root.join("intrinsics/overlay/packed_atomic.toml"))
+                .unwrap();
         for (field, accepted, rejected) in [
             (
                 "state space",
@@ -1954,7 +2332,7 @@ mod tests {
             ),
         ] {
             let mutated = overlay.replacen(accepted, rejected, 1);
-            let error = toml::from_str::<OverlayFile>(&mutated).unwrap_err();
+            let error = toml::from_str::<OverlayShardFile>(&mutated).unwrap_err();
             assert!(
                 error
                     .to_string()
@@ -1971,6 +2349,84 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("unsafe must-use packed atomic")
+        );
+    }
+
+    #[test]
+    fn redux_contract_validates_effects_participation_and_operand_adapter() {
+        let valid = redux_policy();
+        let imported = redux_declaration();
+        validate_imported_policy(&valid, &imported).unwrap();
+
+        assert_eq!(
+            valid.redux.as_ref().unwrap().adapter,
+            ReduxAdapter::MaskValueToSourceMemberMask
+        );
+
+        let mut missing_contract = valid.clone();
+        missing_contract.redux = None;
+        assert!(
+            validate_imported_policy(&missing_contract, &imported)
+                .unwrap_err()
+                .to_string()
+                .contains("closed redux contract")
+        );
+
+        let mut wrong_effect = valid.clone();
+        wrong_effect.memory = "none".into();
+        assert!(
+            validate_imported_policy(&wrong_effect, &imported)
+                .unwrap_err()
+                .to_string()
+                .contains("redux effects")
+        );
+
+        let mut missing_imported_effect = imported;
+        missing_imported_effect
+            .properties
+            .retain(|property| property != "IntrInaccessibleMemOnly");
+        assert!(
+            validate_imported_policy(&valid, &missing_imported_effect)
+                .unwrap_err()
+                .to_string()
+                .contains("memory and convergence effects")
+        );
+    }
+
+    #[test]
+    fn every_integer_redux_variant_matches_its_closed_recipe() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let redux: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "redux")
+            .collect();
+        assert_eq!(redux.len(), 8);
+
+        for policy in redux {
+            let declaration = declarations
+                .get(policy.source_record.as_deref().unwrap())
+                .unwrap();
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+
+        let mut mismatched = packed_policy("redux_sync_min_u32");
+        mismatched.redux.as_mut().unwrap().operation = ReduxOperation::Umax;
+        let declaration = declarations["int_nvvm_redux_sync_umin"];
+        assert!(
+            validate_imported_policy(&mismatched, declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("closed operation recipe")
         );
     }
 

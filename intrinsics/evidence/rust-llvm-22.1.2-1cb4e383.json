@@ -20,10 +20,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%ntid.x" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ntid.x"
+          }
         ]
       }
     },
@@ -41,10 +48,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%ctaid.x" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ctaid.x"
+          }
         ]
       }
     },
@@ -62,10 +76,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%tid.x" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%tid.x"
+          }
         ]
       }
     },
@@ -83,10 +104,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%nctaid.x" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nctaid.x"
+          }
         ]
       }
     },
@@ -104,10 +132,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%tid.y" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%tid.y"
+          }
         ]
       }
     },
@@ -125,10 +160,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%ctaid.y" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ctaid.y"
+          }
         ]
       }
     },
@@ -146,10 +188,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%ntid.y" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ntid.y"
+          }
         ]
       }
     },
@@ -167,10 +216,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%nctaid.y" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nctaid.y"
+          }
         ]
       }
     },
@@ -188,10 +244,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%tid.z" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%tid.z"
+          }
         ]
       }
     },
@@ -209,10 +272,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%ctaid.z" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ctaid.z"
+          }
         ]
       }
     },
@@ -230,10 +300,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%ntid.z" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%ntid.z"
+          }
         ]
       }
     },
@@ -251,10 +328,17 @@
       "status": "lowered",
       "expected_ptx": {
         "mnemonic": "mov",
-        "modifiers": ["u32"],
+        "modifiers": [
+          "u32"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "exact", "value": "%nctaid.z" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nctaid.z"
+          }
         ]
       }
     },
@@ -263,17 +347,33 @@
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x4_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16",
       "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3",
-      "llvm_arguments": ["anyptr"],
-      "llvm_results": ["i32", "i32", "i32", "i32"],
-      "concrete_llvm_arguments": ["ptr addrspace(3)"],
-      "concrete_llvm_results": ["i32", "i32", "i32", "i32"],
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_75",
       "ptx_feature": "+ptx65",
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_75"],
+          "targets": [
+            "sm_75"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3(ptr addrspace(3))",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
@@ -281,7 +381,10 @@
           "detail": "The recognized bare declaration materializes convergent, nocallback, memory(argmem: read), readonly, and captures(none) attributes."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.b16.p3(ptr addrspace(3))",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
@@ -289,7 +392,10 @@
           "detail": "Emitted ldmatrix.sync.aligned.m8n8.x4.shared.b16 with a four-register result struct."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
@@ -304,10 +410,22 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "ldmatrix",
-        "modifiers": ["sync", "aligned", "m8n8", "x4", "shared", "b16"],
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x4",
+          "shared",
+          "b16"
+        ],
         "operands": [
-          { "kind": "register_list", "length": 4 },
-          { "kind": "address" }
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
         ]
       }
     },
@@ -323,7 +441,10 @@
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_70", "ptx62"],
+          "targets": [
+            "sm_70",
+            "ptx62"
+          ],
           "representation": "side-effecting inline PTX atom.global.add.noftz.f16x2 with =r,l,r,~{memory}",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -331,7 +452,10 @@
           "detail": "The selected Rust LLVM backend emitted the exact native packed f16x2 global atomic-add instruction."
         },
         {
-          "targets": ["sm_75", "ptx62"],
+          "targets": [
+            "sm_75",
+            "ptx62"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM packed-atomic probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -345,11 +469,22 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "atom",
-        "modifiers": ["global", "add", "noftz", "f16x2"],
+        "modifiers": [
+          "global",
+          "add",
+          "noftz",
+          "f16x2"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "address" },
-          { "kind": "register" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
         ]
       }
     },
@@ -365,7 +500,10 @@
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_90", "ptx78"],
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
           "representation": "side-effecting inline PTX atom.global.add.noftz.bf16x2 with =r,l,r,~{memory}",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -373,7 +511,10 @@
           "detail": "The selected Rust LLVM backend emitted the exact native packed bf16x2 global atomic-add instruction."
         },
         {
-          "targets": ["sm_90", "ptx78"],
+          "targets": [
+            "sm_90",
+            "ptx78"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM packed-atomic probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -387,11 +528,330 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "atom",
-        "modifiers": ["global", "add", "noftz", "bf16x2"],
+        "modifiers": [
+          "global",
+          "add",
+          "noftz",
+          "bf16x2"
+        ],
         "operands": [
-          { "kind": "register" },
-          { "kind": "address" },
-          { "kind": "register" }
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lane_id",
+      "source_record": "int_nvvm_read_ptx_sreg_laneid",
+      "llvm_symbol": "llvm.nvvm.read.ptx.sreg.laneid",
+      "llvm_arguments": [],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%laneid"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_add",
+      "source_record": "int_nvvm_redux_sync_add",
+      "llvm_symbol": "llvm.nvvm.redux.sync.add",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "add",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_min_u32",
+      "source_record": "int_nvvm_redux_sync_umin",
+      "llvm_symbol": "llvm.nvvm.redux.sync.umin",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "min",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_min_i32",
+      "source_record": "int_nvvm_redux_sync_min",
+      "llvm_symbol": "llvm.nvvm.redux.sync.min",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "min",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_max_u32",
+      "source_record": "int_nvvm_redux_sync_umax",
+      "llvm_symbol": "llvm.nvvm.redux.sync.umax",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "max",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_max_i32",
+      "source_record": "int_nvvm_redux_sync_max",
+      "llvm_symbol": "llvm.nvvm.redux.sync.max",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "max",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_and",
+      "source_record": "int_nvvm_redux_sync_and",
+      "llvm_symbol": "llvm.nvvm.redux.sync.and",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "and",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_or",
+      "source_record": "int_nvvm_redux_sync_or",
+      "llvm_symbol": "llvm.nvvm.redux.sync.or",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "or",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "redux_sync_xor",
+      "source_record": "int_nvvm_redux_sync_xor",
+      "llvm_symbol": "llvm.nvvm.redux.sync.xor",
+      "llvm_arguments": [
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "lowered",
+      "expected_ptx": {
+        "mnemonic": "redux",
+        "modifiers": [
+          "sync",
+          "xor",
+          "b32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
         ]
       }
     }

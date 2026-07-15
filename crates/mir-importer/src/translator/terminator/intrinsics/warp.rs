@@ -12,7 +12,7 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
 use crate::translator::values::ValueMap;
-use dialect_nvvm::ops::{ActiveMaskOp, BarWarpSyncOp, ElectSyncOp, ReadPtxSregLaneIdOp};
+use dialect_nvvm::ops::{ActiveMaskOp, BarWarpSyncOp, ElectSyncOp};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -21,63 +21,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-/// Emits `lane_id()`: Get the lane index within the warp.
-///
-/// Returns the thread's position within its 32-thread warp (0-31).
-///
-/// # Generated Operation
-///
-/// `nvvm.read.ptx.sreg.laneid` - Maps to PTX `mov.u32 %r, %laneid`
-///
-/// # Returns
-///
-/// `u32` - Lane index (0-31)
-pub fn emit_lane_id(
-    ctx: &mut Context,
-    destination: &mir::Place,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    value_map: &mut ValueMap,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    let u32_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
-
-    // Create lane_id operation
-    let lane_id_op = Operation::new(
-        ctx,
-        ReadPtxSregLaneIdOp::get_concrete_op_info(),
-        vec![u32_type.to_handle()],
-        vec![],
-        vec![],
-        0,
-    );
-    lane_id_op.deref_mut(ctx).set_loc(loc.clone());
-
-    let lane_id_op = if let Some(prev) = prev_op {
-        lane_id_op.insert_after(ctx, prev);
-        lane_id_op
-    } else {
-        lane_id_op.insert_at_front(block_ptr, ctx);
-        lane_id_op
-    };
-
-    let result_value = lane_id_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
-        ctx,
-        destination,
-        result_value,
-        target,
-        block_ptr,
-        lane_id_op,
-        value_map,
-        block_map,
-        loc,
-        "lane_id call without target block",
-    )
-}
-
 /// Emits `active_mask()`: a 32-bit mask of currently-converged lanes.
 ///
 /// Generates an `nvvm.activemask` op that lowers to PTX `activemask.b32`

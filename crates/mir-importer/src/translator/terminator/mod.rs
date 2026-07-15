@@ -2449,60 +2449,18 @@ fn try_dispatch_intrinsic(
 
         // =================================================================
         // Thread Index Helpers (from intrinsics::indexing)
-        // Support both re-exported (cuda_device::) and full paths (cuda_device::thread::)
         //
-        // TODO: These three handlers (index_1d, index_2d_row, index_2d_col) are not
-        // strictly necessary. Their Rust bodies are real code that calls true intrinsics
-        // (threadIdx_x, blockIdx_y, etc.), so they compile correctly through the normal
-        // function path. They exist as a reliability workaround because #[inline(always)]
-        // is not always honored by rustc — without these handlers, a non-inlined call
-        // would require compiling the function body separately. The arithmetic expansion
-        // is trivial (3 ops + cast), so we keep them for now. If rustc inlining becomes
-        // reliable, these can be removed along with emit_index_1d_expansion,
-        // emit_index_2d_row, and emit_index_2d_col in intrinsics/indexing.rs.
+        // The index helpers are normal Rust functions over generated leaf
+        // intrinsics. Their bodies use the normal function-call path.
         // =================================================================
         "cuda_device::thread::__internal::index_1d"
         | "cuda_device::index_1d"
-        | "cuda_device::thread::index_1d" => {
-            Ok(Some(intrinsics::indexing::emit_index_1d_expansion(
-                ctx,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::index_2d_row" | "cuda_device::thread::index_2d_row" => {
-            Ok(Some(intrinsics::indexing::emit_index_2d_row(
-                ctx,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::index_2d_col" | "cuda_device::thread::index_2d_col" => {
-            Ok(Some(intrinsics::indexing::emit_index_2d_col(
-                ctx,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        // index_2d returns Option<ThreadIndex> with an internal col < stride check.
-        // It is compiled as a normal function (not expanded inline) so that the
-        // Option construction and branch are handled by the standard MIR translator.
-        "cuda_device::thread::__internal::index_2d"
+        | "cuda_device::thread::index_1d"
+        | "cuda_device::index_2d_row"
+        | "cuda_device::thread::index_2d_row"
+        | "cuda_device::index_2d_col"
+        | "cuda_device::thread::index_2d_col"
+        | "cuda_device::thread::__internal::index_2d"
         | "cuda_device::thread::__internal::index_2d_runtime"
         | "cuda_device::index_2d"
         | "cuda_device::thread::index_2d"
@@ -3062,16 +3020,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Warp Primitives (from intrinsics::warp)
         // =================================================================
-        "cuda_device::warp::lane_id" => Ok(Some(intrinsics::warp::emit_lane_id(
-            ctx,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
         // Lane-position masks: zero-operand u32 special-register reads, same
         // shape as the thread/block indexing sregs (see `emit_nvvm_intrinsic`).
         "cuda_device::warp::lanemask_lt" => Ok(Some(helpers::emit_nvvm_intrinsic(
@@ -3424,118 +3372,6 @@ fn try_dispatch_intrinsic(
             body,
             dialect_nvvm::ops::MatchAllSyncI64Op::get_concrete_op_info(),
             true,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_add" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncAddOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_min_u32" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncUminOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_min_i32" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncMinOp::get_concrete_op_info(),
-            true,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_max_u32" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncUmaxOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_max_i32" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncMaxOp::get_concrete_op_info(),
-            true,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_and" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncAndOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_or" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncOrOp::get_concrete_op_info(),
-            false,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::warp::redux_sync_xor" => Ok(Some(intrinsics::warp::emit_warp_redux(
-            ctx,
-            body,
-            dialect_nvvm::ops::ReduxSyncXorOp::get_concrete_op_info(),
-            false,
             args,
             destination,
             target,

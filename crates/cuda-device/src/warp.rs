@@ -754,13 +754,13 @@ pub fn match_all_i64_sync(mask: u32, value: u64) -> u32 {
 ///
 /// # Convergence
 ///
-/// Like all `*_sync` collectives, the lanes named in `mask` must be
-/// **converged** at the call. Straight-line warp-uniform code is fine,
-/// but after a divergent branch you must first reconverge the subset —
-/// e.g. `warp::sync_mask(mask)` — otherwise the result is undefined.
-/// (This is a runtime requirement on the caller; it is distinct from the
-/// `convergent` attribute on the lowered intrinsic, which only stops LLVM
-/// from moving the instruction across control flow.)
+/// Every non-exited lane named in `mask` must execute the same reduction
+/// instruction, with the same qualifiers and `mask`; the calling lane must
+/// itself be named in `mask`. The instruction waits for those lanes, so a
+/// separate [`sync_mask`] is not required merely because they arrived through
+/// divergent control flow. Violating the participation contract makes the PTX
+/// behavior undefined. This runtime contract is distinct from LLVM's
+/// `convergent` attribute, which constrains compiler motion and duplication.
 #[inline(never)]
 pub fn redux_sync_add(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -782,7 +782,7 @@ pub fn redux_sync_add(mask: u32, value: u32) -> u32 {
 /// Warp-wide unsigned minimum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.umin` → PTX `redux.sync.min.u32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_min_u32(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -792,7 +792,7 @@ pub fn redux_sync_min_u32(mask: u32, value: u32) -> u32 {
 /// Warp-wide signed minimum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.min` → PTX `redux.sync.min.s32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_min_i32(mask: u32, value: i32) -> i32 {
     let _ = (mask, value);
@@ -802,7 +802,7 @@ pub fn redux_sync_min_i32(mask: u32, value: i32) -> i32 {
 /// Warp-wide unsigned maximum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.umax` → PTX `redux.sync.max.u32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_max_u32(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -812,7 +812,7 @@ pub fn redux_sync_max_u32(mask: u32, value: u32) -> u32 {
 /// Warp-wide signed maximum (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.max` → PTX `redux.sync.max.s32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_max_i32(mask: u32, value: i32) -> i32 {
     let _ = (mask, value);
@@ -822,7 +822,7 @@ pub fn redux_sync_max_i32(mask: u32, value: i32) -> i32 {
 /// Warp-wide bitwise AND reduction (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.and` → PTX `redux.sync.and.b32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_and(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -832,7 +832,7 @@ pub fn redux_sync_and(mask: u32, value: u32) -> u32 {
 /// Warp-wide bitwise OR reduction (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.or` → PTX `redux.sync.or.b32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_or(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);
@@ -842,7 +842,7 @@ pub fn redux_sync_or(mask: u32, value: u32) -> u32 {
 /// Warp-wide bitwise XOR reduction (single instruction, sm_80+).
 ///
 /// Lowered to `@llvm.nvvm.redux.sync.xor` → PTX `redux.sync.xor.b32`.
-/// Convergent; participating lanes must be converged at the call.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
 #[inline(never)]
 pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
     let _ = (mask, value);

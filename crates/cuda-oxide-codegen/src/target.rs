@@ -1312,6 +1312,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_redux_floor_matches_the_lowered_ptx_detector() {
+        use crate::generated_intrinsic_targets::generated_intrinsic_target_by_marker;
+
+        let target = generated_intrinsic_target_by_marker("v1:i0017").unwrap();
+        let generated = GeneratedModuleRequirements::from_targets(vec![target]);
+        let detected = detect_module_requirements_in_llvm_text("redux.sync.add.s32 $0, $1, $2;");
+
+        assert_eq!(
+            generated_ptx_isa_requirement(&generated).unwrap(),
+            detected.ptx_isa
+        );
+        assert_eq!(detected.ptx_isa, PtxIsaRequirement::Ptx70);
+        assert!(detected.features.contains(DetectedFeatures::Sm80));
+        for arch in ["sm_75", "sm_80", "sm_90"] {
+            assert_eq!(
+                generated_target_satisfied(arch, &generated),
+                arch_satisfies(arch, detected.features),
+                "{arch}"
+            );
+        }
+    }
+
+    #[test]
     fn generated_packed_atomic_floors_are_backend_specific() {
         use crate::generated_intrinsic_targets::{
             GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,

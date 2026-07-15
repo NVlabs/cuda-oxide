@@ -123,6 +123,18 @@ pub struct OverlayFile {
     pub catalog_version: String,
     pub intrinsic_abi: u32,
     pub backend_profile: String,
+    #[serde(default)]
+    pub shards: Vec<String>,
+    #[serde(rename = "intrinsic")]
+    #[serde(default)]
+    pub intrinsics: Vec<OverlayIntrinsic>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayShardFile {
+    pub schema: u32,
+    pub family: String,
     #[serde(rename = "intrinsic")]
     pub intrinsics: Vec<OverlayIntrinsic>,
 }
@@ -183,6 +195,8 @@ pub struct OverlayIntrinsic {
     pub backend_lowerings: Vec<OverlayBackendLowering>,
     #[serde(default)]
     pub packed_atomic: Option<PackedAtomic>,
+    #[serde(default)]
+    pub redux: Option<Redux>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
@@ -439,6 +453,46 @@ pub enum LdmatrixAdapter {
     MultipleResultsToArray,
 }
 
+/// Closed semantic and lowering contract for the generated integer
+/// `redux.sync` family.
+///
+/// The Rust and NVVM dialect APIs intentionally put the participation mask
+/// first, while LLVM's NVVM intrinsic puts the lane value first. Keeping that
+/// adapter typed prevents a generic direct-call renderer from silently
+/// swapping the collective's source and member mask.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Redux {
+    pub operation: ReduxOperation,
+    pub participation: ReduxParticipation,
+    pub adapter: ReduxAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduxOperation {
+    Add,
+    Umin,
+    Min,
+    Umax,
+    Max,
+    And,
+    Or,
+    Xor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduxParticipation {
+    ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduxAdapter {
+    MaskValueToSourceMemberMask,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiLedgerFile {
@@ -601,6 +655,8 @@ pub struct CatalogIntrinsic {
     pub backend_lowerings: Vec<CatalogBackendLowering>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packed_atomic: Option<PackedAtomic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redux: Option<Redux>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
@@ -866,5 +922,16 @@ provenance = "test"
         }"#;
         let error = serde_json::from_str::<ImportedSelection>(input).unwrap_err();
         assert!(error.to_string().contains("adress_space"));
+    }
+
+    #[test]
+    fn redux_contract_rejects_unknown_operand_adapter() {
+        let input = r#"
+operation = "add"
+participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask"
+adapter = "mask_value_direct"
+"#;
+        let error = toml::from_str::<Redux>(input).unwrap_err();
+        assert!(error.to_string().contains("mask_value_direct"));
     }
 }
