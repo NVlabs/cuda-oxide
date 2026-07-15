@@ -3804,57 +3804,6 @@ fn try_dispatch_intrinsic(
             loc,
         )?)),
         // =================================================================
-        // Integer dot products (from intrinsics::dotprod)
-        // =================================================================
-        "cuda_device::dotprod::dp4a_s32" => Ok(Some(intrinsics::dotprod::emit_dp4a_s32(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::dotprod::dp4a_u32" => Ok(Some(intrinsics::dotprod::emit_dp4a_u32(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::dotprod::dp2a_s32" => Ok(Some(intrinsics::dotprod::emit_dp2a_s32(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        "cuda_device::dotprod::dp2a_u32" => Ok(Some(intrinsics::dotprod::emit_dp2a_u32(
-            ctx,
-            body,
-            args,
-            destination,
-            target,
-            block_ptr,
-            prev_op,
-            value_map,
-            block_map,
-            loc,
-        )?)),
-        // =================================================================
         // bf16x2 packed arithmetic (from intrinsics::bf16x2)
         // =================================================================
         "cuda_device::bf16x2::fma_relu_bf16x2" => {

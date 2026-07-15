@@ -210,3 +210,31 @@ status = "active"
 catalog_id = "ldmatrix_m8n8_x4_trans_b16"
 operation_key = "matrix.ldmatrix.m8n8.x4.transposed.b16.shared"
 raw_rust_signature = { safe = false, arguments = ["*const u32"], result = "[u32; 4]" }
+
+[[entry]]
+abi_id = "i0030"
+status = "active"
+catalog_id = "dp4a_s32"
+operation_key = "integer.dot_product.dp4a.s32"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "i32"], result = "i32" }
+
+[[entry]]
+abi_id = "i0031"
+status = "active"
+catalog_id = "dp4a_u32"
+operation_key = "integer.dot_product.dp4a.u32"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0032"
+status = "active"
+catalog_id = "dp2a_s32"
+operation_key = "integer.dot_product.dp2a.lo.s32"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "i32"], result = "i32" }
+
+[[entry]]
+abi_id = "i0033"
+status = "active"
+catalog_id = "dp2a_u32"
+operation_key = "integer.dot_product.dp2a.lo.u32"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32", "u32"], result = "u32" }

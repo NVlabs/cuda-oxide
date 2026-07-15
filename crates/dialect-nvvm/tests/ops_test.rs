@@ -5,14 +5,15 @@
 
 use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
-    Barrier0Op, ElectSyncOp, FmaBf16x2Op, LdmatrixElementAttr, LdmatrixLayoutAttr,
-    LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr,
-    MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op,
-    MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op,
-    PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
-    PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
-    PackedAtomicSubnormalAttr, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp,
-    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    Barrier0Op, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op,
+    LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp,
+    LdmatrixShapeAttr, LdmatrixStateSpaceAttr, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
+    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op,
+    NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr,
+    PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr,
+    PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr,
+    ReadPtxSregDynamicSmemSizeOp, ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp,
+    ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
     ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
     ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
     ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
@@ -1158,6 +1159,70 @@ fn test_bf16x2_fma_constructs_and_verifies_three_operands() {
     );
 
     assert!(FmaBf16x2Op::new(fma).verify(&ctx).is_ok());
+}
+
+#[test]
+fn test_generated_dot_products_require_three_i32_operands_and_one_i32_result() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![i32_ty.into(), i32_ty.into(), i32_ty.into(), i64_ty.into()],
+    );
+    let a = block.deref(&ctx).get_argument(0);
+    let b = block.deref(&ctx).get_argument(1);
+    let c = block.deref(&ctx).get_argument(2);
+    let wide = block.deref(&ctx).get_argument(3);
+
+    macro_rules! check_variant {
+        ($op:ty) => {{
+            let valid = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![a, b, c],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(valid), &ctx).is_ok());
+
+            let wrong_width = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![a, b, wide],
+                vec![],
+                0,
+            );
+            assert!(verify_op(&<$op>::new(wrong_width), &ctx).is_err());
+
+            for (results, operands) in [
+                (vec![], vec![a, b, c]),
+                (vec![i32_ty.into(), i32_ty.into()], vec![a, b, c]),
+                (vec![i32_ty.into()], vec![a, b]),
+                (vec![i32_ty.into()], vec![a, b, c, c]),
+            ] {
+                let wrong_count = Operation::new(
+                    &mut ctx,
+                    <$op>::get_concrete_op_info(),
+                    results,
+                    operands,
+                    vec![],
+                    0,
+                );
+                assert!(verify_op(&<$op>::new(wrong_count), &ctx).is_err());
+            }
+        }};
+    }
+
+    check_variant!(Dp4aS32Op);
+    check_variant!(Dp4aU32Op);
+    check_variant!(Dp2aS32Op);
+    check_variant!(Dp2aU32Op);
 }
 
 #[test]

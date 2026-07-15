@@ -4,8 +4,8 @@
  */
 
 use crate::model::{
-    ImportedAddressSpace, ImportedFile, ImportedIntrinsic, ImportedSelection,
-    ImportedSelectionConstraints, ImportedSource, UpstreamLock,
+    ImportedAddressSpace, ImportedFile, ImportedImmediateBinding, ImportedIntrinsic,
+    ImportedSelection, ImportedSelectionConstraints, ImportedSource, UpstreamLock,
 };
 use crate::util::{pretty_json, sha256_bytes, sha256_file, write_if_changed};
 use anyhow::{Context, Result, bail, ensure};
@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+pub(crate) const IMPORTED_SCHEMA: u32 = 2;
 
 pub struct ExtractOptions {
     pub intrinsics_json: Option<PathBuf>,
@@ -276,7 +278,7 @@ fn normalize(
     }
 
     Ok(ImportedFile {
-        schema: 1,
+        schema: IMPORTED_SCHEMA,
         source: ImportedSource {
             llvm_repository: lock.llvm.repository.clone(),
             llvm_revision: lock.llvm.revision.clone(),
@@ -383,12 +385,14 @@ fn selection_index(
             .to_owned();
         let predicates = normalized_predicates(record_name, record, root)?;
         for reference in references {
-            let constraints = if reference.starts_with("int_nvvm_ldmatrix_") {
-                ImportedSelectionConstraints {
-                    address_space: Some(ldmatrix_address_space(record_name, record, root)?),
-                }
+            let address_space = if reference.starts_with("int_nvvm_ldmatrix_") {
+                Some(ldmatrix_address_space(record_name, record, root)?)
             } else {
-                ImportedSelectionConstraints::default()
+                None
+            };
+            let constraints = ImportedSelectionConstraints {
+                address_space,
+                immediate_bindings: selection_immediate_bindings(record_name, record, &reference)?,
             };
             result
                 .entry(reference)
@@ -406,6 +410,90 @@ fn selection_index(
         records.dedup();
     }
     Ok(result)
+}
+
+fn selection_immediate_bindings(
+    record_name: &str,
+    record: &Value,
+    intrinsic: &str,
+) -> Result<Vec<ImportedImmediateBinding>> {
+    let Some(pattern) = record.get("Pattern") else {
+        return Ok(Vec::new());
+    };
+    let mut occurrences = Vec::new();
+    collect_immediate_bindings(pattern, record_name, intrinsic, &mut occurrences)?;
+    occurrences.sort();
+    occurrences.dedup();
+    ensure!(
+        occurrences.len() <= 1,
+        "selection {record_name} binds intrinsic {intrinsic} through conflicting immediate patterns: {occurrences:?}"
+    );
+    Ok(occurrences.pop().unwrap_or_default())
+}
+
+fn collect_immediate_bindings(
+    value: &Value,
+    record_name: &str,
+    intrinsic: &str,
+    output: &mut Vec<Vec<ImportedImmediateBinding>>,
+) -> Result<()> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                collect_immediate_bindings(value, record_name, intrinsic, output)?;
+            }
+        }
+        Value::Object(fields) => {
+            let is_intrinsic_application = fields
+                .get("operator")
+                .and_then(|operator| operator.get("def"))
+                .and_then(Value::as_str)
+                == Some(intrinsic);
+            if is_intrinsic_application {
+                let mut bindings = Vec::new();
+                if let Some(arguments) = fields.get("args") {
+                    let arguments = arguments.as_array().with_context(|| {
+                        format!(
+                            "selection {record_name} intrinsic {intrinsic} has a non-array argument list"
+                        )
+                    })?;
+                    for (argument_index, argument) in arguments.iter().enumerate() {
+                        let pair = argument.as_array().with_context(|| {
+                            format!(
+                                "selection {record_name} intrinsic {intrinsic} argument {argument_index} is not a TableGen value/name pair"
+                            )
+                        })?;
+                        let Some(value) = pair.first() else {
+                            bail!(
+                                "selection {record_name} intrinsic {intrinsic} argument {argument_index} has no value"
+                            );
+                        };
+                        let value = match value {
+                            Value::Number(value) => Some(value.as_i64().with_context(|| {
+                                format!(
+                                    "selection {record_name} intrinsic {intrinsic} argument {argument_index} has an integer outside i64"
+                                )
+                            })?),
+                            Value::Bool(value) => Some(if *value { 1 } else { 0 }),
+                            _ => None,
+                        };
+                        if let Some(value) = value {
+                            bindings.push(ImportedImmediateBinding {
+                                argument_index,
+                                value,
+                            });
+                        }
+                    }
+                }
+                output.push(bindings);
+            }
+            for value in fields.values() {
+                collect_immediate_bindings(value, record_name, intrinsic, output)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn direct_wanted_intrinsic<'a>(record: &'a Value, wanted: &BTreeSet<&str>) -> Option<&'a str> {
@@ -690,6 +778,112 @@ mod tests {
                 .constraints
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn preserves_dotprod_low_and_high_immediate_bindings() {
+        const INTRINSIC: &str = "int_nvvm_idp2a_s_s";
+        let wanted = BTreeSet::from([INTRINSIC]);
+        let selection = |value: i64, asm: &str| {
+            json!({
+                "Pattern": [{
+                    "kind": "dag",
+                    "operator": {"kind": "def", "def": "set"},
+                    "args": [
+                        [{"kind": "def", "def": "i32"}, "dst"],
+                        [{
+                            "kind": "dag",
+                            "operator": {"kind": "def", "def": INTRINSIC},
+                            "args": [
+                                [{"kind": "def", "def": "i32"}, "a"],
+                                [{"kind": "def", "def": "i32"}, "b"],
+                                [value, null],
+                                [{"kind": "def", "def": "i32"}, "c"]
+                            ]
+                        }, null]
+                    ]
+                }],
+                "AsmString": asm,
+                "Predicates": [{"kind": "def", "def": "hasDotInstructions"}]
+            })
+        };
+        let root = Map::from_iter([
+            (
+                "DOT2_lo_ss".into(),
+                selection(0, "dp2a.lo.s32.s32 $dst, $a, $b, $c;"),
+            ),
+            (
+                "DOT2_hi_ss".into(),
+                selection(-1, "dp2a.hi.s32.s32 $dst, $a, $b, $c;"),
+            ),
+        ]);
+
+        let selections = &selection_index(&root, &wanted).unwrap()[INTRINSIC];
+        let low = selections
+            .iter()
+            .find(|selection| selection.source_record == "DOT2_lo_ss")
+            .unwrap();
+        let high = selections
+            .iter()
+            .find(|selection| selection.source_record == "DOT2_hi_ss")
+            .unwrap();
+        assert_eq!(
+            low.constraints.immediate_bindings,
+            [ImportedImmediateBinding {
+                argument_index: 2,
+                value: 0,
+            }]
+        );
+        assert_eq!(
+            high.constraints.immediate_bindings,
+            [ImportedImmediateBinding {
+                argument_index: 2,
+                value: -1,
+            }]
+        );
+        assert_ne!(low.constraints, high.constraints);
+    }
+
+    #[test]
+    fn immediate_bindings_serialize_in_argument_order() {
+        const INTRINSIC: &str = "int_nvvm_test";
+        let record = json!({
+            "Pattern": [{
+                "kind": "dag",
+                "operator": {"kind": "def", "def": INTRINSIC},
+                "args": [
+                    [{"kind": "def", "def": "i32"}, "a"],
+                    [0, null],
+                    [{"kind": "def", "def": "i32"}, "b"],
+                    [-1, null]
+                ]
+            }]
+        });
+        let bindings = selection_immediate_bindings("TEST", &record, INTRINSIC).unwrap();
+        assert_eq!(
+            serde_json::to_value(bindings).unwrap(),
+            json!([
+                {"argument_index": 1, "value": 0},
+                {"argument_index": 3, "value": -1}
+            ])
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_immediate_bindings_in_one_selection() {
+        const INTRINSIC: &str = "int_nvvm_test";
+        let application = |value: i64| {
+            json!({
+                "kind": "dag",
+                "operator": {"kind": "def", "def": INTRINSIC},
+                "args": [[value, null]]
+            })
+        };
+        let record = json!({"Pattern": [application(0), application(-1)]});
+        let error = selection_immediate_bindings("TEST", &record, INTRINSIC)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("conflicting immediate patterns"), "{error}");
     }
 
     fn ldmatrix_fixture(patfrag_intrinsic: &str, shared_predicate: &str) -> Map<String, Value> {

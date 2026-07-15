@@ -3,18 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::extract::read_upstream_lock;
+use crate::extract::{IMPORTED_SCHEMA, read_upstream_lock};
 use crate::model::{
     AbiLedgerEntry, AbiLedgerFile, AbiRawRustSignature, BackendLoweringMechanism, CatalogBackend,
     CatalogBackendLowering, CatalogDialect, CatalogFile, CatalogHalfOpenRange,
     CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs, CatalogIntrinsic,
     CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust, CatalogSelection,
-    CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement, EvidenceArtifactKind,
-    EvidenceFile, EvidenceRecord, EvidenceStageKind, ImportedAddressSpace, ImportedFile,
-    ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract,
-    LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder, LdmatrixMultiplicity,
-    LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, OverlayFile, OverlayIntrinsic,
-    OverlayShardFile, PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
+    CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement, DotProductAdapter,
+    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceRecord,
+    EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
+    IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
+    LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
+    LdmatrixStateSpace, OverlayFile, OverlayIntrinsic, OverlayShardFile,
+    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
     PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
     PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
     PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
@@ -29,6 +30,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+const OVERLAY_SCHEMA: u32 = 6;
+const OVERLAY_SHARD_SCHEMA: u32 = 2;
+pub(crate) const CATALOG_SCHEMA: u32 = 5;
+
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
     let imported_path = repo_root.join("intrinsics/imported.json");
@@ -42,12 +47,12 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         toml::from_str(&ledger_text).with_context(|| format!("parse {}", ledger_path.display()))?;
 
     ensure!(
-        imported.schema == 1,
+        imported.schema == IMPORTED_SCHEMA,
         "unsupported imported.json schema {}",
         imported.schema
     );
     ensure!(
-        overlay.schema == 5,
+        overlay.schema == OVERLAY_SCHEMA,
         "unsupported overlay.toml schema {}",
         overlay.schema
     );
@@ -155,7 +160,7 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     }
 
     Ok(CatalogFile {
-        schema: 4,
+        schema: CATALOG_SCHEMA,
         catalog_version: overlay.catalog_version,
         intrinsic_abi: overlay.intrinsic_abi,
         generator_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -218,7 +223,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let shard: OverlayShardFile =
             toml::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
         ensure!(
-            shard.schema == 1,
+            shard.schema == OVERLAY_SHARD_SCHEMA,
             "unsupported overlay shard schema {} in {}",
             shard.schema,
             path.display()
@@ -314,8 +319,12 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}",
-            record.dialect_op_name, record.ldmatrix_variant, record.packed_atomic, record.redux,
+            "{}:{:?}:{:?}:{:?}:{:?}",
+            record.dialect_op_name,
+            record.ldmatrix_variant,
+            record.packed_atomic,
+            record.redux,
+            record.dot_product,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -603,6 +612,10 @@ fn validate_policy(
             policy,
             declaration.context("redux requires imported LLVM declaration")?,
         )?,
+        "dotprod" => validate_dot_product_policy(
+            policy,
+            declaration.context("dotprod requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -669,12 +682,7 @@ fn validate_policy(
         let matching_selections: Vec<_> = declaration
             .selections
             .iter()
-            .filter(|selection| {
-                policy.expected_ptx.matches(&selection.asm)
-                    && policy.selected_address_space.is_none_or(|address_space| {
-                        selection.constraints.address_space == Some(address_space)
-                    })
-            })
+            .filter(|selection| selection_matches_policy(policy, selection))
             .collect();
         ensure!(
             matching_selections.len() == 1,
@@ -687,12 +695,43 @@ fn validate_policy(
     Ok(())
 }
 
+fn selection_matches_policy(
+    policy: &OverlayIntrinsic,
+    selection: &crate::model::ImportedSelection,
+) -> bool {
+    if !policy.expected_ptx.matches(&selection.asm)
+        || policy
+            .selected_address_space
+            .is_some_and(|address_space| selection.constraints.address_space != Some(address_space))
+    {
+        return false;
+    }
+
+    let Some(dot_product) = &policy.dot_product else {
+        return true;
+    };
+    if selection.constraints.address_space.is_some() {
+        return false;
+    }
+    match dot_product.adapter {
+        DotProductAdapter::DirectThreeOperands => {
+            selection.constraints.immediate_bindings.is_empty()
+        }
+        DotProductAdapter::InsertLowHalfFalse => {
+            selection.constraints.immediate_bindings.len() == 1
+                && selection.constraints.immediate_bindings[0].argument_index == 2
+                && selection.constraints.immediate_bindings[0].value == 0
+        }
+    }
+}
+
 fn validate_selected_target_predicates(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,
 ) -> Result<()> {
     let mut imported_ptx = None;
     let mut imported_sm = None;
+    let mut has_dot_instructions = false;
     for predicate in &selection.predicates {
         if let Some(value) = predicate.strip_prefix("Subtarget->getPTXVersion() >= ") {
             ensure!(
@@ -712,6 +751,20 @@ fn validate_selected_target_predicates(
             imported_sm = Some(value.parse::<u16>().with_context(|| {
                 format!("{} has malformed SM predicate {predicate:?}", policy.id)
             })?);
+        } else if predicate == "hasDotInstructions" {
+            ensure!(
+                policy.family == "dotprod",
+                "{} selected instruction uses dot-product target gating outside the dotprod family",
+                policy.id
+            );
+            ensure!(
+                !has_dot_instructions && imported_ptx.is_none() && imported_sm.is_none(),
+                "{} has duplicate or conflicting dot-product target predicates",
+                policy.id
+            );
+            has_dot_instructions = true;
+            imported_ptx = Some(50);
+            imported_sm = Some(61);
         } else {
             bail!(
                 "{} selected instruction has unsupported target predicate {predicate:?}; target gates must fail closed",
@@ -746,6 +799,12 @@ fn validate_selected_target_predicates(
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some(),
             "{} ldmatrix selection must carry both PTX and SM predicates",
+            policy.id
+        );
+    } else if policy.family == "dotprod" {
+        ensure!(
+            has_dot_instructions && selection.predicates.len() == 1,
+            "{} dotprod selection must carry only the hasDotInstructions predicate",
             policy.id
         );
     }
@@ -784,6 +843,7 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic) -> Result<()> {
             && policy.ldmatrix_adapter.is_none()
             && policy.packed_atomic.is_none()
             && policy.redux.is_none()
+            && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with an sreg",
         policy.id
@@ -876,6 +936,7 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
+            && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} mixes another generated-family contract with redux",
         policy.id
@@ -1005,6 +1066,227 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             dialect_op_name: "nvvm.redux_sync_xor",
             ptx_operation: "xor",
             ptx_type: "b32",
+        },
+    }
+}
+
+fn validate_dot_product_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let dot_product = policy
+        .dot_product
+        .as_ref()
+        .with_context(|| format!("{} has no closed dot-product contract", policy.id))?;
+    let recipe = dot_product_recipe(dot_product.operation, dot_product.signedness);
+    ensure!(
+        dot_product.adapter == recipe.adapter,
+        "{} dot-product source adapter does not match its operation",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} dot-product identity does not match its closed operation recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "dotprod"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == ["u32", "u32", recipe.rust_value]
+            && policy.rust_result == recipe.rust_value
+            && policy.safe
+            && !policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::dotprod::{}", recipe.rust_name)
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::dotprod::{}", recipe.rust_name)],
+        "{} must preserve the safe, non-must-use dotprod raw API and legacy cuda-device DefPath",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == ["i32", "i32", "i32"]
+            && policy.dialect_results == ["i32"]
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results == ["i32"]
+            && policy.lowering == "generated_dotprod",
+        "{} is outside the closed three-operand dot-product lowering recipe",
+        policy.id
+    );
+    ensure!(
+        policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == "5.0"
+            && policy.minimum_sm.as_deref() == Some("sm_61")
+            && policy.ptx_result == recipe.rust_value
+            && policy.targets == "all",
+        "{} dot-product effects, carrier, or target floor disagree with its operation recipe",
+        policy.id
+    );
+    ensure!(
+        declaration
+            .classes
+            .iter()
+            .any(|class| class == "NVVMPureIntrinsic")
+            && declaration.properties == recipe.llvm_properties,
+        "{} dot-product effects or immediate contract disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with dotprod",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == recipe.ptx_mnemonic
+            && policy.expected_ptx.modifiers == recipe.ptx_modifiers
+            && policy.expected_ptx.operands
+                == [
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                ],
+        "{} expected PTX does not match its closed dot-product recipe",
+        policy.id
+    );
+
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ]),
+        "{} must define exactly the reviewed LLVM typed and libNVVM inline-PTX routes",
+        policy.id
+    );
+    for lowering in &policy.backend_lowerings {
+        let floor_matches = match lowering.backend {
+            IntrinsicBackend::LlvmNvptx => {
+                lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+            }
+            IntrinsicBackend::LibNvvm => {
+                lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    && lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.as_deref() == Some("sm_75")
+            }
+        };
+        ensure!(
+            floor_matches && !lowering.evidence_profile.trim().is_empty(),
+            "{} backend {:?} does not carry its reviewed dot-product profile floor",
+            policy.id,
+            lowering.backend
+        );
+    }
+    Ok(())
+}
+
+struct DotProductRecipe {
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_name: &'static str,
+    rust_value: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    llvm_arguments: &'static [&'static str],
+    llvm_properties: &'static [&'static str],
+    adapter: DotProductAdapter,
+    ptx_mnemonic: &'static str,
+    ptx_modifiers: &'static [&'static str],
+}
+
+fn dot_product_recipe(
+    operation: DotProductOperation,
+    signedness: DotProductSignedness,
+) -> DotProductRecipe {
+    match (operation, signedness) {
+        (DotProductOperation::Dp4a, DotProductSignedness::Signed) => DotProductRecipe {
+            id: "dp4a_s32",
+            operation_key: "integer.dot_product.dp4a.s32",
+            source_record: "int_nvvm_idp4a_s_s",
+            llvm_symbol: "llvm.nvvm.idp4a.s.s",
+            rust_name: "dp4a_s32",
+            rust_value: "i32",
+            dialect_op_type: "Dp4aS32Op",
+            dialect_op_name: "nvvm.dp4a_s32",
+            llvm_arguments: &["i32", "i32", "i32"],
+            llvm_properties: &["IntrNoMem", "IntrSpeculatable"],
+            adapter: DotProductAdapter::DirectThreeOperands,
+            ptx_mnemonic: "dp4a",
+            ptx_modifiers: &["s32", "s32"],
+        },
+        (DotProductOperation::Dp4a, DotProductSignedness::Unsigned) => DotProductRecipe {
+            id: "dp4a_u32",
+            operation_key: "integer.dot_product.dp4a.u32",
+            source_record: "int_nvvm_idp4a_u_u",
+            llvm_symbol: "llvm.nvvm.idp4a.u.u",
+            rust_name: "dp4a_u32",
+            rust_value: "u32",
+            dialect_op_type: "Dp4aU32Op",
+            dialect_op_name: "nvvm.dp4a_u32",
+            llvm_arguments: &["i32", "i32", "i32"],
+            llvm_properties: &["IntrNoMem", "IntrSpeculatable"],
+            adapter: DotProductAdapter::DirectThreeOperands,
+            ptx_mnemonic: "dp4a",
+            ptx_modifiers: &["u32", "u32"],
+        },
+        (DotProductOperation::Dp2a, DotProductSignedness::Signed) => DotProductRecipe {
+            id: "dp2a_s32",
+            operation_key: "integer.dot_product.dp2a.lo.s32",
+            source_record: "int_nvvm_idp2a_s_s",
+            llvm_symbol: "llvm.nvvm.idp2a.s.s",
+            rust_name: "dp2a_s32",
+            rust_value: "i32",
+            dialect_op_type: "Dp2aS32Op",
+            dialect_op_name: "nvvm.dp2a_s32",
+            llvm_arguments: &["i32", "i32", "i1", "i32"],
+            llvm_properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            adapter: DotProductAdapter::InsertLowHalfFalse,
+            ptx_mnemonic: "dp2a",
+            ptx_modifiers: &["lo", "s32", "s32"],
+        },
+        (DotProductOperation::Dp2a, DotProductSignedness::Unsigned) => DotProductRecipe {
+            id: "dp2a_u32",
+            operation_key: "integer.dot_product.dp2a.lo.u32",
+            source_record: "int_nvvm_idp2a_u_u",
+            llvm_symbol: "llvm.nvvm.idp2a.u.u",
+            rust_name: "dp2a_u32",
+            rust_value: "u32",
+            dialect_op_type: "Dp2aU32Op",
+            dialect_op_name: "nvvm.dp2a_u32",
+            llvm_arguments: &["i32", "i32", "i1", "i32"],
+            llvm_properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            adapter: DotProductAdapter::InsertLowHalfFalse,
+            ptx_mnemonic: "dp2a",
+            ptx_modifiers: &["lo", "u32", "u32"],
         },
     }
 }
@@ -1153,7 +1435,7 @@ fn validate_ldmatrix_policy(
         policy.id
     );
     ensure!(
-        policy.packed_atomic.is_none() && policy.redux.is_none(),
+        policy.packed_atomic.is_none() && policy.redux.is_none() && policy.dot_product.is_none(),
         "{} mixes another generated-family contract with ldmatrix",
         policy.id
     );
@@ -1239,6 +1521,7 @@ fn validate_packed_atomic_policy(
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
             && policy.redux.is_none()
+            && policy.dot_product.is_none()
             && policy.selected_address_space.is_none(),
         "{} packed-atomic effects, carrier, or native target floor disagree",
         policy.id
@@ -1544,14 +1827,7 @@ fn validate_evidence(
         );
         validate_selected_stage_targets(policy, record, lowering)?;
         if lowering.mechanism == BackendLoweringMechanism::TypedNvvm {
-            ensure!(
-                record.resolved_llvm_symbol == policy.resolved_llvm_symbol
-                    && record.concrete_llvm_arguments == ["ptr addrspace(3)"]
-                    && record.concrete_llvm_results == policy.llvm_results
-                    && record.declaration_attributes_canonicalized == Some(true),
-                "{} typed LLVM evidence does not prove the resolved `.p3` signature and canonical declaration attributes",
-                policy.id
-            );
+            validate_typed_llvm_evidence(policy, record)?;
         }
         if lowering.backend == IntrinsicBackend::LlvmNvptx
             && matches!(record.status.as_str(), "validated" | "executed")
@@ -1582,6 +1858,36 @@ fn validate_evidence(
             );
         }
     }
+    Ok(())
+}
+
+fn validate_typed_llvm_evidence(policy: &OverlayIntrinsic, record: &EvidenceRecord) -> Result<()> {
+    let concrete_arguments = policy
+        .llvm_arguments
+        .iter()
+        .map(|argument| {
+            if argument != "anyptr" {
+                return Ok(argument.clone());
+            }
+            match policy.selected_address_space.with_context(|| {
+                format!(
+                    "{} has a polymorphic LLVM pointer without a selected address space",
+                    policy.id
+                )
+            })? {
+                ImportedAddressSpace::Generic => Ok("ptr".into()),
+                ImportedAddressSpace::Shared => Ok("ptr addrspace(3)".into()),
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        record.resolved_llvm_symbol == policy.resolved_llvm_symbol
+            && record.concrete_llvm_arguments == concrete_arguments
+            && record.concrete_llvm_results == policy.llvm_results
+            && record.declaration_attributes_canonicalized == Some(true),
+        "{} typed LLVM evidence does not prove its resolved signature and canonical declaration attributes",
+        policy.id
+    );
     Ok(())
 }
 
@@ -1894,11 +2200,7 @@ fn resolve_record(
         selections: declaration
             .into_iter()
             .flat_map(|declaration| declaration.selections.iter())
-            .filter(|selection| {
-                policy.selected_address_space.is_none_or(|address_space| {
-                    selection.constraints.address_space == Some(address_space)
-                })
-            })
+            .filter(|selection| selection_matches_policy(policy, selection))
             .map(|selection| CatalogSelection {
                 source_record: selection.source_record.clone(),
                 asm: selection.asm.clone(),
@@ -1953,6 +2255,7 @@ fn resolve_record(
         backend_lowerings,
         packed_atomic: policy.packed_atomic.clone(),
         redux: policy.redux.clone(),
+        dot_product: policy.dot_product.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -2057,6 +2360,7 @@ mod tests {
             backend_lowerings: vec![],
             packed_atomic: None,
             redux: None,
+            dot_product: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -2151,7 +2455,7 @@ mod tests {
 
     fn overlay_file(records: Vec<OverlayIntrinsic>) -> OverlayFile {
         OverlayFile {
-            schema: 5,
+            schema: OVERLAY_SCHEMA,
             catalog_version: "test".into(),
             intrinsic_abi: 1,
             backend_profile: "test".into(),
@@ -2201,6 +2505,161 @@ mod tests {
             .unwrap()
     }
 
+    fn dot_product_policy(
+        operation: DotProductOperation,
+        signedness: DotProductSignedness,
+    ) -> OverlayIntrinsic {
+        let recipe = dot_product_recipe(operation, signedness);
+        let mut record = policy();
+        record.id = recipe.id.into();
+        record.abi_id = match (operation, signedness) {
+            (DotProductOperation::Dp4a, DotProductSignedness::Signed) => "i0030",
+            (DotProductOperation::Dp4a, DotProductSignedness::Unsigned) => "i0031",
+            (DotProductOperation::Dp2a, DotProductSignedness::Signed) => "i0032",
+            (DotProductOperation::Dp2a, DotProductSignedness::Unsigned) => "i0033",
+        }
+        .into();
+        record.operation_key = recipe.operation_key.into();
+        record.family = "dotprod".into();
+        record.source = None;
+        record.source_record = Some(recipe.source_record.into());
+        record.rust_module = "dotprod".into();
+        record.rust_name = recipe.rust_name.into();
+        record.rust_arguments = vec!["u32".into(), "u32".into(), recipe.rust_value.into()];
+        record.rust_result = recipe.rust_value.into();
+        record.safe = true;
+        record.must_use = false;
+        record.safe_allowlist_reason = Some(
+            "per-thread integer arithmetic has no memory, pointer, or participation obligations"
+                .into(),
+        );
+        record.public_rust_path = format!("cuda_intrinsics::dotprod::{}", recipe.rust_name);
+        record.compatibility_rust_paths =
+            vec![format!("cuda_device::dotprod::{}", recipe.rust_name)];
+        record.dialect_op_type = recipe.dialect_op_type.into();
+        record.dialect_op_name = recipe.dialect_op_name.into();
+        record.dialect_operands = vec!["i32".into(), "i32".into(), "i32".into()];
+        record.dialect_results = vec!["i32".into()];
+        record.llvm_symbol = Some(recipe.llvm_symbol.into());
+        record.resolved_llvm_symbol = None;
+        record.llvm_arguments = recipe
+            .llvm_arguments
+            .iter()
+            .map(|argument| (*argument).into())
+            .collect();
+        record.llvm_results = vec!["i32".into()];
+        record.pure = true;
+        record.memory = "none".into();
+        record.convergent = false;
+        record.execution_scope = "thread".into();
+        record.minimum_ptx = "5.0".into();
+        record.minimum_sm = Some("sm_61".into());
+        record.ptx_result = recipe.rust_value.into();
+        record.targets = "all".into();
+        record.lowering = "generated_dotprod".into();
+        record.backend_lowerings = vec![
+            crate::model::OverlayBackendLowering {
+                backend: IntrinsicBackend::LlvmNvptx,
+                mechanism: BackendLoweringMechanism::TypedNvvm,
+                evidence_profile: "llvm-test".into(),
+                minimum_ptx: None,
+                minimum_sm: None,
+            },
+            crate::model::OverlayBackendLowering {
+                backend: IntrinsicBackend::LibNvvm,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: "libnvvm-test".into(),
+                minimum_ptx: None,
+                minimum_sm: Some("sm_75".into()),
+            },
+        ];
+        record.dot_product = Some(crate::model::DotProduct {
+            operation,
+            signedness,
+            adapter: recipe.adapter,
+        });
+        record.expected_ptx = InstructionPattern::new(
+            recipe.ptx_mnemonic,
+            recipe.ptx_modifiers,
+            vec![OperandPattern::Register; 4],
+        );
+        record.summary = "packed integer dot product".into();
+        record
+    }
+
+    fn dot_product_declaration(
+        operation: DotProductOperation,
+        signedness: DotProductSignedness,
+    ) -> ImportedIntrinsic {
+        let recipe = dot_product_recipe(operation, signedness);
+        let selection = |source_record: &str, half: Option<(&str, i64)>| ImportedSelection {
+            source_record: source_record.into(),
+            asm: format!(
+                "{}.{} $dst, $a, $b, $c;",
+                recipe.ptx_mnemonic,
+                match half {
+                    Some((name, _)) => {
+                        let types = &recipe.ptx_modifiers[1..];
+                        format!("{name}.{}", types.join("."))
+                    }
+                    None => recipe.ptx_modifiers.join("."),
+                }
+            ),
+            predicates: vec!["hasDotInstructions".into()],
+            constraints: crate::model::ImportedSelectionConstraints {
+                address_space: None,
+                immediate_bindings: half
+                    .map(|(_, value)| {
+                        vec![crate::model::ImportedImmediateBinding {
+                            argument_index: 2,
+                            value,
+                        }]
+                    })
+                    .unwrap_or_default(),
+            },
+        };
+        let selections = match operation {
+            DotProductOperation::Dp4a => vec![selection("DOT4", None)],
+            DotProductOperation::Dp2a => vec![
+                selection("DOT2_hi", Some(("hi", -1))),
+                selection("DOT2_lo", Some(("lo", 0))),
+            ],
+        };
+        ImportedIntrinsic {
+            source_record: recipe.source_record.into(),
+            llvm_name: recipe.llvm_symbol.into(),
+            arguments: recipe
+                .llvm_arguments
+                .iter()
+                .map(|argument| (*argument).into())
+                .collect(),
+            results: vec!["i32".into()],
+            classes: vec!["NVVMPureIntrinsic".into()],
+            properties: recipe
+                .llvm_properties
+                .iter()
+                .map(|property| (*property).into())
+                .collect(),
+            selections,
+        }
+    }
+
+    fn dot_product_evidence(policy: &OverlayIntrinsic) -> EvidenceRecord {
+        let mut record = evidence();
+        record.id = policy.id.clone();
+        record.source_record = policy.source_record.clone();
+        record.llvm_symbol = policy.llvm_symbol.clone();
+        record.llvm_arguments = policy.llvm_arguments.clone();
+        record.llvm_results = policy.llvm_results.clone();
+        record.concrete_llvm_arguments = policy.llvm_arguments.clone();
+        record.concrete_llvm_results = policy.llvm_results.clone();
+        record.declaration_attributes_canonicalized = Some(true);
+        record.gpu_target = "sm_61".into();
+        record.ptx_feature = "+ptx50".into();
+        record.expected_ptx = policy.expected_ptx.clone();
+        record
+    }
+
     fn validate_ptx_native_policy(policy: &OverlayIntrinsic) -> Result<()> {
         let source = resolve_policy_source(policy)?;
         validate_policy(policy, &source, None, 1)
@@ -2237,9 +2696,17 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
-        assert_eq!(overlay.schema, 5);
-        assert_eq!(overlay.shards.len(), 4);
-        assert_eq!(overlay.intrinsics.len(), 29);
+        assert_eq!(overlay.schema, OVERLAY_SCHEMA);
+        assert_eq!(overlay.shards.len(), 5);
+        assert_eq!(overlay.intrinsics.len(), 33);
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "dotprod")
+                .count(),
+            4
+        );
         assert_eq!(
             overlay
                 .intrinsics
@@ -2432,6 +2899,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        assert_eq!(imported.schema, IMPORTED_SCHEMA);
         let declarations: BTreeMap<_, _> = imported
             .intrinsics
             .iter()
@@ -2460,6 +2928,194 @@ mod tests {
                 .to_string()
                 .contains("closed operation recipe")
         );
+    }
+
+    #[test]
+    fn every_dot_product_variant_matches_its_closed_recipe() {
+        let variants = [
+            (
+                DotProductOperation::Dp4a,
+                DotProductSignedness::Signed,
+                "dp4a_s32",
+                "int_nvvm_idp4a_s_s",
+                "integer.dot_product.dp4a.s32",
+            ),
+            (
+                DotProductOperation::Dp4a,
+                DotProductSignedness::Unsigned,
+                "dp4a_u32",
+                "int_nvvm_idp4a_u_u",
+                "integer.dot_product.dp4a.u32",
+            ),
+            (
+                DotProductOperation::Dp2a,
+                DotProductSignedness::Signed,
+                "dp2a_s32",
+                "int_nvvm_idp2a_s_s",
+                "integer.dot_product.dp2a.lo.s32",
+            ),
+            (
+                DotProductOperation::Dp2a,
+                DotProductSignedness::Unsigned,
+                "dp2a_u32",
+                "int_nvvm_idp2a_u_u",
+                "integer.dot_product.dp2a.lo.u32",
+            ),
+        ];
+
+        for (operation, signedness, id, source_record, operation_key) in variants {
+            let policy = dot_product_policy(operation, signedness);
+            let declaration = dot_product_declaration(operation, signedness);
+            assert_eq!(policy.id, id);
+            assert_eq!(policy.source_record.as_deref(), Some(source_record));
+            assert_eq!(policy.operation_key, operation_key);
+            validate_imported_policy(&policy, &declaration).unwrap();
+        }
+    }
+
+    #[test]
+    fn pinned_dot_product_records_match_the_reviewed_overlay() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let dot_products: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "dotprod")
+            .collect();
+        assert_eq!(dot_products.len(), 4);
+
+        for policy in dot_products {
+            let declaration = declarations[policy.source_record.as_deref().unwrap()];
+            validate_imported_policy(policy, declaration).unwrap();
+            let selected: Vec<_> = declaration
+                .selections
+                .iter()
+                .filter(|selection| selection_matches_policy(policy, selection))
+                .collect();
+            assert_eq!(selected.len(), 1);
+            if policy.id.starts_with("dp2a") {
+                assert_eq!(selected[0].constraints.immediate_bindings[0].value, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn dp2a_selects_only_the_reviewed_low_half_binding() {
+        let policy = dot_product_policy(DotProductOperation::Dp2a, DotProductSignedness::Signed);
+        let declaration =
+            dot_product_declaration(DotProductOperation::Dp2a, DotProductSignedness::Signed);
+        let resolved = resolve_record(
+            &policy,
+            resolve_policy_source(&policy).unwrap(),
+            Some(&declaration),
+            &dot_product_evidence(&policy),
+            "test",
+            "LLVM version test",
+            "0123456789abcdef",
+            vec![],
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.selections.len(), 1);
+        assert_eq!(resolved.selections[0].source_record, "DOT2_lo");
+        assert_eq!(
+            resolved.selections[0].constraints.immediate_bindings,
+            [crate::model::ImportedImmediateBinding {
+                argument_index: 2,
+                value: 0,
+            }]
+        );
+        assert_eq!(
+            resolved.dot_product.as_ref().unwrap().adapter,
+            DotProductAdapter::InsertLowHalfFalse
+        );
+
+        let mut wrong_binding = declaration;
+        wrong_binding.selections[1].constraints.immediate_bindings[0].value = -1;
+        let error = validate_imported_policy(&policy, &wrong_binding).unwrap_err();
+        assert!(error.to_string().contains("does not agree"));
+    }
+
+    #[test]
+    fn dot_product_recipe_rejects_unreviewed_api_and_adapter_changes() {
+        let valid = dot_product_policy(DotProductOperation::Dp2a, DotProductSignedness::Unsigned);
+        let declaration =
+            dot_product_declaration(DotProductOperation::Dp2a, DotProductSignedness::Unsigned);
+
+        let mut wrong_adapter = valid.clone();
+        wrong_adapter.dot_product.as_mut().unwrap().adapter =
+            DotProductAdapter::DirectThreeOperands;
+        assert!(
+            validate_imported_policy(&wrong_adapter, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("source adapter")
+        );
+
+        let mut must_use = valid.clone();
+        must_use.must_use = true;
+        assert!(
+            validate_imported_policy(&must_use, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("non-must-use")
+        );
+
+        let mut wrong_llvm_signature = valid;
+        wrong_llvm_signature.llvm_arguments = vec!["i32".into(); 3];
+        assert!(
+            validate_imported_policy(&wrong_llvm_signature, &declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("LLVM argument signature mismatch")
+        );
+    }
+
+    #[test]
+    fn dot_product_target_predicate_is_closed_to_ptx50_and_sm61() {
+        let policy = dot_product_policy(DotProductOperation::Dp4a, DotProductSignedness::Signed);
+        let selection =
+            &dot_product_declaration(DotProductOperation::Dp4a, DotProductSignedness::Signed)
+                .selections[0];
+        validate_selected_target_predicates(&policy, selection).unwrap();
+
+        let mut wrong_ptx = policy.clone();
+        wrong_ptx.minimum_ptx = "5.1".into();
+        assert!(
+            validate_selected_target_predicates(&wrong_ptx, selection)
+                .unwrap_err()
+                .to_string()
+                .contains("minimum PTX")
+        );
+
+        let mut wrong_sm = policy;
+        wrong_sm.minimum_sm = Some("sm_60".into());
+        assert!(
+            validate_selected_target_predicates(&wrong_sm, selection)
+                .unwrap_err()
+                .to_string()
+                .contains("minimum SM")
+        );
+    }
+
+    #[test]
+    fn typed_evidence_accepts_direct_scalar_intrinsic_signatures() {
+        let policy = dot_product_policy(DotProductOperation::Dp2a, DotProductSignedness::Signed);
+        let mut record = dot_product_evidence(&policy);
+        validate_typed_llvm_evidence(&policy, &record).unwrap();
+
+        record.concrete_llvm_arguments.remove(2);
+        let error = validate_typed_llvm_evidence(&policy, &record).unwrap_err();
+        assert!(error.to_string().contains("resolved signature"));
     }
 
     #[test]

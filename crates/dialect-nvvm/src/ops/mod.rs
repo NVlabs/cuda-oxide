@@ -104,7 +104,6 @@ mod cluster;
 mod convert;
 mod cp_async;
 mod debug;
-mod dotprod;
 mod generated;
 mod grid;
 mod mbarrier;
@@ -128,7 +127,6 @@ pub use cluster::*;
 pub use convert::*;
 pub use cp_async::*;
 pub use debug::*;
-pub use dotprod::*;
 pub use generated::*;
 pub use grid::*;
 pub use mbarrier::*;
@@ -164,6 +162,5 @@ pub fn register(ctx: &mut Context) {
     shared::register(ctx);
     stmatrix::register(ctx);
     debug::register(ctx);
-    dotprod::register(ctx);
     wmma::register(ctx);
 }

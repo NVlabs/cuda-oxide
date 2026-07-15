@@ -2289,112 +2289,143 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
 // Integer dot product (dp4a / dp2a) lowering tests
 // =============================================================================
 
-#[test]
-fn test_dp4a_s32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+const DOT_PRODUCT_TYPED_INTRINSICS: [&str; 4] = [
+    "llvm_nvvm_idp4a_s_s",
+    "llvm_nvvm_idp4a_u_u",
+    "llvm_nvvm_idp2a_s_s",
+    "llvm_nvvm_idp2a_u_u",
+];
+
+const DOT_PRODUCT_PTX: [&str; 4] = [
+    "dp4a.s32.s32 $0, $1, $2, $3;",
+    "dp4a.u32.u32 $0, $1, $2, $3;",
+    "dp2a.lo.s32.s32 $0, $1, $2, $3;",
+    "dp2a.lo.u32.u32 $0, $1, $2, $3;",
+];
+
+fn lower_all_dot_product_forms(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
-
-    let a_val = entry.deref(&ctx).get_argument(0);
-    let b_val = entry.deref(&ctx).get_argument(1);
-    let c_val = entry.deref(&ctx).get_argument(2);
-
-    let op = Operation::new(
-        &mut ctx,
+    let operands = (0..3)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    for op_info in [
         nvvm::Dp4aS32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val, b_val, c_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "dp4a.s32.s32")
-}
-
-#[test]
-fn test_dp4a_u32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) =
-        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
-
-    let a_val = entry.deref(&ctx).get_argument(0);
-    let b_val = entry.deref(&ctx).get_argument(1);
-    let c_val = entry.deref(&ctx).get_argument(2);
-
-    let op = Operation::new(
-        &mut ctx,
         nvvm::Dp4aU32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val, b_val, c_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "dp4a.u32.u32")
-}
-
-#[test]
-fn test_dp2a_s32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
-
-    let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) =
-        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
-
-    let a_val = entry.deref(&ctx).get_argument(0);
-    let b_val = entry.deref(&ctx).get_argument(1);
-    let c_val = entry.deref(&ctx).get_argument(2);
-
-    let op = Operation::new(
-        &mut ctx,
         nvvm::Dp2aS32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val, b_val, c_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
+        nvvm::Dp2aU32Op::get_concrete_op_info(),
+    ] {
+        Operation::new(
+            &mut ctx,
+            op_info,
+            vec![i32_ty.into()],
+            operands.clone(),
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+    }
     append_return(&mut ctx, entry);
 
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "dp2a.lo.s32.s32")
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
 }
 
 #[test]
-fn test_dp2a_u32_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
-    use pliron::builtin::types::{IntegerType, Signedness};
+fn test_dot_product_llvm_nvptx_uses_typed_intrinsics_and_low_selector() -> Result<(), anyhow::Error>
+{
+    use pliron::builtin::attributes::IntegerAttr;
 
-    let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&mut ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) =
-        build_test_kernel(&mut ctx, vec![i32_ty.into(), i32_ty.into(), i32_ty.into()]);
+    let (ctx, module_ptr) = lower_all_dot_product_forms(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let mut calls = Vec::new();
+    for op in body {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX dot products must use typed intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        if !callee.starts_with("llvm_nvvm_idp") {
+            continue;
+        }
+        let expected_arity = if callee.contains("idp2a") { 4 } else { 3 };
+        assert_eq!(op.deref(&ctx).get_num_operands(), expected_arity);
+        if expected_arity == 4 {
+            let selector = op.deref(&ctx).get_operand(2);
+            let defining_op = selector.defining_op().expect("selector is a constant");
+            let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
+                .expect("selector is an LLVM constant");
+            let attribute = constant.get_value(&ctx);
+            let integer = attribute
+                .downcast_ref::<IntegerAttr>()
+                .expect("selector constant is an integer");
+            assert_eq!(integer.value().bw(), 1);
+            assert_eq!(integer.value().to_u64(), 0, "dp2a must select `.lo`");
+        }
+        calls.push(callee);
+    }
+    calls.sort();
+    let mut expected = DOT_PRODUCT_TYPED_INTRINSICS.map(str::to_owned);
+    expected.sort();
+    assert_eq!(calls, expected);
+    Ok(())
+}
 
-    let a_val = entry.deref(&ctx).get_argument(0);
-    let b_val = entry.deref(&ctx).get_argument(1);
-    let c_val = entry.deref(&ctx).get_argument(2);
-
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::Dp2aU32Op::get_concrete_op_info(),
-        vec![i32_ty.into()],
-        vec![a_val, b_val, c_val],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
-
-    assert_inline_asm_lowering(&mut ctx, module_ptr, "dp2a.lo.u32.u32")
+#[test]
+fn test_dot_product_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) = lower_all_dot_product_forms(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let mut inline_ptx = Vec::new();
+    for op in body {
+        assert!(
+            Operation::get_op::<llvm::CallOp>(op, &ctx).is_none(),
+            "libNVVM dot products must not use typed intrinsic calls"
+        );
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        inline_ptx.push(
+            inline_asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap_or_default(),
+        );
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("=r,r,r,r")
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
+        assert_eq!(op.deref(&ctx).get_num_operands(), 3);
+        assert_eq!(op.deref(&ctx).get_num_results(), 1);
+    }
+    inline_ptx.sort();
+    let mut expected = DOT_PRODUCT_PTX.map(str::to_owned);
+    expected.sort();
+    assert_eq!(inline_ptx, expected);
+    Ok(())
 }
 
 // =============================================================================

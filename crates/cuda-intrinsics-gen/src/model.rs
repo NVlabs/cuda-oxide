@@ -94,18 +94,29 @@ pub struct ImportedSelection {
 /// Normalized constraints attached to an NVPTX instruction-selection record.
 ///
 /// TableGen represents address-space-specific patterns through anonymous
-/// `PatFrag` records. Keeping that fact separate from the assembly spelling
-/// lets policy select the `.shared` overload without parsing PTX text.
+/// `PatFrag` records and can bind intrinsic arguments to integer literals.
+/// Keeping those facts separate from the assembly spelling lets policy select
+/// an exact lowering without parsing PTX text.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImportedSelectionConstraints {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_space: Option<ImportedAddressSpace>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub immediate_bindings: Vec<ImportedImmediateBinding>,
+}
+
+/// One integer literal fixed by an NVPTX instruction-selection pattern.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportedImmediateBinding {
+    pub argument_index: usize,
+    pub value: i64,
 }
 
 impl ImportedSelectionConstraints {
     pub fn is_empty(&self) -> bool {
-        self.address_space.is_none()
+        self.address_space.is_none() && self.immediate_bindings.is_empty()
     }
 }
 
@@ -197,6 +208,8 @@ pub struct OverlayIntrinsic {
     pub packed_atomic: Option<PackedAtomic>,
     #[serde(default)]
     pub redux: Option<Redux>,
+    #[serde(default)]
+    pub dot_product: Option<DotProduct>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
@@ -494,6 +507,36 @@ pub enum ReduxAdapter {
     MaskValueToSourceMemberMask,
 }
 
+/// Closed identity and source adapter for generated packed integer dot products.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DotProduct {
+    pub operation: DotProductOperation,
+    pub signedness: DotProductSignedness,
+    pub adapter: DotProductAdapter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DotProductOperation {
+    Dp2a,
+    Dp4a,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DotProductSignedness {
+    Signed,
+    Unsigned,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DotProductAdapter {
+    DirectThreeOperands,
+    InsertLowHalfFalse,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbiLedgerFile {
@@ -658,6 +701,8 @@ pub struct CatalogIntrinsic {
     pub packed_atomic: Option<PackedAtomic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redux: Option<Redux>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dot_product: Option<DotProduct>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
@@ -923,6 +968,45 @@ provenance = "test"
         }"#;
         let error = serde_json::from_str::<ImportedSelection>(input).unwrap_err();
         assert!(error.to_string().contains("adress_space"));
+    }
+
+    #[test]
+    fn imported_selection_preserves_immediate_binding() {
+        let input = r#"{
+            "source_record": "DOT2_lo_ss",
+            "asm": "dp2a.lo.s32.s32 $dst, $a, $b, $c;",
+            "predicates": ["hasDotInstructions"],
+            "constraints": {
+                "immediate_bindings": [
+                    { "argument_index": 2, "value": 0 }
+                ]
+            }
+        }"#;
+        let selection = serde_json::from_str::<ImportedSelection>(input).unwrap();
+        assert_eq!(
+            selection.constraints.immediate_bindings,
+            [ImportedImmediateBinding {
+                argument_index: 2,
+                value: 0,
+            }]
+        );
+        assert!(!selection.constraints.is_empty());
+    }
+
+    #[test]
+    fn imported_immediate_binding_rejects_misspelled_index() {
+        let input = r#"{
+            "source_record": "DOT2_lo_ss",
+            "asm": "dp2a.lo.s32.s32 $dst, $a, $b, $c;",
+            "predicates": [],
+            "constraints": {
+                "immediate_bindings": [
+                    { "argument_indx": 2, "value": 0 }
+                ]
+            }
+        }"#;
+        let error = serde_json::from_str::<ImportedSelection>(input).unwrap_err();
+        assert!(error.to_string().contains("argument_indx"));
     }
 
     #[test]

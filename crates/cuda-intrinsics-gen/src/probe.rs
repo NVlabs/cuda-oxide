@@ -244,6 +244,13 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
                 })?;
                 require_attribute_token(argument, "writeonly", symbol, "argument")?;
             }
+            property if property.starts_with("ImmArg<") => {
+                let index = property_argument_index(property, "ImmArg")?;
+                let argument = arguments.get(index).with_context(|| {
+                    format!("@{symbol} has no argument {index} required by {property}")
+                })?;
+                require_attribute_token(argument, "immarg", symbol, "argument")?;
+            }
             property if property.starts_with("NoUndef<") => {
                 let index = property_argument_index(property, "NoUndef")?;
                 let argument = arguments.get(index).with_context(|| {
@@ -707,6 +714,31 @@ attributes #0 = { convergent nocallback nounwind memory(inaccessiblemem: readwri
 "#;
 
         assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+    }
+
+    #[test]
+    fn verifies_dp2a_immediate_argument_attribute() {
+        let llvm = llvm_facts(
+            "llvm.nvvm.idp2a.s.s",
+            None,
+            &["i32", "i32", "i1", "i32"],
+            &["i32"],
+            &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            false,
+            None,
+        );
+        let canonical = r#"
+declare i32 @llvm.nvvm.idp2a.s.s(i32, i32, i1 immarg, i32) #0
+attributes #0 = { speculatable memory(none) }
+"#;
+        assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
+
+        let missing_immarg = r#"
+declare i32 @llvm.nvvm.idp2a.s.s(i32, i32, i1, i32) #0
+attributes #0 = { speculatable memory(none) }
+"#;
+        let error = assert_canonical_intrinsic_declaration(missing_immarg, &llvm).unwrap_err();
+        assert!(error.to_string().contains("missing \"immarg\""));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -10,12 +10,12 @@
     "llvm_tblgen_source_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e"
   },
   "inputs": {
-    "imported_sha256": "af01e769cd916c902bf6b26b1fb723516b58c5a842fe482142402fdeda9ab487",
-    "overlay_sha256": "8ba0671794306132aa3870d7a4727e5c9df1da93e596f1fda96071cc8a11b449",
-    "abi_ledger_sha256": "eea2b8dd3843df0bc66e37fc2cb0a0e4e46ca15825de3f08dfcdc028698e4f3c",
+    "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
+    "overlay_sha256": "381de00e40e44d8b4eec8296d4e243b5c1d5bf042286b2281e9773cae8a4e935",
+    "abi_ledger_sha256": "45c61eaa543a1283e839846eab046e05b5eab95f9037869ab219f928d0cdf19c",
     "evidence_sha256": [
-      "cuda-13.3-libnvvm-13.3.33.json:30b0b8f7d30800784a646e110f273a91fb1fde3a3672175372bef9ba8d9645e4",
-      "rust-llvm-22.1.2-1cb4e383.json:a9ed64f2d02abba0d383702592a0b0a4f8c346babe67e5ec00ec1f34835861bc"
+      "cuda-13.3-libnvvm-13.3.33.json:dd6b7e2ed31f1142b5c187e4659a37b18cd6ac8411784c2b776a089b6c1dd8d1",
+      "rust-llvm-22.1.2-1cb4e383.json:e4aaf927411cf8793a8de89ff3b8bd98393ae16d4c4d4ba31681eaeb6e13bf7a"
     ]
   },
   "intrinsics": [
@@ -636,6 +636,1036 @@
         ]
       },
       "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "dp2a_s32",
+      "operation_key": "integer.dot_product.dp2a.lo.s32",
+      "family": "dotprod",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_idp2a_s_s"
+      },
+      "selections": [
+        {
+          "source_record": "DOT2_lo_ss",
+          "asm": "dp2a.lo.s32.s32 \t$dst, $a, $b, $c;",
+          "predicates": [
+            "hasDotInstructions"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0032",
+        "module": "dotprod",
+        "name": "dp2a_s32",
+        "arguments": [
+          "u32",
+          "u32",
+          "i32"
+        ],
+        "result": "i32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "packed integer arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0032",
+        "public_path": "cuda_intrinsics::dotprod::dp2a_s32",
+        "compatibility_paths": [
+          "cuda_device::dotprod::dp2a_s32"
+        ]
+      },
+      "dialect": {
+        "op_type": "Dp2aS32Op",
+        "op_name": "nvvm.dp2a_s32",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.idp2a.s.s",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg2>",
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "5.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 61
+            }
+          ]
+        },
+        "ptx_result": "i32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.1.25 Integer Arithmetic Instructions: dp2a",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#integer-arithmetic-instructions-dp2a"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_61",
+        "ptx_feature": "+ptx50"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 61
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_61"
+              ],
+              "representation": "typed intrinsic llvm.nvvm.idp2a.s.s(i32, i32, i1 immarg, i32)",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration, immediate selector, and no-memory attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_61",
+                "ptx50"
+              ],
+              "representation": "typed call to llvm.nvvm.idp2a.s.s with selector false",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend mapped false to exact dp2a.lo.s32.s32 PTX at the native floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX dp2a.lo.s32.s32 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact low-half inline-PTX route at its supported compute_75 floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.2A.LO.S16.S8.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "dot_product": {
+        "operation": "dp2a",
+        "signedness": "signed",
+        "adapter": "insert_low_half_false"
+      },
+      "lowering": "generated_dotprod",
+      "expected_ptx": {
+        "mnemonic": "dp2a",
+        "modifiers": [
+          "lo",
+          "s32",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies two packed signed halfwords by the low two signed bytes, sums them, and adds a signed accumulator."
+    },
+    {
+      "id": "dp2a_u32",
+      "operation_key": "integer.dot_product.dp2a.lo.u32",
+      "family": "dotprod",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_idp2a_u_u"
+      },
+      "selections": [
+        {
+          "source_record": "DOT2_lo_uu",
+          "asm": "dp2a.lo.u32.u32 \t$dst, $a, $b, $c;",
+          "predicates": [
+            "hasDotInstructions"
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": 0
+              }
+            ]
+          }
+        }
+      ],
+      "rust": {
+        "abi_id": "i0033",
+        "module": "dotprod",
+        "name": "dp2a_u32",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "packed integer arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0033",
+        "public_path": "cuda_intrinsics::dotprod::dp2a_u32",
+        "compatibility_paths": [
+          "cuda_device::dotprod::dp2a_u32"
+        ]
+      },
+      "dialect": {
+        "op_type": "Dp2aU32Op",
+        "op_name": "nvvm.dp2a_u32",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.idp2a.u.u",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "ImmArg<arg2>",
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "5.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 61
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.1.25 Integer Arithmetic Instructions: dp2a",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#integer-arithmetic-instructions-dp2a"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_61",
+        "ptx_feature": "+ptx50"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 61
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_61"
+              ],
+              "representation": "typed intrinsic llvm.nvvm.idp2a.u.u(i32, i32, i1 immarg, i32)",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration, immediate selector, and no-memory attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_61",
+                "ptx50"
+              ],
+              "representation": "typed call to llvm.nvvm.idp2a.u.u with selector false",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend mapped false to exact dp2a.lo.u32.u32 PTX at the native floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX dp2a.lo.u32.u32 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact low-half inline-PTX route at its supported compute_75 floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.2A.LO.U16.U8.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "dot_product": {
+        "operation": "dp2a",
+        "signedness": "unsigned",
+        "adapter": "insert_low_half_false"
+      },
+      "lowering": "generated_dotprod",
+      "expected_ptx": {
+        "mnemonic": "dp2a",
+        "modifiers": [
+          "lo",
+          "u32",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies two packed unsigned halfwords by the low two unsigned bytes, sums them, and adds an unsigned accumulator."
+    },
+    {
+      "id": "dp4a_s32",
+      "operation_key": "integer.dot_product.dp4a.s32",
+      "family": "dotprod",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_idp4a_s_s"
+      },
+      "selections": [
+        {
+          "source_record": "DOT4_ss",
+          "asm": "dp4a.s32.s32 \t$dst, $a, $b, $c;",
+          "predicates": [
+            "hasDotInstructions"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0030",
+        "module": "dotprod",
+        "name": "dp4a_s32",
+        "arguments": [
+          "u32",
+          "u32",
+          "i32"
+        ],
+        "result": "i32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "packed integer arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0030",
+        "public_path": "cuda_intrinsics::dotprod::dp4a_s32",
+        "compatibility_paths": [
+          "cuda_device::dotprod::dp4a_s32"
+        ]
+      },
+      "dialect": {
+        "op_type": "Dp4aS32Op",
+        "op_name": "nvvm.dp4a_s32",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.idp4a.s.s",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "5.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 61
+            }
+          ]
+        },
+        "ptx_result": "i32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.1.24 Integer Arithmetic Instructions: dp4a",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#integer-arithmetic-instructions-dp4a"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_61",
+        "ptx_feature": "+ptx50"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 61
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_61"
+              ],
+              "representation": "typed intrinsic llvm.nvvm.idp4a.s.s(i32, i32, i32)",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration and added its no-memory and speculatable attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_61",
+                "ptx50"
+              ],
+              "representation": "typed call to llvm.nvvm.idp4a.s.s",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact dp4a.s32.s32 PTX at the native floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX dp4a.s32.s32 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact inline-PTX route at its supported compute_75 floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.4A.S8.S8.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "dot_product": {
+        "operation": "dp4a",
+        "signedness": "signed",
+        "adapter": "direct_three_operands"
+      },
+      "lowering": "generated_dotprod",
+      "expected_ptx": {
+        "mnemonic": "dp4a",
+        "modifiers": [
+          "s32",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies four pairs of packed signed bytes, sums them, and adds a signed accumulator."
+    },
+    {
+      "id": "dp4a_u32",
+      "operation_key": "integer.dot_product.dp4a.u32",
+      "family": "dotprod",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_idp4a_u_u"
+      },
+      "selections": [
+        {
+          "source_record": "DOT4_uu",
+          "asm": "dp4a.u32.u32 \t$dst, $a, $b, $c;",
+          "predicates": [
+            "hasDotInstructions"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0031",
+        "module": "dotprod",
+        "name": "dp4a_u32",
+        "arguments": [
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "packed integer arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0031",
+        "public_path": "cuda_intrinsics::dotprod::dp4a_u32",
+        "compatibility_paths": [
+          "cuda_device::dotprod::dp4a_u32"
+        ]
+      },
+      "dialect": {
+        "op_type": "Dp4aU32Op",
+        "op_name": "nvvm.dp4a_u32",
+        "operands": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.idp4a.u.u",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "5.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 61
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.1.24 Integer Arithmetic Instructions: dp4a",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#integer-arithmetic-instructions-dp4a"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_61",
+        "ptx_feature": "+ptx50"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 61
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_61"
+              ],
+              "representation": "typed intrinsic llvm.nvvm.idp4a.u.u(i32, i32, i32)",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM recognized the declaration and added its no-memory and speculatable attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_61",
+                "ptx50"
+              ],
+              "representation": "typed call to llvm.nvvm.idp4a.u.u",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact dp4a.u32.u32 PTX at the native floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "5.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "legacy NVVM IR pure inline PTX dp4a.u32.u32 with =r,r,r,r",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM accepted the exact inline-PTX route at its supported compute_75 floor.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx50"
+              ],
+              "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.4A.U8.U8.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "dot_product": {
+        "operation": "dp4a",
+        "signedness": "unsigned",
+        "adapter": "direct_three_operands"
+      },
+      "lowering": "generated_dotprod",
+      "expected_ptx": {
+        "mnemonic": "dp4a",
+        "modifiers": [
+          "u32",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies four pairs of packed unsigned bytes, sums them, and adds an unsigned accumulator."
     },
     {
       "id": "grid_dim_x",

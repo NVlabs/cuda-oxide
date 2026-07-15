@@ -374,6 +374,182 @@
           { "kind": "register" }
         ]
       }
+    },
+    {
+      "id": "dp4a_s32",
+      "source_record": "int_nvvm_idp4a_s_s",
+      "llvm_symbol": "llvm.nvvm.idp4a.s.s",
+      "llvm_arguments": ["i32", "i32", "i32"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 5.0 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "legacy NVVM IR pure inline PTX dp4a.s32.s32 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact inline-PTX route at its supported compute_75 floor."
+        },
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.4A.S8.S8.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp4a",
+        "modifiers": ["s32", "s32"],
+        "operands": [
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
+      "id": "dp4a_u32",
+      "source_record": "int_nvvm_idp4a_u_u",
+      "llvm_symbol": "llvm.nvvm.idp4a.u.u",
+      "llvm_arguments": ["i32", "i32", "i32"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 5.0 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "legacy NVVM IR pure inline PTX dp4a.u32.u32 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact inline-PTX route at its supported compute_75 floor."
+        },
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.4A.U8.U8.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp4a",
+        "modifiers": ["u32", "u32"],
+        "operands": [
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
+      "id": "dp2a_s32",
+      "source_record": "int_nvvm_idp2a_s_s",
+      "llvm_symbol": "llvm.nvvm.idp2a.s.s",
+      "llvm_arguments": ["i32", "i32", "i1", "i32"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 5.0 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "legacy NVVM IR pure inline PTX dp2a.lo.s32.s32 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact low-half inline-PTX route at its supported compute_75 floor."
+        },
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.2A.LO.S16.S8.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp2a",
+        "modifiers": ["lo", "s32", "s32"],
+        "operands": [
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
+      "id": "dp2a_u32",
+      "source_record": "int_nvvm_idp2a_u_u",
+      "llvm_symbol": "llvm.nvvm.idp2a.u.u",
+      "llvm_arguments": ["i32", "i32", "i1", "i32"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 5.0 minimum",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "legacy NVVM IR pure inline PTX dp2a.lo.u32.u32 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM accepted the exact low-half inline-PTX route at its supported compute_75 floor."
+        },
+        {
+          "targets": ["sm_75", "ptx50"],
+          "representation": "retained legacy-NVVM kernel containing all four integer dot-product forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "libNVVM produced 1,984-byte LTOIR; nvJitLink produced a 3,240-byte cubin; cuobjdump showed IDP.2A.LO.U16.U8.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp2a",
+        "modifiers": ["lo", "u32", "u32"],
+        "operands": [
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" },
+          { "kind": "register" }
+        ]
+      }
     }
   ]
 }

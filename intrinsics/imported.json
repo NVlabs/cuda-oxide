@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "source": {
     "llvm_repository": "https://github.com/rust-lang/llvm-project.git",
     "llvm_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
@@ -3739,7 +3739,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_G2S_CH",
@@ -3747,7 +3759,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_G2S_CH_MC",
@@ -3755,7 +3779,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              },
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_G2S_MC",
@@ -3763,7 +3799,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -3799,7 +3847,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_G2S_CTA_CH",
@@ -3807,7 +3863,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -3841,7 +3905,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 3,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_PREFETCH_CH",
@@ -3849,7 +3921,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 3,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -3916,7 +3996,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_S2G_CH",
@@ -3924,7 +4012,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -3959,7 +4055,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "CP_ASYNC_BULK_S2G_CH_BM",
@@ -3967,7 +4071,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4005,7 +4117,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_3D_CH",
@@ -4013,7 +4133,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4053,7 +4181,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_4D_CH",
@@ -4061,7 +4197,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4103,7 +4247,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_5D_CH",
@@ -4111,7 +4263,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4149,14 +4309,30 @@
           "asm": "cp.async.bulk.tensor.3d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_W_128_3D_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes.L2::cache_hint [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4195,14 +4371,30 @@
           "asm": "cp.async.bulk.tensor.4d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_W_128_4D_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes.L2::cache_hint [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4242,14 +4434,30 @@
           "asm": "cp.async.bulk.tensor.5d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_W_128_5D_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes.L2::cache_hint [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4288,7 +4496,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_W_3D_CH",
@@ -4296,7 +4512,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4336,7 +4560,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_W_4D_CH",
@@ -4344,7 +4576,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4385,7 +4625,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_IM2COL_W_5D_CH",
@@ -4393,7 +4641,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4428,7 +4684,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_TILE_1D_CH",
@@ -4436,7 +4700,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4472,7 +4744,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_TILE_2D_CH",
@@ -4480,7 +4760,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4517,7 +4805,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_TILE_3D_CH",
@@ -4525,7 +4821,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4563,7 +4867,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_TILE_4D_CH",
@@ -4571,7 +4883,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4610,7 +4930,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_TILE_5D_CH",
@@ -4618,7 +4946,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 90",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4657,7 +4993,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_CTA_TILE_GATHER4_2D_CH",
@@ -4665,7 +5009,15 @@
           "predicates": [
             "Subtarget->getSmVersion() >= 100",
             "Subtarget->getPTXVersion() >= 86"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4708,28 +5060,76 @@
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_3D_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_3D_MC",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_3D_MC_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_3D",
@@ -4737,7 +5137,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_3D_CH",
@@ -4745,7 +5157,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_3D_MC",
@@ -4753,7 +5177,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_3D_MC_CH",
@@ -4761,7 +5197,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4806,28 +5254,76 @@
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_4D_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_4D_MC",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_4D_MC_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_4D",
@@ -4835,7 +5331,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_4D_CH",
@@ -4843,7 +5351,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_4D_MC",
@@ -4851,7 +5371,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_4D_MC_CH",
@@ -4859,7 +5391,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -4906,28 +5450,76 @@
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1, $im2col2}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": 0
+              },
+              {
+                "argument_index": 14,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_5D_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1, $im2col2}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": 0
+              },
+              {
+                "argument_index": 14,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_5D_MC",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1, $im2col2}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": -1
+              },
+              {
+                "argument_index": 14,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_5D_MC_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1, $im2col2}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": -1
+              },
+              {
+                "argument_index": 14,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_5D",
@@ -4935,7 +5527,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": 0
+              },
+              {
+                "argument_index": 14,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_5D_CH",
@@ -4943,7 +5547,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": 0
+              },
+              {
+                "argument_index": 14,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_5D_MC",
@@ -4951,7 +5567,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": -1
+              },
+              {
+                "argument_index": 14,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_CG0_5D_MC_CH",
@@ -4959,7 +5587,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 13,
+                "value": -1
+              },
+              {
+                "argument_index": 14,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5003,28 +5643,76 @@
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_3D_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_3D_MC",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_3D_MC_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5069,28 +5757,76 @@
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_4D_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_4D_MC",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_4D_MC_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5136,28 +5872,76 @@
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": 0
+              },
+              {
+                "argument_index": 13,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_5D_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": 0
+              },
+              {
+                "argument_index": 13,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_5D_MC",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": -1
+              },
+              {
+                "argument_index": 13,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_128_5D_MC_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w::128.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": -1
+              },
+              {
+                "argument_index": 13,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5201,28 +5985,76 @@
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_3D_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_3D_MC",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_3D_MC_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5267,28 +6099,76 @@
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_4D_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": 0
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_4D_MC",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_4D_MC_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 11,
+                "value": -1
+              },
+              {
+                "argument_index": 12,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5334,28 +6214,76 @@
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": 0
+              },
+              {
+                "argument_index": 13,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_5D_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": 0
+              },
+              {
+                "argument_index": 13,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_5D_MC",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": -1
+              },
+              {
+                "argument_index": 13,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_IM2COL_W_5D_MC_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.im2col::w.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], {{$im2col0, $im2col1}}, $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 12,
+                "value": -1
+              },
+              {
+                "argument_index": 13,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5395,28 +6323,76 @@
           "asm": "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0}}], [$mbar];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_1D_CH",
           "asm": "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0}}], [$mbar], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_1D_MC",
           "asm": "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0}}], [$mbar], $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_1D_MC_CH",
           "asm": "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0}}], [$mbar], $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              },
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_1D",
@@ -5424,7 +6400,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_1D_CH",
@@ -5432,7 +6420,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              },
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_1D_MC",
@@ -5440,7 +6440,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              },
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_1D_MC_CH",
@@ -5448,7 +6460,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              },
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5489,28 +6513,76 @@
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_2D_CH",
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              },
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_2D_MC",
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_2D_MC_CH",
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1}}], [$mbar], $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              },
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_2D",
@@ -5518,7 +6590,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_2D_CH",
@@ -5526,7 +6610,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              },
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_2D_MC",
@@ -5534,7 +6630,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              },
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_2D_MC_CH",
@@ -5542,7 +6650,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              },
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5584,28 +6704,76 @@
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              },
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_3D_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              },
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_3D_MC",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              },
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_3D_MC_CH",
           "asm": "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2}}], [$mbar], $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              },
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_3D",
@@ -5613,7 +6781,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              },
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_3D_CH",
@@ -5621,7 +6801,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              },
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_3D_MC",
@@ -5629,7 +6821,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              },
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_3D_MC_CH",
@@ -5637,7 +6841,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              },
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5680,28 +6896,76 @@
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_4D_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_4D_MC",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_4D_MC_CH",
           "asm": "cp.async.bulk.tensor.4d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3}}], [$mbar], $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_4D",
@@ -5709,7 +6973,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_4D_CH",
@@ -5717,7 +6993,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_4D_MC",
@@ -5725,7 +7013,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_4D_MC_CH",
@@ -5733,7 +7033,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              },
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5777,28 +7089,76 @@
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_5D_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_5D_MC",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_5D_MC_CH",
           "asm": "cp.async.bulk.tensor.5d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_5D",
@@ -5806,7 +7166,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_5D_CH",
@@ -5814,7 +7186,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_5D_MC",
@@ -5822,7 +7206,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_CG0_5D_MC_CH",
@@ -5830,7 +7226,19 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5874,28 +7282,76 @@
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile::gather4.mbarrier::complete_tx::bytes$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_GATHER4_2D_CH",
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile::gather4.mbarrier::complete_tx::bytes.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_GATHER4_2D_MC",
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile::gather4.mbarrier::complete_tx::bytes.multicast::cluster$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], $mc;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_G2S_TILE_GATHER4_2D_MC_CH",
           "asm": "cp.async.bulk.tensor.2d.shared::cluster.global.tile::gather4.mbarrier::complete_tx::bytes.multicast::cluster.L2::cache_hint$cg [$dst], [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$mbar], $mc, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              },
+              {
+                "argument_index": 11,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5930,7 +7386,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_3D_CH",
@@ -5938,7 +7402,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -5975,7 +7447,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_4D_CH",
@@ -5983,7 +7463,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6022,7 +7510,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_5D_CH",
@@ -6030,7 +7526,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 10,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6065,14 +7569,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.3d.L2.global.im2col::w::128 [$tmap, {{$d0, $d1, $d2}}], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_W_128_3D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.3d.L2.global.im2col::w::128.L2::cache_hint [$tmap, {{$d0, $d1, $d2}}], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6108,14 +7628,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.4d.L2.global.im2col::w::128 [$tmap, {{$d0, $d1, $d2, $d3}}], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_W_128_4D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.4d.L2.global.im2col::w::128.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3}}], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6152,14 +7688,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.5d.L2.global.im2col::w::128 [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_W_128_5D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.5d.L2.global.im2col::w::128.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6194,14 +7746,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.3d.L2.global.im2col::w [$tmap, {{$d0, $d1, $d2}}], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_W_3D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.3d.L2.global.im2col::w.L2::cache_hint [$tmap, {{$d0, $d1, $d2}}], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6237,14 +7805,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.4d.L2.global.im2col::w [$tmap, {{$d0, $d1, $d2, $d3}}], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_W_4D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.4d.L2.global.im2col::w.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3}}], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6281,14 +7865,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.5d.L2.global.im2col::w [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], {{$im2col0, $im2col1}};",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_IM2COL_W_5D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.5d.L2.global.im2col::w.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], {{$im2col0, $im2col1}}, $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 9,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6320,7 +7920,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 3,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_TILE_1D_CH",
@@ -6328,7 +7936,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 3,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6361,7 +7977,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_TILE_2D_CH",
@@ -6369,7 +7993,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6403,7 +8035,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_TILE_3D_CH",
@@ -6411,7 +8051,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6446,7 +8094,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_TILE_4D_CH",
@@ -6454,7 +8110,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6490,7 +8154,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_TILE_5D_CH",
@@ -6498,7 +8170,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -6533,14 +8213,30 @@
           "asm": "cp.async.bulk.prefetch.tensor.2d.L2.global.tile::gather4 [$tmap, {{$d0, $d1, $d2, $d3, $d4}}];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_PF_TILE_GATHER4_2D_CH",
           "asm": "cp.async.bulk.prefetch.tensor.2d.L2.global.tile::gather4.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8328,7 +10024,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_IM2COL_3D_CH",
@@ -8336,7 +10040,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8373,7 +10085,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_IM2COL_4D_CH",
@@ -8381,7 +10101,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8419,7 +10147,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_IM2COL_5D_CH",
@@ -8427,7 +10163,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8461,7 +10205,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_TILE_1D_CH",
@@ -8469,7 +10221,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 4,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8504,7 +10264,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_TILE_2D_CH",
@@ -8512,7 +10280,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 5,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8548,7 +10324,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_TILE_3D_CH",
@@ -8556,7 +10340,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 6,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8593,7 +10385,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_TILE_4D_CH",
@@ -8601,7 +10401,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 7,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8639,7 +10447,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_TENSOR_S2G_TILE_5D_CH",
@@ -8647,7 +10463,15 @@
           "predicates": [
             "Subtarget->getPTXVersion() >= 80",
             "Subtarget->getSmVersion() >= 90"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -8684,14 +10508,30 @@
           "asm": "cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$src];",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "TMA_S2G_TILE_SCATTER4_2D_CH",
           "asm": "cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], [$src], $ch;",
           "predicates": [
             "Subtarget->hasTMABlackwellSupport()"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 8,
+                "value": -1
+              }
+            ]
+          }
         }
       ]
     },
@@ -13939,22 +15779,54 @@
         {
           "source_record": "BFIND_SHIFTAMT_s32",
           "asm": "bfind.shiftamt.s32 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "BFIND_SHIFTAMT_s64",
           "asm": "bfind.shiftamt.s64 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "BFIND_s32",
           "asm": "bfind.s32 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "BFIND_s64",
           "asm": "bfind.s64 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -13983,22 +15855,54 @@
         {
           "source_record": "BFIND_SHIFTAMT_u32",
           "asm": "bfind.shiftamt.u32 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "BFIND_SHIFTAMT_u64",
           "asm": "bfind.shiftamt.u64 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "BFIND_u32",
           "asm": "bfind.u32 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": 0
+              }
+            ]
+          }
         },
         {
           "source_record": "BFIND_u64",
           "asm": "bfind.u64 \t$dst, $src;",
-          "predicates": []
+          "predicates": [],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 1,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -18460,14 +20364,30 @@
           "asm": "dp2a.hi.s32.s32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "DOT2_lo_ss",
           "asm": "dp2a.lo.s32.s32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -18500,14 +20420,30 @@
           "asm": "dp2a.hi.s32.u32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "DOT2_lo_su",
           "asm": "dp2a.lo.s32.u32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -18540,14 +20476,30 @@
           "asm": "dp2a.hi.u32.s32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "DOT2_lo_us",
           "asm": "dp2a.lo.u32.s32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -18580,14 +20532,30 @@
           "asm": "dp2a.hi.u32.u32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": -1
+              }
+            ]
+          }
         },
         {
           "source_record": "DOT2_lo_uu",
           "asm": "dp2a.lo.u32.u32 \t$dst, $a, $b, $c;",
           "predicates": [
             "hasDotInstructions"
-          ]
+          ],
+          "constraints": {
+            "immediate_bindings": [
+              {
+                "argument_index": 2,
+                "value": 0
+              }
+            ]
+          }
         }
       ]
     },

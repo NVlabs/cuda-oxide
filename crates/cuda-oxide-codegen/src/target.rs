@@ -1367,6 +1367,41 @@ mod tests {
     }
 
     #[test]
+    fn generated_dot_product_floors_record_sm61_and_split_backend_support() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedIntrinsicBackend, generated_intrinsic_target_by_marker,
+        };
+
+        for marker in ["v1:i0030", "v1:i0031", "v1:i0032", "v1:i0033"] {
+            let target = generated_intrinsic_target_by_marker(marker).unwrap();
+            let llvm = GeneratedModuleRequirements::from_targets(vec![target])
+                .for_backend(GeneratedIntrinsicBackend::LlvmNvptx);
+            assert!(matches!(
+                llvm.requirement(target).hardware,
+                GeneratedHardwareTarget::AnyOf(alternatives)
+                    if alternatives == [GeneratedHardwareAlternative::MinimumSm(61)]
+            ));
+            assert!(!generated_target_satisfied("sm_60", &llvm), "{marker}");
+            assert!(generated_target_satisfied("sm_70", &llvm), "{marker}");
+            assert_eq!(
+                generated_ptx_isa_requirement(&llvm).unwrap(),
+                PtxIsaRequirement::Default
+            );
+
+            let error = validate_generated_target("sm_60", &llvm)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(target.id), "{error}");
+            assert!(error.contains("sm_61 or newer"), "{error}");
+
+            let libnvvm = GeneratedModuleRequirements::from_targets(vec![target])
+                .for_backend(GeneratedIntrinsicBackend::LibNvvm);
+            assert!(!generated_target_satisfied("sm_74", &libnvvm));
+            assert!(generated_target_satisfied("sm_75", &libnvvm));
+        }
+    }
+
+    #[test]
     fn test_feature_detection_reads_llvm_ir_snippets() {
         let llvm = r#"
             call void asm sideeffect "wgmma.fence.sync.aligned", ""()

@@ -5,9 +5,10 @@
 
 use crate::model::{
     BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative, CatalogHardwareTarget,
-    CatalogIntrinsic, CatalogLlvm, CatalogSelection, EvidenceArtifactKind, EvidenceStageKind,
-    ImportedAddressSpace, IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout,
-    LdmatrixMultiplicity, LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter,
+    CatalogIntrinsic, CatalogLlvm, CatalogSelection, DotProductAdapter, DotProductOperation,
+    DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
+    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
+    LdmatrixShape, LdmatrixStateSpace, PackedAtomicFormat, ReduxAdapter,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,12 +40,20 @@ pub fn all_outputs(
         render_compat_sreg(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/cuda-device/src/generated/dotprod.rs".into(),
+        render_compat_dotprod(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/mod.rs".into(),
         render_dialect_mod(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/sreg.rs".into(),
         render_dialect_sreg(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/dotprod.rs".into(),
+        render_dialect_dotprod(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/ldmatrix.rs".into(),
@@ -147,6 +156,27 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated redux recipe",
                 record.id
             ),
+            "dotprod" => ensure!(
+                record.rust.module == "dotprod"
+                    && matches!(record.rust.arguments.as_slice(), [a, b, c]
+                        if a == "u32" && b == "u32" && matches!(c.as_str(), "u32" | "i32"))
+                    && record.rust.result == *record.rust.arguments.last().unwrap()
+                    && record.rust.safe
+                    && !record.rust.must_use
+                    && record.llvm.as_ref().is_some_and(|llvm| {
+                        llvm.results == ["i32"]
+                            && (matches!(llvm.arguments.as_slice(), [a, b, c]
+                                if a == "i32" && b == "i32" && c == "i32")
+                                || matches!(llvm.arguments.as_slice(), [a, b, selector, c]
+                                    if a == "i32" && b == "i32" && selector == "i1" && c == "i32"))
+                    })
+                    && record.dialect.operands == ["i32", "i32", "i32"]
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_dotprod"
+                    && record.dot_product.is_some(),
+                "{} is outside the closed generated dot-product recipe",
+                record.id
+            ),
             family => ensure!(false, "{} has unrenderable family {family}", record.id),
         };
     }
@@ -215,6 +245,40 @@ fn redux(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
         .intrinsics
         .iter()
         .filter(|record| record.family == "redux")
+}
+
+fn dot_products(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "dotprod")
+}
+
+fn dot_product_ptx(record: &CatalogIntrinsic) -> &'static str {
+    let dot = record.dot_product.as_ref().expect("dot-product record");
+    match (dot.operation, dot.signedness, dot.adapter) {
+        (
+            DotProductOperation::Dp4a,
+            DotProductSignedness::Signed,
+            DotProductAdapter::DirectThreeOperands,
+        ) => "dp4a.s32.s32 $0, $1, $2, $3;",
+        (
+            DotProductOperation::Dp4a,
+            DotProductSignedness::Unsigned,
+            DotProductAdapter::DirectThreeOperands,
+        ) => "dp4a.u32.u32 $0, $1, $2, $3;",
+        (
+            DotProductOperation::Dp2a,
+            DotProductSignedness::Signed,
+            DotProductAdapter::InsertLowHalfFalse,
+        ) => "dp2a.lo.s32.s32 $0, $1, $2, $3;",
+        (
+            DotProductOperation::Dp2a,
+            DotProductSignedness::Unsigned,
+            DotProductAdapter::InsertLowHalfFalse,
+        ) => "dp2a.lo.u32.u32 $0, $1, $2, $3;",
+        combination => panic!("unsupported generated dot-product recipe {combination:?}"),
+    }
 }
 
 fn llvm(record: &CatalogIntrinsic) -> &CatalogLlvm {
@@ -522,10 +586,51 @@ fn render_compat_sreg(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_dotprod(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::dotprod` to keep existing paths stable.\n\n");
+    for record in dot_products(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::dotprod::"))
+            .expect("dot-product compatibility path");
+        let arguments = record
+            .rust
+            .arguments
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| format!("arg{index}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let values = (0..record.rust.arguments.len())
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub fn {}({arguments}) -> {} {{",
+            record.rust.name, record.rust.result
+        )
+        .unwrap();
+        writeln!(output, "    let _ = ({values});").unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\n\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n}\n",
+        "mod dotprod;\nmod ldmatrix;\nmod packed_atomic;\nmod redux;\nmod sreg;\n\npub use dotprod::*;\npub use ldmatrix::*;\npub use packed_atomic::*;\npub use redux::*;\npub use sreg::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    packed_atomic::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n}\n",
     );
     output
 }
@@ -570,6 +675,60 @@ fn render_dialect_sreg(catalog: &CatalogFile, hash: &str) -> String {
         "fn verify_scalar_result(\n    ctx: &Context,\n    op: Ptr<Operation>,\n    name: &str,\n    width: u32,\n) -> Result<(), Error> {\n    let op = op.deref(ctx);\n    let ty = op.get_result(0).get_type(ctx);\n    let ty_object = ty.deref(ctx);\n    let Some(integer) = ty_object.downcast_ref::<IntegerType>() else {\n        return verify_err!(op.loc(), \"{} result must be an integer\", name);\n    };\n    if integer.width() != width {\n        return verify_err!(\n            op.loc(),\n            \"{} result must be a {}-bit integer\",\n            name,\n            width\n        );\n    }\n    Ok(())\n}\n\npub(super) fn register(ctx: &mut Context) {\n",
     );
     for record in sregs(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_dialect_dotprod(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operations for generated packed integer dot products.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+    );
+    for record in dot_products(catalog) {
+        let signedness = match record.rust.result.as_str() {
+            "i32" => "Signed",
+            "u32" => "Unsigned",
+            result => panic!("unsupported dot-product result {result}"),
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "/// Lowers to `{}`.",
+            dot_product_ptx(record).replace("$0, $1, $2, $3", "%d, %a, %b, %c")
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<3>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, a: Value, b: Value, c: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::{signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![a, b, c],\n            vec![],\n            0,\n        )\n    }}\n}}"
+        )
+        .unwrap();
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 3 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !(0..3).all(|index| is_i32(ctx, op.get_operand(index).get_type(ctx)))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!(
+                "{} requires exactly three operands and one result",
+                record.dialect.op_name
+            ),
+            format!(
+                "{} operands and result must be 32-bit integers",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in dot_products(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
@@ -1009,6 +1168,21 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if dot_products(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in dot_products(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
@@ -1206,6 +1380,46 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    for record in dot_products(catalog) {
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 3, &loc)?;\n");
+        output.push_str(
+            "            let (a, last_op) = rvalue::translate_operand(\n                ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (b, last_op) = rvalue::translate_operand(\n                ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        output.push_str(
+            "            let (c, last_op) = rvalue::translate_operand(\n                ctx, body, &args[2], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n",
+        );
+        writeln!(
+            output,
+            "            let dot = {}::build(ctx, a, b, c);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            dot.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, dot, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, dot, block_ptr, last_op);\n            let result = dot.deref(ctx).get_result(0);\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, dot, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
     output.push_str("        _ => Ok(None),\n    }\n}\n\n");
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
@@ -1276,7 +1490,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated direct-NVVM, ldmatrix, packed-atomic, and redux conversion interfaces.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::call_intrinsic, ldmatrix::convert_generated_ldmatrix, warp::convert_redux};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::call_intrinsic, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, warp::convert_redux};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -1304,6 +1518,21 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         for (index, record) in redux(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if dot_products(catalog).next().is_some() {
+        if sregs(catalog).next().is_some()
+            || ldmatrix(catalog).next().is_some()
+            || packed_atomics(catalog).next().is_some()
+            || redux(catalog).next().is_some()
+        {
+            output.push_str(", ");
+        }
+        for (index, record) in dot_products(catalog).enumerate() {
             if index != 0 {
                 output.push_str(", ");
             }
@@ -1395,6 +1624,29 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    for record in dot_products(catalog) {
+        let insert_low_half_selector = matches!(
+            record.dot_product.as_ref().unwrap().adapter,
+            DotProductAdapter::InsertLowHalfFalse
+        );
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_generated_dot_product(ctx, rewriter, self.get_operation(), {:?}, {:?}, {insert_low_half_selector})",
+            record.llvm_identifier(),
+            dot_product_ptx(record),
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
     output
 }
 
@@ -1455,7 +1707,21 @@ fn generated_selection_constraints(selection: &CatalogSelection) -> String {
         Some(ImportedAddressSpace::Generic) => "Some(GeneratedSelectionAddressSpace::Generic)",
         Some(ImportedAddressSpace::Shared) => "Some(GeneratedSelectionAddressSpace::Shared)",
     };
-    format!("GeneratedSelectionConstraints {{ address_space: {address_space} }}")
+    let immediate_bindings = selection
+        .constraints
+        .immediate_bindings
+        .iter()
+        .map(|binding| {
+            format!(
+                "GeneratedImmediateBinding {{ argument_index: {}, value: {} }}",
+                binding.argument_index, binding.value
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "GeneratedSelectionConstraints {{ address_space: {address_space}, immediate_bindings: &[{immediate_bindings}] }}"
+    )
 }
 
 fn generated_selection_alternatives(selections: &[CatalogSelection]) -> String {
@@ -1527,7 +1793,7 @@ fn generated_backend_requirements(record: &CatalogIntrinsic) -> String {
 fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace> }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
+        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
     );
     for record in &catalog.intrinsics {
         let llvm_facts = match &record.llvm {
@@ -1627,6 +1893,52 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %old\n}\n");
+    } else if let Some(dot) = &record.dot_product {
+        match dot.adapter {
+            DotProductAdapter::DirectThreeOperands => {
+                writeln!(
+                    output,
+                    "declare i32 @{}(i32, i32, i32)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                output.push('\n');
+                writeln!(
+                    output,
+                    "define i32 @probe_{}(i32 %a, i32 %b, i32 %c) {{",
+                    record.id
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  %result = call i32 @{}(i32 %a, i32 %b, i32 %c)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+            }
+            DotProductAdapter::InsertLowHalfFalse => {
+                writeln!(
+                    output,
+                    "declare i32 @{}(i32, i32, i1, i32)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                output.push('\n');
+                writeln!(
+                    output,
+                    "define i32 @probe_{}(i32 %a, i32 %b, i32 %c) {{",
+                    record.id
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "  %result = call i32 @{}(i32 %a, i32 %b, i1 false, i32 %c)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+            }
+        }
+        output.push_str("  ret i32 %result\n}\n");
     } else if let Some(redux) = &record.redux {
         debug_assert_eq!(redux.adapter, ReduxAdapter::MaskValueToSourceMemberMask);
         writeln!(output, "declare i32 @{}(i32, i32)", llvm(record).symbol).unwrap();
@@ -1949,6 +2261,7 @@ mod tests {
                 predicates: vec!["HasA".into(), "HasCommon".into()],
                 constraints: ImportedSelectionConstraints {
                     address_space: Some(ImportedAddressSpace::Generic),
+                    immediate_bindings: vec![],
                 },
             },
             CatalogSelection {
@@ -1957,6 +2270,7 @@ mod tests {
                 predicates: vec!["HasB".into()],
                 constraints: ImportedSelectionConstraints {
                     address_space: Some(ImportedAddressSpace::Shared),
+                    immediate_bindings: vec![],
                 },
             },
         ];
@@ -1964,10 +2278,10 @@ mod tests {
         let rendered = generated_selection_alternatives(&selections);
         assert_eq!(rendered.matches("GeneratedSelectionAlternative").count(), 2);
         assert!(rendered.contains(
-            "source_record: \"SELECT_A\", asm: \"op.a $dst;\", predicates: &[\"HasA\", \"HasCommon\"], constraints: GeneratedSelectionConstraints { address_space: Some(GeneratedSelectionAddressSpace::Generic) }"
+            "source_record: \"SELECT_A\", asm: \"op.a $dst;\", predicates: &[\"HasA\", \"HasCommon\"], constraints: GeneratedSelectionConstraints { address_space: Some(GeneratedSelectionAddressSpace::Generic), immediate_bindings: &[] }"
         ));
         assert!(rendered.contains(
-            "source_record: \"SELECT_B\", asm: \"op.b $dst;\", predicates: &[\"HasB\"], constraints: GeneratedSelectionConstraints { address_space: Some(GeneratedSelectionAddressSpace::Shared) }"
+            "source_record: \"SELECT_B\", asm: \"op.b $dst;\", predicates: &[\"HasB\"], constraints: GeneratedSelectionConstraints { address_space: Some(GeneratedSelectionAddressSpace::Shared), immediate_bindings: &[] }"
         ));
     }
 
@@ -2045,6 +2359,7 @@ mod tests {
     fn redux_rendering_preserves_mask_first_api_and_source_first_llvm_order() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        assert_eq!(catalog.schema, crate::resolve::CATALOG_SCHEMA);
         validate_renderable(&catalog).unwrap();
 
         assert_eq!(redux(&catalog).count(), 8);
@@ -2087,5 +2402,45 @@ mod tests {
         assert!(raw.contains("pub unsafe fn i0019(_arg0: u32, _arg1: i32) -> i32"));
         assert!(raw.contains("pub unsafe fn i0024(_arg0: u32, _arg1: u32) -> u32"));
         assert!(raw.contains("The executing lane must be named in `mask`"));
+    }
+
+    #[test]
+    fn dot_product_rendering_preserves_stable_paths_and_low_selector() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(dot_products(&catalog).count(), 4);
+
+        let compatibility = render_compat_dotprod(&catalog, "test-hash");
+        for name in ["dp4a_s32", "dp4a_u32", "dp2a_s32", "dp2a_u32"] {
+            assert!(compatibility.contains(&format!("pub fn {name}(")));
+        }
+
+        let dialect = render_dialect_dotprod(&catalog, "test-hash");
+        assert!(dialect.contains("pub struct Dp4aS32Op"));
+        assert!(dialect.contains("pub struct Dp2aU32Op"));
+        assert!(dialect.contains("NOpdsInterface<3>"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::dotprod::dp2a_s32"));
+        assert!(importer.contains("let dot = Dp2aS32Op::build(ctx, a, b, c)"));
+        assert!(importer.contains("set_generated_intrinsic_marker(ctx, dot, \"v1:i0032\")"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("impl MirToLlvmConversion for Dp4aS32Op"));
+        assert!(lowering.contains("\"llvm_nvvm_idp2a_s_s\""));
+        assert!(lowering.contains("\"dp2a.lo.s32.s32 $0, $1, $2, $3;\""));
+        assert!(lowering.contains("\"dp2a.lo.s32.s32 $0, $1, $2, $3;\", true)"));
+
+        let low = dot_products(&catalog)
+            .find(|record| record.id == "dp2a_s32")
+            .unwrap();
+        let probe = render_probe(&catalog, low, "test-hash");
+        assert!(probe.contains("call i32 @llvm.nvvm.idp2a.s.s(i32 %a, i32 %b, i1 false, i32 %c)"));
+        assert!(!probe.contains("i1 true"));
+
+        let target = render_targets(&catalog, "test-hash");
+        assert!(target.contains("GeneratedImmediateBinding { argument_index: 2, value: 0 }"));
+        assert!(!target.contains("GeneratedImmediateBinding { argument_index: 2, value: -1 }"));
     }
 }

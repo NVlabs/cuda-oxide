@@ -1119,6 +1119,352 @@
           }
         ]
       }
+    },
+    {
+      "id": "dp4a_s32",
+      "source_record": "int_nvvm_idp4a_s_s",
+      "llvm_symbol": "llvm.nvvm.idp4a.s.s",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_61",
+      "ptx_feature": "+ptx50",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_61"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.idp4a.s.s(i32, i32, i32)",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and added its no-memory and speculatable attributes."
+        },
+        {
+          "targets": [
+            "sm_61",
+            "ptx50"
+          ],
+          "representation": "typed call to llvm.nvvm.idp4a.s.s",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted exact dp4a.s32.s32 PTX at the native floor."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx50"
+          ],
+          "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp4a",
+        "modifiers": [
+          "s32",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dp4a_u32",
+      "source_record": "int_nvvm_idp4a_u_u",
+      "llvm_symbol": "llvm.nvvm.idp4a.u.u",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_61",
+      "ptx_feature": "+ptx50",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_61"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.idp4a.u.u(i32, i32, i32)",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration and added its no-memory and speculatable attributes."
+        },
+        {
+          "targets": [
+            "sm_61",
+            "ptx50"
+          ],
+          "representation": "typed call to llvm.nvvm.idp4a.u.u",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted exact dp4a.u32.u32 PTX at the native floor."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx50"
+          ],
+          "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp4a",
+        "modifiers": [
+          "u32",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dp2a_s32",
+      "source_record": "int_nvvm_idp2a_s_s",
+      "llvm_symbol": "llvm.nvvm.idp2a.s.s",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_61",
+      "ptx_feature": "+ptx50",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_61"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.idp2a.s.s(i32, i32, i1 immarg, i32)",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration, immediate selector, and no-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_61",
+            "ptx50"
+          ],
+          "representation": "typed call to llvm.nvvm.idp2a.s.s with selector false",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend mapped false to exact dp2a.lo.s32.s32 PTX at the native floor."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx50"
+          ],
+          "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp2a",
+        "modifiers": [
+          "lo",
+          "s32",
+          "s32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "dp2a_u32",
+      "source_record": "int_nvvm_idp2a_u_u",
+      "llvm_symbol": "llvm.nvvm.idp2a.u.u",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1",
+        "i32"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_61",
+      "ptx_feature": "+ptx50",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_61"
+          ],
+          "representation": "typed intrinsic llvm.nvvm.idp2a.u.u(i32, i32, i1 immarg, i32)",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM recognized the declaration, immediate selector, and no-memory attributes."
+        },
+        {
+          "targets": [
+            "sm_61",
+            "ptx50"
+          ],
+          "representation": "typed call to llvm.nvvm.idp2a.u.u with selector false",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend mapped false to exact dp2a.lo.u32.u32 PTX at the native floor."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx50"
+          ],
+          "representation": "PTX 5.0 emitted by the combined typed dot-product probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the native-floor output when assembled for its supported sm_75 floor.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "dp2a",
+        "modifiers": [
+          "lo",
+          "u32",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
     }
   ]
 }
