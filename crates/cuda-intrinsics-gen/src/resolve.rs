@@ -25,7 +25,9 @@ use crate::model::{
     PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
     PackedConversionSaturation, PackedConversionSourceFormat, PreSm70MemberMaskRule, PtxVersion,
-    ReduxAdapter, ReduxOperation, ReduxParticipation, RuntimeValidation, VoteAdapter, VoteMode,
+    ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator,
+    RegisterMmaAdapter, RegisterMmaElement, RegisterMmaLayout, RegisterMmaOverflow,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, VoteAdapter, VoteMode,
     VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
     WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
     WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
@@ -40,9 +42,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 17;
-const OVERLAY_SHARD_SCHEMA: u32 = 13;
-pub(crate) const CATALOG_SCHEMA: u32 = 16;
+const OVERLAY_SCHEMA: u32 = 18;
+const OVERLAY_SHARD_SCHEMA: u32 = 14;
+pub(crate) const CATALOG_SCHEMA: u32 = 17;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -330,7 +332,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -345,6 +347,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.cp_async_control,
             record.cp_async_mbarrier,
             record.mbarrier_basic,
+            record.register_mma,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -689,8 +692,17 @@ fn validate_policy(
             policy,
             declaration.context("mbarrier_basic requires imported LLVM declaration")?,
         )?,
+        "register_mma" => validate_register_mma_policy(
+            policy,
+            declaration.context("register_mma requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
+    ensure!(
+        (policy.family == "register_mma") == policy.register_mma.is_some(),
+        "{} mixes the register-MMA contract with another generated family",
+        policy.id
+    );
     ensure!(
         !policy.execution_scope.trim().is_empty(),
         "{} has no execution scope",
@@ -749,17 +761,22 @@ fn validate_policy(
             .properties
             .iter()
             .any(|property| property == "IntrConvergent");
+        let convergence_supplied_by_ptx = policy.family == "register_mma"
+            && policy.register_mma.is_some()
+            && policy.convergent
+            && !imported_convergent;
         ensure!(
-            imported_convergent == policy.convergent,
+            imported_convergent == policy.convergent || convergence_supplied_by_ptx,
             "{} convergence mismatch: imported {}, overlay {}",
             policy.id,
             imported_convergent,
             policy.convergent
         );
-        let selectionless_packed_conversion =
-            policy.family == "packed_conversion" && policy.packed_conversion.is_some();
+        let selectionless_closed_family = (policy.family == "packed_conversion"
+            && policy.packed_conversion.is_some())
+            || (policy.family == "register_mma" && policy.register_mma.is_some());
         ensure!(
-            !declaration.selections.is_empty() || selectionless_packed_conversion,
+            !declaration.selections.is_empty() || selectionless_closed_family,
             "{} has a declaration but no NVPTX TableGen selection record",
             policy.id
         );
@@ -772,7 +789,7 @@ fn validate_policy(
             "vote" | "warp_barrier" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
-            "packed_conversion" => 0,
+            "packed_conversion" | "register_mma" => 0,
             "cp_async_copy"
                 if policy
                     .cp_async_copy
@@ -5512,6 +5529,294 @@ fn validate_packed_conversion_policy(
     Ok(())
 }
 
+struct RegisterMmaRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_arguments: &'static [&'static str],
+    rust_result: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    dialect_results: &'static [&'static str],
+    llvm_arguments: &'static [&'static str],
+    llvm_results: &'static [&'static str],
+    adapter: RegisterMmaAdapter,
+    ptx_modifiers: &'static [&'static str],
+    ptx_register_counts: [usize; 4],
+}
+
+fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
+    use RegisterMmaAccumulator::{F32, F64, S32};
+    use RegisterMmaAdapter::{
+        C2F64A1F64B1F64ToD2F64, C4F32A4U32B2U32ToD4F32, C4I32A4U32B2U32ToD4I32,
+    };
+    use RegisterMmaElement::{Bf16, F16, F64 as F64Element, S8, Tf32};
+    use RegisterMmaShape::{M8n8k4, M16n8k8, M16n8k16, M16n8k32};
+
+    let common = mma.a_layout == RegisterMmaLayout::Row
+        && mma.b_layout == RegisterMmaLayout::Col
+        && mma.participation
+            == RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes;
+    match (
+        mma.shape,
+        mma.accumulator,
+        mma.a_element,
+        mma.b_element,
+        mma.overflow,
+        mma.adapter,
+        common,
+    ) {
+        (
+            M16n8k16,
+            F32,
+            Bf16,
+            Bf16,
+            RegisterMmaOverflow::NotApplicable,
+            C4F32A4U32B2U32ToD4F32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k16_f32_bf16",
+            abi_id: "i0105",
+            operation_key: "matrix.mma.m16n8k16.row.col.f32.bf16.bf16.f32",
+            source_record: "int_nvvm_mma_m16n8k16_row_col_bf16",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k16.row.col.bf16",
+            rust_arguments: &["[f32; 4]", "[u32; 4]", "[u32; 2]"],
+            rust_result: "[f32; 4]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &[
+                "f32", "f32", "f32", "f32", "i32", "i32", "i32", "i32", "i32", "i32",
+            ],
+            dialect_results: &["f32", "f32", "f32", "f32"],
+            llvm_arguments: &[
+                "i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32",
+            ],
+            llvm_results: &["f32", "f32", "f32", "f32"],
+            adapter: C4F32A4U32B2U32ToD4F32,
+            ptx_modifiers: &[
+                "sync", "aligned", "m16n8k16", "row", "col", "f32", "bf16", "bf16", "f32",
+            ],
+            ptx_register_counts: [4, 4, 2, 4],
+        }),
+        (
+            M16n8k16,
+            F32,
+            F16,
+            F16,
+            RegisterMmaOverflow::NotApplicable,
+            C4F32A4U32B2U32ToD4F32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k16_f32_f16",
+            abi_id: "i0106",
+            operation_key: "matrix.mma.m16n8k16.row.col.f32.f16.f16.f32",
+            source_record: "int_nvvm_mma_m16n8k16_row_col_f32_f32",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k16.row.col.f32.f32",
+            rust_arguments: &["[f32; 4]", "[u32; 4]", "[u32; 2]"],
+            rust_result: "[f32; 4]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &[
+                "f32", "f32", "f32", "f32", "i32", "i32", "i32", "i32", "i32", "i32",
+            ],
+            dialect_results: &["f32", "f32", "f32", "f32"],
+            llvm_arguments: &[
+                "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "f32", "f32", "f32", "f32",
+            ],
+            llvm_results: &["f32", "f32", "f32", "f32"],
+            adapter: C4F32A4U32B2U32ToD4F32,
+            ptx_modifiers: &[
+                "sync", "aligned", "m16n8k16", "row", "col", "f32", "f16", "f16", "f32",
+            ],
+            ptx_register_counts: [4, 4, 2, 4],
+        }),
+        (
+            M16n8k8,
+            F32,
+            Tf32,
+            Tf32,
+            RegisterMmaOverflow::NotApplicable,
+            C4F32A4U32B2U32ToD4F32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k8_f32_tf32",
+            abi_id: "i0107",
+            operation_key: "matrix.mma.m16n8k8.row.col.f32.tf32.tf32.f32",
+            source_record: "int_nvvm_mma_m16n8k8_row_col_tf32",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k8.row.col.tf32",
+            rust_arguments: &["[f32; 4]", "[u32; 4]", "[u32; 2]"],
+            rust_result: "[f32; 4]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &[
+                "f32", "f32", "f32", "f32", "i32", "i32", "i32", "i32", "i32", "i32",
+            ],
+            dialect_results: &["f32", "f32", "f32", "f32"],
+            llvm_arguments: &[
+                "i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32",
+            ],
+            llvm_results: &["f32", "f32", "f32", "f32"],
+            adapter: C4F32A4U32B2U32ToD4F32,
+            ptx_modifiers: &[
+                "sync", "aligned", "m16n8k8", "row", "col", "f32", "tf32", "tf32", "f32",
+            ],
+            ptx_register_counts: [4, 4, 2, 4],
+        }),
+        (M16n8k32, S32, S8, S8, RegisterMmaOverflow::Wrapping, C4I32A4U32B2U32ToD4I32, true) => {
+            Some(RegisterMmaRecipe {
+                id: "mma_m16n8k32_s32_s8",
+                abi_id: "i0108",
+                operation_key: "matrix.mma.m16n8k32.row.col.s32.s8.s8.s32.wrapping",
+                source_record: "int_nvvm_mma_m16n8k32_row_col_s8",
+                llvm_symbol: "llvm.nvvm.mma.m16n8k32.row.col.s8",
+                rust_arguments: &["[i32; 4]", "[u32; 4]", "[u32; 2]"],
+                rust_result: "[i32; 4]",
+                dialect_op_type: "RegisterMmaOp",
+                dialect_op_name: "nvvm.register_mma",
+                dialect_operands: &[
+                    "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32",
+                ],
+                dialect_results: &["i32", "i32", "i32", "i32"],
+                llvm_arguments: &[
+                    "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32",
+                ],
+                llvm_results: &["i32", "i32", "i32", "i32"],
+                adapter: C4I32A4U32B2U32ToD4I32,
+                ptx_modifiers: &[
+                    "sync", "aligned", "m16n8k32", "row", "col", "s32", "s8", "s8", "s32",
+                ],
+                ptx_register_counts: [4, 4, 2, 4],
+            })
+        }
+        (
+            M8n8k4,
+            F64,
+            F64Element,
+            F64Element,
+            RegisterMmaOverflow::NotApplicable,
+            C2F64A1F64B1F64ToD2F64,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m8n8k4_f64",
+            abi_id: "i0109",
+            operation_key: "matrix.mma.m8n8k4.row.col.f64.f64.f64.f64",
+            source_record: "int_nvvm_mma_m8n8k4_row_col_f64",
+            llvm_symbol: "llvm.nvvm.mma.m8n8k4.row.col.f64",
+            rust_arguments: &["[f64; 2]", "f64", "f64"],
+            rust_result: "[f64; 2]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &["f64", "f64", "f64", "f64"],
+            dialect_results: &["f64", "f64"],
+            llvm_arguments: &["f64", "f64", "f64", "f64"],
+            llvm_results: &["f64", "f64"],
+            adapter: C2F64A1F64B1F64ToD2F64,
+            ptx_modifiers: &[
+                "sync", "aligned", "m8n8k4", "row", "col", "f64", "f64", "f64", "f64",
+            ],
+            ptx_register_counts: [2, 1, 1, 2],
+        }),
+        _ => None,
+    }
+}
+
+fn validate_register_mma_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let mma = policy
+        .register_mma
+        .as_ref()
+        .with_context(|| format!("{} has no closed register-MMA contract", policy.id))?;
+    let recipe = register_mma_recipe(mma)
+        .with_context(|| format!("{} requests an unsupported register-MMA variant", policy.id))?;
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} register-MMA identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "matrix"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == recipe.rust_result
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{}", recipe.id)],
+        "{} must preserve its unsafe must-use Rust MMA API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results == recipe.dialect_results
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results == recipe.llvm_results
+            && policy.ptx_result == recipe.rust_result
+            && mma.adapter == recipe.adapter
+            && policy.lowering == "generated_register_mma",
+        "{} register-MMA carrier or lowering adapter disagrees with its recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "none"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "7.0"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.targets == "all",
+        "{} register-MMA effects or target floor disagree with PTX",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma",
+        "{} register-MMA PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.classes.iter().any(|class| class == "NVVM_MMA")
+            && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
+            && declaration.selections.is_empty(),
+        "{} imported MMA declaration changed its class, properties, or selectionless contract",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "mma"
+            && policy.expected_ptx.modifiers == recipe.ptx_modifiers
+            && policy.expected_ptx.operands
+                == recipe
+                    .ptx_register_counts
+                    .map(|length| OperandPattern::RegisterList { length }),
+        "{} expected PTX does not match its exact register-MMA spelling",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, "7.0", "sm_80"),
+            (IntrinsicBackend::LibNvvm, "7.0", "sm_80"),
+        ],
+        "register MMA",
+    )?;
+    ensure_no_other_family_contract(policy, "register MMA")?;
+    Ok(())
+}
+
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
     requirements: [(IntrinsicBackend, &str, &str); 2],
@@ -5575,7 +5880,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
-            && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some(),
+            && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some()
+            && (policy.family == "register_mma") == policy.register_mma.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -6258,6 +6564,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(mma) = &policy.register_mma {
+        match mma.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} register-MMA runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} register-MMA runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -6377,6 +6699,7 @@ fn resolve_record(
         cp_async_control: policy.cp_async_control.clone(),
         cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
         mbarrier_basic: policy.mbarrier_basic.clone(),
+        register_mma: policy.register_mma.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -6493,6 +6816,7 @@ mod tests {
             cp_async_control: None,
             cp_async_mbarrier: None,
             mbarrier_basic: None,
+            register_mma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -7468,8 +7792,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 17);
-        assert_eq!(overlay.intrinsics.len(), 104);
+        assert_eq!(overlay.shards.len(), 18);
+        assert_eq!(overlay.intrinsics.len(), 109);
         assert_eq!(
             overlay
                 .intrinsics
@@ -7509,6 +7833,14 @@ mod tests {
                 .filter(|record| record.family == "ldmatrix")
                 .count(),
             6
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "register_mma")
+                .count(),
+            5
         );
         assert_eq!(
             overlay
@@ -7593,6 +7925,52 @@ mod tests {
         ] {
             assert!(validate_overlay_shard_path(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn pinned_register_mma_records_match_the_closed_recipes_and_fail_closed() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let records: Vec<_> = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "register_mma")
+            .collect();
+        assert_eq!(records.len(), 5);
+
+        for policy in &records {
+            let declaration = declarations[policy.source_record.as_deref().unwrap()];
+            assert!(declaration.selections.is_empty());
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+
+        let valid = records[0];
+        let declaration = declarations[valid.source_record.as_deref().unwrap()];
+
+        let mut non_convergent = valid.clone();
+        non_convergent.convergent = false;
+        assert!(
+            validate_imported_policy(&non_convergent, declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("effects")
+        );
+
+        let mut typed_route = valid.clone();
+        typed_route.backend_lowerings[0].mechanism = BackendLoweringMechanism::TypedNvvm;
+        assert!(validate_imported_policy(&typed_route, declaration).is_err());
+
+        let mut crossed_variant = valid.clone();
+        crossed_variant.register_mma.as_mut().unwrap().a_element = RegisterMmaElement::F16;
+        assert!(validate_imported_policy(&crossed_variant, declaration).is_err());
     }
 
     #[test]

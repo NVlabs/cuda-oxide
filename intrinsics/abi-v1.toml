@@ -735,3 +735,38 @@ status = "active"
 catalog_id = "cp_async_mbarrier_arrive_noinc_shared"
 operation_key = "memory.copy.async.mbarrier.arrive.shared.no_increment"
 raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0105"
+status = "active"
+catalog_id = "mma_m16n8k16_f32_bf16"
+operation_key = "matrix.mma.m16n8k16.row.col.f32.bf16.bf16.f32"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0106"
+status = "active"
+catalog_id = "mma_m16n8k16_f32_f16"
+operation_key = "matrix.mma.m16n8k16.row.col.f32.f16.f16.f32"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0107"
+status = "active"
+catalog_id = "mma_m16n8k8_f32_tf32"
+operation_key = "matrix.mma.m16n8k8.row.col.f32.tf32.tf32.f32"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0108"
+status = "active"
+catalog_id = "mma_m16n8k32_s32_s8"
+operation_key = "matrix.mma.m16n8k32.row.col.s32.s8.s8.s32.wrapping"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 2]"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0109"
+status = "active"
+catalog_id = "mma_m8n8k4_f64"
+operation_key = "matrix.mma.m8n8k4.row.col.f64.f64.f64.f64"
+raw_rust_signature = { safe = false, arguments = ["[f64; 2]", "f64", "f64"], result = "[f64; 2]" }

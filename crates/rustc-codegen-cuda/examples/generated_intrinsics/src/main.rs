@@ -10,6 +10,10 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel};
+use cuda_intrinsics::matrix::{
+    mma_m8n8k4_f64, mma_m16n8k8_f32_tf32, mma_m16n8k16_f32_bf16, mma_m16n8k16_f32_f16,
+    mma_m16n8k32_s32_s8,
+};
 use cuda_intrinsics::sreg::{
     block_dim_x, block_dim_y, block_dim_z, block_idx_x, block_idx_y, block_idx_z, grid_dim_x,
     grid_dim_y, grid_dim_z, lane_id, lanemask_eq, lanemask_ge, lanemask_gt, lanemask_le,
@@ -18,14 +22,43 @@ use cuda_intrinsics::sreg::{
 use cuda_intrinsics::warp::{
     active_mask, all_sync, any_sync, ballot_sync, match_all_i64_sync, match_all_sync,
     match_any_i64_sync, match_any_sync, shuffle_down_f32_sync, shuffle_down_sync,
-    shuffle_down_u64_sync, shuffle_f32_sync, shuffle_sync, shuffle_u64_sync,
-    shuffle_up_f32_sync, shuffle_up_sync, shuffle_up_u64_sync, shuffle_xor_f32_sync,
-    shuffle_xor_sync, shuffle_xor_u64_sync, sync_mask, uni_sync,
+    shuffle_down_u64_sync, shuffle_f32_sync, shuffle_sync, shuffle_u64_sync, shuffle_up_f32_sync,
+    shuffle_up_sync, shuffle_up_u64_sync, shuffle_xor_f32_sync, shuffle_xor_sync,
+    shuffle_xor_u64_sync, sync_mask, uni_sync,
 };
 
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    /// Keeps every generated register-MMA variant in the compiled module.
+    ///
+    /// This coverage kernel is not launched by the example. A caller must use
+    /// one complete warp because every MMA call is warp-synchronous.
+    #[kernel]
+    pub fn compile_register_mma(mut output: DisjointSlice<u64>) {
+        // SAFETY: every lane executes the same instruction sequence. The zero
+        // fragments have the documented register layouts.
+        let (bf16, f16, tf32, int8, f64) = unsafe {
+            (
+                mma_m16n8k16_f32_bf16([0.0; 4], [0; 4], [0; 2]),
+                mma_m16n8k16_f32_f16([0.0; 4], [0; 4], [0; 2]),
+                mma_m16n8k8_f32_tf32([0.0; 4], [0; 4], [0; 2]),
+                mma_m16n8k32_s32_s8([0; 4], [0; 4], [0; 2]),
+                mma_m8n8k4_f64([0.0; 2], 0.0, 0.0),
+            )
+        };
+        let checksum = u64::from(bf16[0].to_bits())
+            ^ u64::from(f16[0].to_bits())
+            ^ u64::from(tf32[0].to_bits())
+            ^ u64::from(int8[0] as u32)
+            ^ f64[0].to_bits();
+        let index = thread_idx_x() as usize;
+        if index < output.len() {
+            // SAFETY: the bounds check covers this lane's unique slot.
+            unsafe { *output.get_unchecked_mut(index) = checksum };
+        }
+    }
 
     #[kernel]
     pub fn record_row_major_volume_idx(mut output: DisjointSlice<u32>) {

@@ -13,8 +13,10 @@ use crate::model::{
     LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
     MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
-    PackedConversionSaturation, PackedConversionSourceFormat, ReduxAdapter, VoteAdapter, VoteMode,
-    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
+    PackedConversionSaturation, PackedConversionSourceFormat, ReduxAdapter, RegisterMmaAccumulator,
+    RegisterMmaAdapter, RegisterMmaElement, RegisterMmaLayout, RegisterMmaOverflow,
+    RegisterMmaShape, RuntimeValidation, VoteAdapter, VoteMode, WarpBarrierAdapter,
+    WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
     WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
@@ -107,6 +109,10 @@ pub fn all_outputs(
         render_dialect_ldmatrix(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/register_mma.rs".into(),
+        render_dialect_register_mma(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/packed_atomic.rs".into(),
         render_dialect_packed_atomic(catalog, catalog_sha256),
     );
@@ -192,6 +198,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
         if !record.rust.safe {
             ensure!(
                 (record.family == "ldmatrix" && record.ldmatrix.is_some())
+                    || (record.family == "register_mma" && record.register_mma.is_some())
                     || (record.family == "packed_atomic" && record.packed_atomic.is_some())
                     || (record.family == "redux" && record.redux.is_some())
                     || (record.family == "vote" && record.vote.is_some())
@@ -223,6 +230,20 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_ldmatrix"
                     && record.ldmatrix.is_some(),
                 "{} is outside the generated ldmatrix recipe",
+                record.id
+            ),
+            "register_mma" => ensure!(
+                record.rust.module == "matrix"
+                    && record.rust.arguments.len() == 3
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.semantics.memory == "none"
+                    && record.semantics.convergent
+                    && record.dialect.op_type == "RegisterMmaOp"
+                    && record.dialect.op_name == "nvvm.register_mma"
+                    && record.lowering == "generated_register_mma"
+                    && record.register_mma.is_some(),
+                "{} is outside the closed generated register-MMA recipe",
                 record.id
             ),
             "packed_atomic" => ensure!(
@@ -690,6 +711,13 @@ fn ldmatrix(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
         .filter(|record| record.family == "ldmatrix")
 }
 
+fn register_mmas(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "register_mma")
+}
+
 fn packed_atomics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
     catalog
         .intrinsics
@@ -983,6 +1011,115 @@ fn ldmatrix_attr_variants(
     (shape, multiplicity, layout, element, state_space)
 }
 
+fn register_mma_attr_variants(
+    record: &CatalogIntrinsic,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    let mma = record.register_mma.as_ref().expect("register-MMA record");
+    let shape = match mma.shape {
+        RegisterMmaShape::M8n8k4 => "RegisterMmaShapeAttr::M8n8k4",
+        RegisterMmaShape::M16n8k8 => "RegisterMmaShapeAttr::M16n8k8",
+        RegisterMmaShape::M16n8k16 => "RegisterMmaShapeAttr::M16n8k16",
+        RegisterMmaShape::M16n8k32 => "RegisterMmaShapeAttr::M16n8k32",
+    };
+    let accumulator = match mma.accumulator {
+        RegisterMmaAccumulator::F32 => "RegisterMmaAccumulatorAttr::F32",
+        RegisterMmaAccumulator::F64 => "RegisterMmaAccumulatorAttr::F64",
+        RegisterMmaAccumulator::S32 => "RegisterMmaAccumulatorAttr::S32",
+    };
+    let element = |element| match element {
+        RegisterMmaElement::Bf16 => "RegisterMmaElementAttr::Bf16",
+        RegisterMmaElement::F16 => "RegisterMmaElementAttr::F16",
+        RegisterMmaElement::Tf32 => "RegisterMmaElementAttr::Tf32",
+        RegisterMmaElement::F64 => "RegisterMmaElementAttr::F64",
+        RegisterMmaElement::S8 => "RegisterMmaElementAttr::S8",
+    };
+    let layout = |layout| match layout {
+        RegisterMmaLayout::Row => "RegisterMmaLayoutAttr::Row",
+        RegisterMmaLayout::Col => "RegisterMmaLayoutAttr::Col",
+    };
+    let overflow = match mma.overflow {
+        RegisterMmaOverflow::NotApplicable => "RegisterMmaOverflowAttr::NotApplicable",
+        RegisterMmaOverflow::Wrapping => "RegisterMmaOverflowAttr::Wrapping",
+        RegisterMmaOverflow::Satfinite => "RegisterMmaOverflowAttr::Satfinite",
+    };
+    (
+        shape,
+        accumulator,
+        element(mma.a_element),
+        element(mma.b_element),
+        layout(mma.a_layout),
+        layout(mma.b_layout),
+        overflow,
+    )
+}
+
+fn register_mma_fragment_counts(record: &CatalogIntrinsic) -> (usize, usize, usize, usize) {
+    match record.register_mma.as_ref().unwrap().adapter {
+        RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 | RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => {
+            (4, 4, 2, 4)
+        }
+        RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => (2, 1, 1, 2),
+    }
+}
+
+fn register_mma_ptx_head(record: &CatalogIntrinsic) -> String {
+    let mut head = record.expected_ptx.mnemonic.clone();
+    for modifier in &record.expected_ptx.modifiers {
+        write!(head, ".{modifier}").unwrap();
+    }
+    head
+}
+
+fn register_list(first: usize, count: usize) -> String {
+    format!(
+        "{{{}}}",
+        (first..first + count)
+            .map(|index| format!("${index}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn register_mma_template(record: &CatalogIntrinsic) -> String {
+    let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
+    let d = register_list(0, d_count);
+    let c = register_list(d_count, c_count);
+    let a = register_list(d_count + c_count, a_count);
+    let b = register_list(d_count + c_count + a_count, b_count);
+    format!("{} {d}, {a}, {b}, {c};", register_mma_ptx_head(record))
+}
+
+fn register_mma_constraints(record: &CatalogIntrinsic) -> String {
+    let mma = record.register_mma.as_ref().unwrap();
+    let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
+    let (output, c, packed) = match mma.adapter {
+        RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => ("=f", "f", "r"),
+        RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("=d", "d", "d"),
+        RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => ("=r", "r", "r"),
+    };
+    std::iter::repeat_n(output, d_count)
+        .chain(std::iter::repeat_n(c, c_count))
+        .chain(std::iter::repeat_n(packed, a_count + b_count))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
+    match record.register_mma.as_ref().unwrap().adapter {
+        RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => "GeneratedMmaResultType::F32",
+        RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => "GeneratedMmaResultType::F64",
+        RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => "GeneratedMmaResultType::I32",
+    }
+}
+
 fn intrinsic_marker(catalog: &CatalogFile, record: &CatalogIntrinsic) -> String {
     format!("v{}:{}", catalog.intrinsic_abi, record.rust.abi_id)
 }
@@ -1154,6 +1291,15 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// This weak memory operation does not replace a required barrier or fence.\n",
                 );
+            } else if let Some(mma) = &record.register_mma {
+                output.push_str(
+                    "/// All 32 warp lanes must execute the same `mma.sync.aligned` instruction with the same qualifiers, and no lane may have exited.\n\
+                     /// `_arg0`, `_arg1`, and `_arg2` must contain this lane's C, A, and B fragments in the documented PTX layout.\n\
+                     /// The operation is register-only and is not a memory fence.\n",
+                );
+                if mma.overflow == RegisterMmaOverflow::Wrapping {
+                    output.push_str("/// Signed accumulator overflow wraps because this form omits `.satfinite`.\n");
+                }
             } else if record.redux.is_some() {
                 output.push_str(
                     "/// The executing lane must be named in `mask`. Every non-exited lane named in `mask` must execute the same `redux.sync` operation with the same qualifiers and mask.\n\
@@ -1827,7 +1973,7 @@ fn render_compat_packed_conversion(
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod register_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use register_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -2885,6 +3031,159 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn register_mma_carriers(record: &CatalogIntrinsic) -> (&'static str, &'static str) {
+    match record.register_mma.as_ref().unwrap().adapter {
+        RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => (
+            "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]",
+            "&[MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32, MmaCarrier::F32]",
+        ),
+        RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => (
+            "&[MmaCarrier::F64, MmaCarrier::F64, MmaCarrier::F64, MmaCarrier::F64]",
+            "&[MmaCarrier::F64, MmaCarrier::F64]",
+        ),
+        RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => (
+            "&[MmaCarrier::I32, MmaCarrier::I32, MmaCarrier::I32, MmaCarrier::I32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32, MmaCarrier::U32]",
+            "&[MmaCarrier::I32, MmaCarrier::I32, MmaCarrier::I32, MmaCarrier::I32]",
+        ),
+    }
+}
+
+fn render_dialect_register_mma(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r#"//! One structural operation for generated register-only `mma.sync` variants.
+
+use pliron::{
+    attribute::Attribute,
+    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::{TypeHandle, Typed},
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.register_mma_shape", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RegisterMmaShapeAttr { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }
+
+#[pliron_attr(name = "nvvm.register_mma_accumulator", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RegisterMmaAccumulatorAttr { F32, F64, S32 }
+
+#[pliron_attr(name = "nvvm.register_mma_element", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RegisterMmaElementAttr { Bf16, F16, Tf32, F64, S8 }
+
+#[pliron_attr(name = "nvvm.register_mma_layout", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RegisterMmaLayoutAttr { Row, Col }
+
+#[pliron_attr(name = "nvvm.register_mma_overflow", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RegisterMmaOverflowAttr { NotApplicable, Wrapping, Satfinite }
+
+#[pliron_op(
+    name = "nvvm.register_mma",
+    format,
+    attributes = (
+        nvvm_register_mma_shape: RegisterMmaShapeAttr,
+        nvvm_register_mma_accumulator: RegisterMmaAccumulatorAttr,
+        nvvm_register_mma_a_element: RegisterMmaElementAttr,
+        nvvm_register_mma_b_element: RegisterMmaElementAttr,
+        nvvm_register_mma_a_layout: RegisterMmaLayoutAttr,
+        nvvm_register_mma_b_layout: RegisterMmaLayoutAttr,
+        nvvm_register_mma_overflow: RegisterMmaOverflowAttr
+    )
+)]
+pub struct RegisterMmaOp;
+
+impl RegisterMmaOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+}
+
+#[derive(Clone, Copy)]
+enum MmaCarrier { F32, F64, I32, U32 }
+
+fn is_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool {
+    match carrier {
+        MmaCarrier::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
+        MmaCarrier::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
+        MmaCarrier::I32 | MmaCarrier::U32 => {
+            let expected = if matches!(carrier, MmaCarrier::I32) {
+                Signedness::Signed
+            } else {
+                Signedness::Unsigned
+            };
+            ty.deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 32 && integer.signedness() == expected)
+        }
+    }
+}
+
+impl Verify for RegisterMmaOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let recipe: (&[MmaCarrier], &[MmaCarrier]) = match (
+            self.get_attr_nvvm_register_mma_shape(ctx).as_deref(),
+            self.get_attr_nvvm_register_mma_accumulator(ctx).as_deref(),
+            self.get_attr_nvvm_register_mma_a_element(ctx).as_deref(),
+            self.get_attr_nvvm_register_mma_b_element(ctx).as_deref(),
+            self.get_attr_nvvm_register_mma_a_layout(ctx).as_deref(),
+            self.get_attr_nvvm_register_mma_b_layout(ctx).as_deref(),
+            self.get_attr_nvvm_register_mma_overflow(ctx).as_deref(),
+        ) {
+"#,
+    );
+    for record in register_mmas(catalog) {
+        let (shape, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
+            register_mma_attr_variants(record);
+        let (operands, results) = register_mma_carriers(record);
+        writeln!(
+            output,
+            "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({operands}, {results}),"
+        )
+        .unwrap();
+    }
+    output.push_str(
+        r#"            _ => return verify_err!(op.loc(), "nvvm.register_mma has a missing or unsupported variant"),
+        };
+        let operands: Vec<_> = op.operands().collect();
+        if operands.len() != recipe.0.len() || op.get_num_results() != recipe.1.len() {
+            return verify_err!(op.loc(), "nvvm.register_mma has the wrong register count");
+        }
+        for (index, (operand, carrier)) in operands.iter().zip(recipe.0).enumerate() {
+            if !is_carrier(ctx, operand.get_type(ctx), *carrier) {
+                return verify_err!(op.loc(), "nvvm.register_mma operand {} has the wrong carrier type", index);
+            }
+        }
+        for (index, carrier) in recipe.1.iter().enumerate() {
+            if !is_carrier(ctx, op.get_result(index).get_type(ctx), *carrier) {
+                return verify_err!(op.loc(), "nvvm.register_mma result {} has the wrong carrier type", index);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    RegisterMmaShapeAttr::register(ctx);
+    RegisterMmaAccumulatorAttr::register(ctx);
+    RegisterMmaElementAttr::register(ctx);
+    RegisterMmaLayoutAttr::register(ctx);
+    RegisterMmaOverflowAttr::register(ctx);
+    RegisterMmaOp::register(ctx);
+}
+"#,
+    );
+    output
+}
+
 fn render_dialect_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -3211,6 +3510,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
     }
+    if register_mmas(catalog).next().is_some() {
+        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
+    }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
@@ -3394,6 +3696,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
+    if register_mmas(catalog).next().is_some() {
+        output.push_str(
+            "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirExtractFieldOp}, types::MirArrayType};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
+        );
+    }
     writeln!(
         output,
         "pub const GENERATED_INTRINSIC_ABI: u32 = {};",
@@ -3534,6 +3841,57 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
+    for record in register_mmas(catalog) {
+        let adapter = match record.register_mma.as_ref().unwrap().adapter {
+            RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => {
+                "GeneratedMmaImportAdapter::C4F32A4U32B2U32ToD4F32"
+            }
+            RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => {
+                "GeneratedMmaImportAdapter::C2F64A1F64B1F64ToD2F64"
+            }
+            RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => {
+                "GeneratedMmaImportAdapter::C4I32A4U32B2U32ToD4I32"
+            }
+        };
+        let (shape, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
+            register_mma_attr_variants(record);
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 3, &loc)?;\n");
+        writeln!(
+            output,
+            "            let (operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), {adapter})?;"
+        )
+        .unwrap();
+        output.push_str(
+            "            let mma = Operation::new(ctx, RegisterMmaOp::get_concrete_op_info(), vec![result_ty; result_count], operands, vec![], 0);\n            mma.deref_mut(ctx).set_loc(loc.clone());\n            let mma = RegisterMmaOp::new(mma);\n",
+        );
+        writeln!(
+            output,
+            "            mma.set_attr_nvvm_register_mma_shape(ctx, {shape});\n            mma.set_attr_nvvm_register_mma_accumulator(ctx, {accumulator});\n            mma.set_attr_nvvm_register_mma_a_element(ctx, {a_element});\n            mma.set_attr_nvvm_register_mma_b_element(ctx, {b_element});\n            mma.set_attr_nvvm_register_mma_a_layout(ctx, {a_layout});\n            mma.set_attr_nvvm_register_mma_b_layout(ctx, {b_layout});\n            mma.set_attr_nvvm_register_mma_overflow(ctx, {overflow});"
+        )
+        .unwrap();
+        output.push_str("            let mma = mma.get_operation();\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, mma, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -4088,6 +4446,144 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
     );
+    if register_mmas(catalog).next().is_some() {
+        output.push_str(
+            r#"
+
+#[derive(Clone, Copy)]
+enum GeneratedMmaImportAdapter {
+    C4F32A4U32B2U32ToD4F32,
+    C2F64A1F64B1F64ToD2F64,
+    C4I32A4U32B2U32ToD4I32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_generated_mma_array(
+    ctx: &mut Context,
+    array: Value,
+    expected_element_ty: TypeHandle,
+    expected_len: usize,
+    block_ptr: Ptr<BasicBlock>,
+    mut last_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Vec<Value>, Ptr<Operation>)> {
+    let valid = array
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<MirArrayType>()
+        .is_some_and(|array_ty| {
+            array_ty.size() == expected_len as u64
+                && array_ty.element_type() == expected_element_ty
+        });
+    if !valid {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "generated MMA fragment must be an array of {expected_len} scalar registers"
+            ))
+        );
+    }
+    let mut registers = Vec::with_capacity(expected_len);
+    for index in 0..expected_len {
+        let extract = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![expected_element_ty],
+            vec![array],
+            vec![],
+            0,
+        );
+        extract.deref_mut(ctx).set_loc(loc.clone());
+        let extract = MirExtractFieldOp::new(extract);
+        extract.set_attr_index(ctx, FieldIndexAttr(index as u32));
+        helpers::insert_op(ctx, extract.get_operation(), block_ptr, last_op);
+        last_op = Some(extract.get_operation());
+        registers.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    Ok((registers, last_op.expect("non-empty generated MMA fragment")))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn import_generated_mma_operands(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    loc: Location,
+    adapter: GeneratedMmaImportAdapter,
+) -> TranslationResult<(Vec<Value>, Ptr<Operation>, TypeHandle, usize)> {
+    let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+    let f64_ty: TypeHandle = FP64Type::get(ctx).into();
+    let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signed).into();
+    let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+    let (c_ty, c_count, a_ty, a_count, a_array, b_ty, b_count, b_array, result_ty, result_count) =
+        match adapter {
+            GeneratedMmaImportAdapter::C4F32A4U32B2U32ToD4F32 =>
+                (f32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, f32_ty, 4),
+            GeneratedMmaImportAdapter::C2F64A1F64B1F64ToD2F64 =>
+                (f64_ty, 2, f64_ty, 1, false, f64_ty, 1, false, f64_ty, 2),
+            GeneratedMmaImportAdapter::C4I32A4U32B2U32ToD4I32 =>
+                (i32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, i32_ty, 4),
+        };
+    let (c_array, last_op) = rvalue::translate_operand(
+        ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
+    )?;
+    let (mut operands, last_op) = extract_generated_mma_array(
+        ctx, c_array, c_ty, c_count, block_ptr, last_op, loc.clone(),
+    )?;
+    let (a_value, last_after_a) = rvalue::translate_operand(
+        ctx, body, &args[1], value_map, block_ptr, Some(last_op), loc.clone(),
+    )?;
+    let (a_registers, last_op) = if a_array {
+        extract_generated_mma_array(
+            ctx, a_value, a_ty, a_count, block_ptr, last_after_a, loc.clone(),
+        )?
+    } else {
+        (vec![a_value], last_after_a.expect("generated MMA A translation keeps predecessor"))
+    };
+    operands.extend(a_registers);
+    let (b_value, last_after_b) = rvalue::translate_operand(
+        ctx, body, &args[2], value_map, block_ptr, Some(last_op), loc.clone(),
+    )?;
+    let (b_registers, last_op) = if b_array {
+        extract_generated_mma_array(
+            ctx, b_value, b_ty, b_count, block_ptr, last_after_b, loc,
+        )?
+    } else {
+        (vec![b_value], last_after_b.expect("generated MMA B translation keeps predecessor"))
+    };
+    operands.extend(b_registers);
+    Ok((operands, last_op, result_ty, result_count))
+}
+
+fn bundle_generated_mma_results(
+    ctx: &mut Context,
+    mma: Ptr<Operation>,
+    result_ty: TypeHandle,
+    result_count: usize,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    let results = (0..result_count)
+        .map(|index| mma.deref(ctx).get_result(index))
+        .collect();
+    let array_ty = MirArrayType::get(ctx, result_ty, result_count as u64);
+    let array = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![array_ty.into()],
+        results,
+        vec![],
+        0,
+    );
+    array.deref_mut(ctx).set_loc(loc);
+    array.insert_after(ctx, mma);
+    (array.deref(ctx).get_result(0), array)
+}
+"#,
+        );
+    }
     output.push_str("\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n");
     for record in &catalog.intrinsics {
         writeln!(
@@ -4154,7 +4650,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -4167,6 +4663,9 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
+    }
+    if register_mmas(catalog).next().is_some() {
+        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -4380,6 +4879,28 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str(
             "                _ => return pliron::input_err!(\n                    self.get_operation().deref(ctx).loc(),\n                    \"nvvm.ldmatrix variant has no generated lowering recipe\",\n                ),\n            }\n        };\n        convert_generated_ldmatrix(ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2)\n    }\n}\n\n",
+        );
+    }
+    if register_mmas(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for RegisterMmaOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_register_mma_shape(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_accumulator(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_overflow(ctx).as_deref(),\n        ) {\n",
+        );
+        for record in register_mmas(catalog) {
+            let (shape, accumulator, a_element, b_element, a_layout, b_layout, overflow) =
+                register_mma_attr_variants(record);
+            let (c_count, a_count, b_count, result_count) = register_mma_fragment_counts(record);
+            let expected_operands = c_count + a_count + b_count;
+            writeln!(
+                output,
+                "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow})) => ({}, {result_count}, {expected_operands}, {:?}, {:?}),",
+                register_mma_result_variant(record),
+                register_mma_template(record),
+                register_mma_constraints(record),
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.register_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_register_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
         );
     }
     if packed_atomics(catalog).next().is_some() {
@@ -4825,6 +5346,42 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
         };
         return format!("GeneratedIntrinsicVariant::PackedAtomic {{ format: {format} }}");
     }
+    if let Some(mma) = &record.register_mma {
+        let shape = match mma.shape {
+            RegisterMmaShape::M8n8k4 => "GeneratedRegisterMmaShape::M8n8k4",
+            RegisterMmaShape::M16n8k8 => "GeneratedRegisterMmaShape::M16n8k8",
+            RegisterMmaShape::M16n8k16 => "GeneratedRegisterMmaShape::M16n8k16",
+            RegisterMmaShape::M16n8k32 => "GeneratedRegisterMmaShape::M16n8k32",
+        };
+        let accumulator = match mma.accumulator {
+            RegisterMmaAccumulator::F32 => "GeneratedRegisterMmaAccumulator::F32",
+            RegisterMmaAccumulator::F64 => "GeneratedRegisterMmaAccumulator::F64",
+            RegisterMmaAccumulator::S32 => "GeneratedRegisterMmaAccumulator::S32",
+        };
+        let element = |element| match element {
+            RegisterMmaElement::Bf16 => "GeneratedRegisterMmaElement::Bf16",
+            RegisterMmaElement::F16 => "GeneratedRegisterMmaElement::F16",
+            RegisterMmaElement::Tf32 => "GeneratedRegisterMmaElement::Tf32",
+            RegisterMmaElement::F64 => "GeneratedRegisterMmaElement::F64",
+            RegisterMmaElement::S8 => "GeneratedRegisterMmaElement::S8",
+        };
+        let layout = |layout| match layout {
+            RegisterMmaLayout::Row => "GeneratedRegisterMmaLayout::Row",
+            RegisterMmaLayout::Col => "GeneratedRegisterMmaLayout::Col",
+        };
+        let overflow = match mma.overflow {
+            RegisterMmaOverflow::NotApplicable => "GeneratedRegisterMmaOverflow::NotApplicable",
+            RegisterMmaOverflow::Wrapping => "GeneratedRegisterMmaOverflow::Wrapping",
+            RegisterMmaOverflow::Satfinite => "GeneratedRegisterMmaOverflow::Satfinite",
+        };
+        return format!(
+            "GeneratedIntrinsicVariant::RegisterMma {{ shape: {shape}, accumulator: {accumulator}, a_element: {}, b_element: {}, a_layout: {}, b_layout: {}, overflow: {overflow} }}",
+            element(mma.a_element),
+            element(mma.b_element),
+            layout(mma.a_layout),
+            layout(mma.b_layout),
+        );
+    }
     let Some(ldmatrix) = &record.ldmatrix else {
         return "GeneratedIntrinsicVariant::Scalar".to_owned();
     };
@@ -4871,7 +5428,7 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     records.sort_by(|left, right| left.rust.abi_id.cmp(&right.rust.abi_id));
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
+        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n    RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
     );
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -4907,10 +5464,10 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
     }
     output.push_str(
-        "];\n\npub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGETS.iter().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n    }\n}\n",
+        "];\n\npub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGETS.iter().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n        GeneratedIntrinsicVariant::RegisterMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow } => {\n            let Some(op) = Operation::get_op::<RegisterMmaOp>(operation, ctx) else { return false; };\n            let shape_matches = match shape {\n                GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k8),\n                GeneratedRegisterMmaShape::M16n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k16),\n                GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F32),\n                GeneratedRegisterMmaAccumulator::F64 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F64),\n                GeneratedRegisterMmaAccumulator::S32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::S32),\n            };\n            let element_matches = |expected, actual: Option<&RegisterMmaElementAttr>| match expected {\n                GeneratedRegisterMmaElement::Bf16 => actual == Some(&RegisterMmaElementAttr::Bf16),\n                GeneratedRegisterMmaElement::F16 => actual == Some(&RegisterMmaElementAttr::F16),\n                GeneratedRegisterMmaElement::Tf32 => actual == Some(&RegisterMmaElementAttr::Tf32),\n                GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8 => actual == Some(&RegisterMmaElementAttr::S8),\n            };\n            let layout_matches = |expected, actual: Option<&RegisterMmaLayoutAttr>| match expected {\n                GeneratedRegisterMmaLayout::Row => actual == Some(&RegisterMmaLayoutAttr::Row),\n                GeneratedRegisterMmaLayout::Col => actual == Some(&RegisterMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedRegisterMmaOverflow::NotApplicable => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::NotApplicable),\n                GeneratedRegisterMmaOverflow::Wrapping => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Wrapping),\n                GeneratedRegisterMmaOverflow::Satfinite => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Satfinite),\n            };\n            shape_matches && accumulator_matches\n                && element_matches(a_element, op.get_attr_nvvm_register_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_register_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_register_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_register_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n        }\n    }\n}\n",
     );
     output.push_str(
-        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
+        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
@@ -5479,6 +6036,48 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %result\n}\n");
+    } else if record.register_mma.is_some() {
+        let mma = record.register_mma.as_ref().unwrap();
+        let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
+        let (c_type, packed_type, result_type) = match mma.adapter {
+            RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32 => ("float", "i32", "float"),
+            RegisterMmaAdapter::C2F64A1F64B1F64ToD2F64 => ("double", "double", "double"),
+            RegisterMmaAdapter::C4I32A4U32B2U32ToD4I32 => ("i32", "i32", "i32"),
+        };
+        let parameters = (0..c_count)
+            .map(|index| format!("{c_type} %c{index}"))
+            .chain((0..a_count).map(|index| format!("{packed_type} %a{index}")))
+            .chain((0..b_count).map(|index| format!("{packed_type} %b{index}")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = (0..c_count)
+            .map(|index| format!("{c_type} %c{index}"))
+            .chain((0..a_count).map(|index| format!("{packed_type} %a{index}")))
+            .chain((0..b_count).map(|index| format!("{packed_type} %b{index}")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let result = format!(
+            "{{ {} }}",
+            std::iter::repeat_n(result_type, d_count)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        writeln!(
+            output,
+            "define {result} @probe_{}({parameters}) #0 {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  %result = call {result} asm sideeffect {:?}, {:?}({arguments}) #0",
+            register_mma_template(record),
+            register_mma_constraints(record),
+        )
+        .unwrap();
+        output.push_str("  ret ");
+        output.push_str(&result);
+        output.push_str(" %result\n}\n\nattributes #0 = { convergent }\n");
     } else if let Some(ldmatrix) = &record.ldmatrix {
         let register_count = ldmatrix.variant.multiplicity.register_count();
         let result_ty = if register_count == 1 {
@@ -5578,6 +6177,26 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         for path in &record.rust.compatibility_paths {
             writeln!(output, "  - compatibility compiler path: `{path}`").unwrap();
         }
+    }
+    output.push_str("\n## Register-MMA contracts\n\n");
+    for record in register_mmas(catalog) {
+        let mma = record.register_mma.as_ref().unwrap();
+        let overflow = match mma.overflow {
+            RegisterMmaOverflow::NotApplicable => "not applicable",
+            RegisterMmaOverflow::Wrapping => "wrapping",
+            RegisterMmaOverflow::Satfinite => "finite saturation",
+        };
+        let runtime = match mma.runtime_validation {
+            RuntimeValidation::Unexecuted => "not executed on a GPU",
+            RuntimeValidation::Executed => "executed on a GPU",
+        };
+        writeln!(
+            output,
+            "- `{}` takes fragments in C, A, B order and lowers to one convergent, register-only `{}` instruction. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+            record.id,
+            register_mma_ptx_head(record),
+        )
+        .unwrap();
     }
     output.push_str("\n## Packed-atomic contracts\n\n");
     for record in packed_atomics(catalog) {
@@ -5865,6 +6484,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .or_else(|| {
                 record
                     .cp_async_mbarrier
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
+            .or_else(|| {
+                record
+                    .register_mma
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
@@ -7016,6 +7641,80 @@ mod tests {
         )));
         assert!(outputs.contains_key(&PathBuf::from(
             "crates/dialect-nvvm/src/ops/generated/mbarrier_basic.rs"
+        )));
+    }
+
+    #[test]
+    fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let records: Vec<_> = register_mmas(&catalog).collect();
+        assert_eq!(records.len(), 5);
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        for record in &records {
+            assert!(raw.contains(&format!("pub unsafe fn {}(", record.rust.abi_id)));
+        }
+        assert!(raw.contains("no lane may have exited"));
+        assert!(raw.contains("Signed accumulator overflow wraps"));
+
+        let dialect = render_dialect_register_mma(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct RegisterMmaOp").count(), 1);
+        assert!(dialect.contains("let recipe: (&[MmaCarrier], &[MmaCarrier])"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M8n8k4"));
+        assert!(dialect.contains("RegisterMmaShapeAttr::M16n8k32"));
+        assert!(dialect.contains("RegisterMmaOverflowAttr::Wrapping"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("enum GeneratedMmaImportAdapter"));
+        assert!(importer.contains("import_generated_mma_operands"));
+        assert!(importer.contains("bundle_generated_mma_results"));
+        for record in &records {
+            assert!(importer.contains(&record.rust.canonical_path));
+            assert!(importer.contains(&record.rust.compatibility_paths[0]));
+            assert!(importer.contains(&format!(
+                "set_generated_intrinsic_marker(ctx, mma, {:?})",
+                intrinsic_marker(&catalog, record)
+            )));
+        }
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for RegisterMmaOp")
+                .count(),
+            1
+        );
+        assert!(lowering.contains("convert_generated_register_mma"));
+        assert!(lowering.contains("=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r"));
+        assert!(lowering.contains("=d,=d,d,d,d,d"));
+        assert!(lowering.contains("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32"));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
+        assert!(targets.contains("GeneratedRegisterMmaShape::M8n8k4"));
+        assert!(targets.contains("GeneratedRegisterMmaShape::M16n8k32"));
+        assert!(targets.contains("get_attr_nvvm_register_mma_overflow"));
+
+        for record in &records {
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains("asm sideeffect"));
+            assert!(probe.contains("attributes #0 = { convergent }"));
+            assert!(probe.contains(&register_mma_template(record)));
+            assert!(probe.contains(&register_mma_constraints(record)));
+        }
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## Register-MMA contracts"));
+        assert!(reference.contains("runtime validation is not executed on a GPU"));
+        for record in &records {
+            assert!(reference.contains(&format!("- `{}`: runtime `unexecuted`", record.id)));
+        }
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/register_mma.rs"
         )));
     }
 }

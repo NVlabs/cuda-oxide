@@ -4610,6 +4610,248 @@ fn test_ldmatrix_rejects_wrong_result_arity() {
     );
 }
 
+#[test]
+fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
+-> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
+    use pliron::r#type::TypeHandle;
+
+    #[derive(Clone, Copy)]
+    enum Carrier {
+        F32,
+        F64,
+        I32,
+        U32,
+    }
+
+    struct Case {
+        shape: nvvm::RegisterMmaShapeAttr,
+        accumulator: nvvm::RegisterMmaAccumulatorAttr,
+        element: nvvm::RegisterMmaElementAttr,
+        overflow: nvvm::RegisterMmaOverflowAttr,
+        operands: &'static [Carrier],
+        results: &'static [Carrier],
+        template: &'static str,
+        constraints: &'static str,
+    }
+
+    let cases = [
+        Case {
+            shape: nvvm::RegisterMmaShapeAttr::M16n8k16,
+            accumulator: nvvm::RegisterMmaAccumulatorAttr::F32,
+            element: nvvm::RegisterMmaElementAttr::Bf16,
+            overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
+            operands: &[
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ],
+            results: &[Carrier::F32; 4],
+            template: concat!(
+                "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 ",
+                "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
+                "{$12, $13}, {$4, $5, $6, $7};"
+            ),
+            constraints: "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
+        },
+        Case {
+            shape: nvvm::RegisterMmaShapeAttr::M16n8k16,
+            accumulator: nvvm::RegisterMmaAccumulatorAttr::F32,
+            element: nvvm::RegisterMmaElementAttr::F16,
+            overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
+            operands: &[
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ],
+            results: &[Carrier::F32; 4],
+            template: concat!(
+                "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
+                "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
+                "{$12, $13}, {$4, $5, $6, $7};"
+            ),
+            constraints: "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
+        },
+        Case {
+            shape: nvvm::RegisterMmaShapeAttr::M16n8k8,
+            accumulator: nvvm::RegisterMmaAccumulatorAttr::F32,
+            element: nvvm::RegisterMmaElementAttr::Tf32,
+            overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
+            operands: &[
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::F32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ],
+            results: &[Carrier::F32; 4],
+            template: concat!(
+                "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 ",
+                "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
+                "{$12, $13}, {$4, $5, $6, $7};"
+            ),
+            constraints: "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
+        },
+        Case {
+            shape: nvvm::RegisterMmaShapeAttr::M16n8k32,
+            accumulator: nvvm::RegisterMmaAccumulatorAttr::S32,
+            element: nvvm::RegisterMmaElementAttr::S8,
+            overflow: nvvm::RegisterMmaOverflowAttr::Wrapping,
+            operands: &[
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::I32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+                Carrier::U32,
+            ],
+            results: &[Carrier::I32; 4],
+            template: concat!(
+                "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 ",
+                "{$0, $1, $2, $3}, {$8, $9, $10, $11}, ",
+                "{$12, $13}, {$4, $5, $6, $7};"
+            ),
+            constraints: "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r",
+        },
+        Case {
+            shape: nvvm::RegisterMmaShapeAttr::M8n8k4,
+            accumulator: nvvm::RegisterMmaAccumulatorAttr::F64,
+            element: nvvm::RegisterMmaElementAttr::F64,
+            overflow: nvvm::RegisterMmaOverflowAttr::NotApplicable,
+            operands: &[Carrier::F64; 4],
+            results: &[Carrier::F64; 2],
+            template: concat!(
+                "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 ",
+                "{$0, $1}, {$4}, {$5}, {$2, $3};"
+            ),
+            constraints: "=d,=d,d,d,d,d",
+        },
+    ];
+
+    let carrier_type = |ctx: &Context, carrier: Carrier| -> TypeHandle {
+        match carrier {
+            Carrier::F32 => FP32Type::get(ctx).into(),
+            Carrier::F64 => FP64Type::get(ctx).into(),
+            Carrier::I32 => IntegerType::get(ctx, 32, Signedness::Signed).into(),
+            Carrier::U32 => IntegerType::get(ctx, 32, Signedness::Unsigned).into(),
+        }
+    };
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        for case in &cases {
+            let mut ctx = make_test_ctx();
+            let argument_types = case
+                .operands
+                .iter()
+                .map(|carrier| carrier_type(&ctx, *carrier))
+                .collect();
+            let result_types = case
+                .results
+                .iter()
+                .map(|carrier| carrier_type(&ctx, *carrier))
+                .collect();
+            let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+            let operands = (0..case.operands.len())
+                .map(|index| entry.deref(&ctx).get_argument(index))
+                .collect();
+            let operation = Operation::new(
+                &mut ctx,
+                nvvm::RegisterMmaOp::get_concrete_op_info(),
+                result_types,
+                operands,
+                vec![],
+                0,
+            );
+            let mma = nvvm::RegisterMmaOp::new(operation);
+            mma.set_attr_nvvm_register_mma_shape(&ctx, case.shape.clone());
+            mma.set_attr_nvvm_register_mma_accumulator(&ctx, case.accumulator.clone());
+            mma.set_attr_nvvm_register_mma_a_element(&ctx, case.element.clone());
+            mma.set_attr_nvvm_register_mma_b_element(&ctx, case.element.clone());
+            mma.set_attr_nvvm_register_mma_a_layout(&ctx, nvvm::RegisterMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_register_mma_b_layout(&ctx, nvvm::RegisterMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_register_mma_overflow(&ctx, case.overflow.clone());
+            operation.insert_at_back(entry, &ctx);
+            append_return(&mut ctx, entry);
+
+            mir_lower::lower_mir_to_llvm_with_options(
+                &mut ctx,
+                module_ptr,
+                mir_lower::LoweringOptions {
+                    intrinsic_backend: backend,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+            let body = lowered_kernel_body(&ctx, module_ptr);
+            let lowered = body
+                .iter()
+                .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(*op, &ctx))
+                .collect::<Vec<_>>();
+            assert_eq!(lowered.len(), 1, "{:?}", backend);
+            let asm = &lowered[0];
+            assert_eq!(
+                asm.get_attr_inline_asm_template(&ctx)
+                    .as_deref()
+                    .map(|value| String::from(value.clone())),
+                Some(case.template.to_string())
+            );
+            assert_eq!(
+                asm.get_attr_inline_asm_constraints(&ctx)
+                    .as_deref()
+                    .map(|value| String::from(value.clone())),
+                Some(case.constraints.to_string())
+            );
+            assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+            assert_eq!(
+                asm.get_operation().deref(&ctx).get_num_operands(),
+                case.operands.len()
+            );
+            assert_eq!(asm.get_operation().deref(&ctx).get_num_results(), 1);
+            assert_eq!(
+                body.iter()
+                    .filter(|op| Operation::get_op::<llvm::ExtractValueOp>(**op, &ctx).is_some())
+                    .count(),
+                case.results.len()
+            );
+
+            let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+            let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+                .expect("generated register MMA exports to LLVM IR");
+            assert!(ir.contains("asm sideeffect"), "{ir}");
+            assert!(ir.contains("{ convergent }"), "{ir}");
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // mma.sync m16n8k16 bf16 intrinsic lowering test
 // ---------------------------------------------------------------------------

@@ -21,9 +21,11 @@ use dialect_nvvm::ops::{
     ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
     ReadPtxSregSmIdOp, ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp,
     ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
-    ShflSyncUpI64Op, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
-    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
+    ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr,
+    RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+    ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, StmatrixM8n8X4Op,
+    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp,
+    VoteSyncBallotOp, VoteSyncUniOp,
 };
 
 #[test]
@@ -810,6 +812,128 @@ fn test_mma_m16n8k32_s8_verifies_exact_register_signature() {
         0,
     );
     assert!(verify_op(&MmaM16N8K32S32S8Op::new(invalid_arity), &ctx).is_err());
+}
+
+#[test]
+fn generated_register_mma_verifier_rejects_crossed_variants_and_carriers() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    macro_rules! set_variant {
+        ($op:expr, $shape:expr, $acc:expr, $a:expr, $b:expr, $overflow:expr) => {{
+            $op.set_attr_nvvm_register_mma_shape(&ctx, $shape);
+            $op.set_attr_nvvm_register_mma_accumulator(&ctx, $acc);
+            $op.set_attr_nvvm_register_mma_a_element(&ctx, $a);
+            $op.set_attr_nvvm_register_mma_b_element(&ctx, $b);
+            $op.set_attr_nvvm_register_mma_a_layout(&ctx, RegisterMmaLayoutAttr::Row);
+            $op.set_attr_nvvm_register_mma_b_layout(&ctx, RegisterMmaLayoutAttr::Col);
+            $op.set_attr_nvvm_register_mma_overflow(&ctx, $overflow);
+        }};
+    }
+
+    let f32_ty = FP32Type::get(&ctx);
+    let f64_ty = FP64Type::get(&ctx);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let signless_i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![f32_ty.into(), f64_ty.into(), i32_ty.into(), u32_ty.into()],
+    );
+    let f32_value = block.deref(&ctx).get_argument(0);
+    let f64_value = block.deref(&ctx).get_argument(1);
+    let i32_value = block.deref(&ctx).get_argument(2);
+    let u32_value = block.deref(&ctx).get_argument(3);
+
+    let bf16_operation = Operation::new(
+        &mut ctx,
+        RegisterMmaOp::get_concrete_op_info(),
+        vec![f32_ty.into(); 4],
+        [vec![f32_value; 4], vec![u32_value; 6]].concat(),
+        vec![],
+        0,
+    );
+    let bf16 = RegisterMmaOp::new(bf16_operation);
+    set_variant!(
+        bf16,
+        RegisterMmaShapeAttr::M16n8k16,
+        RegisterMmaAccumulatorAttr::F32,
+        RegisterMmaElementAttr::Bf16,
+        RegisterMmaElementAttr::Bf16,
+        RegisterMmaOverflowAttr::NotApplicable
+    );
+    assert!(verify_op(&bf16, &ctx).is_ok());
+    bf16.set_attr_nvvm_register_mma_b_element(&ctx, RegisterMmaElementAttr::F16);
+    assert!(verify_op(&bf16, &ctx).is_err());
+
+    let f64_operation = Operation::new(
+        &mut ctx,
+        RegisterMmaOp::get_concrete_op_info(),
+        vec![f64_ty.into(); 2],
+        vec![f64_value; 4],
+        vec![],
+        0,
+    );
+    let f64_mma = RegisterMmaOp::new(f64_operation);
+    set_variant!(
+        f64_mma,
+        RegisterMmaShapeAttr::M8n8k4,
+        RegisterMmaAccumulatorAttr::F64,
+        RegisterMmaElementAttr::F64,
+        RegisterMmaElementAttr::F64,
+        RegisterMmaOverflowAttr::NotApplicable
+    );
+    assert!(verify_op(&f64_mma, &ctx).is_ok());
+
+    let int_operands = [vec![i32_value; 4], vec![u32_value; 6]].concat();
+    let int_operation = Operation::new(
+        &mut ctx,
+        RegisterMmaOp::get_concrete_op_info(),
+        vec![i32_ty.into(); 4],
+        int_operands.clone(),
+        vec![],
+        0,
+    );
+    let int_mma = RegisterMmaOp::new(int_operation);
+    set_variant!(
+        int_mma,
+        RegisterMmaShapeAttr::M16n8k32,
+        RegisterMmaAccumulatorAttr::S32,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaOverflowAttr::Wrapping
+    );
+    assert!(verify_op(&int_mma, &ctx).is_ok());
+
+    let wrong_signedness = Operation::new(
+        &mut ctx,
+        RegisterMmaOp::get_concrete_op_info(),
+        vec![signless_i32_ty.into(); 4],
+        int_operands,
+        vec![],
+        0,
+    );
+    let wrong_signedness = RegisterMmaOp::new(wrong_signedness);
+    set_variant!(
+        wrong_signedness,
+        RegisterMmaShapeAttr::M16n8k32,
+        RegisterMmaAccumulatorAttr::S32,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaElementAttr::S8,
+        RegisterMmaOverflowAttr::Wrapping
+    );
+    assert!(verify_op(&wrong_signedness, &ctx).is_err());
+
+    let missing_attributes = Operation::new(
+        &mut ctx,
+        RegisterMmaOp::get_concrete_op_info(),
+        vec![f64_ty.into(); 2],
+        vec![f64_value; 4],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&RegisterMmaOp::new(missing_attributes), &ctx).is_err());
 }
 
 #[test]

@@ -372,4 +372,99 @@ mod tests {
             "{error}"
         );
     }
+
+    #[test]
+    fn register_mma_markers_and_attributes_select_one_exact_variant() {
+        use dialect_nvvm::ops::{
+            RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
+            RegisterMmaOp, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+        };
+        use pliron::basic_block::BasicBlock;
+        use pliron::builtin::types::FP32Type;
+
+        fn register_mma(
+            ctx: &mut Context,
+            element: RegisterMmaElementAttr,
+            marker: Option<&str>,
+        ) -> Ptr<Operation> {
+            let f32_ty = FP32Type::get(ctx);
+            let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..4)
+                .map(|_| f32_ty.into())
+                .chain((0..6).map(|_| u32_ty.into()))
+                .collect();
+            let block = BasicBlock::new(ctx, None, argument_types);
+            let operands = (0..10)
+                .map(|index| block.deref(ctx).get_argument(index))
+                .collect();
+            let operation = Operation::new(
+                ctx,
+                RegisterMmaOp::get_concrete_op_info(),
+                vec![f32_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = RegisterMmaOp::new(operation);
+            mma.set_attr_nvvm_register_mma_shape(ctx, RegisterMmaShapeAttr::M16n8k16);
+            mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::F32);
+            mma.set_attr_nvvm_register_mma_a_element(ctx, element.clone());
+            mma.set_attr_nvvm_register_mma_b_element(ctx, element);
+            mma.set_attr_nvvm_register_mma_a_layout(ctx, RegisterMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_register_mma_b_layout(ctx, RegisterMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
+            if let Some(marker) = marker {
+                operation.deref_mut(ctx).attributes.set(
+                    Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                    StringAttr::new(marker.to_string()),
+                );
+            }
+            operation
+        }
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+
+        let bf16 = register_mma(&mut ctx, RegisterMmaElementAttr::Bf16, None);
+        let requirements =
+            collect_generated_intrinsic_requirements(&ctx, bf16, GeneratedMarkerPolicy::Optional)
+                .unwrap();
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].marker, "v1:i0105");
+
+        bf16.deref_mut(&ctx).attributes.set(
+            Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+            StringAttr::new("v1:i0106".to_string()),
+        );
+        let error =
+            collect_generated_intrinsic_requirements(&ctx, bf16, GeneratedMarkerPolicy::Required)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.contains("does not match the exact variant attributes"),
+            "{error}"
+        );
+
+        let f16 = register_mma(&mut ctx, RegisterMmaElementAttr::F16, Some("v1:i0106"));
+        let requirements =
+            collect_generated_intrinsic_requirements(&ctx, f16, GeneratedMarkerPolicy::Required)
+                .unwrap();
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].marker, "v1:i0106");
+
+        let crossed = register_mma(&mut ctx, RegisterMmaElementAttr::F16, None);
+        RegisterMmaOp::new(crossed)
+            .set_attr_nvvm_register_mma_b_element(&ctx, RegisterMmaElementAttr::Bf16);
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            crossed,
+            GeneratedMarkerPolicy::Optional,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("matches 0 generated catalog variants"),
+            "{error}"
+        );
+    }
 }

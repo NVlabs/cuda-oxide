@@ -55,6 +55,59 @@ pub(crate) fn convert_movmatrix_trans_b16(
     Ok(())
 }
 
+/// Result carrier used by generated register-MMA recipes.
+#[derive(Clone, Copy)]
+pub(crate) enum GeneratedMmaResultType {
+    F32,
+    F64,
+    I32,
+}
+
+/// Lower one generated register-MMA variant to convergent inline PTX.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_generated_register_mma(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    result_type: GeneratedMmaResultType,
+    result_count: usize,
+    expected_operands: usize,
+    template: &str,
+    constraints: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != expected_operands {
+        return pliron::input_err_noloc!(
+            "generated register MMA requires {expected_operands} operands, got {}",
+            operands.len()
+        );
+    }
+    let scalar_type = match result_type {
+        GeneratedMmaResultType::F32 => FP32Type::get(ctx).into(),
+        GeneratedMmaResultType::F64 => FP64Type::get(ctx).into(),
+        GeneratedMmaResultType::I32 => IntegerType::get(ctx, 32, Signedness::Signless).into(),
+    };
+    let result_type = llvm_types::StructType::get_unnamed(ctx, vec![scalar_type; result_count]);
+    let inline_asm = inline_asm_convergent(
+        ctx,
+        rewriter,
+        result_type.into(),
+        operands,
+        template,
+        constraints,
+    );
+    let aggregate = inline_asm.deref(ctx).get_result(0);
+    let mut results = Vec::with_capacity(result_count);
+    for index in 0..result_count {
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
+            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        results.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    rewriter.replace_operation_with_values(ctx, op, results);
+    Ok(())
+}
+
 /// Convert `mma_m16n8k16_f32_bf16` to one register-only inline PTX operation.
 ///
 /// Operand order is C[0..4], A[0..4], B[0..2]. The four D registers are

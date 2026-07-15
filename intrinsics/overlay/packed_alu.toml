@@ -1,6 +1,6 @@
 # Reviewed packed arithmetic.
 
-schema = 13
+schema = 14
 family = "packed_alu"
 
 [[intrinsic]]

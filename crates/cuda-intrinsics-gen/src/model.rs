@@ -233,6 +233,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default)]
+    pub register_mma: Option<RegisterMma>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -368,6 +370,79 @@ pub enum LdmatrixMemoryOrder {
 pub enum RuntimeValidation {
     Unexecuted,
     Executed,
+}
+
+/// Closed contract for register-only warp-level `mma.sync` operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMma {
+    pub shape: RegisterMmaShape,
+    pub accumulator: RegisterMmaAccumulator,
+    pub a_element: RegisterMmaElement,
+    pub b_element: RegisterMmaElement,
+    pub a_layout: RegisterMmaLayout,
+    pub b_layout: RegisterMmaLayout,
+    pub overflow: RegisterMmaOverflow,
+    pub participation: RegisterMmaParticipation,
+    pub adapter: RegisterMmaAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaShape {
+    M8n8k4,
+    M16n8k8,
+    M16n8k16,
+    M16n8k32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaAccumulator {
+    F32,
+    F64,
+    S32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaElement {
+    Bf16,
+    F16,
+    Tf32,
+    F64,
+    S8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaLayout {
+    Row,
+    Col,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaOverflow {
+    NotApplicable,
+    Wrapping,
+    Satfinite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaParticipation {
+    AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+}
+
+/// Rust `C, A, B` fragment shape used by the importer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaAdapter {
+    C4F32A4U32B2U32ToD4F32,
+    C2F64A1F64B1F64ToD2F64,
+    C4I32A4U32B2U32ToD4I32,
 }
 
 /// Closed semantic contract for the generated packed global atomic-add
@@ -1182,6 +1257,8 @@ pub struct CatalogIntrinsic {
     pub cp_async_mbarrier: Option<CpAsyncMbarrier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mbarrier_basic: Option<MbarrierBasic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub register_mma: Option<RegisterMma>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
