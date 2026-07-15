@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warp-level matrix intrinsic lowering (`movmatrix`, `mma.sync`).
+//! Warp-level matrix intrinsic lowering (`movmatrix`, `mma.sync`, `mma.sp`).
 
 use crate::convert::intrinsics::common::*;
 use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
@@ -75,10 +75,60 @@ pub(crate) fn convert_generated_register_mma(
     template: &str,
     constraints: &str,
 ) -> Result<()> {
+    convert_generated_mma(
+        ctx,
+        rewriter,
+        op,
+        result_type,
+        result_count,
+        expected_operands,
+        template,
+        constraints,
+        "generated register MMA",
+    )
+}
+
+/// Lower one generated sparse-MMA variant to convergent inline PTX.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convert_generated_sparse_mma(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    result_type: GeneratedMmaResultType,
+    result_count: usize,
+    expected_operands: usize,
+    template: &str,
+    constraints: &str,
+) -> Result<()> {
+    convert_generated_mma(
+        ctx,
+        rewriter,
+        op,
+        result_type,
+        result_count,
+        expected_operands,
+        template,
+        constraints,
+        "generated sparse MMA",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn convert_generated_mma(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    result_type: GeneratedMmaResultType,
+    result_count: usize,
+    expected_operands: usize,
+    template: &str,
+    constraints: &str,
+    family: &str,
+) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     if operands.len() != expected_operands {
         return pliron::input_err_noloc!(
-            "generated register MMA requires {expected_operands} operands, got {}",
+            "{family} requires {expected_operands} operands, got {}",
             operands.len()
         );
     }

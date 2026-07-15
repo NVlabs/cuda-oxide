@@ -155,6 +155,8 @@ pub struct OverlayShardFile {
     pub register_mma_int8: Option<RegisterMmaIntegerAdmission>,
     #[serde(default)]
     pub register_mma_b1: Option<RegisterMmaBinaryAdmission>,
+    #[serde(default)]
+    pub sparse_mma_int8: Option<SparseMmaIntegerAdmission>,
 }
 
 /// Compact admission for a closed dense integer register-MMA family.
@@ -195,6 +197,27 @@ pub struct RegisterMmaBinaryAdmission {
 pub struct RegisterMmaBinaryVariant {
     pub shape: RegisterMmaShape,
     pub operation: RegisterMmaOperation,
+}
+
+/// Compact admission for the base sparse INT8 register-MMA family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaIntegerAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<SparseMmaIntegerVariant>,
+}
+
+/// One reviewed member of the base sparse INT8 register-MMA family.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaIntegerVariant {
+    pub shape: SparseMmaShape,
+    pub a_element: SparseMmaElement,
+    pub b_element: SparseMmaElement,
+    pub overflow: SparseMmaOverflow,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -281,6 +304,8 @@ pub struct OverlayIntrinsic {
     pub mbarrier_basic: Option<MbarrierBasic>,
     #[serde(default)]
     pub register_mma: Option<RegisterMma>,
+    #[serde(default)]
+    pub sparse_mma: Option<SparseMma>,
     #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
@@ -519,6 +544,90 @@ pub enum RegisterMmaAdapter {
 #[serde(rename_all = "snake_case")]
 pub enum RegisterMmaCompatibilitySource {
     ExistingStub,
+    GeneratedStub,
+}
+
+/// Closed semantic contract for register-only sparse `mma.sp` operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMma {
+    pub shape: SparseMmaShape,
+    pub accumulator: SparseMmaAccumulator,
+    pub a_element: SparseMmaElement,
+    pub b_element: SparseMmaElement,
+    pub a_layout: SparseMmaLayout,
+    pub b_layout: SparseMmaLayout,
+    pub overflow: SparseMmaOverflow,
+    pub metadata: SparseMmaMetadata,
+    pub selector: SparseMmaSelector,
+    pub participation: SparseMmaParticipation,
+    pub adapter: SparseMmaAdapter,
+    pub compatibility_source: SparseMmaCompatibilitySource,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaShape {
+    M16n8k32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaAccumulator {
+    S32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaElement {
+    S8,
+    U8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaLayout {
+    Row,
+    Col,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaOverflow {
+    Wrapping,
+    Satfinite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaMetadata {
+    Standard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaSelector {
+    ImmediateZeroOrOne,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaParticipation {
+    AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+}
+
+/// Rust `C, A, B, metadata, selector` shape used by the importer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaAdapter {
+    C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32,
+}
+
+/// Where the stable `cuda_device::wmma` callable is defined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseMmaCompatibilitySource {
     GeneratedStub,
 }
 
@@ -1337,6 +1446,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub register_mma: Option<RegisterMma>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparse_mma: Option<SparseMma>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
     pub expected_ptx: InstructionPattern,
@@ -1942,6 +2053,40 @@ runtime_validation = "unexecuted"
                 toml::from_str::<RegisterMma>(&invalid).is_err(),
                 "{invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn sparse_mma_contract_closes_the_selector_and_metadata_modes() {
+        let valid = r#"
+shape = "m16n8k32"
+accumulator = "s32"
+a_element = "s8"
+b_element = "u8"
+a_layout = "row"
+b_layout = "col"
+overflow = "satfinite"
+metadata = "standard"
+selector = "immediate_zero_or_one"
+participation = "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes"
+adapter = "c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32"
+compatibility_source = "generated_stub"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<SparseMma>(valid).unwrap();
+        assert_eq!(parsed.metadata, SparseMmaMetadata::Standard);
+        assert_eq!(parsed.selector, SparseMmaSelector::ImmediateZeroOrOne);
+
+        for invalid in [
+            valid.replace(
+                "selector = \"immediate_zero_or_one\"",
+                "selector = \"runtime\"",
+            ),
+            valid.replace("metadata = \"standard\"", "metadata = \"ordered\""),
+            valid.replace("shape = \"m16n8k32\"", "shape = \"m16n8k64\""),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(toml::from_str::<SparseMma>(&invalid).is_err(), "{invalid}");
         }
     }
 

@@ -15,8 +15,10 @@ use crate::model::{
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
     PackedConversionSaturation, PackedConversionSourceFormat, ReduxAdapter, RegisterMmaAccumulator,
     RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, VoteAdapter,
-    VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation,
+    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
+    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
+    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
     WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
@@ -47,6 +49,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/cuda-device/src/generated/register_mma.rs".into(),
         render_compat_register_mma(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/cuda-device/src/generated/sparse_mma.rs".into(),
+        render_compat_sparse_mma(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/cuda-device/src/generated/sreg.rs".into(),
@@ -115,6 +121,10 @@ pub fn all_outputs(
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/register_mma.rs".into(),
         render_dialect_register_mma(catalog, catalog_sha256),
+    );
+    outputs.insert(
+        "crates/dialect-nvvm/src/ops/generated/sparse_mma.rs".into(),
+        render_dialect_sparse_mma(catalog, catalog_sha256),
     );
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/packed_atomic.rs".into(),
@@ -203,6 +213,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             ensure!(
                 (record.family == "ldmatrix" && record.ldmatrix.is_some())
                     || (record.family == "register_mma" && record.register_mma.is_some())
+                    || (record.family == "sparse_mma" && record.sparse_mma.is_some())
                     || (record.family == "packed_atomic" && record.packed_atomic.is_some())
                     || (record.family == "redux" && record.redux.is_some())
                     || (record.family == "vote" && record.vote.is_some())
@@ -248,6 +259,22 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_register_mma"
                     && record.register_mma.is_some(),
                 "{} is outside the closed generated register-MMA recipe",
+                record.id
+            ),
+            "sparse_mma" => ensure!(
+                record.rust.module == "matrix"
+                    && record.rust.arguments
+                        == ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"]
+                    && record.rust.result == "[i32; 4]"
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.semantics.memory == "none"
+                    && record.semantics.convergent
+                    && record.dialect.op_type == "SparseMmaOp"
+                    && record.dialect.op_name == "nvvm.sparse_mma"
+                    && record.lowering == "generated_sparse_mma"
+                    && record.sparse_mma.is_some(),
+                "{} is outside the closed generated sparse-MMA recipe",
                 record.id
             ),
             "packed_atomic" => ensure!(
@@ -722,6 +749,13 @@ fn register_mmas(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsi
         .filter(|record| record.family == "register_mma")
 }
 
+fn sparse_mmas(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "sparse_mma")
+}
+
 fn packed_atomics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
     catalog
         .intrinsics
@@ -1148,6 +1182,80 @@ fn register_mma_result_variant(record: &CatalogIntrinsic) -> &'static str {
     }
 }
 
+fn sparse_mma_attr_variants(
+    record: &CatalogIntrinsic,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    let mma = record.sparse_mma.as_ref().expect("sparse-MMA record");
+    let shape = match mma.shape {
+        SparseMmaShape::M16n8k32 => "SparseMmaShapeAttr::M16n8k32",
+    };
+    let accumulator = match mma.accumulator {
+        SparseMmaAccumulator::S32 => "SparseMmaAccumulatorAttr::S32",
+    };
+    let element = |element| match element {
+        SparseMmaElement::S8 => "SparseMmaElementAttr::S8",
+        SparseMmaElement::U8 => "SparseMmaElementAttr::U8",
+    };
+    let layout = |layout| match layout {
+        SparseMmaLayout::Row => "SparseMmaLayoutAttr::Row",
+        SparseMmaLayout::Col => "SparseMmaLayoutAttr::Col",
+    };
+    let overflow = match mma.overflow {
+        SparseMmaOverflow::Wrapping => "SparseMmaOverflowAttr::Wrapping",
+        SparseMmaOverflow::Satfinite => "SparseMmaOverflowAttr::Satfinite",
+    };
+    let metadata = match mma.metadata {
+        SparseMmaMetadata::Standard => "SparseMmaMetadataAttr::Standard",
+    };
+    let selector = match mma.selector {
+        SparseMmaSelector::ImmediateZeroOrOne => "SparseMmaSelectorAttr::ImmediateZeroOrOne",
+    };
+    (
+        shape,
+        accumulator,
+        element(mma.a_element),
+        element(mma.b_element),
+        layout(mma.a_layout),
+        layout(mma.b_layout),
+        overflow,
+        metadata,
+        selector,
+    )
+}
+
+fn sparse_mma_ptx_head(record: &CatalogIntrinsic) -> String {
+    let mut head = record.expected_ptx.mnemonic.clone();
+    for modifier in &record.expected_ptx.modifiers {
+        write!(head, ".{modifier}").unwrap();
+    }
+    head
+}
+
+fn sparse_mma_template(record: &CatalogIntrinsic) -> String {
+    let d = register_list(0, 4);
+    let c = register_list(4, 4);
+    let a = register_list(8, 2);
+    let b = register_list(10, 2);
+    format!(
+        "{} {d}, {a}, {b}, {c}, $12, $13;",
+        sparse_mma_ptx_head(record)
+    )
+}
+
+fn sparse_mma_constraints() -> &'static str {
+    "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,n"
+}
+
 fn intrinsic_marker(catalog: &CatalogFile, record: &CatalogIntrinsic) -> String {
     format!("v{}:{}", catalog.intrinsic_abi, record.rust.abi_id)
 }
@@ -1319,6 +1427,29 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// This weak memory operation does not replace a required barrier or fence.\n",
                 );
+            } else if let Some(mma) = &record.sparse_mma {
+                output.push_str(
+                    "/// All 32 warp lanes must execute the same `mma.sp.sync.aligned` instruction with the same qualifiers, and no lane may have exited.\n\
+                     /// `_arg0`, `_arg1`, `_arg2`, and `_arg3` must contain this lane's C, A, B, and sparse metadata fragments in the documented PTX layout.\n\
+                     /// `_arg4` must be the compile-time constant `0` or `1`.\n\
+                     /// The operation is register-only and is not a memory fence.\n",
+                );
+                writeln!(
+                    output,
+                    "/// See the [PTX sparse MMA fragment layouts]({}).",
+                    record.target.ptx_isa_url
+                )
+                .unwrap();
+                match mma.overflow {
+                    SparseMmaOverflow::Wrapping => {
+                        output.push_str(
+                            "/// Signed accumulator overflow wraps because this form omits `.satfinite`.\n",
+                        );
+                    }
+                    SparseMmaOverflow::Satfinite => output.push_str(
+                        "/// Signed accumulator overflow clamps to the finite `i32` range.\n",
+                    ),
+                }
             } else if let Some(mma) = &record.register_mma {
                 output.push_str(
                     "/// All 32 warp lanes must execute the same `mma.sync.aligned` instruction with the same qualifiers, and no lane may have exited.\n\
@@ -1563,6 +1694,85 @@ fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("    let _ = (c, a, b);\n");
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::wmma` to keep public paths stable.\n\n");
+    for record in sparse_mmas(catalog).filter(|record| {
+        record.sparse_mma.as_ref().is_some_and(|mma| {
+            mma.compatibility_source == SparseMmaCompatibilitySource::GeneratedStub
+        })
+    }) {
+        let mma = record.sparse_mma.as_ref().expect("sparse-MMA semantics");
+        let [path] = record.rust.compatibility_paths.as_slice() else {
+            panic!("generated sparse-MMA API requires one compatibility path");
+        };
+        assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
+        assert_eq!(
+            mma.adapter,
+            SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
+        );
+
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "/// Lowers to `{}`. C, A, B, and metadata are this lane's PTX fragments.",
+            sparse_mma_ptx_head(record)
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "/// Requires PTX {} and `{}`.",
+            record.target.minimum_ptx,
+            hardware_target_label(&record.target.hardware)
+        )
+        .unwrap();
+        match mma.overflow {
+            SparseMmaOverflow::Wrapping => {
+                output.push_str("/// Signed accumulator overflow wraps.\n");
+            }
+            SparseMmaOverflow::Satfinite => output
+                .push_str("/// Signed accumulator overflow clamps to the finite `i32` range.\n"),
+        }
+        output.push_str("///\n/// # Safety\n");
+        output.push_str(
+            "/// All 32 lanes must execute the same instruction with the same qualifiers, and no lane may have exited.\n",
+        );
+        output.push_str(
+            "/// `c`, `a`, `b`, and `metadata` must contain this lane's fragments in the documented PTX layout.\n",
+        );
+        output.push_str("/// `selector` must be the compile-time constant `0` or `1`.\n");
+        writeln!(
+            output,
+            "/// See the [PTX sparse MMA fragment layouts]({}).",
+            record.target.ptx_isa_url
+        )
+        .unwrap();
+        output.push_str("/// This register-only operation is not a memory fence.\n");
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        let arguments = ["c", "a", "b", "metadata", "selector"]
+            .into_iter()
+            .zip(&record.rust.arguments)
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "pub unsafe fn {}({arguments}) -> {} {{",
+            record.rust.name, record.rust.result
+        )
+        .unwrap();
+        output.push_str("    let _ = (c, a, b, metadata, selector);\n");
         writeln!(
             output,
             "    unreachable!(\"{} called outside CUDA kernel context\")",
@@ -2095,7 +2305,7 @@ fn render_compat_packed_conversion(
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod register_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use register_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
+        "mod active_mask;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
     output
 }
@@ -3330,6 +3540,168 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_sparse_mma(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r#"//! One structural operation for generated `mma.sp.sync` variants.
+
+use dialect_mir::ops::MirConstantOp;
+use pliron::{
+    attribute::Attribute,
+    builtin::{attributes::IntegerAttr, ops::ConstantOp, types::{IntegerType, Signedness}},
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.sparse_mma_shape", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaShapeAttr { M16n8k32 }
+
+#[pliron_attr(name = "nvvm.sparse_mma_accumulator", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaAccumulatorAttr { S32 }
+
+#[pliron_attr(name = "nvvm.sparse_mma_element", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaElementAttr { S8, U8 }
+
+#[pliron_attr(name = "nvvm.sparse_mma_layout", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaLayoutAttr { Row, Col }
+
+#[pliron_attr(name = "nvvm.sparse_mma_overflow", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaOverflowAttr { Wrapping, Satfinite }
+
+#[pliron_attr(name = "nvvm.sparse_mma_metadata", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaMetadataAttr { Standard }
+
+#[pliron_attr(name = "nvvm.sparse_mma_selector", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum SparseMmaSelectorAttr { ImmediateZeroOrOne }
+
+#[pliron_op(
+    name = "nvvm.sparse_mma",
+    format,
+    attributes = (
+        nvvm_sparse_mma_shape: SparseMmaShapeAttr,
+        nvvm_sparse_mma_accumulator: SparseMmaAccumulatorAttr,
+        nvvm_sparse_mma_a_element: SparseMmaElementAttr,
+        nvvm_sparse_mma_b_element: SparseMmaElementAttr,
+        nvvm_sparse_mma_a_layout: SparseMmaLayoutAttr,
+        nvvm_sparse_mma_b_layout: SparseMmaLayoutAttr,
+        nvvm_sparse_mma_overflow: SparseMmaOverflowAttr,
+        nvvm_sparse_mma_metadata: SparseMmaMetadataAttr,
+        nvvm_sparse_mma_selector: SparseMmaSelectorAttr
+    )
+)]
+pub struct SparseMmaOp;
+
+impl SparseMmaOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+}
+
+fn is_i32(ctx: &Context, value: Value, signedness: Signedness) -> bool {
+    value.get_type(ctx).deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == 32 && integer.signedness() == signedness)
+}
+
+fn constant_u32(ctx: &Context, value: Value) -> Option<u64> {
+    let defining_op = value.defining_op()?;
+    if let Some(constant) = Operation::get_op::<MirConstantOp>(defining_op, ctx) {
+        return constant.get_attr_value(ctx).map(|value| value.value().to_u64());
+    }
+    let constant = Operation::get_op::<ConstantOp>(defining_op, ctx)?;
+    constant
+        .get_value(ctx)
+        .downcast_ref::<IntegerAttr>()
+        .map(|value| value.value().to_u64())
+}
+
+impl Verify for SparseMmaOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        match (
+            self.get_attr_nvvm_sparse_mma_shape(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref(),
+            self.get_attr_nvvm_sparse_mma_selector(ctx).as_deref(),
+        ) {
+"#,
+    );
+    for record in sparse_mmas(catalog) {
+        let (
+            shape,
+            accumulator,
+            a_element,
+            b_element,
+            a_layout,
+            b_layout,
+            overflow,
+            metadata,
+            selector,
+        ) = sparse_mma_attr_variants(record);
+        writeln!(
+            output,
+            "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => (),"
+        )
+        .unwrap();
+    }
+    output.push_str(
+        r#"            _ => return verify_err!(op.loc(), "nvvm.sparse_mma has a missing or unsupported variant"),
+        }
+        let operands: Vec<_> = op.operands().collect();
+        if operands.len() != 10 || op.get_num_results() != 4 {
+            return verify_err!(op.loc(), "nvvm.sparse_mma has the wrong register count");
+        }
+        for (index, operand) in operands.iter().enumerate() {
+            let signedness = if index < 4 { Signedness::Signed } else { Signedness::Unsigned };
+            if !is_i32(ctx, *operand, signedness) {
+                return verify_err!(op.loc(), "nvvm.sparse_mma operand {} has the wrong carrier type", index);
+            }
+        }
+        for index in 0..4 {
+            if !is_i32(ctx, op.get_result(index), Signedness::Signed) {
+                return verify_err!(op.loc(), "nvvm.sparse_mma result {} has the wrong carrier type", index);
+            }
+        }
+        if !matches!(constant_u32(ctx, operands[9]), Some(0) | Some(1)) {
+            return verify_err!(op.loc(), "nvvm.sparse_mma selector must be the compile-time constant 0 or 1");
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    SparseMmaShapeAttr::register(ctx);
+    SparseMmaAccumulatorAttr::register(ctx);
+    SparseMmaElementAttr::register(ctx);
+    SparseMmaLayoutAttr::register(ctx);
+    SparseMmaOverflowAttr::register(ctx);
+    SparseMmaMetadataAttr::register(ctx);
+    SparseMmaSelectorAttr::register(ctx);
+    SparseMmaOp::register(ctx);
+}
+"#,
+    );
+    output
+}
+
 fn render_dialect_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -3659,6 +4031,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     if register_mmas(catalog).next().is_some() {
         output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
     }
+    if sparse_mmas(catalog).next().is_some() {
+        output.push_str(", SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr");
+    }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
@@ -3842,7 +4217,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
-    if register_mmas(catalog).next().is_some() {
+    if register_mmas(catalog).next().is_some() || sparse_mmas(catalog).next().is_some() {
         output.push_str(
             "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirExtractFieldOp}, types::MirArrayType};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
         );
@@ -4040,6 +4415,63 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str(
             "            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
+    for record in sparse_mmas(catalog) {
+        assert_eq!(
+            record.sparse_mma.as_ref().unwrap().adapter,
+            SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
+        );
+        let (
+            shape,
+            accumulator,
+            a_element,
+            b_element,
+            a_layout,
+            b_layout,
+            overflow,
+            metadata,
+            selector,
+        ) = sparse_mma_attr_variants(record);
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str("            require_arity(name, args.len(), 5, &loc)?;\n");
+        output.push_str(
+            "            if !matches!(&args[4], mir::Operand::Constant(_)) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"sparse MMA selector must be the compile-time constant 0 or 1\".to_owned()\n                    )\n                );\n            }\n",
+        );
+        output.push_str(
+            "            let (mut operands, last_op, result_ty, result_count) = import_generated_mma_operands(ctx, body, args, block_ptr, prev_op, value_map, loc.clone(), GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32)?;\n",
+        );
+        output.push_str(
+            "            let (metadata, last_op) = rvalue::translate_operand(\n                ctx, body, &args[3], value_map, block_ptr, Some(last_op), loc.clone(),\n            )?;\n            operands.push(metadata);\n            let (selector_value, last_op) = rvalue::translate_operand(\n                ctx, body, &args[4], value_map, block_ptr, last_op, loc.clone(),\n            )?;\n            operands.push(selector_value);\n",
+        );
+        output.push_str(
+            "            let mma = Operation::new(ctx, SparseMmaOp::get_concrete_op_info(), vec![result_ty; result_count], operands, vec![], 0);\n            mma.deref_mut(ctx).set_loc(loc.clone());\n            let mma = SparseMmaOp::new(mma);\n",
+        );
+        writeln!(
+            output,
+            "            mma.set_attr_nvvm_sparse_mma_shape(ctx, {shape});\n            mma.set_attr_nvvm_sparse_mma_accumulator(ctx, {accumulator});\n            mma.set_attr_nvvm_sparse_mma_a_element(ctx, {a_element});\n            mma.set_attr_nvvm_sparse_mma_b_element(ctx, {b_element});\n            mma.set_attr_nvvm_sparse_mma_a_layout(ctx, {a_layout});\n            mma.set_attr_nvvm_sparse_mma_b_layout(ctx, {b_layout});\n            mma.set_attr_nvvm_sparse_mma_overflow(ctx, {overflow});\n            mma.set_attr_nvvm_sparse_mma_metadata(ctx, {metadata});\n            mma.set_attr_nvvm_sparse_mma_selector(ctx, {selector});"
+        )
+        .unwrap();
+        output.push_str("            let mma = mma.get_operation();\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, mma, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, mma, block_ptr, last_op);\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
         );
         writeln!(
             output,
@@ -4598,7 +5030,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
     );
-    if register_mmas(catalog).next().is_some() {
+    if register_mmas(catalog).next().is_some() || sparse_mmas(catalog).next().is_some() {
         output.push_str(
             r#"
 
@@ -4609,6 +5041,7 @@ enum GeneratedMmaImportAdapter {
     C2I32A1U32B1U32ToD2I32,
     C4I32A4U32B2U32ToD4I32,
     C4I32A2U32B1U32ToD4I32,
+    C4I32A2U32B2U32ToD4I32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4684,6 +5117,8 @@ fn import_generated_mma_operands(
                 (i32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, i32_ty, 4),
             GeneratedMmaImportAdapter::C4I32A2U32B1U32ToD4I32 =>
                 (i32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, i32_ty, 4),
+            GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32 =>
+                (i32_ty, 4, u32_ty, 2, true, u32_ty, 2, true, i32_ty, 4),
         };
     let (c_array, last_op) = rvalue::translate_operand(
         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),
@@ -4808,7 +5243,7 @@ fn bundle_generated_mma_results(
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
+        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2}, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
     );
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
@@ -4824,6 +5259,9 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if register_mmas(catalog).next().is_some() {
         output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
+    }
+    if sparse_mmas(catalog).next().is_some() {
+        output.push_str(", SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr");
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -5059,6 +5497,34 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.register_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_register_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
+        );
+    }
+    if sparse_mmas(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for SparseMmaOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_sparse_mma_shape(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_selector(ctx).as_deref(),\n        ) {\n",
+        );
+        for record in sparse_mmas(catalog) {
+            let (
+                shape,
+                accumulator,
+                a_element,
+                b_element,
+                a_layout,
+                b_layout,
+                overflow,
+                metadata,
+                selector,
+            ) = sparse_mma_attr_variants(record);
+            writeln!(
+                output,
+                "            (Some(&{shape}), Some(&{accumulator}), Some(&{a_element}), Some(&{b_element}), Some(&{a_layout}), Some(&{b_layout}), Some(&{overflow}), Some(&{metadata}), Some(&{selector})) => (GeneratedMmaResultType::I32, 4, 10, {:?}, {:?}),",
+                sparse_mma_template(record),
+                sparse_mma_constraints(),
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.sparse_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_sparse_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
         );
     }
     if packed_atomics(catalog).next().is_some() {
@@ -5555,6 +6021,41 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             layout(mma.b_layout),
         );
     }
+    if let Some(mma) = &record.sparse_mma {
+        let shape = match mma.shape {
+            SparseMmaShape::M16n8k32 => "GeneratedSparseMmaShape::M16n8k32",
+        };
+        let accumulator = match mma.accumulator {
+            SparseMmaAccumulator::S32 => "GeneratedSparseMmaAccumulator::S32",
+        };
+        let element = |element| match element {
+            SparseMmaElement::S8 => "GeneratedSparseMmaElement::S8",
+            SparseMmaElement::U8 => "GeneratedSparseMmaElement::U8",
+        };
+        let layout = |layout| match layout {
+            SparseMmaLayout::Row => "GeneratedSparseMmaLayout::Row",
+            SparseMmaLayout::Col => "GeneratedSparseMmaLayout::Col",
+        };
+        let overflow = match mma.overflow {
+            SparseMmaOverflow::Wrapping => "GeneratedSparseMmaOverflow::Wrapping",
+            SparseMmaOverflow::Satfinite => "GeneratedSparseMmaOverflow::Satfinite",
+        };
+        let metadata = match mma.metadata {
+            SparseMmaMetadata::Standard => "GeneratedSparseMmaMetadata::Standard",
+        };
+        let selector = match mma.selector {
+            SparseMmaSelector::ImmediateZeroOrOne => {
+                "GeneratedSparseMmaSelector::ImmediateZeroOrOne"
+            }
+        };
+        return format!(
+            "GeneratedIntrinsicVariant::SparseMma {{ shape: {shape}, accumulator: {accumulator}, a_element: {}, b_element: {}, a_layout: {}, b_layout: {}, overflow: {overflow}, metadata: {metadata}, selector: {selector} }}",
+            element(mma.a_element),
+            element(mma.b_element),
+            layout(mma.a_layout),
+            layout(mma.b_layout),
+        );
+    }
     let Some(ldmatrix) = &record.ldmatrix else {
         return "GeneratedIntrinsicVariant::Scalar".to_owned();
     };
@@ -5633,6 +6134,16 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         "RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator,",
         "RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator,",
     );
+    replace_exact_render_fragment(
+        &mut output,
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+    );
+    replace_exact_render_fragment(
+        &mut output,
+        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}",
+        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n}",
+    );
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
             Some(llvm) => {
@@ -5699,8 +6210,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8",
         "GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::B1 => actual == Some(&RegisterMmaElementAttr::B1),\n                GeneratedRegisterMmaElement::S4 => actual == Some(&RegisterMmaElementAttr::S4),\n                GeneratedRegisterMmaElement::U4 => actual == Some(&RegisterMmaElementAttr::U4),\n                GeneratedRegisterMmaElement::S8",
     );
+    replace_exact_render_fragment(
+        &mut output,
+        "                && overflow_matches\n        }\n    }\n}\n",
+        "                && overflow_matches\n        }\n        GeneratedIntrinsicVariant::SparseMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow, metadata, selector } => {\n            let Some(op) = Operation::get_op::<SparseMmaOp>(operation, ctx) else { return false; };\n            let element_matches = |expected, actual: Option<&SparseMmaElementAttr>| match expected {\n                GeneratedSparseMmaElement::S8 => actual == Some(&SparseMmaElementAttr::S8),\n                GeneratedSparseMmaElement::U8 => actual == Some(&SparseMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&SparseMmaLayoutAttr>| match expected {\n                GeneratedSparseMmaLayout::Row => actual == Some(&SparseMmaLayoutAttr::Row),\n                GeneratedSparseMmaLayout::Col => actual == Some(&SparseMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedSparseMmaOverflow::Wrapping => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Wrapping),\n                GeneratedSparseMmaOverflow::Satfinite => op.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref() == Some(&SparseMmaOverflowAttr::Satfinite),\n            };\n            matches!(shape, GeneratedSparseMmaShape::M16n8k32)\n                && op.get_attr_nvvm_sparse_mma_shape(ctx).as_deref() == Some(&SparseMmaShapeAttr::M16n8k32)\n                && matches!(accumulator, GeneratedSparseMmaAccumulator::S32)\n                && op.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref() == Some(&SparseMmaAccumulatorAttr::S32)\n                && element_matches(a_element, op.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n                && matches!(metadata, GeneratedSparseMmaMetadata::Standard)\n                && op.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref() == Some(&SparseMmaMetadataAttr::Standard)\n                && matches!(selector, GeneratedSparseMmaSelector::ImmediateZeroOrOne)\n                && op.get_attr_nvvm_sparse_mma_selector(ctx).as_deref() == Some(&SparseMmaSelectorAttr::ImmediateZeroOrOne)\n        }\n    }\n}\n",
+    );
     output.push_str(
-        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
+        "\nuse dialect_nvvm::ops::{LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
@@ -6269,6 +6785,39 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         output.push_str("  ret i32 %result\n}\n");
+    } else if record.sparse_mma.is_some() {
+        let result = "{ i32, i32, i32, i32 }";
+        let parameters = (0..4)
+            .map(|index| format!("i32 %c{index}"))
+            .chain((0..2).map(|index| format!("i32 %a{index}")))
+            .chain((0..2).map(|index| format!("i32 %b{index}")))
+            .chain(std::iter::once("i32 %metadata".to_owned()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = (0..4)
+            .map(|index| format!("i32 %c{index}"))
+            .chain((0..2).map(|index| format!("i32 %a{index}")))
+            .chain((0..2).map(|index| format!("i32 %b{index}")))
+            .chain(std::iter::once("i32 %metadata".to_owned()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for selector in [0, 1] {
+            writeln!(
+                output,
+                "define {result} @probe_{}_selector_{selector}({parameters}) #0 {{",
+                record.id
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "  %result = call {result} asm sideeffect {:?}, {:?}({arguments}, i32 {selector}) #0",
+                sparse_mma_template(record),
+                sparse_mma_constraints(),
+            )
+            .unwrap();
+            writeln!(output, "  ret {result} %result\n}}").unwrap();
+        }
+        output.push_str("\nattributes #0 = { convergent }\n");
     } else if record.register_mma.is_some() {
         let mma = record.register_mma.as_ref().unwrap();
         let (c_count, a_count, b_count, d_count) = register_mma_fragment_counts(record);
@@ -6435,6 +6984,25 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` takes fragments in C, A, B order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
             record.id,
             register_mma_ptx_head(record),
+        )
+        .unwrap();
+    }
+    output.push_str("\n## Sparse-MMA contracts\n\n");
+    for record in sparse_mmas(catalog) {
+        let mma = record.sparse_mma.as_ref().unwrap();
+        let overflow = match mma.overflow {
+            SparseMmaOverflow::Wrapping => "wrapping",
+            SparseMmaOverflow::Satfinite => "finite saturation",
+        };
+        let runtime = match mma.runtime_validation {
+            RuntimeValidation::Unexecuted => "not executed on a GPU",
+            RuntimeValidation::Executed => "executed on a GPU",
+        };
+        writeln!(
+            output,
+            "- `{}` takes fragments in C, A, B, metadata, selector order and lowers to one convergent, register-only `{}` instruction. The selector must be the compile-time constant `0` or `1`. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+            record.id,
+            sparse_mma_ptx_head(record),
         )
         .unwrap();
     }
@@ -6730,6 +7298,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .or_else(|| {
                 record
                     .register_mma
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
+            .or_else(|| {
+                record
+                    .sparse_mma
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
@@ -7889,7 +8463,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 162);
+        assert_eq!(catalog.intrinsics.len(), 170);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -8097,6 +8671,91 @@ mod tests {
         )));
         assert!(outputs.contains_key(&PathBuf::from(
             "crates/dialect-nvvm/src/ops/generated/register_mma.rs"
+        )));
+    }
+
+    #[test]
+    fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let records = sparse_mmas(&catalog).collect::<Vec<_>>();
+        assert_eq!(records.len(), 8);
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("must be the compile-time constant `0` or `1`"));
+        for record in &records {
+            assert!(raw.contains(&format!(
+                "pub unsafe fn {}(_arg0: [i32; 4], _arg1: [u32; 2], _arg2: [u32; 2], _arg3: u32, _arg4: u32) -> [i32; 4]",
+                record.rust.abi_id
+            )));
+        }
+
+        let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 8);
+        assert!(
+            compatibility
+                .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
+        );
+
+        let dialect = render_dialect_sparse_mma(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct SparseMmaOp").count(), 1);
+        assert!(dialect.contains("operands.len() != 10 || op.get_num_results() != 4"));
+        assert!(dialect.contains("Some(0) | Some(1)"));
+        assert!(dialect.contains("SparseMmaElementAttr::S8"));
+        assert!(dialect.contains("SparseMmaElementAttr::U8"));
+        assert!(dialect.contains("SparseMmaOverflowAttr::Wrapping"));
+        assert!(dialect.contains("SparseMmaOverflowAttr::Satfinite"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("sparse MMA selector must be the compile-time constant 0 or 1"));
+        assert!(importer.contains("GeneratedMmaImportAdapter::C4I32A2U32B2U32ToD4I32"));
+        assert!(importer.contains("operands.push(metadata)"));
+        assert!(importer.contains("operands.push(selector_value)"));
+        assert!(importer.contains("SparseMmaOp::get_concrete_op_info"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for SparseMmaOp")
+                .count(),
+            1
+        );
+        assert!(lowering.contains("convert_generated_sparse_mma"));
+        assert!(lowering.contains(sparse_mma_constraints()));
+        for record in &records {
+            assert!(lowering.contains(&sparse_mma_template(record)));
+        }
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains("GeneratedIntrinsicVariant::SparseMma"));
+        assert!(targets.contains("Operation::get_op::<SparseMmaOp>"));
+        assert!(targets.contains("get_attr_nvvm_sparse_mma_selector"));
+        assert!(targets.contains("GeneratedSparseMmaSelector::ImmediateZeroOrOne"));
+
+        for record in &records {
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains(&format!("probe_{}_selector_0", record.id)));
+            assert!(probe.contains(&format!("probe_{}_selector_1", record.id)));
+            assert_eq!(probe.matches("asm sideeffect").count(), 2);
+            assert!(probe.contains(&sparse_mma_template(record)));
+            assert!(probe.contains(sparse_mma_constraints()));
+            assert!(probe.contains("attributes #0 = { convergent }"));
+        }
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## Sparse-MMA contracts"));
+        assert!(reference.contains("C, A, B, metadata, selector order"));
+        for record in &records {
+            assert!(reference.contains(&format!("- `{}`: runtime `unexecuted`", record.id)));
+        }
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/sparse_mma.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/sparse_mma.rs"
         )));
     }
 }

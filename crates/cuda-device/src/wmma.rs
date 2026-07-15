@@ -445,3 +445,4 @@ pub unsafe fn mma_m16n8k32_s32_s8(c: [i32; 4], a: [u32; 4], b: [u32; 2]) -> [i32
 }
 
 include!("generated/register_mma.rs");
+include!("generated/sparse_mma.rs");

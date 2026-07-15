@@ -29,11 +29,14 @@ use crate::model::{
     RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaBinaryAdmission,
     RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaIntegerAdmission,
     RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation,
-    RegisterMmaShape, RuntimeValidation, VoteAdapter, VoteMode, VoteParticipation,
-    WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
-    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
-    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
-    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
+    RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaIntegerAdmission, SparseMmaLayout,
+    SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
+    SparseMmaShape, VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter,
+    WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
+    WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
+    WarpShuffleValueKind,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -42,9 +45,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 23;
-const OVERLAY_SHARD_SCHEMA: u32 = 19;
-pub(crate) const CATALOG_SCHEMA: u32 = 22;
+const OVERLAY_SCHEMA: u32 = 24;
+const OVERLAY_SHARD_SCHEMA: u32 = 20;
+pub(crate) const CATALOG_SCHEMA: u32 = 23;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -243,9 +246,11 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let int4_mma_admission = shard.register_mma_int4.take();
         let int8_mma_admission = shard.register_mma_int8.take();
         let binary_mma_admission = shard.register_mma_b1.take();
+        let sparse_mma_admission = shard.sparse_mma_int8.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
-            + usize::from(binary_mma_admission.is_some());
+            + usize::from(binary_mma_admission.is_some())
+            + usize::from(sparse_mma_admission.is_some());
         ensure!(
             compact_mma_count <= 1,
             "overlay shard {} contains more than one compact MMA admission",
@@ -269,6 +274,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact binary MMA admission must be the only content of a register_mma shard"
             );
             shard.intrinsics = expand_register_mma_binary_admission(&admission)?;
+        }
+        if let Some(admission) = sparse_mma_admission {
+            ensure!(
+                shard.family == "sparse_mma" && shard.intrinsics.is_empty(),
+                "compact sparse MMA admission must be the only content of a sparse_mma shard"
+            );
+            shard.intrinsics = expand_sparse_mma_integer_admission(&admission)?;
         }
         ensure!(
             !shard.intrinsics.is_empty(),
@@ -362,7 +374,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -378,6 +390,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.cp_async_mbarrier,
             record.mbarrier_basic,
             record.register_mma,
+            record.sparse_mma,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -726,11 +739,20 @@ fn validate_policy(
             policy,
             declaration.context("register_mma requires imported LLVM declaration")?,
         )?,
+        "sparse_mma" => validate_sparse_mma_policy(
+            policy,
+            declaration.context("sparse_mma requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
         (policy.family == "register_mma") == policy.register_mma.is_some(),
         "{} mixes the register-MMA contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "sparse_mma") == policy.sparse_mma.is_some(),
+        "{} mixes the sparse-MMA contract with another generated family",
         policy.id
     );
     ensure!(
@@ -791,10 +813,11 @@ fn validate_policy(
             .properties
             .iter()
             .any(|property| property == "IntrConvergent");
-        let convergence_supplied_by_ptx = policy.family == "register_mma"
-            && policy.register_mma.is_some()
-            && policy.convergent
-            && !imported_convergent;
+        let convergence_supplied_by_ptx =
+            matches!(policy.family.as_str(), "register_mma" | "sparse_mma")
+                && (policy.register_mma.is_some() || policy.sparse_mma.is_some())
+                && policy.convergent
+                && !imported_convergent;
         ensure!(
             imported_convergent == policy.convergent || convergence_supplied_by_ptx,
             "{} convergence mismatch: imported {}, overlay {}",
@@ -804,7 +827,8 @@ fn validate_policy(
         );
         let selectionless_closed_family = (policy.family == "packed_conversion"
             && policy.packed_conversion.is_some())
-            || (policy.family == "register_mma" && policy.register_mma.is_some());
+            || (policy.family == "register_mma" && policy.register_mma.is_some())
+            || (policy.family == "sparse_mma" && policy.sparse_mma.is_some());
         ensure!(
             !declaration.selections.is_empty() || selectionless_closed_family,
             "{} has a declaration but no NVPTX TableGen selection record",
@@ -819,7 +843,7 @@ fn validate_policy(
             "vote" | "warp_barrier" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
-            "packed_conversion" | "register_mma" => 0,
+            "packed_conversion" | "register_mma" | "sparse_mma" => 0,
             "cp_async_copy"
                 if policy
                     .cp_async_copy
@@ -6657,6 +6681,7 @@ fn expand_register_mma_integer_admission(
             cp_async_mbarrier: None,
             mbarrier_basic: None,
             register_mma: Some(mma),
+            sparse_mma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -6829,6 +6854,7 @@ fn expand_register_mma_binary_admission(
             cp_async_mbarrier: None,
             mbarrier_basic: None,
             register_mma: Some(mma),
+            sparse_mma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -6849,6 +6875,386 @@ fn expand_register_mma_binary_admission(
         });
     }
     Ok(records)
+}
+
+struct SparseMmaRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    ptx_modifiers: Vec<&'static str>,
+}
+
+fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
+    use SparseMmaElement::{S8, U8};
+    use SparseMmaOverflow::{Satfinite, Wrapping};
+
+    if mma.shape != SparseMmaShape::M16n8k32
+        || mma.accumulator != SparseMmaAccumulator::S32
+        || mma.a_layout != SparseMmaLayout::Row
+        || mma.b_layout != SparseMmaLayout::Col
+        || mma.metadata != SparseMmaMetadata::Standard
+        || mma.selector != SparseMmaSelector::ImmediateZeroOrOne
+        || mma.participation
+            != SparseMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
+        || mma.adapter != SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
+        || mma.compatibility_source != SparseMmaCompatibilitySource::GeneratedStub
+    {
+        return None;
+    }
+
+    let (id, abi_id, operation_key, source_record, llvm_symbol) =
+        match (mma.a_element, mma.b_element, mma.overflow) {
+            (S8, S8, Wrapping) => (
+                "mma_sp_m16n8k32_s32_s8",
+                "i0163",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.wrapping.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_s8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.s8",
+            ),
+            (S8, U8, Wrapping) => (
+                "mma_sp_m16n8k32_s32_s8_u8",
+                "i0164",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.wrapping.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_s8_u8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.s8.u8",
+            ),
+            (U8, U8, Wrapping) => (
+                "mma_sp_m16n8k32_s32_u8",
+                "i0165",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.wrapping.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_u8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.u8",
+            ),
+            (U8, S8, Wrapping) => (
+                "mma_sp_m16n8k32_s32_u8_s8",
+                "i0166",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.wrapping.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_u8_s8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.u8.s8",
+            ),
+            (S8, S8, Satfinite) => (
+                "mma_sp_m16n8k32_s32_s8_satfinite",
+                "i0167",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.satfinite.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_s8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.s8",
+            ),
+            (S8, U8, Satfinite) => (
+                "mma_sp_m16n8k32_s32_s8_u8_satfinite",
+                "i0168",
+                "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.satfinite.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_s8_u8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.s8.u8",
+            ),
+            (U8, U8, Satfinite) => (
+                "mma_sp_m16n8k32_s32_u8_satfinite",
+                "i0169",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.satfinite.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_u8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.u8",
+            ),
+            (U8, S8, Satfinite) => (
+                "mma_sp_m16n8k32_s32_u8_s8_satfinite",
+                "i0170",
+                "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.satfinite.standard_metadata",
+                "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_u8_s8",
+                "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.u8.s8",
+            ),
+        };
+    let mut ptx_modifiers = vec!["sp", "sync", "aligned", "m16n8k32", "row", "col"];
+    if mma.overflow == Satfinite {
+        ptx_modifiers.push("satfinite");
+    }
+    ptx_modifiers.extend([
+        "s32",
+        match mma.a_element {
+            S8 => "s8",
+            U8 => "u8",
+        },
+        match mma.b_element {
+            S8 => "s8",
+            U8 => "u8",
+        },
+        "s32",
+    ]);
+    Some(SparseMmaRecipe {
+        id,
+        abi_id,
+        operation_key,
+        source_record,
+        llvm_symbol,
+        ptx_modifiers,
+    })
+}
+
+fn expand_sparse_mma_integer_admission(
+    admission: &SparseMmaIntegerAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        !admission.variants.is_empty(),
+        "compact sparse INT8 MMA admission has no variants"
+    );
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "sparse INT8 MMA runtime validation may be marked executed only with GPU evidence"
+    );
+
+    let mut seen = BTreeSet::new();
+    let mut records = Vec::with_capacity(admission.variants.len());
+    for variant in &admission.variants {
+        ensure!(
+            seen.insert((
+                variant.shape,
+                variant.a_element,
+                variant.b_element,
+                variant.overflow,
+            )),
+            "compact sparse INT8 MMA admission contains a duplicate variant"
+        );
+        let mma = SparseMma {
+            shape: variant.shape,
+            accumulator: SparseMmaAccumulator::S32,
+            a_element: variant.a_element,
+            b_element: variant.b_element,
+            a_layout: SparseMmaLayout::Row,
+            b_layout: SparseMmaLayout::Col,
+            overflow: variant.overflow,
+            metadata: SparseMmaMetadata::Standard,
+            selector: SparseMmaSelector::ImmediateZeroOrOne,
+            participation:
+                SparseMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+            adapter: SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32,
+            compatibility_source: SparseMmaCompatibilitySource::GeneratedStub,
+            runtime_validation: admission.runtime_validation,
+        };
+        let recipe = sparse_mma_recipe(&mma).with_context(
+            || "compact sparse INT8 MMA admission requests a variant outside the closed recipe set",
+        )?;
+        let signedness = |element| match element {
+            SparseMmaElement::S8 => "signed",
+            SparseMmaElement::U8 => "unsigned",
+        };
+        let overflow = match variant.overflow {
+            SparseMmaOverflow::Wrapping => "wrapping",
+            SparseMmaOverflow::Satfinite => "saturating",
+        };
+        let summary = format!(
+            "Multiplies warp-distributed sparse {} A and {} B INT8 fragments and adds a {overflow} s32 accumulator.",
+            signedness(variant.a_element),
+            signedness(variant.b_element),
+        );
+        let dialect_operands = [
+            "i32", "i32", "i32", "i32", "u32", "u32", "u32", "u32", "u32", "u32",
+        ];
+
+        records.push(OverlayIntrinsic {
+            id: recipe.id.into(),
+            abi_id: recipe.abi_id.into(),
+            operation_key: recipe.operation_key.into(),
+            family: "sparse_mma".into(),
+            source: None,
+            source_record: Some(recipe.source_record.into()),
+            rust_module: "matrix".into(),
+            rust_name: recipe.id.into(),
+            rust_arguments: vec![
+                "[i32; 4]".into(),
+                "[u32; 2]".into(),
+                "[u32; 2]".into(),
+                "u32".into(),
+                "u32".into(),
+            ],
+            rust_result: "[i32; 4]".into(),
+            safe: false,
+            must_use: true,
+            safe_allowlist_reason: None,
+            public_rust_path: format!("cuda_intrinsics::matrix::{}", recipe.id),
+            compatibility_rust_paths: vec![format!("cuda_device::wmma::{}", recipe.id)],
+            dialect_op_type: "SparseMmaOp".into(),
+            dialect_op_name: "nvvm.sparse_mma".into(),
+            dialect_operands: dialect_operands.map(str::to_owned).into(),
+            dialect_results: vec!["i32".into(); 4],
+            llvm_symbol: Some(recipe.llvm_symbol.into()),
+            resolved_llvm_symbol: None,
+            llvm_arguments: vec!["i32".into(); 10],
+            llvm_results: vec!["i32".into(); 4],
+            pure: false,
+            memory: "none".into(),
+            convergent: true,
+            execution_scope: "warp".into(),
+            minimum_ptx: "7.1".into(),
+            minimum_sm: Some("sm_80".into()),
+            ptx_result: "[i32; 4]".into(),
+            targets: "all".into(),
+            ptx_isa_version: "9.3".into(),
+            ptx_isa_section: "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp".into(),
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp".into(),
+            lowering: "generated_sparse_mma".into(),
+            backend_lowerings: vec![
+                OverlayBackendLowering {
+                    backend: IntrinsicBackend::LlvmNvptx,
+                    mechanism: BackendLoweringMechanism::InlinePtx,
+                    evidence_profile: admission.llvm_evidence_profile.clone(),
+                    minimum_ptx: Some("7.1".into()),
+                    minimum_sm: Some("sm_80".into()),
+                },
+                OverlayBackendLowering {
+                    backend: IntrinsicBackend::LibNvvm,
+                    mechanism: BackendLoweringMechanism::InlinePtx,
+                    evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                    minimum_ptx: Some("7.1".into()),
+                    minimum_sm: Some("sm_80".into()),
+                },
+            ],
+            packed_atomic: None,
+            redux: None,
+            vote: None,
+            active_mask: None,
+            warp_match: None,
+            warp_barrier: None,
+            warp_shuffle: None,
+            dot_product: None,
+            packed_alu: None,
+            packed_conversion: None,
+            cp_async_copy: None,
+            cp_async_control: None,
+            cp_async_mbarrier: None,
+            mbarrier_basic: None,
+            register_mma: None,
+            sparse_mma: Some(mma),
+            ldmatrix_variant: None,
+            ldmatrix_safety: None,
+            ldmatrix_adapter: None,
+            selected_address_space: None,
+            expected_ptx: InstructionPattern {
+                mnemonic: "mma".into(),
+                modifiers: recipe
+                    .ptx_modifiers
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                operands: vec![
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::Register,
+                    OperandPattern::Immediate,
+                ],
+            },
+            summary,
+        });
+    }
+    Ok(records)
+}
+
+fn validate_sparse_mma_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let mma = policy
+        .sparse_mma
+        .as_ref()
+        .with_context(|| format!("{} has no closed sparse-MMA contract", policy.id))?;
+    let recipe = sparse_mma_recipe(mma)
+        .with_context(|| format!("{} requests an unsupported sparse-MMA variant", policy.id))?;
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} sparse-MMA identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "matrix"
+            && policy.rust_name == recipe.id
+            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{}", recipe.id)
+            && policy.rust_arguments == ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"]
+            && policy.rust_result == "[i32; 4]"
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{}", recipe.id)],
+        "{} must preserve its unsafe must-use Rust sparse-MMA API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "SparseMmaOp"
+            && policy.dialect_op_name == "nvvm.sparse_mma"
+            && policy.dialect_operands
+                == [
+                    "i32", "i32", "i32", "i32", "u32", "u32", "u32", "u32", "u32", "u32"
+                ]
+            && policy.dialect_results == ["i32"; 4]
+            && policy.llvm_arguments == ["i32"; 10]
+            && policy.llvm_results == ["i32"; 4]
+            && policy.ptx_result == "[i32; 4]"
+            && policy.lowering == "generated_sparse_mma",
+        "{} sparse-MMA carrier or lowering adapter disagrees with its recipe",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "none"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "7.1"
+            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.targets == "all",
+        "{} sparse-MMA effects or target floor disagree with PTX",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp",
+        "{} sparse-MMA PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA_SP"]
+            && declaration.properties
+                == [
+                    "ImmArg<arg9>",
+                    "IntrNoCallback",
+                    "IntrNoMem",
+                    "Range<arg9,0,2>"
+                ]
+            && declaration.selections.is_empty(),
+        "{} imported sparse MMA declaration changed its class, immediate range, properties, or selectionless contract",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "mma"
+            && policy.expected_ptx.modifiers == recipe.ptx_modifiers
+            && policy.expected_ptx.operands
+                == [
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::Register,
+                    OperandPattern::Immediate,
+                ],
+        "{} expected PTX does not match its exact sparse-MMA spelling",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, "7.1", "sm_80"),
+            (IntrinsicBackend::LibNvvm, "7.1", "sm_80"),
+        ],
+        "sparse MMA",
+    )?;
+    ensure_no_other_family_contract(policy, "sparse MMA")?;
+    Ok(())
 }
 
 fn validate_register_mma_policy(
@@ -7018,7 +7424,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
             && (policy.family == "mbarrier_basic") == policy.mbarrier_basic.is_some()
-            && (policy.family == "register_mma") == policy.register_mma.is_some(),
+            && (policy.family == "register_mma") == policy.register_mma.is_some()
+            && (policy.family == "sparse_mma") == policy.sparse_mma.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -7717,6 +8124,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(mma) = &policy.sparse_mma {
+        match mma.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} sparse-MMA runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} sparse-MMA runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -7837,6 +8260,7 @@ fn resolve_record(
         cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
         mbarrier_basic: policy.mbarrier_basic.clone(),
         register_mma: policy.register_mma.clone(),
+        sparse_mma: policy.sparse_mma.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -7954,6 +8378,7 @@ mod tests {
             cp_async_mbarrier: None,
             mbarrier_basic: None,
             register_mma: None,
+            sparse_mma: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -8929,8 +9354,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 23);
-        assert_eq!(overlay.intrinsics.len(), 162);
+        assert_eq!(overlay.shards.len(), 24);
+        assert_eq!(overlay.intrinsics.len(), 170);
         assert_eq!(
             overlay
                 .intrinsics
@@ -8978,6 +9403,14 @@ mod tests {
                 .filter(|record| record.family == "register_mma")
                 .count(),
             58
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "sparse_mma")
+                .count(),
+            8
         );
         assert_eq!(
             overlay
@@ -9436,6 +9869,103 @@ mod tests {
             .unwrap()
             .a_element = RegisterMmaElement::U4;
         assert!(validate_imported_policy(&wrong_binary_element, binary_declaration).is_err());
+    }
+
+    #[test]
+    fn pinned_sparse_mma_records_close_the_selector_and_imported_range() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let records = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "sparse_mma")
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 8);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.abi_id.as_str())
+                .collect::<BTreeSet<_>>(),
+            (163..=170)
+                .map(|id| format!("i{id:04}"))
+                .collect::<BTreeSet<_>>()
+                .iter()
+                .map(String::as_str)
+                .collect()
+        );
+
+        let variants = records
+            .iter()
+            .map(|record| {
+                let mma = record.sparse_mma.as_ref().unwrap();
+                assert_eq!(mma.shape, SparseMmaShape::M16n8k32);
+                assert_eq!(mma.accumulator, SparseMmaAccumulator::S32);
+                assert_eq!(mma.metadata, SparseMmaMetadata::Standard);
+                assert_eq!(mma.selector, SparseMmaSelector::ImmediateZeroOrOne);
+                assert_eq!(
+                    mma.adapter,
+                    SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
+                );
+                assert_eq!(record.minimum_ptx, "7.1");
+                assert_eq!(record.minimum_sm.as_deref(), Some("sm_80"));
+                assert_eq!(
+                    record.expected_ptx.operands.last(),
+                    Some(&OperandPattern::Immediate)
+                );
+                (mma.a_element, mma.b_element, mma.overflow)
+            })
+            .collect::<BTreeSet<_>>();
+        let expected_variants = [SparseMmaElement::S8, SparseMmaElement::U8]
+            .into_iter()
+            .flat_map(|a_element| {
+                [SparseMmaElement::S8, SparseMmaElement::U8]
+                    .into_iter()
+                    .flat_map(move |b_element| {
+                        [SparseMmaOverflow::Wrapping, SparseMmaOverflow::Satfinite]
+                            .into_iter()
+                            .map(move |overflow| (a_element, b_element, overflow))
+                    })
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(variants, expected_variants);
+
+        for policy in &records {
+            let declaration = declarations[policy.source_record.as_deref().unwrap()];
+            validate_imported_policy(policy, declaration).unwrap();
+        }
+
+        let valid = records[0];
+        let declaration = declarations[valid.source_record.as_deref().unwrap()];
+
+        let mut runtime_selector = valid.clone();
+        *runtime_selector.expected_ptx.operands.last_mut().unwrap() = OperandPattern::Register;
+        assert!(
+            validate_imported_policy(&runtime_selector, declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("expected PTX")
+        );
+
+        let mut wrong_range = declaration.clone();
+        *wrong_range
+            .properties
+            .iter_mut()
+            .find(|property| property.starts_with("Range<arg9"))
+            .unwrap() = "Range<arg9,0,3>".into();
+        assert!(
+            validate_imported_policy(valid, &wrong_range)
+                .unwrap_err()
+                .to_string()
+                .contains("immediate range")
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Reviewed basic CTA shared-memory barriers.
 
-schema = 19
+schema = 20
 family = "mbarrier_basic"
 
 [[intrinsic]]

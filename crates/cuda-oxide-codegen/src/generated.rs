@@ -738,6 +738,277 @@ mod tests {
     }
 
     #[test]
+    fn sparse_mma_markers_require_exact_variant_attributes() {
+        use dialect_nvvm::ops::{
+            RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
+            RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+            SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr,
+            SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr,
+            SparseMmaShapeAttr,
+        };
+        use pliron::basic_block::BasicBlock;
+
+        fn sparse_mma(
+            ctx: &mut Context,
+            a_element: SparseMmaElementAttr,
+            b_element: SparseMmaElementAttr,
+            overflow: SparseMmaOverflowAttr,
+            marker: Option<&str>,
+        ) -> Ptr<Operation> {
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+            let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..4)
+                .map(|_| i32_ty.into())
+                .chain((0..6).map(|_| u32_ty.into()))
+                .collect();
+            let block = BasicBlock::new(ctx, None, argument_types);
+            let operands = (0..10)
+                .map(|index| block.deref(ctx).get_argument(index))
+                .collect();
+            let operation = Operation::new(
+                ctx,
+                SparseMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = SparseMmaOp::new(operation);
+            mma.set_attr_nvvm_sparse_mma_shape(ctx, SparseMmaShapeAttr::M16n8k32);
+            mma.set_attr_nvvm_sparse_mma_accumulator(ctx, SparseMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_sparse_mma_a_element(ctx, a_element);
+            mma.set_attr_nvvm_sparse_mma_b_element(ctx, b_element);
+            mma.set_attr_nvvm_sparse_mma_a_layout(ctx, SparseMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_sparse_mma_b_layout(ctx, SparseMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_sparse_mma_overflow(ctx, overflow);
+            mma.set_attr_nvvm_sparse_mma_metadata(ctx, SparseMmaMetadataAttr::Standard);
+            mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
+            if let Some(marker) = marker {
+                operation.deref_mut(ctx).attributes.set(
+                    Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                    StringAttr::new(marker.to_string()),
+                );
+            }
+            operation
+        }
+
+        fn dense_mma_with_sparse_marker(ctx: &mut Context, marker: &str) -> Ptr<Operation> {
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signed);
+            let u32_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..4)
+                .map(|_| i32_ty.into())
+                .chain((0..6).map(|_| u32_ty.into()))
+                .collect();
+            let block = BasicBlock::new(ctx, None, argument_types);
+            let operands = (0..10)
+                .map(|index| block.deref(ctx).get_argument(index))
+                .collect();
+            let operation = Operation::new(
+                ctx,
+                RegisterMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = RegisterMmaOp::new(operation);
+            mma.set_attr_nvvm_register_mma_shape(ctx, RegisterMmaShapeAttr::M16n8k32);
+            mma.set_attr_nvvm_register_mma_operation(ctx, RegisterMmaOperationAttr::Multiply);
+            mma.set_attr_nvvm_register_mma_accumulator(ctx, RegisterMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_register_mma_a_element(ctx, RegisterMmaElementAttr::S8);
+            mma.set_attr_nvvm_register_mma_b_element(ctx, RegisterMmaElementAttr::S8);
+            mma.set_attr_nvvm_register_mma_a_layout(ctx, RegisterMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_register_mma_b_layout(ctx, RegisterMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
+            operation.deref_mut(ctx).attributes.set(
+                Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                StringAttr::new(marker.to_string()),
+            );
+            operation
+        }
+
+        fn require_marker(ctx: &Context, op: Ptr<Operation>, marker: &str, id: &str) {
+            let requirements =
+                collect_generated_intrinsic_requirements(ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            assert_eq!(requirements.targets[0].marker, marker);
+            assert_eq!(requirements.targets[0].id, id);
+        }
+
+        fn reject_marker(ctx: &Context, op: Ptr<Operation>) {
+            let error =
+                collect_generated_intrinsic_requirements(ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap_err()
+                    .to_string();
+            assert!(
+                error.contains("does not match the exact variant attributes"),
+                "{error}"
+            );
+        }
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        for (a_element, b_element, overflow, marker, id) in [
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Wrapping,
+                "v1:i0163",
+                "mma_sp_m16n8k32_s32_s8",
+            ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping,
+                "v1:i0164",
+                "mma_sp_m16n8k32_s32_s8_u8",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping,
+                "v1:i0165",
+                "mma_sp_m16n8k32_s32_u8",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Wrapping,
+                "v1:i0166",
+                "mma_sp_m16n8k32_s32_u8_s8",
+            ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Satfinite,
+                "v1:i0167",
+                "mma_sp_m16n8k32_s32_s8_satfinite",
+            ),
+            (
+                SparseMmaElementAttr::S8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Satfinite,
+                "v1:i0168",
+                "mma_sp_m16n8k32_s32_s8_u8_satfinite",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Satfinite,
+                "v1:i0169",
+                "mma_sp_m16n8k32_s32_u8_satfinite",
+            ),
+            (
+                SparseMmaElementAttr::U8,
+                SparseMmaElementAttr::S8,
+                SparseMmaOverflowAttr::Satfinite,
+                "v1:i0170",
+                "mma_sp_m16n8k32_s32_u8_s8_satfinite",
+            ),
+        ] {
+            let op = sparse_mma(&mut ctx, a_element, b_element, overflow, Some(marker));
+            require_marker(&ctx, op, marker, id);
+        }
+
+        let structural = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::U8,
+            SparseMmaElementAttr::S8,
+            SparseMmaOverflowAttr::Satfinite,
+            None,
+        );
+        let requirements = collect_generated_intrinsic_requirements(
+            &ctx,
+            structural,
+            GeneratedMarkerPolicy::Optional,
+        )
+        .unwrap();
+        assert_eq!(requirements.targets.len(), 1);
+        assert_eq!(requirements.targets[0].marker, "v1:i0170");
+
+        let wrong_element = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::S8,
+            SparseMmaElementAttr::U8,
+            SparseMmaOverflowAttr::Wrapping,
+            Some("v1:i0163"),
+        );
+        reject_marker(&ctx, wrong_element);
+
+        let wrong_overflow = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::S8,
+            SparseMmaElementAttr::S8,
+            SparseMmaOverflowAttr::Satfinite,
+            Some("v1:i0163"),
+        );
+        reject_marker(&ctx, wrong_overflow);
+
+        let wrong_layout = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::S8,
+            SparseMmaElementAttr::S8,
+            SparseMmaOverflowAttr::Wrapping,
+            Some("v1:i0163"),
+        );
+        SparseMmaOp::new(wrong_layout)
+            .set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Row);
+        reject_marker(&ctx, wrong_layout);
+
+        let sparse_with_dense_marker = sparse_mma(
+            &mut ctx,
+            SparseMmaElementAttr::U8,
+            SparseMmaElementAttr::S8,
+            SparseMmaOverflowAttr::Wrapping,
+            Some("v1:i0116"),
+        );
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            sparse_with_dense_marker,
+            GeneratedMarkerPolicy::Required,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("belongs to `nvvm.register_mma`"), "{error}");
+        let dense_with_sparse_marker = dense_mma_with_sparse_marker(&mut ctx, "v1:i0163");
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            dense_with_sparse_marker,
+            GeneratedMarkerPolicy::Required,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("belongs to `nvvm.sparse_mma`"), "{error}");
+    }
+
+    #[test]
+    fn sparse_mma_targets_require_ptx_71_and_ampere_on_both_backends() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedHardwareAlternative, GeneratedHardwareTarget,
+        };
+
+        for marker in [
+            "v1:i0163", "v1:i0164", "v1:i0165", "v1:i0166", "v1:i0167", "v1:i0168", "v1:i0169",
+            "v1:i0170",
+        ] {
+            let target = generated_intrinsic_target_by_marker(marker).unwrap();
+            for backend in [
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                GeneratedIntrinsicBackend::LibNvvm,
+            ] {
+                let requirement = target.requirement_for_backend(backend);
+                assert_eq!(requirement.minimum_ptx.encoded(), 71, "{marker}");
+                assert_eq!(
+                    requirement.hardware,
+                    GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)]),
+                    "{marker}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn integer_register_mma_targets_require_ampere_on_both_backends() {
         use crate::generated_intrinsic_targets::{
             GeneratedHardwareAlternative, GeneratedHardwareTarget,

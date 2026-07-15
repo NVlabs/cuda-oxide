@@ -163,6 +163,9 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     if record.packed_alu.is_some() || record.packed_conversion.is_some() {
         validate_exact_pure_instruction(&record.expected_ptx, ptx)?;
     }
+    if record.sparse_mma.is_some() {
+        validate_sparse_mma_selectors(&record.expected_ptx, ptx)?;
+    }
     Ok(())
 }
 
@@ -195,6 +198,40 @@ fn validate_exact_pure_instruction(expected: &InstructionPattern, ptx: &str) -> 
         instructions[0].prefix.is_empty(),
         "packed pure probe instruction must be unguarded"
     );
+    Ok(())
+}
+
+fn validate_sparse_mma_selectors(expected: &InstructionPattern, ptx: &str) -> Result<()> {
+    let selector = expected
+        .operands
+        .get(5)
+        .context("sparse MMA selector operand is missing")?;
+    ensure!(
+        *selector == OperandPattern::Immediate,
+        "sparse MMA selector must be an immediate operand"
+    );
+    let instructions = instructions_with_matching_head(ptx, expected);
+    ensure!(
+        instructions.len() == 2,
+        "sparse MMA probe must contain exactly two matching instructions; found {}",
+        instructions.len()
+    );
+    ensure!(
+        instructions
+            .iter()
+            .all(|instruction| instruction.prefix.is_empty()),
+        "sparse MMA probe instructions must be unguarded"
+    );
+    for selector in ["0", "1"] {
+        let mut pattern = expected.clone();
+        pattern.operands[5] = OperandPattern::Exact {
+            value: selector.into(),
+        };
+        ensure!(
+            matching_instructions(ptx, &pattern).len() == 1,
+            "sparse MMA probe PTX must contain exactly one selector {selector} form matching `{pattern}`"
+        );
+    }
     Ok(())
 }
 
@@ -1521,5 +1558,50 @@ attributes #0 = { nounwind }
                 "{invalid}"
             );
         }
+    }
+
+    #[test]
+    fn sparse_mma_probe_requires_both_selector_values() {
+        let expected = InstructionPattern::new(
+            "mma",
+            &[
+                "sp", "sync", "aligned", "m16n8k32", "row", "col", "s32", "s8", "u8", "s32",
+            ],
+            vec![
+                OperandPattern::RegisterList { length: 4 },
+                OperandPattern::RegisterList { length: 2 },
+                OperandPattern::RegisterList { length: 2 },
+                OperandPattern::RegisterList { length: 4 },
+                OperandPattern::Register,
+                OperandPattern::Immediate,
+            ],
+        );
+        let selector_zero = "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32 {%r1, %r2, %r3, %r4}, {%r5, %r6}, {%r7, %r8}, {%r9, %r10, %r11, %r12}, %r13, 0;";
+        let selector_one = "mma.sp.sync.aligned.m16n8k32.row.col.s32.s8.u8.s32 {%r1, %r2, %r3, %r4}, {%r5, %r6}, {%r7, %r8}, {%r9, %r10, %r11, %r12}, %r13, 1;";
+
+        validate_sparse_mma_selectors(&expected, &format!("{selector_zero}\n{selector_one}"))
+            .unwrap();
+        assert!(validate_sparse_mma_selectors(&expected, selector_zero).is_err());
+        assert!(validate_sparse_mma_selectors(&expected, selector_one).is_err());
+
+        let mut register_selector = expected.clone();
+        register_selector.operands[5] = OperandPattern::Register;
+        assert!(validate_sparse_mma_selectors(&register_selector, selector_zero).is_err());
+
+        let selector_two = selector_one.replace(", 1;", ", 2;");
+        assert!(
+            validate_sparse_mma_selectors(
+                &expected,
+                &format!("{selector_zero}\n{selector_one}\n{selector_two}")
+            )
+            .is_err()
+        );
+        assert!(
+            validate_sparse_mma_selectors(
+                &expected,
+                &format!("@%p0 {selector_zero}\n{selector_one}")
+            )
+            .is_err()
+        );
     }
 }
