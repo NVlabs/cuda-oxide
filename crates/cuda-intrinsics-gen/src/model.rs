@@ -161,6 +161,8 @@ pub struct OverlayShardFile {
     pub register_mma_f8f6f4_f16: Option<RegisterMmaF8F6F4Admission>,
     #[serde(default)]
     pub register_mma_fp8: Option<RegisterMmaFp8Admission>,
+    #[serde(default)]
+    pub register_mma_ampere_float: Option<RegisterMmaAmpereFloatAdmission>,
     #[serde(default, alias = "sparse_mma_int8")]
     pub sparse_mma_integer: Option<SparseMmaIntegerAdmission>,
     #[serde(default)]
@@ -658,6 +660,28 @@ pub struct RegisterMmaFp8Admission {
     pub a_elements: Vec<RegisterMmaElement>,
     pub b_elements: Vec<RegisterMmaElement>,
     pub product_count: usize,
+}
+
+/// Compact admission for the reviewed Ampere floating-point MMA forms.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaAmpereFloatAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub first_abi_id: String,
+    pub product_count: usize,
+    #[serde(rename = "variant")]
+    pub variants: Vec<RegisterMmaAmpereFloatVariant>,
+}
+
+/// One reviewed Ampere floating-point MMA form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaAmpereFloatVariant {
+    pub shape: RegisterMmaShape,
+    pub accumulator: RegisterMmaAccumulator,
+    pub element: RegisterMmaElement,
 }
 
 /// Compact admission for a sparse integer register-MMA family.
@@ -1323,6 +1347,7 @@ pub enum RegisterMmaShape {
     M8n8k4,
     M8n8k16,
     M8n8k32,
+    M16n8k4,
     M16n8k8,
     M16n8k16,
     M16n8k32,

@@ -25,6 +25,7 @@ shards = [
     "overlay/prmt.toml",
     "overlay/redux.toml",
     "overlay/register_mma.toml",
+    "overlay/register_mma_ampere_float.toml",
     "overlay/register_mma_b1.toml",
     "overlay/register_mma_f8f6f4_f16.toml",
     "overlay/register_mma_f8f6f4_f32.toml",

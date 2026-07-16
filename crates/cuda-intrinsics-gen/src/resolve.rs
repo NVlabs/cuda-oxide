@@ -35,20 +35,21 @@ use crate::model::{
     PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
     PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
     ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
-    RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
-    RegisterMmaF8F6F4Admission, RegisterMmaFp8Admission, RegisterMmaIntegerAdmission,
-    RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
-    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, ScalarArithmetic,
-    ScalarArithmeticAdmission, ScalarArithmeticFormat, ScalarArithmeticOperation,
-    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
-    ScalarConversion, ScalarConversionAdapter, ScalarConversionAdmission,
-    ScalarConversionDestinationFormat, ScalarConversionResultRepresentation,
-    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, SparseMma,
-    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
-    SparseMmaF8F6F4Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
-    SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
-    SparseMmaShape, SpecialRegister, SpecialRegisterAdmission, SpecialRegisterKind,
-    SpecialRegisterLlvmExclusion, SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
+    RegisterMmaAmpereFloatAdmission, RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission,
+    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaF8F6F4Admission,
+    RegisterMmaFp8Admission, RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape,
+    RuntimeValidation, ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat,
+    ScalarArithmeticOperation, ScalarArithmeticRounding, ScalarArithmeticSaturation,
+    ScalarArithmeticSubnormal, ScalarConversion, ScalarConversionAdapter,
+    ScalarConversionAdmission, ScalarConversionDestinationFormat,
+    ScalarConversionResultRepresentation, ScalarConversionRounding, ScalarConversionSaturation,
+    ScalarConversionSourceFormat, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
+    SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
+    SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
+    SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05Adapter,
     Tcgen05Admission, Tcgen05Operation, Tcgen05SourceContract, ThreadfenceAdmission,
@@ -68,10 +69,11 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 43;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 48;
+const OVERLAY_SHARD_SCHEMA: u32 = 49;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
+const REGISTER_MMA_AMPERE_FLOAT_SHARD_SCHEMA: u32 = 49;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -769,6 +771,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let f8f6f4_f32_mma_admission = shard.register_mma_f8f6f4_f32.take();
         let f8f6f4_f16_mma_admission = shard.register_mma_f8f6f4_f16.take();
         let fp8_mma_admission = shard.register_mma_fp8.take();
+        let ampere_float_mma_admission = shard.register_mma_ampere_float.take();
         let sparse_mma_admission = shard.sparse_mma_integer.take();
         let sparse_mma_f8f6f4_admission = shard.sparse_mma_f8f6f4_f32.take();
         let prmt_admission = shard.prmt.take();
@@ -793,6 +796,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             + usize::from(f8f6f4_f32_mma_admission.is_some())
             + usize::from(f8f6f4_f16_mma_admission.is_some())
             + usize::from(fp8_mma_admission.is_some())
+            + usize::from(ampere_float_mma_admission.is_some())
             + usize::from(sparse_mma_admission.is_some())
             + usize::from(sparse_mma_f8f6f4_admission.is_some());
         ensure!(
@@ -841,6 +845,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact standard FP8 MMA admission must be the only content of a register_mma shard"
             );
             shard.intrinsics = expand_register_mma_fp8_admission(&admission)?;
+        }
+        if let Some(admission) = ampere_float_mma_admission {
+            ensure!(
+                shard.family == "register_mma" && shard.intrinsics.is_empty(),
+                "compact Ampere floating-point MMA admission must be the only content of a register_mma shard"
+            );
+            shard.intrinsics = expand_register_mma_ampere_float_admission(&admission)?;
         }
         if let Some(admission) = sparse_mma_admission {
             ensure!(
@@ -1032,6 +1043,12 @@ fn validate_overlay_shard_schema_with_max(
         shard.register_mma_fp8.is_none() || shard.schema >= REGISTER_MMA_FP8_SHARD_SCHEMA,
         "compact standard FP8 MMA admission requires overlay shard schema {}",
         REGISTER_MMA_FP8_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.register_mma_ampere_float.is_none()
+            || shard.schema >= REGISTER_MMA_AMPERE_FLOAT_SHARD_SCHEMA,
+        "compact Ampere floating-point MMA admission requires overlay shard schema {}",
+        REGISTER_MMA_AMPERE_FLOAT_SHARD_SCHEMA
     );
     ensure!(
         shard.prmt.is_none() || shard.schema >= PRMT_SHARD_SCHEMA,
@@ -13776,10 +13793,13 @@ fn binary_register_mma_recipe(mma: &RegisterMma, common: bool) -> Option<Registe
 }
 
 fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
-    use RegisterMmaAccumulator::{F32, F64};
-    use RegisterMmaAdapter::{C2F64A1F64B1F64ToD2F64, C4F32A4U32B2U32ToD4F32};
-    use RegisterMmaElement::{Bf16, F16, F64 as F64Element, Tf32};
-    use RegisterMmaShape::{M8n8k4, M16n8k8, M16n8k16};
+    use RegisterMmaAccumulator::{F16 as F16Accumulator, F32, F64};
+    use RegisterMmaAdapter::{
+        C2F64A1F64B1F64ToD2F64, C2U32A2U32B1U32ToD2U32, C2U32A4U32B2U32ToD2U32,
+        C4F32A2U32B1U32ToD4F32, C4F32A4U32B2U32ToD4F32,
+    };
+    use RegisterMmaElement::{Bf16, F16 as F16Element, F64 as F64Element, Tf32};
+    use RegisterMmaShape::{M8n8k4, M16n8k4, M16n8k8, M16n8k16};
 
     let common = mma.a_layout == RegisterMmaLayout::Row
         && mma.b_layout == RegisterMmaLayout::Col
@@ -13803,6 +13823,163 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
         mma.adapter,
         common,
     ) {
+        (
+            M16n8k4,
+            F32,
+            Tf32,
+            Tf32,
+            RegisterMmaOverflow::NotApplicable,
+            C4F32A2U32B1U32ToD4F32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k4_f32_tf32",
+            abi_id: "i0520",
+            operation_key: "matrix.mma.m16n8k4.row.col.f32.tf32.tf32.f32",
+            source_record: "int_nvvm_mma_m16n8k4_row_col_tf32",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k4.row.col.tf32",
+            rust_arguments: &["[f32; 4]", "[u32; 2]", "u32"],
+            rust_result: "[f32; 4]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &["f32", "f32", "f32", "f32", "i32", "i32", "i32"],
+            dialect_results: &["f32", "f32", "f32", "f32"],
+            llvm_arguments: &["i32", "i32", "i32", "f32", "f32", "f32", "f32"],
+            llvm_results: &["f32", "f32", "f32", "f32"],
+            adapter: C4F32A2U32B1U32ToD4F32,
+            compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_modifiers: vec![
+                "sync", "aligned", "m16n8k4", "row", "col", "f32", "tf32", "tf32", "f32",
+            ],
+            ptx_register_counts: [4, 2, 1, 4],
+        }),
+        (
+            M16n8k8,
+            F16Accumulator,
+            F16Element,
+            F16Element,
+            RegisterMmaOverflow::NotApplicable,
+            C2U32A2U32B1U32ToD2U32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k8_f16_f16",
+            abi_id: "i0521",
+            operation_key: "matrix.mma.m16n8k8.row.col.f16.f16.f16.f16",
+            source_record: "int_nvvm_mma_m16n8k8_row_col_f16_f16",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k8.row.col.f16.f16",
+            rust_arguments: &["[u32; 2]", "[u32; 2]", "u32"],
+            rust_result: "[u32; 2]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &["i32", "i32", "i32", "i32", "i32"],
+            dialect_results: &["i32", "i32"],
+            llvm_arguments: &["v2f16", "v2f16", "v2f16", "v2f16", "v2f16"],
+            llvm_results: &["v2f16", "v2f16"],
+            adapter: C2U32A2U32B1U32ToD2U32,
+            compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_modifiers: vec![
+                "sync", "aligned", "m16n8k8", "row", "col", "f16", "f16", "f16", "f16",
+            ],
+            ptx_register_counts: [2, 2, 1, 2],
+        }),
+        (
+            M16n8k8,
+            F32,
+            Bf16,
+            Bf16,
+            RegisterMmaOverflow::NotApplicable,
+            C4F32A2U32B1U32ToD4F32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k8_f32_bf16",
+            abi_id: "i0522",
+            operation_key: "matrix.mma.m16n8k8.row.col.f32.bf16.bf16.f32",
+            source_record: "int_nvvm_mma_m16n8k8_row_col_bf16",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k8.row.col.bf16",
+            rust_arguments: &["[f32; 4]", "[u32; 2]", "u32"],
+            rust_result: "[f32; 4]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &["f32", "f32", "f32", "f32", "i32", "i32", "i32"],
+            dialect_results: &["f32", "f32", "f32", "f32"],
+            llvm_arguments: &["i32", "i32", "i32", "f32", "f32", "f32", "f32"],
+            llvm_results: &["f32", "f32", "f32", "f32"],
+            adapter: C4F32A2U32B1U32ToD4F32,
+            compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_modifiers: vec![
+                "sync", "aligned", "m16n8k8", "row", "col", "f32", "bf16", "bf16", "f32",
+            ],
+            ptx_register_counts: [4, 2, 1, 4],
+        }),
+        (
+            M16n8k8,
+            F32,
+            F16Element,
+            F16Element,
+            RegisterMmaOverflow::NotApplicable,
+            C4F32A2U32B1U32ToD4F32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k8_f32_f16",
+            abi_id: "i0523",
+            operation_key: "matrix.mma.m16n8k8.row.col.f32.f16.f16.f32",
+            source_record: "int_nvvm_mma_m16n8k8_row_col_f32_f32",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k8.row.col.f32.f32",
+            rust_arguments: &["[f32; 4]", "[u32; 2]", "u32"],
+            rust_result: "[f32; 4]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &["f32", "f32", "f32", "f32", "i32", "i32", "i32"],
+            dialect_results: &["f32", "f32", "f32", "f32"],
+            llvm_arguments: &["v2f16", "v2f16", "v2f16", "f32", "f32", "f32", "f32"],
+            llvm_results: &["f32", "f32", "f32", "f32"],
+            adapter: C4F32A2U32B1U32ToD4F32,
+            compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_modifiers: vec![
+                "sync", "aligned", "m16n8k8", "row", "col", "f32", "f16", "f16", "f32",
+            ],
+            ptx_register_counts: [4, 2, 1, 4],
+        }),
+        (
+            M16n8k16,
+            F16Accumulator,
+            F16Element,
+            F16Element,
+            RegisterMmaOverflow::NotApplicable,
+            C2U32A4U32B2U32ToD2U32,
+            true,
+        ) => Some(RegisterMmaRecipe {
+            id: "mma_m16n8k16_f16_f16",
+            abi_id: "i0524",
+            operation_key: "matrix.mma.m16n8k16.row.col.f16.f16.f16.f16",
+            source_record: "int_nvvm_mma_m16n8k16_row_col_f16_f16",
+            llvm_symbol: "llvm.nvvm.mma.m16n8k16.row.col.f16.f16",
+            rust_arguments: &["[u32; 2]", "[u32; 4]", "[u32; 2]"],
+            rust_result: "[u32; 2]",
+            dialect_op_type: "RegisterMmaOp",
+            dialect_op_name: "nvvm.register_mma",
+            dialect_operands: &["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+            dialect_results: &["i32", "i32"],
+            llvm_arguments: &[
+                "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16",
+            ],
+            llvm_results: &["v2f16", "v2f16"],
+            adapter: C2U32A4U32B2U32ToD2U32,
+            compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_modifiers: vec![
+                "sync", "aligned", "m16n8k16", "row", "col", "f16", "f16", "f16", "f16",
+            ],
+            ptx_register_counts: [2, 4, 2, 2],
+        }),
         (
             M16n8k16,
             F32,
@@ -13841,8 +14018,8 @@ fn register_mma_recipe(mma: &RegisterMma) -> Option<RegisterMmaRecipe> {
         (
             M16n8k16,
             F32,
-            F16,
-            F16,
+            F16Element,
+            F16Element,
             RegisterMmaOverflow::NotApplicable,
             C4F32A4U32B2U32ToD4F32,
             true,
@@ -14804,6 +14981,192 @@ fn expand_register_mma_fp8_admission(
     }
     ensure!(records.len() == admission.product_count);
     Ok(records)
+}
+
+const REGISTER_MMA_AMPERE_FLOAT_VARIANTS: [RegisterMmaAmpereFloatVariant; 5] = [
+    RegisterMmaAmpereFloatVariant {
+        shape: RegisterMmaShape::M16n8k4,
+        accumulator: RegisterMmaAccumulator::F32,
+        element: RegisterMmaElement::Tf32,
+    },
+    RegisterMmaAmpereFloatVariant {
+        shape: RegisterMmaShape::M16n8k8,
+        accumulator: RegisterMmaAccumulator::F16,
+        element: RegisterMmaElement::F16,
+    },
+    RegisterMmaAmpereFloatVariant {
+        shape: RegisterMmaShape::M16n8k8,
+        accumulator: RegisterMmaAccumulator::F32,
+        element: RegisterMmaElement::Bf16,
+    },
+    RegisterMmaAmpereFloatVariant {
+        shape: RegisterMmaShape::M16n8k8,
+        accumulator: RegisterMmaAccumulator::F32,
+        element: RegisterMmaElement::F16,
+    },
+    RegisterMmaAmpereFloatVariant {
+        shape: RegisterMmaShape::M16n8k16,
+        accumulator: RegisterMmaAccumulator::F16,
+        element: RegisterMmaElement::F16,
+    },
+];
+
+fn expand_register_mma_ampere_float_admission(
+    admission: &RegisterMmaAmpereFloatAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "Ampere floating-point MMA runtime validation requires GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "Ampere floating-point MMA admission requires both backend evidence profiles"
+    );
+    ensure!(
+        admission.first_abi_id == "i0520"
+            && admission.product_count == REGISTER_MMA_AMPERE_FLOAT_VARIANTS.len()
+            && admission.variants == REGISTER_MMA_AMPERE_FLOAT_VARIANTS,
+        "Ampere floating-point MMA admission must retain the five reviewed variants in ABI order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .enumerate()
+        .map(|(index, variant)| {
+            let adapter = match (variant.shape, variant.accumulator) {
+                (RegisterMmaShape::M16n8k4, RegisterMmaAccumulator::F32)
+                | (RegisterMmaShape::M16n8k8, RegisterMmaAccumulator::F32) => {
+                    RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
+                }
+                (RegisterMmaShape::M16n8k8, RegisterMmaAccumulator::F16) => {
+                    RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32
+                }
+                (RegisterMmaShape::M16n8k16, RegisterMmaAccumulator::F16) => {
+                    RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32
+                }
+                _ => bail!("Ampere floating-point MMA admission contains an unsupported carrier"),
+            };
+            let mma = RegisterMma {
+                shape: variant.shape,
+                operation: RegisterMmaOperation::Multiply,
+                kind: None,
+                accumulator: variant.accumulator,
+                a_element: variant.element,
+                b_element: variant.element,
+                a_layout: RegisterMmaLayout::Row,
+                b_layout: RegisterMmaLayout::Col,
+                overflow: RegisterMmaOverflow::NotApplicable,
+                participation: RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+                adapter,
+                compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+                runtime_validation: admission.runtime_validation,
+            };
+            let recipe = register_mma_recipe(&mma).with_context(|| {
+                "Ampere floating-point MMA admission requests a variant outside the closed recipe set"
+            })?;
+            let expected_abi_id = format!("i{:04}", 520 + index);
+            ensure!(
+                recipe.abi_id == expected_abi_id,
+                "Ampere floating-point MMA recipe changed ABI order"
+            );
+
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: recipe.abi_id.into(),
+                operation_key: recipe.operation_key.into(),
+                family: "register_mma".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "matrix".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: recipe.rust_arguments.iter().map(|value| (*value).into()).collect(),
+                rust_result: recipe.rust_result.into(),
+                safe: false,
+                must_use: true,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::matrix::{}", recipe.id),
+                compatibility_rust_paths: vec![format!("cuda_device::wmma::{}", recipe.id)],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: recipe.dialect_operands.iter().map(|value| (*value).into()).collect(),
+                dialect_results: recipe.dialect_results.iter().map(|value| (*value).into()).collect(),
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments: recipe.llvm_arguments.iter().map(|value| (*value).into()).collect(),
+                llvm_results: recipe.llvm_results.iter().map(|value| (*value).into()).collect(),
+                pure: false,
+                memory: "none".into(),
+                convergent: true,
+                execution_scope: "warp".into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: Some(recipe.minimum_sm.into()),
+                ptx_result: recipe.rust_result.into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma".into(),
+                lowering: "generated_register_mma".into(),
+                backend_lowerings: [
+                    (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
+                    (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
+                ]
+                .into_iter()
+                .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                    backend,
+                    mechanism: BackendLoweringMechanism::InlinePtx,
+                    evidence_profile: evidence_profile.clone(),
+                    targets: None,
+                    minimum_ptx: Some(recipe.minimum_ptx.into()),
+                    minimum_sm: Some(recipe.minimum_sm.into()),
+                })
+                .collect(),
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                scalar_conversion: None,
+                scalar_arithmetic: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                mbarrier_extended: None,
+                register_mma: Some(mma),
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                wgmma_control: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: None,
+                tma: None,
+                tcgen05: None,
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "mma".into(),
+                    modifiers: recipe.ptx_modifiers.iter().map(|value| (*value).into()).collect(),
+                    operands: recipe
+                        .ptx_register_counts
+                        .map(|length| OperandPattern::RegisterList { length })
+                        .into(),
+                },
+                summary: format!("Executes the {} Ampere floating-point MMA form.", recipe.id),
+            })
+        })
+        .collect()
 }
 
 fn expand_register_mma_binary_admission(
@@ -15823,6 +16186,30 @@ fn validate_register_mma_policy(
         "{} imported MMA declaration changed its class, properties, or exact selection contract",
         policy.id
     );
+    // These are imported facts. The BF16 selection is underconstrained.
+    let ampere_float_predicates = match recipe.abi_id {
+        "i0520" | "i0524" => Some([
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70",
+        ]),
+        "i0521" | "i0522" | "i0523" => Some([
+            "Subtarget->getPTXVersion() >= 65",
+            "Subtarget->getSmVersion() >= 75",
+        ]),
+        _ => None,
+    };
+    if let Some(predicates) = ampere_float_predicates {
+        let selection = &declaration.selections[0];
+        ensure!(
+            declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA"]
+                && selection.predicates == predicates
+                && selection.constraints.is_empty()
+                && mma.kind.is_none()
+                && mma.runtime_validation == RuntimeValidation::Unexecuted,
+            "{} imported Ampere floating-point MMA contract changed",
+            policy.id
+        );
+    }
     ensure!(
         policy.expected_ptx.mnemonic == "mma"
             && policy.expected_ptx.modifiers == recipe.ptx_modifiers
@@ -22523,8 +22910,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 54);
-        assert_eq!(overlay.intrinsics.len(), 519);
+        assert_eq!(overlay.shards.len(), 55);
+        assert_eq!(overlay.intrinsics.len(), 524);
         assert_eq!(
             overlay
                 .intrinsics
@@ -22611,7 +22998,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "register_mma")
                 .count(),
-            124
+            129
         );
         assert_eq!(
             overlay
@@ -22770,6 +23157,17 @@ mod tests {
             a_elements: REGISTER_MMA_FP8_ELEMENTS.into(),
             b_elements: REGISTER_MMA_FP8_ELEMENTS.into(),
             product_count: 16,
+        }
+    }
+
+    fn test_register_mma_ampere_float_admission() -> RegisterMmaAmpereFloatAdmission {
+        RegisterMmaAmpereFloatAdmission {
+            llvm_evidence_profile: "llvm-ampere-float-test".into(),
+            libnvvm_evidence_profile: "libnvvm-ampere-float-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            first_abi_id: "i0520".into(),
+            product_count: 5,
+            variants: REGISTER_MMA_AMPERE_FLOAT_VARIANTS.into(),
         }
     }
 
@@ -23084,6 +23482,7 @@ mod tests {
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32,
             prmt,
@@ -23190,6 +23589,7 @@ mod tests {
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -23228,6 +23628,7 @@ mod tests {
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -23267,6 +23668,7 @@ mod tests {
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -23506,6 +23908,7 @@ record_count = 14
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -24130,6 +24533,133 @@ scope = "system"
     }
 
     #[test]
+    fn compact_ampere_float_mma_admission_is_closed_and_ordered() {
+        let admission = test_register_mma_ampere_float_admission();
+        let records = expand_register_mma_ampere_float_admission(&admission).unwrap();
+        assert_eq!(records.len(), 5);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0520", "mma_m16n8k4_f32_tf32"),
+                ("i0521", "mma_m16n8k8_f16_f16"),
+                ("i0522", "mma_m16n8k8_f32_bf16"),
+                ("i0523", "mma_m16n8k8_f32_f16"),
+                ("i0524", "mma_m16n8k16_f16_f16"),
+            ]
+        );
+        for record in &records {
+            assert_eq!(record.minimum_ptx, "7.0");
+            assert_eq!(record.minimum_sm.as_deref(), Some("sm_80"));
+            assert_eq!(record.backend_lowerings.len(), 2);
+            assert!(record.backend_lowerings.iter().all(|lowering| {
+                lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    && lowering.minimum_ptx.as_deref() == Some("7.0")
+                    && lowering.minimum_sm.as_deref() == Some("sm_80")
+            }));
+            let mma = record.register_mma.as_ref().unwrap();
+            assert_eq!(mma.kind, None);
+            assert_eq!(
+                mma.compatibility_source,
+                RegisterMmaCompatibilitySource::GeneratedStub
+            );
+        }
+
+        let mut reordered = admission.clone();
+        reordered.variants.swap(0, 1);
+        assert!(expand_register_mma_ampere_float_admission(&reordered).is_err());
+        let mut wrong = admission.clone();
+        wrong.first_abi_id = "i0521".into();
+        assert!(expand_register_mma_ampere_float_admission(&wrong).is_err());
+        let mut wrong = admission.clone();
+        wrong.product_count = 4;
+        assert!(expand_register_mma_ampere_float_admission(&wrong).is_err());
+        let mut wrong = admission.clone();
+        wrong.llvm_evidence_profile.clear();
+        assert!(expand_register_mma_ampere_float_admission(&wrong).is_err());
+        let mut wrong = admission;
+        wrong.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_register_mma_ampere_float_admission(&wrong).is_err());
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = repo_root.join("intrinsics/overlay/register_mma_ampere_float.toml");
+        let bytes = fs::read(&path).unwrap();
+        let mut shard: OverlayShardFile = toml::from_slice(&bytes).unwrap();
+        validate_overlay_shard_schema(&shard, &path).unwrap();
+        shard.schema = REGISTER_MMA_AMPERE_FLOAT_SHARD_SCHEMA - 1;
+        assert!(
+            validate_overlay_shard_schema(&shard, &path)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 49")
+        );
+    }
+
+    #[test]
+    fn ampere_float_mma_policies_match_llvm_and_fail_closed() {
+        let records =
+            expand_register_mma_ampere_float_admission(&test_register_mma_ampere_float_admission())
+                .unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+            let expected_predicates = match record.abi_id.as_str() {
+                "i0520" | "i0524" => [
+                    "Subtarget->getSmVersion() >= 80",
+                    "Subtarget->getPTXVersion() >= 70",
+                ],
+                _ => [
+                    "Subtarget->getPTXVersion() >= 65",
+                    "Subtarget->getSmVersion() >= 75",
+                ],
+            };
+            assert_eq!(declaration.selections[0].predicates, expected_predicates);
+            assert_eq!(record.minimum_ptx, "7.0");
+            assert_eq!(record.minimum_sm.as_deref(), Some("sm_80"));
+        }
+
+        let valid = &records[2];
+        assert_eq!(valid.id, "mma_m16n8k8_f32_bf16");
+        assert_eq!(
+            declarations[valid.source_record.as_deref().unwrap()].selections[0].predicates,
+            [
+                "Subtarget->getPTXVersion() >= 65",
+                "Subtarget->getSmVersion() >= 75",
+            ]
+        );
+        assert_eq!(valid.minimum_ptx, "7.0");
+        assert_eq!(valid.minimum_sm.as_deref(), Some("sm_80"));
+        assert!(valid.backend_lowerings.iter().all(|lowering| {
+            lowering.minimum_ptx.as_deref() == Some("7.0")
+                && lowering.minimum_sm.as_deref() == Some("sm_80")
+        }));
+        let declaration = declarations[valid.source_record.as_deref().unwrap()];
+        let mut wrong = valid.clone();
+        wrong.minimum_ptx = "6.5".into();
+        assert!(validate_imported_policy(&wrong, declaration).is_err());
+        let mut wrong = valid.clone();
+        wrong.register_mma.as_mut().unwrap().adapter = RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32;
+        assert!(validate_imported_policy(&wrong, declaration).is_err());
+        let mut wrong = valid.clone();
+        wrong.register_mma.as_mut().unwrap().kind = Some(RegisterMmaKind::Standard);
+        assert!(validate_imported_policy(&wrong, declaration).is_err());
+        let mut wrong_declaration = declaration.clone();
+        wrong_declaration.selections[0].predicates[0] = "Subtarget->getPTXVersion() >= 70".into();
+        assert!(validate_imported_policy(valid, &wrong_declaration).is_err());
+    }
+
+    #[test]
     fn standard_fp8_policies_match_llvm_and_fail_closed() {
         let records =
             expand_register_mma_fp8_admission(&test_register_mma_fp8_admission()).unwrap();
@@ -24730,6 +25260,7 @@ scope = "system"
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -24860,6 +25391,7 @@ scope = "system"
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -25009,6 +25541,7 @@ scope = "system"
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -25059,6 +25592,7 @@ scope = "system"
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -25101,6 +25635,7 @@ scope = "system"
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -25540,6 +26075,7 @@ scope = "system"
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
             register_mma_fp8: None,
+            register_mma_ampere_float: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -25647,7 +26183,7 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "register_mma")
             .collect();
-        assert_eq!(records.len(), 124);
+        assert_eq!(records.len(), 129);
 
         let dense_f8f6f4_records = records
             .iter()

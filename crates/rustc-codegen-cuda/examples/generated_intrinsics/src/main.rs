@@ -184,6 +184,15 @@ mod kernels {
                 matrix::mma_m8n8k4_f64([0.0; 2], 0.0, 0.0),
             )
         };
+        let (tf32_k4, f16_k8, bf16_k8, f32_f16_k8, f16_k16) = unsafe {
+            (
+                matrix::mma_m16n8k4_f32_tf32([0.0; 4], [0; 2], 0),
+                matrix::mma_m16n8k8_f16_f16([0; 2], [0; 2], 0),
+                matrix::mma_m16n8k8_f32_bf16([0.0; 4], [0; 2], 0),
+                matrix::mma_m16n8k8_f32_f16([0.0; 4], [0; 2], 0),
+                matrix::mma_m16n8k16_f16_f16([0; 2], [0; 4], [0; 2]),
+            )
+        };
         // Keep the complete dense INT8 families in the generated path.
         let int8 = unsafe {
             [
@@ -848,7 +857,12 @@ mod kernels {
         let mut checksum = u64::from(bf16[0].to_bits())
             ^ u64::from(f16[0].to_bits())
             ^ u64::from(tf32[0].to_bits())
-            ^ f64[0].to_bits();
+            ^ f64[0].to_bits()
+            ^ u64::from(tf32_k4[0].to_bits())
+            ^ u64::from(f16_k8[0])
+            ^ u64::from(bf16_k8[0].to_bits())
+            ^ u64::from(f32_f16_k8[0].to_bits())
+            ^ u64::from(f16_k16[0]);
         for value in int8 {
             checksum ^= u64::from(value as u32);
         }

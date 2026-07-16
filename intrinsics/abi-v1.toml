@@ -3640,3 +3640,38 @@ status = "active"
 catalog_id = "mma_m16n8k32_fp8_f32_e5m2_e5m2"
 operation_key = "matrix.mma.m16n8k32.row.col.standard_fp8.f32.e5m2.e5m2.f32"
 raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 2]"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0520"
+status = "active"
+catalog_id = "mma_m16n8k4_f32_tf32"
+operation_key = "matrix.mma.m16n8k4.row.col.f32.tf32.tf32.f32"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 2]", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0521"
+status = "active"
+catalog_id = "mma_m16n8k8_f16_f16"
+operation_key = "matrix.mma.m16n8k8.row.col.f16.f16.f16.f16"
+raw_rust_signature = { safe = false, arguments = ["[u32; 2]", "[u32; 2]", "u32"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i0522"
+status = "active"
+catalog_id = "mma_m16n8k8_f32_bf16"
+operation_key = "matrix.mma.m16n8k8.row.col.f32.bf16.bf16.f32"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 2]", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0523"
+status = "active"
+catalog_id = "mma_m16n8k8_f32_f16"
+operation_key = "matrix.mma.m16n8k8.row.col.f32.f16.f16.f32"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 2]", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0524"
+status = "active"
+catalog_id = "mma_m16n8k16_f16_f16"
+operation_key = "matrix.mma.m16n8k16.row.col.f16.f16.f16.f16"
+raw_rust_signature = { safe = false, arguments = ["[u32; 2]", "[u32; 4]", "[u32; 2]"], result = "[u32; 2]" }

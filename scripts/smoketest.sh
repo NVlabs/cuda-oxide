@@ -646,8 +646,7 @@ run_cargo() {
         return
     fi
 
-    # This example is the permanent two-backend gate for explicit-rounding
-    # scalar arithmetic. Keep both routes at their shared sm_80 floor.
+    # This example gates scalar arithmetic and Ampere MMA on both backends.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "generated_intrinsics" ]]; then
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local -a llvm_args=("build" "${ex}" "--arch=sm_80")
@@ -665,16 +664,23 @@ run_cargo() {
         fi
 
         local scalar_ptx_re='((mul|div)\.(rn|rz|rm|rp)(\.ftz)?\.f32|fma\.(rn|rz|rm|rp)(\.ftz)?(\.sat)?\.f32|add\.(rn|rz|rm|rp)(\.sat)?(\.ftz)?\.f32|(mul|div|fma|add)\.(rn|rz|rm|rp)\.f64)'
+        local ampere_float_mma_re='mma\.sync\.aligned\.(m16n8k4\.row\.col\.f32\.tf32\.tf32\.f32|m16n8k8\.row\.col\.f16\.f16\.f16\.f16|m16n8k8\.row\.col\.f32\.bf16\.bf16\.f32|m16n8k8\.row\.col\.f32\.f16\.f16\.f32|m16n8k16\.row\.col\.f16\.f16\.f16\.f16)'
         local scalar_ptx_body scalar_ptx_count scalar_ptx_unique
+        local mma_ptx_body mma_ptx_count mma_ptx_unique
         scalar_ptx_body="$(awk '/^\.visible \.entry compile_scalar_explicit_rounding\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
         scalar_ptx_count="$(grep -oE "${scalar_ptx_re}" <<<"${scalar_ptx_body}" | wc -l)"
         scalar_ptx_unique="$(grep -oE "${scalar_ptx_re}" <<<"${scalar_ptx_body}" | sort -u | wc -l)"
-        if [[ ! -s "${llvm_ptx}" || -z "${scalar_ptx_body}" ]] \
+        mma_ptx_body="$(awk '/^\.visible \.entry compile_register_mma\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        mma_ptx_count="$(grep -oE "${ampere_float_mma_re}" <<<"${mma_ptx_body}" | wc -l)"
+        mma_ptx_unique="$(grep -oE "${ampere_float_mma_re}" <<<"${mma_ptx_body}" | sort -u | wc -l)"
+        if [[ ! -s "${llvm_ptx}" || -z "${scalar_ptx_body}" || -z "${mma_ptx_body}" ]] \
             || ! grep -qx '\.target sm_80' "${llvm_ptx}" \
             || [[ ${scalar_ptx_count} -ne 64 || ${scalar_ptx_unique} -ne 64 ]] \
+            || [[ ${mma_ptx_count} -ne 5 || ${mma_ptx_unique} -ne 5 ]] \
             || grep -qE '(\.extern|call)[^;]*llvm[.$]nvvm[.$](mul|div|fma|add)[.$](rn|rz|rm|rp)' "${llvm_ptx}"; then
-            printf 'generated_intrinsics LLVM route expected 64 exact unique scalar arithmetic instructions; got %s total, %s unique\n' \
-                "${scalar_ptx_count}" "${scalar_ptx_unique}" >>"${log}"
+            printf 'generated_intrinsics LLVM route expected 64 scalar forms and 5 Ampere floating MMA forms; got %s/%s and %s/%s total/unique\n' \
+                "${scalar_ptx_count}" "${scalar_ptx_unique}" \
+                "${mma_ptx_count}" "${mma_ptx_unique}" >>"${log}"
             CARGO_EC=1
             return
         fi
@@ -692,8 +698,11 @@ run_cargo() {
         fi
 
         local nvvm_ll="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
-        local scalar_ir_body
+        local scalar_ir_body mma_ir_body mma_ir_count mma_ir_unique
         scalar_ir_body="$(awk '/^define .*@compile_scalar_explicit_rounding\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        mma_ir_body="$(awk '/^define .*@compile_register_mma\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        mma_ir_count="$(grep -oE "${ampere_float_mma_re}" <<<"${mma_ir_body}" | wc -l)"
+        mma_ir_unique="$(grep -oE "${ampere_float_mma_re}" <<<"${mma_ir_body}" | sort -u | wc -l)"
         local f32_binary_re='call float asm "((mul|div)\.(rn|rz|rm|rp)(\.ftz)?|add\.(rn|rz|rm|rp)(\.sat)?(\.ftz)?)\.f32 \$0, \$1, \$2;", "=f,f,f"'
         local f32_fma_re='call float asm "fma\.(rn|rz|rm|rp)(\.ftz)?(\.sat)?\.f32 \$0, \$1, \$2, \$3;", "=f,f,f,f"'
         local f64_binary_re='call double asm "(mul|div|add)\.(rn|rz|rm|rp)\.f64 \$0, \$1, \$2;", "=d,d,d"'
@@ -708,17 +717,19 @@ run_cargo() {
         f64_binary_unique="$(grep -oE "${f64_binary_re}" <<<"${scalar_ir_body}" | sort -u | wc -l)"
         f64_fma_count="$(grep -oE "${f64_fma_re}" <<<"${scalar_ir_body}" | wc -l)"
         f64_fma_unique="$(grep -oE "${f64_fma_re}" <<<"${scalar_ir_body}" | sort -u | wc -l)"
-        if [[ ! -s "${nvvm_ll}" || -z "${scalar_ir_body}" ]] \
+        if [[ ! -s "${nvvm_ll}" || -z "${scalar_ir_body}" || -z "${mma_ir_body}" ]] \
             || [[ ${f32_binary_count} -ne 32 || ${f32_binary_unique} -ne 32 ]] \
             || [[ ${f32_fma_count} -ne 16 || ${f32_fma_unique} -ne 16 ]] \
             || [[ ${f64_binary_count} -ne 12 || ${f64_binary_unique} -ne 12 ]] \
             || [[ ${f64_fma_count} -ne 4 || ${f64_fma_unique} -ne 4 ]] \
+            || [[ ${mma_ir_count} -ne 5 || ${mma_ir_unique} -ne 5 ]] \
             || grep -qE 'llvm\.nvvm\.(mul|div|fma|add)\.(rn|rz|rm|rp)' "${nvvm_ll}"; then
-            printf 'generated_intrinsics libNVVM route expected exact constrained scalar forms f32-bin=32, f32-fma=16, f64-bin=12, f64-fma=4; got %s/%s, %s/%s, %s/%s, %s/%s total/unique\n' \
+            printf 'generated_intrinsics libNVVM route expected exact scalar forms plus 5 Ampere floating MMA forms; got scalar %s/%s, %s/%s, %s/%s, %s/%s and MMA %s/%s total/unique\n' \
                 "${f32_binary_count}" "${f32_binary_unique}" \
                 "${f32_fma_count}" "${f32_fma_unique}" \
                 "${f64_binary_count}" "${f64_binary_unique}" \
-                "${f64_fma_count}" "${f64_fma_unique}" >>"${log}"
+                "${f64_fma_count}" "${f64_fma_unique}" \
+                "${mma_ir_count}" "${mma_ir_unique}" >>"${log}"
             CARGO_EC=1
         fi
         return
