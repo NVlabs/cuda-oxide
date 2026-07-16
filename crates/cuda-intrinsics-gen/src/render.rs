@@ -1679,7 +1679,7 @@ fn tcgen05_render_contract(record: &CatalogIntrinsic) -> bool {
         || record.lowering != "generated_tcgen05"
         || !record.semantics.convergent
         || record.target.minimum_ptx.to_string() != "8.6"
-        || record.target.targets != "sm_100a|sm_101a"
+        || record.target.targets != "sm_100a|sm_101a|sm_103a|sm_110a"
         || record.backend_lowerings.len() != 2
         || !record
             .backend_lowerings
@@ -7561,6 +7561,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in tcgen05_intrinsics(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
@@ -7569,9 +7573,18 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     } else if wgmma_controls(catalog).next().is_some() {
         output.push_str("use dialect_mir::ops::MirConstantOp;\n\n");
     }
-    if register_mmas(catalog).next().is_some() || sparse_mmas(catalog).next().is_some() {
+    if register_mmas(catalog).next().is_some()
+        || sparse_mmas(catalog).next().is_some()
+        || tcgen05_intrinsics(catalog).next().is_some()
+    {
         output.push_str(
-            "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirExtractFieldOp}, types::MirArrayType};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
+            "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirConstructStructOp, MirExtractFieldOp}, types::MirArrayType};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
+        );
+    }
+    if tcgen05_intrinsics(catalog).next().is_some() {
+        output = output.replace(
+            "use crate::translator::{rvalue, terminator::helpers};",
+            "use crate::translator::{rvalue, terminator::helpers, types};",
         );
     }
     writeln!(
@@ -8991,33 +9004,88 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("        ");
         render_inline_patterns(&mut output, &path_refs);
         output.push_str(" => {\n");
-        let helper = format!("emit_{}", record.rust.name);
+        let arity = record.dialect.operands.len();
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {arity}, &loc)?;"
+        )
+        .unwrap();
+        output.push_str(
+            "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
+        );
         match operation {
-            Tcgen05Operation::RelinquishAllocPermit
-            | Tcgen05Operation::FenceBeforeThreadSync
-            | Tcgen05Operation::FenceAfterThreadSync
-            | Tcgen05Operation::LoadWait
-            | Tcgen05Operation::StoreWait
-            | Tcgen05Operation::RelinquishAllocPermitCg2 => {
+            Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
+                let count = if operation == Tcgen05Operation::Ld16x256bX8Pure {
+                    32
+                } else {
+                    4
+                };
+                output.push_str("            let f32_ty = FP32Type::get(ctx);\n");
                 writeln!(
                     output,
-                    "            Ok(Some(super::tcgen05::{helper}(\n                ctx, args, target, block_ptr, prev_op, block_map, loc,\n            )?))"
+                    "            let result_types = (0..{count}).map(|_| f32_ty.into()).collect();"
                 )
                 .unwrap();
-            }
-            Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tcgen05::{helper}(\n                ctx, body, args, destination, target, block_ptr, prev_op, value_map, block_map, loc,\n            )?))"
+                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), result_types, operands, vec![], 0);",
+                    record.dialect.op_type
+                )
+                .unwrap();
+                output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n",
+                );
+                writeln!(
+                    output,
+                    "            let results: Vec<Value> = (0..{count}).map(|index| intrinsic.deref(ctx).get_result(index)).collect();"
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "            let array_ty = MirArrayType::get(ctx, f32_ty.into(), {count});"
+                )
+                .unwrap();
+                output.push_str(
+                    "            let array = Operation::new(ctx, MirConstructArrayOp::get_concrete_op_info(), vec![array_ty.into()], results, vec![], 0);\n            array.deref_mut(ctx).set_loc(loc.clone());\n            array.insert_after(ctx, intrinsic);\n            let destination_rust_ty = match destination.ty(body.locals()) {\n                Ok(ty) => ty,\n                Err(error) => {\n                    return input_err!(\n                        loc,\n                        TranslationErr::unsupported(format!(\n                            \"failed to resolve destination type for intrinsic result: {error:?}\"\n                        ))\n                    );\n                }\n            };\n            let destination_ty = types::translate_type(ctx, &destination_rust_ty)?;\n            let array_result = array.deref(ctx).get_result(0);\n            let value = Operation::new(ctx, MirConstructStructOp::get_concrete_op_info(), vec![destination_ty], vec![array_result], vec![], 0);\n            value.deref_mut(ctx).set_loc(loc.clone());\n            value.insert_after(ctx, array);\n            let result = value.deref(ctx).get_result(0);\n",
+                );
+                writeln!(
+                    output,
+                    "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
+                    format!("{} call without target block", record.rust.name)
                 )
                 .unwrap();
             }
             _ => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tcgen05::{helper}(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,\n            )?))"
+                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                    record.dialect.op_type
                 )
                 .unwrap();
+                output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+                );
+                writeln!(
+                    output,
+                    "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+                    format!("{} call without target block", record.rust.name)
+                )
+                .unwrap();
+                output.push_str("            }\n");
             }
         }
         output.push_str("        }\n");
@@ -9299,6 +9367,144 @@ fn special_register_backend_mechanism(
         .mechanism
 }
 
+fn tcgen05_inline_asm(operation: Tcgen05Operation) -> (String, String, Option<usize>) {
+    match operation {
+        Tcgen05Operation::Alloc | Tcgen05Operation::AllocCg2 => {
+            let group = if operation == Tcgen05Operation::AllocCg2 { 2 } else { 1 };
+            (
+                format!("{{ .reg .u64 %shared64; .reg .u32 %shared32; cvta.to.shared.u64 %shared64, $0; cvt.u32.u64 %shared32, %shared64; tcgen05.alloc.cta_group::{group}.sync.aligned.shared::cta.b32 [%shared32], $1; }}"),
+                "l,r,~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::Dealloc | Tcgen05Operation::DeallocCg2 => {
+            let group = if operation == Tcgen05Operation::DeallocCg2 { 2 } else { 1 };
+            (
+                format!("tcgen05.dealloc.cta_group::{group}.sync.aligned.b32 $0, $1;"),
+                "r,r,~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::RelinquishAllocPermit
+        | Tcgen05Operation::RelinquishAllocPermitCg2 => {
+            let group = if operation == Tcgen05Operation::RelinquishAllocPermitCg2 {
+                2
+            } else {
+                1
+            };
+            (
+                format!("tcgen05.relinquish_alloc_permit.cta_group::{group}.sync.aligned;"),
+                "~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::FenceBeforeThreadSync => (
+            "tcgen05.fence::before_thread_sync;".into(),
+            "~{memory}".into(),
+            None,
+        ),
+        Tcgen05Operation::FenceAfterThreadSync => (
+            "tcgen05.fence::after_thread_sync;".into(),
+            "~{memory}".into(),
+            None,
+        ),
+        Tcgen05Operation::Commit
+        | Tcgen05Operation::CommitSharedCluster
+        | Tcgen05Operation::CommitCg2
+        | Tcgen05Operation::CommitSharedClusterCg2 => {
+            let group = if matches!(
+                operation,
+                Tcgen05Operation::CommitCg2 | Tcgen05Operation::CommitSharedClusterCg2
+            ) {
+                2
+            } else {
+                1
+            };
+            let shared = if matches!(
+                operation,
+                Tcgen05Operation::CommitSharedCluster
+                    | Tcgen05Operation::CommitSharedClusterCg2
+            ) {
+                ".shared::cluster"
+            } else {
+                ""
+            };
+            (
+                format!("tcgen05.commit.cta_group::{group}.mbarrier::arrive::one{shared}.b64 [$0];"),
+                "r,~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::MmaWsF16 | Tcgen05Operation::MmaWsBf16 => (
+            "{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $5, 0; tcgen05.mma.ws.cta_group::1.kind::f16 [$0], [$1], $3, $4, %enable_pred; }".into(),
+            "r,r,l,l,r,r,~{memory}".into(),
+            None,
+        ),
+        Tcgen05Operation::MmaWsTf32 => (
+            "{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $5, 0; tcgen05.mma.ws.cta_group::1.kind::tf32 [$0], [$1], $3, $4, %enable_pred; }".into(),
+            "r,r,l,l,r,r,~{memory}".into(),
+            None,
+        ),
+        Tcgen05Operation::MmaF16 | Tcgen05Operation::MmaF16Cg2 => {
+            let group = if operation == Tcgen05Operation::MmaF16Cg2 { 2 } else { 1 };
+            let zeros = std::iter::repeat_n("%z", if group == 2 { 8 } else { 4 })
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                format!("{{ .reg .pred %enable_pred; setp.ne.s32 %enable_pred, $4, 0; .reg .u32 %z; mov.u32 %z, 0; tcgen05.mma.cta_group::{group}.kind::f16 [$0], $1, $2, $3, {{{zeros}}}, %enable_pred; }}"),
+                "r,l,l,r,r,~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::CpSmemToTmem | Tcgen05Operation::CpSmemToTmemCg2 => {
+            let group = if operation == Tcgen05Operation::CpSmemToTmemCg2 { 2 } else { 1 };
+            (
+                format!("tcgen05.cp.cta_group::{group}.128x256b [$0], $1;"),
+                "r,l,~{memory}".into(),
+                None,
+            )
+        }
+        Tcgen05Operation::Ld16x256bX8Pure | Tcgen05Operation::Ld16x256bPure => {
+            let count = if operation == Tcgen05Operation::Ld16x256bX8Pure {
+                32
+            } else {
+                4
+            };
+            let registers = (0..count)
+                .map(|index| format!("${index}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let constraints = std::iter::repeat_n("=f", count)
+                .chain(std::iter::once("r"))
+                .collect::<Vec<_>>()
+                .join(",");
+            (
+                format!(
+                    "tcgen05.ld.sync.aligned.16x256b.{}.b32 {{{registers}}}, [${count}];",
+                    if count == 32 { "x8" } else { "x1" }
+                ),
+                constraints,
+                Some(count),
+            )
+        }
+        Tcgen05Operation::LoadWait => (
+            "tcgen05.wait::ld.sync.aligned;".into(),
+            "~{memory}".into(),
+            None,
+        ),
+        Tcgen05Operation::StoreWait => (
+            "tcgen05.wait::st.sync.aligned;".into(),
+            "~{memory}".into(),
+            None,
+        ),
+        Tcgen05Operation::CommitMulticastCg2 => (
+            "tcgen05.commit.cta_group::2.mbarrier::arrive::one.shared::cluster.multicast::cluster.b64 [$0], $1;".into(),
+            "r,h,~{memory}".into(),
+            None,
+        ),
+    }
+}
+
 fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -9330,8 +9536,16 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if tcgen05_intrinsics(catalog).next().is_some() {
         output = output.replace(
-            "use dialect_nvvm::ops::{",
-            "use crate::convert::intrinsics::tcgen05;\nuse dialect_nvvm::ops::{",
+            "use llvm_export::{ops::AsmKind, types as llvm_types};",
+            "use llvm_export::{ops as llvm_ops, ops::AsmKind, types as llvm_types};",
+        );
+        output = output.replace(
+            "builtin::types::{IntegerType, Signedness}",
+            "builtin::types::{FP32Type, IntegerType, Signedness}",
+        );
+        output = output.replace(
+            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
+            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
         );
     }
     for (index, record) in sregs(catalog).enumerate() {
@@ -9587,6 +9801,78 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "fn convert_zero_operand_scalar_direct(\n    ctx: &mut Context,\n    rewriter: &mut DialectConversionRewriter,\n    op: Ptr<Operation>,\n    width: u32,\n    intrinsic_name: &str,\n) -> Result<()> {\n    let result_ty = IntegerType::get(ctx, width, Signedness::Signless);\n    let function_ty = llvm_types::FuncType::get(ctx, result_ty.into(), vec![], false);\n    let call = call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, vec![])?;\n    rewriter.replace_operation(ctx, op, call);\n    Ok(())\n}\n\n",
     );
+    if tcgen05_intrinsics(catalog).next().is_some() {
+        output.push_str(
+            r#"fn convert_generated_tcgen05_void(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    arity: usize,
+    template: &str,
+    constraints: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != arity {
+        return pliron::input_err_noloc!(
+            "generated tcgen05 operation expects {arity} operands, got {}",
+            operands.len()
+        );
+    }
+    let void_ty = llvm_types::VoidType::get(ctx);
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        void_ty.into(),
+        operands,
+        template,
+        constraints,
+    );
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+fn convert_generated_tcgen05_load(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    count: usize,
+    template: &str,
+    constraints: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 || !matches!(count, 4 | 32) {
+        return pliron::input_err_noloc!(
+            "generated tcgen05 load requires one operand and four or 32 results"
+        );
+    }
+    let f32_ty = FP32Type::get(ctx);
+    let result_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (0..count).map(|_| f32_ty.into()).collect(),
+    );
+    let inline_asm = inline_asm_convergent(
+        ctx,
+        rewriter,
+        result_ty.into(),
+        operands,
+        template,
+        constraints,
+    );
+    let result = inline_asm.deref(ctx).get_result(0);
+    let mut values = Vec::with_capacity(count);
+    for index in 0..count as u32 {
+        let extract = llvm_ops::ExtractValueOp::new(ctx, result, vec![index])
+            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
+        rewriter.insert_operation(ctx, extract.get_operation());
+        values.push(extract.get_operation().deref(ctx).get_result(0));
+    }
+    rewriter.replace_operation_with_values(ctx, op, values);
+    Ok(())
+}
+
+"#,
+        );
+    }
     if stmatrices(catalog).next().is_some() {
         output.push_str(
             r#"fn convert_generated_stmatrix(
@@ -10571,6 +10857,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     for record in tcgen05_intrinsics(catalog) {
         let operation = record.tcgen05.as_ref().unwrap().operation;
+        let (template, constraints, result_count) = tcgen05_inline_asm(operation);
         writeln!(
             output,
             "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
@@ -10578,60 +10865,21 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str(
-            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
         );
-        match operation {
-            Tcgen05Operation::MmaWsF16 | Tcgen05Operation::MmaWsBf16 => output.push_str(
-                "        tcgen05::convert_mma_ws(ctx, rewriter, self.get_operation(), operands_info, \"f16\")\n",
-            ),
-            Tcgen05Operation::MmaWsTf32 => output.push_str(
-                "        tcgen05::convert_mma_ws(ctx, rewriter, self.get_operation(), operands_info, \"tf32\")\n",
-            ),
-            _ => {
-                let helper = match operation {
-                    Tcgen05Operation::Alloc => "convert_alloc",
-                    Tcgen05Operation::Dealloc => "convert_dealloc",
-                    Tcgen05Operation::RelinquishAllocPermit => {
-                        "convert_relinquish_alloc_permit"
-                    }
-                    Tcgen05Operation::FenceBeforeThreadSync => {
-                        "convert_fence_before_thread_sync"
-                    }
-                    Tcgen05Operation::FenceAfterThreadSync => {
-                        "convert_fence_after_thread_sync"
-                    }
-                    Tcgen05Operation::Commit => "convert_commit",
-                    Tcgen05Operation::CommitSharedCluster => "convert_commit_shared_cluster",
-                    Tcgen05Operation::MmaF16 => "convert_mma_f16",
-                    Tcgen05Operation::CpSmemToTmem => "convert_cp_smem_to_tmem",
-                    Tcgen05Operation::Ld16x256bX8Pure => "convert_ld_16x256b_x8_pure",
-                    Tcgen05Operation::Ld16x256bPure => "convert_ld_16x256b_pure",
-                    Tcgen05Operation::LoadWait => "convert_load_wait",
-                    Tcgen05Operation::StoreWait => "convert_store_wait",
-                    Tcgen05Operation::AllocCg2 => "convert_alloc_cg2",
-                    Tcgen05Operation::DeallocCg2 => "convert_dealloc_cg2",
-                    Tcgen05Operation::RelinquishAllocPermitCg2 => {
-                        "convert_relinquish_alloc_permit_cg2"
-                    }
-                    Tcgen05Operation::MmaF16Cg2 => "convert_mma_f16_cg2",
-                    Tcgen05Operation::CommitCg2 => "convert_commit_cg2",
-                    Tcgen05Operation::CommitSharedClusterCg2 => {
-                        "convert_commit_shared_cluster_cg2"
-                    }
-                    Tcgen05Operation::CommitMulticastCg2 => {
-                        "convert_commit_multicast_cg2"
-                    }
-                    Tcgen05Operation::CpSmemToTmemCg2 => "convert_cp_smem_to_tmem_cg2",
-                    Tcgen05Operation::MmaWsF16
-                    | Tcgen05Operation::MmaWsBf16
-                    | Tcgen05Operation::MmaWsTf32 => unreachable!(),
-                };
-                writeln!(
-                    output,
-                    "        tcgen05::{helper}(ctx, rewriter, self.get_operation(), operands_info)"
-                )
-                .unwrap();
-            }
+        if let Some(count) = result_count {
+            writeln!(
+                output,
+                "        convert_generated_tcgen05_load(ctx, rewriter, self.get_operation(), {count}, {template:?}, {constraints:?})"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                output,
+                "        convert_generated_tcgen05_void(ctx, rewriter, self.get_operation(), {}, {template:?}, {constraints:?})",
+                record.dialect.operands.len()
+            )
+            .unwrap();
         }
         output.push_str("    }\n}\n\n");
     }
@@ -11492,6 +11740,10 @@ fn render_tcgen05_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, hash: 
             "i32 %mbar, i16 %mask".into(),
         ),
     };
+    let (lowering_template, lowering_constraints, lowering_results) = tcgen05_inline_asm(operation);
+    assert_eq!(template, lowering_template);
+    assert_eq!(constraints, lowering_constraints);
+    assert_eq!(result_ty != "void", lowering_results.is_some());
     writeln!(
         output,
         "define void @probe_{}({parameters}) #0 {{",
@@ -15935,20 +16187,23 @@ mod tests {
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("cuda_device::tcgen05::tcgen05_alloc"));
-        assert!(importer.contains("super::tcgen05::emit_tcgen05_alloc("));
-        assert!(importer.contains("super::tcgen05::emit_tcgen05_ld_16x256b_x8_pure("));
-        assert!(importer.contains("destination, target"));
+        assert!(importer.contains("Tcgen05AllocOp::get_concrete_op_info()"));
+        assert!(importer.contains("Tcgen05Ld16x256bX8PureOp::get_concrete_op_info()"));
+        assert!(importer.contains("MirConstructStructOp::get_concrete_op_info()"));
+        assert!(!importer.contains("super::tcgen05::emit_"));
         assert!(importer.contains("\"v1:i0343\""));
         assert!(importer.contains("\"v1:i0366\""));
 
         let lowering = render_lowering(&catalog, "test-hash");
-        assert!(lowering.contains("use crate::convert::intrinsics::tcgen05;"));
+        assert!(!lowering.contains("use crate::convert::intrinsics::tcgen05;"));
         assert!(lowering.contains("impl MirToLlvmConversion for Tcgen05AllocOp"));
-        assert!(lowering.contains(
-            "tcgen05::convert_mma_ws(ctx, rewriter, self.get_operation(), operands_info, \"f16\")"
-        ));
-        assert!(!lowering.contains("operands_info, \"bf16\""));
-        assert!(lowering.contains("tcgen05::convert_ld_16x256b_x8_pure("));
+        assert!(
+            lowering.contains(
+                "tcgen05.mma.ws.cta_group::1.kind::f16 [$0], [$1], $3, $4, %enable_pred;"
+            )
+        );
+        assert!(!lowering.contains(".kind::bf16"));
+        assert!(lowering.contains("convert_generated_tcgen05_load("));
 
         let bf16 = tcgen05_intrinsics(&catalog)
             .find(|record| record.id == "tcgen05_mma_ws_bf16")
@@ -15974,7 +16229,7 @@ mod tests {
         let target = render_targets(&catalog, "test-hash");
         assert!(target.contains("\"v1:i0343\""));
         assert!(target.contains(
-            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101)])"
+            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
         ));
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();

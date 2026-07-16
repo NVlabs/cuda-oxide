@@ -338,6 +338,16 @@ pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
 #[cfg(test)]
 pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile> {
     let mut catalog = resolve(repo_root)?;
+    let active_count = catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "tcgen05")
+        .count();
+    match active_count {
+        24 => return Ok(catalog),
+        0 => {}
+        count => bail!("active tcgen05 catalog has {count} of 24 records"),
+    }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
     let operations = [
@@ -4417,7 +4427,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 minimum_ptx: "8.6".into(),
                 minimum_sm: None,
                 ptx_result: recipe.rust_result.into(),
-                targets: "sm_100a|sm_101a".into(),
+                targets: "sm_100a|sm_101a|sm_103a|sm_110a".into(),
                 ptx_isa_version: "8.6".into(),
                 ptx_isa_section: "Tensor Memory tcgen05 instructions".into(),
                 ptx_isa_url:
@@ -4548,7 +4558,7 @@ fn validate_tcgen05_policy(
     ensure!(
         policy.minimum_ptx == "8.6"
             && policy.minimum_sm.is_none()
-            && policy.targets == "sm_100a|sm_101a"
+            && policy.targets == "sm_100a|sm_101a|sm_103a|sm_110a"
             && policy.ptx_isa_version == "8.6"
             && policy.ptx_result == recipe.rust_result
             && policy.expected_ptx.mnemonic == "tcgen05"
@@ -6477,9 +6487,11 @@ fn validate_selected_target_predicates(
                         alternatives: vec![
                             CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
                             CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                            CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                            CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
                         ],
                     },
-            "{} tcgen05 selection must use the reviewed PTX 8.6 accelerated architectures",
+            "{} tcgen05 selection must use the reviewed accelerated architectures",
             policy.id
         );
     } else if matches!(
@@ -21304,6 +21316,8 @@ scope = "system"
                 alternatives: vec![
                     CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
                     CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
                 ],
             }
         );

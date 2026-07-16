@@ -1,0 +1,103 @@
+schema = 42
+family = "tcgen05"
+
+[tcgen05]
+llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-tcgen05"
+runtime_validation = "unexecuted"
+
+[[tcgen05.variant]]
+abi_id = "i0343"
+operation = "alloc"
+
+[[tcgen05.variant]]
+abi_id = "i0344"
+operation = "dealloc"
+
+[[tcgen05.variant]]
+abi_id = "i0345"
+operation = "relinquish_alloc_permit"
+
+[[tcgen05.variant]]
+abi_id = "i0346"
+operation = "fence_before_thread_sync"
+
+[[tcgen05.variant]]
+abi_id = "i0347"
+operation = "fence_after_thread_sync"
+
+[[tcgen05.variant]]
+abi_id = "i0348"
+operation = "commit"
+
+[[tcgen05.variant]]
+abi_id = "i0349"
+operation = "commit_shared_cluster"
+
+[[tcgen05.variant]]
+abi_id = "i0350"
+operation = "mma_ws_f16"
+
+[[tcgen05.variant]]
+abi_id = "i0351"
+operation = "mma_f16"
+
+[[tcgen05.variant]]
+abi_id = "i0352"
+operation = "mma_ws_bf16"
+
+[[tcgen05.variant]]
+abi_id = "i0353"
+operation = "mma_ws_tf32"
+
+[[tcgen05.variant]]
+abi_id = "i0354"
+operation = "cp_smem_to_tmem"
+
+[[tcgen05.variant]]
+abi_id = "i0355"
+operation = "ld16x256b_x8_pure"
+
+[[tcgen05.variant]]
+abi_id = "i0356"
+operation = "ld16x256b_pure"
+
+[[tcgen05.variant]]
+abi_id = "i0357"
+operation = "load_wait"
+
+[[tcgen05.variant]]
+abi_id = "i0358"
+operation = "store_wait"
+
+[[tcgen05.variant]]
+abi_id = "i0359"
+operation = "alloc_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0360"
+operation = "dealloc_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0361"
+operation = "relinquish_alloc_permit_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0362"
+operation = "mma_f16_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0363"
+operation = "commit_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0364"
+operation = "commit_shared_cluster_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0365"
+operation = "commit_multicast_cg2"
+
+[[tcgen05.variant]]
+abi_id = "i0366"
+operation = "cp_smem_to_tmem_cg2"
