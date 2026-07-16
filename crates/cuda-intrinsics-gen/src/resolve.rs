@@ -39,12 +39,12 @@ use crate::model::{
     SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
     SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
-    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth, VoteAdapter,
-    VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
-    WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
-    WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
-    WarpShuffleValueKind,
+    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
+    ThreadfenceAdmission, ThreadfenceScope, VoteAdapter, VoteMode, VoteParticipation,
+    WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
+    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
+    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
+    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -53,9 +53,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 37;
+const OVERLAY_SCHEMA: u32 = 38;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 33;
+const OVERLAY_SHARD_SCHEMA: u32 = 34;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -63,7 +63,8 @@ const CLUSTER_SREG_SHARD_SCHEMA: u32 = 30;
 const CLUSTER_BARRIER_SHARD_SCHEMA: u32 = 31;
 const SPECIAL_REGISTER_SHARD_SCHEMA: u32 = 32;
 const DEBUG_CONTROL_SHARD_SCHEMA: u32 = 33;
-pub(crate) const CATALOG_SCHEMA: u32 = 36;
+const THREADFENCE_SHARD_SCHEMA: u32 = 34;
+pub(crate) const CATALOG_SCHEMA: u32 = 37;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -468,6 +469,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let cluster_barrier_admission = shard.cluster_barrier.take();
         let special_register_admission = shard.special_registers.take();
         let debug_control_admission = shard.debug_control.take();
+        let threadfence_admission = shard.threadfence.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -553,6 +555,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_debug_control_admission(&admission)?;
         }
+        if let Some(admission) = threadfence_admission {
+            ensure!(
+                shard.family == "sync" && shard.intrinsics.is_empty(),
+                "compact threadfence admission must be the only content of a sync shard"
+            );
+            shard.intrinsics = expand_threadfence_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -631,6 +640,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.debug_control.is_none() || shard.schema >= DEBUG_CONTROL_SHARD_SCHEMA,
         "compact debug-control admission requires overlay shard schema {}",
         DEBUG_CONTROL_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.threadfence.is_none() || shard.schema >= THREADFENCE_SHARD_SCHEMA,
+        "compact threadfence admission requires overlay shard schema {}",
+        THREADFENCE_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1304,12 +1318,20 @@ fn selection_matches_policy(
     selection: &crate::model::ImportedSelection,
 ) -> bool {
     if policy.family == "sync" {
-        return policy.id == "sync_threads"
-            && selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
-            && selection.asm == "bar.sync \t$i;"
+        if policy.id == "sync_threads" {
+            return selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
+                && selection.asm == "bar.sync \t$i;"
+                && selection.predicates.is_empty()
+                && selection.constraints.is_empty();
+        }
+        let Some(scope) = threadfence_scope_for_id(&policy.id) else {
+            return false;
+        };
+        let recipe = threadfence_recipe(scope);
+        return selection.source_record == recipe.selection_record
+            && selection.asm == format!("membar.{};", recipe.ptx_level)
             && selection.predicates.is_empty()
-            && selection.constraints.address_space.is_none()
-            && selection.constraints.immediate_bindings.is_empty();
+            && selection.constraints.is_empty();
     }
 
     if policy.family == "vote" {
@@ -1432,7 +1454,346 @@ fn selection_matches_policy(
     }
 }
 
+#[derive(Clone, Copy)]
+struct ThreadfenceRecipe {
+    scope: ThreadfenceScope,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    selection_record: &'static str,
+    llvm_symbol: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    ptx_level: &'static str,
+    execution_scope: &'static str,
+    minimum_ptx: &'static str,
+    minimum_sm: Option<&'static str>,
+    summary: &'static str,
+}
+
+fn threadfence_recipe(scope: ThreadfenceScope) -> ThreadfenceRecipe {
+    match scope {
+        ThreadfenceScope::Cta => ThreadfenceRecipe {
+            scope,
+            abi_id: "i0298",
+            id: "threadfence_block",
+            operation_key: "memory.fence.cta.sc",
+            source_record: "int_nvvm_membar_cta",
+            selection_record: "INT_MEMBAR_CTA",
+            llvm_symbol: "llvm.nvvm.membar.cta",
+            dialect_op_type: "ThreadfenceBlockOp",
+            dialect_op_name: "nvvm.threadfence_block",
+            ptx_level: "cta",
+            execution_scope: "cta",
+            minimum_ptx: "1.4",
+            minimum_sm: None,
+            summary: "Orders this thread's memory operations for observers in its CTA.",
+        },
+        ThreadfenceScope::Device => ThreadfenceRecipe {
+            scope,
+            abi_id: "i0299",
+            id: "threadfence",
+            operation_key: "memory.fence.device.sc",
+            source_record: "int_nvvm_membar_gl",
+            selection_record: "INT_MEMBAR_GL",
+            llvm_symbol: "llvm.nvvm.membar.gl",
+            dialect_op_type: "ThreadfenceOp",
+            dialect_op_name: "nvvm.threadfence",
+            ptx_level: "gl",
+            execution_scope: "device",
+            minimum_ptx: "1.4",
+            minimum_sm: None,
+            summary: "Orders this thread's memory operations for observers on its GPU.",
+        },
+        ThreadfenceScope::System => ThreadfenceRecipe {
+            scope,
+            abi_id: "i0300",
+            id: "threadfence_system",
+            operation_key: "memory.fence.system.sc",
+            source_record: "int_nvvm_membar_sys",
+            selection_record: "INT_MEMBAR_SYS",
+            llvm_symbol: "llvm.nvvm.membar.sys",
+            dialect_op_type: "ThreadfenceSystemOp",
+            dialect_op_name: "nvvm.threadfence_system",
+            ptx_level: "sys",
+            execution_scope: "system",
+            minimum_ptx: "2.0",
+            minimum_sm: Some("sm_20"),
+            summary: "Orders this thread's memory operations for system-wide observers.",
+        },
+    }
+}
+
+fn threadfence_scope_for_id(id: &str) -> Option<ThreadfenceScope> {
+    match id {
+        "threadfence_block" => Some(ThreadfenceScope::Cta),
+        "threadfence" => Some(ThreadfenceScope::Device),
+        "threadfence_system" => Some(ThreadfenceScope::System),
+        _ => None,
+    }
+}
+
+fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "threadfence runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact threadfence admission requires both backend evidence profiles"
+    );
+    let expected_scopes = [
+        ThreadfenceScope::Cta,
+        ThreadfenceScope::Device,
+        ThreadfenceScope::System,
+    ];
+    let actual_scopes = admission
+        .variants
+        .iter()
+        .map(|variant| variant.scope)
+        .collect::<Vec<_>>();
+    ensure!(
+        actual_scopes == expected_scopes,
+        "compact threadfence admission must contain each reviewed scope exactly once in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = threadfence_recipe(variant.scope);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "sync".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "fence".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: vec![],
+                rust_result: "()".into(),
+                safe: true,
+                must_use: false,
+                safe_allowlist_reason: Some(
+                    "a fence only orders the calling thread's memory operations and has no caller preconditions"
+                        .into(),
+                ),
+                public_rust_path: format!("cuda_intrinsics::fence::{}", recipe.id),
+                compatibility_rust_paths: vec![
+                    format!("cuda_device::fence::{}", recipe.id),
+                    format!("cuda_device::{}", recipe.id),
+                ],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: vec![],
+                dialect_results: vec![],
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments: vec![],
+                llvm_results: vec![],
+                pure: false,
+                memory: "read_write".into(),
+                convergent: false,
+                execution_scope: recipe.execution_scope.into(),
+                minimum_ptx: recipe.minimum_ptx.into(),
+                minimum_sm: recipe.minimum_sm.map(Into::into),
+                ptx_result: "()".into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section:
+                    "9.7.14.4 Parallel Synchronization and Communication Instructions: membar / fence"
+                        .into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-membar-fence".into(),
+                lowering: "direct_nvvm".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("3.2".into()),
+                        minimum_sm: Some("sm_20".into()),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some("7.0".into()),
+                        minimum_sm: Some("sm_80".into()),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: None,
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "membar".into(),
+                    modifiers: vec![recipe.ptx_level.into()],
+                    operands: vec![],
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_threadfence_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    scope: ThreadfenceScope,
+) -> Result<()> {
+    let recipe = threadfence_recipe(scope);
+    ensure!(
+        recipe.scope == scope
+            && policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} threadfence identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "fence"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments.is_empty()
+            && policy.rust_result == "()"
+            && policy.safe
+            && !policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::fence::{}", recipe.id)
+            && policy.compatibility_rust_paths
+                == [
+                    format!("cuda_device::fence::{}", recipe.id),
+                    format!("cuda_device::{}", recipe.id),
+                ],
+        "{} threadfence Rust API does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments.is_empty()
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "direct_nvvm",
+        "{} threadfence carrier or lowering does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == ["IntrNoCallback"]
+            && !policy.pure
+            && policy.memory == "read_write"
+            && !policy.convergent
+            && policy.execution_scope == recipe.execution_scope,
+        "{} threadfence effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
+            && policy.ptx_result == "()"
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.4 Parallel Synchronization and Communication Instructions: membar / fence"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-membar-fence",
+        "{} threadfence target floor or PTX provenance changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == (InstructionPattern {
+                mnemonic: "membar".into(),
+                modifiers: vec![recipe.ptx_level.into()],
+                operands: vec![],
+            }),
+        "{} expected PTX does not match its closed threadfence scope",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LlvmNvptx
+                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.minimum_ptx.as_deref() == Some("3.2")
+                    && route.minimum_sm.as_deref() == Some("sm_20")
+            })
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LibNvvm
+                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.minimum_ptx.as_deref() == Some("7.0")
+                    && route.minimum_sm.as_deref() == Some("sm_80")
+            }),
+        "{} must keep both reviewed typed threadfence routes",
+        policy.id
+    );
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
+            && policy.dot_product.is_none()
+            && policy.packed_alu.is_none()
+            && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
+            && policy.cp_async_mbarrier.is_none()
+            && policy.mbarrier_basic.is_none()
+            && policy.register_mma.is_none()
+            && policy.sparse_mma.is_none()
+            && policy.prmt.is_none()
+            && policy.cluster_barrier.is_none()
+            && policy.special_register.is_none()
+            && policy.debug_control.is_none()
+            && policy.selected_address_space.is_none(),
+        "{} mixes another generated-family contract with threadfence",
+        policy.id
+    );
+    Ok(())
+}
+
 fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
+    if let Some(scope) = threadfence_scope_for_id(&policy.id) {
+        return validate_threadfence_policy(policy, declaration, scope);
+    }
     ensure!(
         policy.id == "sync_threads"
             && policy.abi_id == "i0034"
@@ -13844,8 +14205,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 38);
-        assert_eq!(overlay.intrinsics.len(), 297);
+        assert_eq!(overlay.shards.len(), 39);
+        assert_eq!(overlay.intrinsics.len(), 300);
         assert_eq!(
             overlay
                 .intrinsics
@@ -13956,7 +14317,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "sync")
                 .count(),
-            1
+            4
         );
         assert_eq!(
             overlay
@@ -14107,6 +14468,28 @@ mod tests {
         }
     }
 
+    fn test_threadfence_admission() -> ThreadfenceAdmission {
+        ThreadfenceAdmission {
+            llvm_evidence_profile: "llvm-test".into(),
+            libnvvm_evidence_profile: "libnvvm-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: vec![
+                crate::model::ThreadfenceAdmissionVariant {
+                    abi_id: "i0298".into(),
+                    scope: ThreadfenceScope::Cta,
+                },
+                crate::model::ThreadfenceAdmissionVariant {
+                    abi_id: "i0299".into(),
+                    scope: ThreadfenceScope::Device,
+                },
+                crate::model::ThreadfenceAdmissionVariant {
+                    abi_id: "i0300".into(),
+                    scope: ThreadfenceScope::System,
+                },
+            ],
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -14124,6 +14507,7 @@ mod tests {
             cluster_barrier: None,
             special_registers: None,
             debug_control: None,
+            threadfence: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -14131,6 +14515,10 @@ mod tests {
         validate_overlay_shard_schema(&shard(28, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(29, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(30, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(31, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(32, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(33, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(34, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(27, Some(test_f8f6f4_admission()), None), path)
             .unwrap();
         validate_overlay_shard_schema_with_max(
@@ -14148,9 +14536,7 @@ mod tests {
         .unwrap();
 
         assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
-        validate_overlay_shard_schema(&shard(32, None, None), path).unwrap();
-        validate_overlay_shard_schema(&shard(33, None, None), path).unwrap();
-        assert!(validate_overlay_shard_schema(&shard(34, None, None), path).is_err());
+        assert!(validate_overlay_shard_schema(&shard(35, None, None), path).is_err());
         let error =
             validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
                 .unwrap_err();
@@ -14183,6 +14569,7 @@ mod tests {
             cluster_barrier: None,
             special_registers: None,
             debug_control: None,
+            threadfence: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -14208,6 +14595,7 @@ mod tests {
             cluster_barrier: Some(test_cluster_barrier_admission()),
             special_registers: None,
             debug_control: None,
+            threadfence: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -14313,6 +14701,7 @@ record_count = 14
             cluster_barrier: None,
             special_registers: Some(admission.clone()),
             debug_control: None,
+            threadfence: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -14478,6 +14867,117 @@ record_count = 14
             .get(&(lowering.evidence_profile.as_str(), policy.id.as_str()))
             .unwrap();
         assert!(validate_evidence(policy, evidence, Some(lowering)).is_err());
+    }
+
+    #[test]
+    fn threadfence_admission_is_closed_and_uses_schema_34() {
+        let shard = |schema| {
+            toml::from_str::<OverlayShardFile>(&format!(
+                r#"
+schema = {schema}
+family = "sync"
+
+[threadfence]
+llvm_evidence_profile = "llvm-test"
+libnvvm_evidence_profile = "libnvvm-test"
+runtime_validation = "unexecuted"
+
+[[threadfence.variant]]
+abi_id = "i0298"
+scope = "cta"
+
+[[threadfence.variant]]
+abi_id = "i0299"
+scope = "device"
+
+[[threadfence.variant]]
+abi_id = "i0300"
+scope = "system"
+"#
+            ))
+            .unwrap()
+        };
+        let path = Path::new("intrinsics/overlay/threadfence.toml");
+
+        let old = shard(THREADFENCE_SHARD_SCHEMA - 1);
+        assert!(
+            validate_overlay_shard_schema(&old, path)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 34")
+        );
+
+        let current = shard(THREADFENCE_SHARD_SCHEMA);
+        validate_overlay_shard_schema(&current, path).unwrap();
+        let admission = current.threadfence.unwrap();
+        let records = expand_threadfence_admission(&admission).unwrap();
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0298", "threadfence_block"),
+                ("i0299", "threadfence"),
+                ("i0300", "threadfence_system"),
+            ]
+        );
+
+        let mut reordered = admission.clone();
+        reordered.variants.swap(0, 1);
+        assert!(expand_threadfence_admission(&reordered).is_err());
+
+        let mut wrong_id = admission.clone();
+        wrong_id.variants[0].abi_id = "i0300".into();
+        assert!(expand_threadfence_admission(&wrong_id).is_err());
+
+        let mut executed = admission.clone();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_threadfence_admission(&executed).is_err());
+    }
+
+    #[test]
+    fn pinned_threadfences_match_llvm_and_reject_contract_drift() {
+        let records = expand_threadfence_admission(&test_threadfence_admission()).unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+            assert_eq!(
+                declaration
+                    .selections
+                    .iter()
+                    .filter(|selection| selection_matches_policy(record, selection))
+                    .count(),
+                1
+            );
+        }
+
+        let declaration = declarations["int_nvvm_membar_cta"];
+        let mut changed = records[0].clone();
+        changed.memory = "none".into();
+        assert!(validate_imported_policy(&changed, declaration).is_err());
+
+        let mut changed = records[0].clone();
+        changed.convergent = true;
+        assert!(validate_imported_policy(&changed, declaration).is_err());
+
+        let mut changed = records[0].clone();
+        changed.backend_lowerings[0].mechanism = BackendLoweringMechanism::InlinePtx;
+        assert!(validate_imported_policy(&changed, declaration).is_err());
+
+        let mut changed = records[0].clone();
+        changed.minimum_ptx = "2.0".into();
+        assert!(validate_imported_policy(&changed, declaration).is_err());
     }
 
     #[test]
@@ -14747,6 +15247,7 @@ record_count = 14
             cluster_barrier: None,
             special_registers: None,
             debug_control: Some(test_debug_control_admission()),
+            threadfence: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();

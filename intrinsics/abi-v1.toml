@@ -2086,3 +2086,24 @@ status = "active"
 catalog_id = "pmevent"
 operation_key = "debug.profiler.event"
 raw_rust_signature = { safe = true, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0298"
+status = "active"
+catalog_id = "threadfence_block"
+operation_key = "memory.fence.cta.sc"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0299"
+status = "active"
+catalog_id = "threadfence"
+operation_key = "memory.fence.device.sc"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0300"
+status = "active"
+catalog_id = "threadfence_system"
+operation_key = "memory.fence.system.sc"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }

@@ -3,23 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Basic NVVM intrinsic conversion for special registers and memory fences.
+//! Basic NVVM intrinsic conversion for special registers.
 //!
 //! | Operation    | LLVM Intrinsic                    |
 //! |--------------|-----------------------------------|
 //! | `ReadTidX`   | `llvm_nvvm_read_ptx_sreg_tid_x`   |
 //! | `ReadCtaidX` | `llvm_nvvm_read_ptx_sreg_ctaid_x` |
 //! | `ReadNtidX`  | `llvm_nvvm_read_ptx_sreg_ntid_x`  |
-//! | `ThreadfenceBlock` | inline PTX `membar.cta`      |
-//! | `Threadfence` | inline PTX `membar.gl`           |
-//! | `ThreadfenceSystem` | inline PTX `membar.sys`     |
-
-use crate::convert::intrinsics::common::*;
 use llvm_export::ops::{AsmKind, InlineAsmOpExt};
-use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
-use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
+use pliron::irbuild::dialect_conversion::DialectConversionRewriter;
 use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
@@ -54,53 +48,4 @@ pub(crate) fn convert_sreg_read_inline(
     rewriter.insert_operation(ctx, asm_op);
     rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
-}
-
-fn convert_membar(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    asm_template: &str,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    inline_asm_convergent(
-        ctx,
-        rewriter,
-        void_ty.into(),
-        vec![],
-        asm_template,
-        "~{memory}",
-    );
-    rewriter.erase_operation(ctx, op);
-    Ok(())
-}
-
-/// Convert a block-scoped memory fence to inline PTX `membar.cta`.
-pub(crate) fn convert_threadfence_block(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_membar(ctx, rewriter, op, "membar.cta;")
-}
-
-/// Convert a device-scoped memory fence to inline PTX `membar.gl`.
-pub(crate) fn convert_threadfence(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_membar(ctx, rewriter, op, "membar.gl;")
-}
-
-/// Convert a system-scoped memory fence to inline PTX `membar.sys`.
-pub(crate) fn convert_threadfence_system(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    convert_membar(ctx, rewriter, op, "membar.sys;")
 }

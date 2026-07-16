@@ -19,7 +19,7 @@ use dialect_nvvm::ops::{
     FenceProxyAsyncGenericReleaseSharedCtaClusterOp, FenceProxyAsyncSharedCtaOp,
     MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp, MbarrierArriveExpectTxSharedOp,
     MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp, MbarrierTryWaitSharedOp,
-    NanosleepOp, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    NanosleepOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -29,132 +29,6 @@ use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use rustc_public::mir;
-/// Emit a zero-operand, zero-result synchronization op and branch to the
-/// target block.
-fn emit_zero_arg_void_sync_op<F>(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-    build_op: F,
-    op_name: &str,
-) -> TranslationResult<Ptr<Operation>>
-where
-    F: FnOnce(&mut Context) -> Ptr<Operation>,
-{
-    let sync_op = build_op(ctx);
-    sync_op.deref_mut(ctx).set_loc(loc.clone());
-
-    let last_op = if let Some(prev) = prev_op {
-        sync_op.insert_after(ctx, prev);
-        sync_op
-    } else {
-        sync_op.insert_at_front(block_ptr, ctx);
-        sync_op
-    };
-
-    if let Some(target_idx) = target {
-        let goto_op = emit_goto(ctx, *target_idx, last_op, block_map, loc);
-        Ok(goto_op)
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(format!("{op_name} call without target block"))
-        )
-    }
-}
-
-/// Emits `threadfence_block()`: CTA-scoped memory fence.
-pub fn emit_threadfence_block(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    emit_zero_arg_void_sync_op(
-        ctx,
-        target,
-        block_ptr,
-        prev_op,
-        block_map,
-        loc,
-        |ctx| {
-            Operation::new(
-                ctx,
-                ThreadfenceBlockOp::get_concrete_op_info(),
-                vec![],
-                vec![],
-                vec![],
-                0,
-            )
-        },
-        "threadfence_block",
-    )
-}
-
-/// Emits `threadfence()`: device-scoped memory fence.
-pub fn emit_threadfence(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    emit_zero_arg_void_sync_op(
-        ctx,
-        target,
-        block_ptr,
-        prev_op,
-        block_map,
-        loc,
-        |ctx| {
-            Operation::new(
-                ctx,
-                ThreadfenceOp::get_concrete_op_info(),
-                vec![],
-                vec![],
-                vec![],
-                0,
-            )
-        },
-        "threadfence",
-    )
-}
-
-/// Emits `threadfence_system()`: system-scoped memory fence.
-pub fn emit_threadfence_system(
-    ctx: &mut Context,
-    target: &Option<usize>,
-    block_ptr: Ptr<BasicBlock>,
-    prev_op: Option<Ptr<Operation>>,
-    block_map: &[Ptr<BasicBlock>],
-    loc: Location,
-) -> TranslationResult<Ptr<Operation>> {
-    emit_zero_arg_void_sync_op(
-        ctx,
-        target,
-        block_ptr,
-        prev_op,
-        block_map,
-        loc,
-        |ctx| {
-            Operation::new(
-                ctx,
-                ThreadfenceSystemOp::get_concrete_op_info(),
-                vec![],
-                vec![],
-                vec![],
-                0,
-            )
-        },
-        "threadfence_system",
-    )
-}
 /// Emit mbarrier_arrive_expect_tx: arrive at barrier with expected transaction bytes.
 ///
 /// This is required for TMA's complete_tx::bytes mode. The barrier must be told

@@ -171,6 +171,8 @@ pub struct OverlayShardFile {
     pub special_registers: Option<SpecialRegisterAdmission>,
     #[serde(default)]
     pub debug_control: Option<DebugControlAdmission>,
+    #[serde(default)]
+    pub threadfence: Option<ThreadfenceAdmission>,
 }
 
 /// Compact admission for Hopper cluster special registers.
@@ -251,6 +253,34 @@ pub struct DebugControlAdmission {
     /// Filled only when this pending shard is aggregated.
     #[serde(default)]
     pub abi_ids: Vec<String>,
+}
+
+/// Compact admission for the three CUDA thread fences.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadfenceAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ThreadfenceAdmissionVariant>,
+}
+
+/// One reviewed thread-fence scope.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadfenceAdmissionVariant {
+    pub abi_id: String,
+    pub scope: ThreadfenceScope,
+}
+
+/// Scope encoded by a PTX `membar` instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadfenceScope {
+    Cta,
+    Device,
+    System,
 }
 
 /// Compact admission for the closed `prmt` family.

@@ -71,6 +71,12 @@ pub fn all_outputs(
         "crates/cuda-device/src/generated/cluster_sreg.rs".into(),
         render_compat_cluster_sreg(catalog, catalog_sha256),
     );
+    if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
+        outputs.insert(
+            "crates/cuda-device/src/generated/fence.rs".into(),
+            render_compat_fence(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/cuda-device/src/generated/dotprod.rs".into(),
         render_compat_dotprod(catalog, catalog_sha256),
@@ -743,27 +749,51 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 "{} is outside the closed generated basic mbarrier recipe",
                 record.id
             ),
-            "sync" => ensure!(
-                record.id == "sync_threads"
-                    && record.rust.module == "thread"
-                    && record.rust.name == "sync_threads"
-                    && record.rust.arguments.is_empty()
-                    && record.rust.result == "()"
-                    && !record.rust.safe
-                    && !record.rust.must_use
-                    && record.llvm.as_ref().is_some_and(|llvm| {
-                        llvm.symbol == "llvm.nvvm.barrier.cta.sync.aligned.all"
-                            && llvm.arguments == ["i32"]
-                            && llvm.results.is_empty()
-                    })
-                    && record.dialect.op_type == "Barrier0Op"
-                    && record.dialect.op_name == "nvvm.barrier0"
-                    && record.dialect.operands.is_empty()
-                    && record.dialect.results.is_empty()
-                    && record.lowering == "generated_sync_threads",
-                "{} is outside the fixed-zero generated sync_threads recipe",
-                record.id
-            ),
+            "sync" => {
+                if record.id == "sync_threads" {
+                    ensure!(
+                        record.rust.module == "thread"
+                            && record.rust.name == "sync_threads"
+                            && record.rust.arguments.is_empty()
+                            && record.rust.result == "()"
+                            && !record.rust.safe
+                            && !record.rust.must_use
+                            && record.llvm.as_ref().is_some_and(|llvm| {
+                                llvm.symbol == "llvm.nvvm.barrier.cta.sync.aligned.all"
+                                    && llvm.arguments == ["i32"]
+                                    && llvm.results.is_empty()
+                            })
+                            && record.dialect.op_type == "Barrier0Op"
+                            && record.dialect.op_name == "nvvm.barrier0"
+                            && record.dialect.operands.is_empty()
+                            && record.dialect.results.is_empty()
+                            && record.lowering == "generated_sync_threads",
+                        "{} is outside the fixed-zero generated sync_threads recipe",
+                        record.id
+                    );
+                } else {
+                    ensure!(
+                        threadfence_ptx_level(record).is_some()
+                            && record.rust.module == "fence"
+                            && record.rust.name == record.id
+                            && record.rust.arguments.is_empty()
+                            && record.rust.result == "()"
+                            && record.rust.safe
+                            && !record.rust.must_use
+                            && record.llvm.as_ref().is_some_and(|llvm| {
+                                llvm.arguments.is_empty() && llvm.results.is_empty()
+                            })
+                            && record.dialect.operands.is_empty()
+                            && record.dialect.results.is_empty()
+                            && record.lowering == "direct_nvvm"
+                            && record.semantics.memory == "read_write"
+                            && !record.semantics.pure
+                            && !record.semantics.convergent,
+                        "{} is outside the closed generated thread-fence recipe",
+                        record.id
+                    );
+                }
+            }
             "vote" => ensure!(
                 record.rust.module == "warp"
                     && record.rust.arguments == ["u32", "bool"]
@@ -1089,6 +1119,15 @@ fn sync_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrin
         .intrinsics
         .iter()
         .filter(|record| record.family == "sync")
+}
+
+fn threadfence_ptx_level(record: &CatalogIntrinsic) -> Option<&'static str> {
+    match record.id.as_str() {
+        "threadfence_block" => Some("cta"),
+        "threadfence" => Some("gl"),
+        "threadfence_system" => Some("sys"),
+        _ => None,
+    }
 }
 
 fn vote_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2385,6 +2424,41 @@ fn render_compat_special_register_module(
             record.rust.result
         )
         .unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_fence(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "// This file is included inside `cuda_device::fence` so existing paths stay stable.\n\n",
+    );
+    for record in sync_intrinsics(catalog).filter(|record| threadfence_ptx_level(record).is_some())
+    {
+        let Some(path) = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::fence::"))
+        else {
+            continue;
+        };
+        let name = path.rsplit("::").next().unwrap();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "/// The compiler replaces this call with `{}`.",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push_str("#[inline(never)]\n");
+        writeln!(output, "pub fn {name}() {{").unwrap();
         writeln!(
             output,
             "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
@@ -7550,18 +7624,34 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             record.dialect.op_type
         )
         .unwrap();
-        output.push_str(
-            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n        match context::lowering_options(ctx).intrinsic_backend {\n            IntrinsicBackend::LlvmNvptx => {\n                let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n                let barrier_id = create_i32_const(ctx, rewriter, 0);\n                let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![i32_ty.into()], false);\n",
-        );
-        writeln!(
-            output,
-            "                call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![barrier_id])?;",
-            record.llvm_identifier()
-        )
-        .unwrap();
-        output.push_str(
-            "            }\n            IntrinsicBackend::LibNvvm => {\n                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], \"bar.sync 0;\", \"~{memory}\");\n            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
-        );
+        if record.id == "sync_threads" {
+            output.push_str(
+                "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n        match context::lowering_options(ctx).intrinsic_backend {\n            IntrinsicBackend::LlvmNvptx => {\n                let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n                let barrier_id = create_i32_const(ctx, rewriter, 0);\n                let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![i32_ty.into()], false);\n",
+            );
+            writeln!(
+                output,
+                "                call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![barrier_id])?;",
+                record.llvm_identifier()
+            )
+            .unwrap();
+            output.push_str(
+                "            }\n            IntrinsicBackend::LibNvvm => {\n                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], \"bar.sync 0;\", \"~{memory}\");\n            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
+            );
+        } else {
+            debug_assert!(threadfence_ptx_level(record).is_some());
+            output.push_str(
+                "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let void_ty = llvm_types::VoidType::get(ctx);\n        let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![], false);\n",
+            );
+            writeln!(
+                output,
+                "        call_intrinsic(ctx, rewriter, op, {:?}, function_ty, vec![])?;",
+                record.llvm_identifier()
+            )
+            .unwrap();
+            output.push_str(
+                "        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
+            );
+        }
     }
     output
 }
@@ -8337,10 +8427,26 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         writeln!(output, "  call void @{}() #0", llvm(record).symbol).unwrap();
         output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
     } else if record.family == "sync" {
-        writeln!(output, "declare void @{}(i32)", llvm(record).symbol).unwrap();
+        let arguments = if record.id == "sync_threads" {
+            "i32"
+        } else {
+            debug_assert!(threadfence_ptx_level(record).is_some());
+            ""
+        };
+        writeln!(output, "declare void @{}({arguments})", llvm(record).symbol).unwrap();
         output.push('\n');
         writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
-        writeln!(output, "  call void @{}(i32 0)", llvm(record).symbol).unwrap();
+        let call_arguments = if record.id == "sync_threads" {
+            "i32 0"
+        } else {
+            ""
+        };
+        writeln!(
+            output,
+            "  call void @{}({call_arguments})",
+            llvm(record).symbol
+        )
+        .unwrap();
         output.push_str("  ret void\n}\n");
     } else if let Some(warp_barrier) = &record.warp_barrier {
         debug_assert_eq!(warp_barrier.adapter, WarpBarrierAdapter::DirectMemberMask);
@@ -9047,14 +9153,29 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `cuda_device::cluster::cluster_sync` is the generated compatibility operation: aligned arrive followed by aligned wait.\n",
         );
     }
-    output.push_str("\n## CTA synchronization contracts\n\n");
+    if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
+        output.push_str("\n## Synchronization contracts\n\n");
+    } else {
+        output.push_str("\n## CTA synchronization contracts\n\n");
+    }
     for record in sync_intrinsics(catalog) {
-        writeln!(
-            output,
-            "- `{}` inserts the fixed barrier ID `0`. Every active CTA thread must reach the same barrier; divergent use can deadlock the CTA.",
-            record.id,
-        )
-        .unwrap();
+        if record.id == "sync_threads" {
+            writeln!(
+                output,
+                "- `{}` inserts the fixed barrier ID `0`. Every active CTA thread must reach the same barrier; divergent use can deadlock the CTA.",
+                record.id,
+            )
+            .unwrap();
+        } else {
+            let level = threadfence_ptx_level(record)
+                .expect("resolver admitted an unknown generated synchronization record");
+            writeln!(
+                output,
+                "- `{}` emits `membar.{level}` through the reviewed typed NVVM route on both backends.",
+                record.id,
+            )
+            .unwrap();
+        }
     }
     output.push_str("\n## cp.async mbarrier contracts\n\n");
     for record in cp_async_mbarriers(catalog) {
@@ -10266,12 +10387,12 @@ mod tests {
     }
 
     #[test]
-    fn sync_threads_rendering_keeps_fixed_zero_and_backend_routes_explicit() {
+    fn sync_rendering_keeps_barrier_and_threadfence_contracts_explicit() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         let record = sync_intrinsics(&catalog).next().unwrap();
-        assert_eq!(sync_intrinsics(&catalog).count(), 1);
+        assert_eq!(sync_intrinsics(&catalog).count(), 4);
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("pub unsafe fn i0034() -> ()"));
@@ -10321,6 +10442,60 @@ mod tests {
         assert!(outputs.contains_key(&PathBuf::from(
             "crates/dialect-nvvm/src/ops/generated/sync.rs"
         )));
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/fence.rs")));
+
+        let compatibility = render_compat_fence(&catalog, "test-hash");
+        for (id, abi_id, op_type, op_name, llvm_identifier, ptx) in [
+            (
+                "threadfence_block",
+                "i0298",
+                "ThreadfenceBlockOp",
+                "nvvm.threadfence_block",
+                "llvm_nvvm_membar_cta",
+                "membar.cta;",
+            ),
+            (
+                "threadfence",
+                "i0299",
+                "ThreadfenceOp",
+                "nvvm.threadfence",
+                "llvm_nvvm_membar_gl",
+                "membar.gl;",
+            ),
+            (
+                "threadfence_system",
+                "i0300",
+                "ThreadfenceSystemOp",
+                "nvvm.threadfence_system",
+                "llvm_nvvm_membar_sys",
+                "membar.sys;",
+            ),
+        ] {
+            let record = sync_intrinsics(&catalog)
+                .find(|record| record.id == id)
+                .unwrap();
+            assert_eq!(record.rust.abi_id, abi_id);
+            assert!(compatibility.contains(&format!("pub fn {id}()")));
+            assert!(dialect.contains(&format!("pub struct {op_type}")));
+            assert!(dialect.contains(&format!("name = \"{op_name}\"")));
+            assert!(dialect.contains(&format!("{op_type}::register(ctx)")));
+            assert!(importer.contains(&format!("cuda_device::fence::{id}")));
+            assert!(importer.contains(&format!("cuda_device::{id}")));
+            assert!(importer.contains(&format!(
+                "set_generated_intrinsic_marker(ctx, barrier, \"v1:{abi_id}\")"
+            )));
+            assert!(lowering.contains(&format!("impl MirToLlvmConversion for {op_type}")));
+            assert!(lowering.contains(&format!("\"{llvm_identifier}\"")));
+
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains(&format!("declare void @{}()", llvm(record).symbol)));
+            assert!(probe.contains(&format!("call void @{}()", llvm(record).symbol)));
+            assert!(targets.contains(&format!("id: \"{id}\", abi_id: \"{abi_id}\"")));
+            assert!(targets.contains(&format!("asm: \"{ptx}\"")));
+        }
+        for ptx in ["membar.cta;", "membar.gl;", "membar.sys;"] {
+            assert!(!lowering.contains(&format!("\"{ptx}\"")));
+        }
     }
 
     #[test]
@@ -10469,7 +10644,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 297);
+        assert_eq!(catalog.intrinsics.len(), 300);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

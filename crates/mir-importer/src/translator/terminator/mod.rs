@@ -2342,19 +2342,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // Synchronization (from intrinsics::sync)
         // =================================================================
-        "cuda_device::threadfence_block" | "cuda_device::fence::threadfence_block" => {
-            Ok(Some(intrinsics::sync::emit_threadfence_block(
-                ctx, target, block_ptr, prev_op, block_map, loc,
-            )?))
-        }
-        "cuda_device::threadfence" | "cuda_device::fence::threadfence" => Ok(Some(
-            intrinsics::sync::emit_threadfence(ctx, target, block_ptr, prev_op, block_map, loc)?,
-        )),
-        "cuda_device::threadfence_system" | "cuda_device::fence::threadfence_system" => {
-            Ok(Some(intrinsics::sync::emit_threadfence_system(
-                ctx, target, block_ptr, prev_op, block_map, loc,
-            )?))
-        }
         "cuda_device::barrier::mbarrier_arrive_expect_tx" => {
             Ok(Some(intrinsics::sync::emit_mbarrier_arrive_expect_tx(
                 ctx,
