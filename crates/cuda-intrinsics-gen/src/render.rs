@@ -21,9 +21,9 @@ use crate::model::{
     RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
     SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, SpecialRegisterObservation,
-    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, VoteAdapter, VoteMode,
-    WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, StmatrixLayout, StmatrixMultiplicity,
+    VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -94,6 +94,12 @@ pub fn all_outputs(
         outputs.insert(
             "crates/cuda-device/src/generated/cluster_memory.rs".into(),
             render_compat_cluster_memory(catalog, catalog_sha256),
+        );
+    }
+    if stmatrices(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/stmatrix.rs".into(),
+            render_compat_stmatrix(catalog, catalog_sha256),
         );
     }
     outputs.insert(
@@ -196,6 +202,12 @@ pub fn all_outputs(
             render_dialect_cluster_memory(catalog, catalog_sha256),
         );
     }
+    if stmatrices(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/stmatrix.rs".into(),
+            render_dialect_stmatrix(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/redux.rs".into(),
         render_dialect_redux(catalog, catalog_sha256),
@@ -284,6 +296,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
         if !record.rust.safe {
             ensure!(
                 (record.family == "ldmatrix" && record.ldmatrix.is_some())
+                    || record.family == "stmatrix"
                     || (record.family == "register_mma" && record.register_mma.is_some())
                     || (record.family == "sparse_mma" && record.sparse_mma.is_some())
                     || (record.family == "packed_atomic" && record.packed_atomic.is_some())
@@ -339,6 +352,20 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_ldmatrix"
                     && record.ldmatrix.is_some(),
                 "{} is outside the generated ldmatrix recipe",
+                record.id
+            ),
+            "stmatrix" => ensure!(
+                stmatrix_variant(record).is_some()
+                    && record.rust.module == "matrix"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.rust.result == "()"
+                    && record.dialect.results.is_empty()
+                    && record.llvm.as_ref().is_some_and(|llvm| llvm.results.is_empty())
+                    && record.semantics.memory == "write"
+                    && record.semantics.convergent
+                    && record.lowering == "generated_stmatrix",
+                "{} is outside the closed generated stmatrix recipe",
                 record.id
             ),
             "register_mma" => ensure!(
@@ -1106,6 +1133,37 @@ fn ldmatrix(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
         .intrinsics
         .iter()
         .filter(|record| record.family == "ldmatrix")
+}
+
+fn stmatrices(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "stmatrix")
+}
+
+fn stmatrix_variant(record: &CatalogIntrinsic) -> Option<(StmatrixMultiplicity, StmatrixLayout)> {
+    match record.id.as_str() {
+        "stmatrix_m8n8_x2_b16" => Some((StmatrixMultiplicity::X2, StmatrixLayout::Normal)),
+        "stmatrix_m8n8_x2_trans_b16" => {
+            Some((StmatrixMultiplicity::X2, StmatrixLayout::Transposed))
+        }
+        "stmatrix_m8n8_x4_b16" => Some((StmatrixMultiplicity::X4, StmatrixLayout::Normal)),
+        "stmatrix_m8n8_x4_trans_b16" => {
+            Some((StmatrixMultiplicity::X4, StmatrixLayout::Transposed))
+        }
+        _ => None,
+    }
+}
+
+fn stmatrix_compatibility_name(record: &CatalogIntrinsic) -> &'static str {
+    match record.id.as_str() {
+        "stmatrix_m8n8_x2_b16" => "stmatrix_m8n8_x2",
+        "stmatrix_m8n8_x2_trans_b16" => "stmatrix_m8n8_x2_trans",
+        "stmatrix_m8n8_x4_b16" => "stmatrix_m8n8_x4",
+        "stmatrix_m8n8_x4_trans_b16" => "stmatrix_m8n8_x4_trans",
+        _ => panic!("unknown stmatrix record {}", record.id),
+    }
 }
 
 fn register_mmas(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2027,6 +2085,16 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 output.push_str(
                     "/// This weak memory operation does not replace a required barrier or fence.\n",
                 );
+            } else if let Some((multiplicity, _)) = stmatrix_variant(record) {
+                let address_lanes = multiplicity.register_count() * 8;
+                writeln!(
+                    output,
+                    "/// All 32 warp lanes must execute the same instruction. The first {address_lanes} lanes must provide valid, 16-byte-aligned shared-memory row addresses."
+                )
+                .unwrap();
+                output.push_str(
+                    "/// Register operands must contain the packed b16 fragments required by the selected layout.\n/// This weak memory operation does not replace a required barrier or fence.\n",
+                );
             } else if let Some(mma) = &record.sparse_mma {
                 let (c_count, a_count, b_count, _) = sparse_mma_fragment_counts(record);
                 output.push_str(
@@ -2829,6 +2897,44 @@ pub(crate) fn __prof_trigger(_event_id: u32) {
     output
 }
 
+fn render_compat_stmatrix(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::tcgen05` to keep public paths stable.\n\n");
+    for record in stmatrices(catalog) {
+        let (multiplicity, _) = stmatrix_variant(record).expect("stmatrix variant");
+        let count = multiplicity.register_count();
+        let name = stmatrix_compatibility_name(record);
+        let path = record
+            .rust
+            .compatibility_paths
+            .first()
+            .expect("stmatrix compatibility path");
+        let arguments = std::iter::once("smem_ptr: *mut u8".to_owned())
+            .chain((0..count).map(|index| format!("r{index}: u32")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let values = std::iter::once("smem_ptr".to_owned())
+            .chain((0..count).map(|index| format!("r{index}")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        output.push_str(
+            "/// All warp lanes must participate. The used row addresses must be valid, shared, and 16-byte aligned.\n",
+        );
+        output.push_str("#[inline(never)]\n");
+        writeln!(output, "pub unsafe fn {name}({arguments}) {{").unwrap();
+        writeln!(output, "    let _ = ({values});").unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -3287,6 +3393,15 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    cluster_barrier::register(ctx);",
                 "    cluster_barrier::register(ctx);\n    cluster_memory::register(ctx);",
+            );
+    }
+    if stmatrices(catalog).next().is_some() {
+        output = output
+            .replace("mod sync;", "mod stmatrix;\nmod sync;")
+            .replace("pub use sync::*;", "pub use stmatrix::*;\npub use sync::*;")
+            .replace(
+                "    sync::register(ctx);",
+                "    stmatrix::register(ctx);\n    sync::register(ctx);",
             );
     }
     output
@@ -4342,6 +4457,110 @@ pub(super) fn register(ctx: &mut Context) {
 }
 "##,
     );
+    output
+}
+
+fn render_dialect_stmatrix(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(stmatrices(catalog).count(), 4);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r#"//! Structural operations for the four generated `stmatrix` stores.
+
+use dialect_mir::types::MirPtrType;
+use pliron::{
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::IntegerType,
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    verify_err,
+};
+use pliron_derive::pliron_op;
+
+fn verify_stmatrix_operands(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    op_name: &str,
+    register_count: usize,
+) -> Result<(), Error> {
+    let op = op.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != register_count + 1 {
+        return verify_err!(
+            op.loc(),
+            "{} requires one pointer and {} register operands",
+            op_name,
+            register_count
+        );
+    }
+    if operands[0]
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .is_none()
+    {
+        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    }
+    for (index, register) in operands.iter().enumerate().skip(1) {
+        let ty = register.get_type(ctx);
+        let ty = ty.deref(ctx);
+        let Some(integer) = ty.downcast_ref::<IntegerType>() else {
+            return verify_err!(
+                op.loc(),
+                "{} register operand {} must be an integer",
+                op_name,
+                index - 1
+            );
+        };
+        if integer.width() != 32 {
+            return verify_err!(
+                op.loc(),
+                "{} register operand {} must be 32 bits",
+                op_name,
+                index - 1
+            );
+        }
+    }
+    Ok(())
+}
+
+"#,
+    );
+    for record in stmatrices(catalog) {
+        let (multiplicity, _) = stmatrix_variant(record).expect("stmatrix variant");
+        let count = multiplicity.register_count();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<{}>, NResultsInterface<0>],\n)]",
+            record.dialect.op_name,
+            count + 1
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    pub fn new(op: Ptr<Operation>) -> Self {\n        Self { op }\n    }\n}\n",
+        );
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_stmatrix_operands(ctx, self.get_operation(), {:?}, {count})\n    }}\n}}\n",
+            record.dialect.op_name
+        )
+        .unwrap();
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in stmatrices(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
     output
 }
 
@@ -5809,6 +6028,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    for record in stmatrices(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     output.push_str(
         "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
     );
@@ -5964,6 +6187,49 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         )
         .unwrap();
         output.push_str("        }\n");
+    }
+    for record in stmatrices(catalog) {
+        let (multiplicity, _) = stmatrix_variant(record).expect("stmatrix variant");
+        let arity = multiplicity.register_count() + 1;
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {arity}, &loc)?;"
+        )
+        .unwrap();
+        output.push_str(
+            "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
+        );
+        writeln!(
+            output,
+            "            let store = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            store.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, store, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, store, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, store, block_map, loc)))\n            } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!(
+                "{} call without target block",
+                stmatrix_compatibility_name(record)
+            )
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
     }
     for record in register_mmas(catalog) {
         let adapter = match record.register_mma.as_ref().unwrap().adapter {
@@ -7186,6 +7452,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "inline_asm_convergent, inline_asm_sideeffect}",
         );
     }
+    if stmatrices(catalog).next().is_some() {
+        output = output.replace(
+            "common::{call_intrinsic,",
+            "common::{call_intrinsic, cast_to_shared_addrspace,",
+        );
+    }
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
             output.push_str(", ");
@@ -7368,6 +7640,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in stmatrices(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     output.push_str(
         "};\nuse llvm_export::{ops::AsmKind, types as llvm_types};\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
     );
@@ -7386,6 +7662,83 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "fn convert_zero_operand_scalar_direct(\n    ctx: &mut Context,\n    rewriter: &mut DialectConversionRewriter,\n    op: Ptr<Operation>,\n    width: u32,\n    intrinsic_name: &str,\n) -> Result<()> {\n    let result_ty = IntegerType::get(ctx, width, Signedness::Signless);\n    let function_ty = llvm_types::FuncType::get(ctx, result_ty.into(), vec![], false);\n    let call = call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, vec![])?;\n    rewriter.replace_operation(ctx, op, call);\n    Ok(())\n}\n\n",
     );
+    if stmatrices(catalog).next().is_some() {
+        output.push_str(
+            r#"fn convert_generated_stmatrix(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    register_count: usize,
+    transposed: bool,
+    typed_intrinsic_name: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != register_count + 1 || !matches!(register_count, 2 | 4) {
+        return pliron::input_err_noloc!(
+            "stmatrix requires one pointer and two or four registers"
+        );
+    }
+    let void_ty = llvm_types::VoidType::get(ctx);
+    match context::lowering_options(ctx).intrinsic_backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let shared = cast_to_shared_addrspace(ctx, rewriter, operands[0]);
+            let shared_ty = llvm_types::PointerType::get(
+                ctx,
+                llvm_types::address_space::SHARED,
+            );
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+            let argument_types = std::iter::once(shared_ty.into())
+                .chain(std::iter::repeat_n(i32_ty.into(), register_count))
+                .collect();
+            let function_ty = llvm_types::FuncType::get(
+                ctx,
+                void_ty.into(),
+                argument_types,
+                false,
+            );
+            let arguments = std::iter::once(shared)
+                .chain(operands.iter().skip(1).copied())
+                .collect();
+            call_intrinsic(
+                ctx,
+                rewriter,
+                op,
+                typed_intrinsic_name,
+                function_ty,
+                arguments,
+            )?;
+        }
+        IntrinsicBackend::LibNvvm => {
+            let registers = (1..=register_count)
+                .map(|index| format!("${index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let trans = if transposed { ".trans" } else { "" };
+            let template = format!(
+                "{{ .reg .u64 %ptr64; .reg .u32 %ptr32; cvta.to.shared.u64 %ptr64, $0; cvt.u32.u64 %ptr32, %ptr64; stmatrix.sync.aligned.m8n8.x{register_count}{trans}.shared.b16 [%ptr32], {{{registers}}}; }}"
+            );
+            let constraints = std::iter::once("l")
+                .chain(std::iter::repeat_n("r", register_count))
+                .chain(std::iter::once("~{memory}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            inline_asm_convergent(
+                ctx,
+                rewriter,
+                void_ty.into(),
+                operands,
+                &template,
+                &constraints,
+            );
+        }
+    }
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+"#,
+        );
+    }
     for record in sregs(catalog) {
         writeln!(
             output,
@@ -7481,6 +7834,30 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "                _ => return pliron::input_err!(\n                    self.get_operation().deref(ctx).loc(),\n                    \"nvvm.ldmatrix variant has no generated lowering recipe\",\n                ),\n            }\n        };\n        convert_generated_ldmatrix(ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2)\n    }\n}\n\n",
         );
+    }
+    for record in stmatrices(catalog) {
+        let (multiplicity, layout) = stmatrix_variant(record).expect("stmatrix variant");
+        let count = multiplicity.register_count();
+        let transposed = layout == StmatrixLayout::Transposed;
+        let intrinsic_name = record
+            .llvm
+            .as_ref()
+            .expect("stmatrix LLVM facts")
+            .resolved_symbol
+            .as_ref()
+            .expect("stmatrix resolved symbol")
+            .replace('.', "_");
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_stmatrix(\n            ctx, rewriter, self.get_operation(), {count}, {transposed}, {intrinsic_name:?},\n        )\n    }}\n}}\n"
+        )
+        .unwrap();
     }
     if register_mmas(catalog).next().is_some() {
         output.push_str(
@@ -9280,6 +9657,30 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         writeln!(output, "define void @probe_{}() {{", record.id).unwrap();
         writeln!(output, "  call void asm sideeffect {:?}, \"\"()", template).unwrap();
         output.push_str("  ret void\n}\n");
+    } else if record.family == "stmatrix" {
+        let (multiplicity, _) = stmatrix_variant(record).expect("stmatrix variant");
+        let count = multiplicity.register_count();
+        let symbol = llvm(record)
+            .resolved_symbol
+            .as_ref()
+            .expect("stmatrix resolved symbol");
+        let declaration = std::iter::once("ptr addrspace(3)".to_owned())
+            .chain(std::iter::repeat_n("i32".to_owned(), count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let parameters = std::iter::once("ptr %generic".to_owned())
+            .chain((0..count).map(|index| format!("i32 %r{index}")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = std::iter::once("ptr addrspace(3) %shared".to_owned())
+            .chain((0..count).map(|index| format!("i32 %r{index}")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "declare void @{symbol}({declaration})\n").unwrap();
+        writeln!(output, "define void @probe_{}({parameters}) {{", record.id).unwrap();
+        output.push_str("  %shared = addrspacecast ptr %generic to ptr addrspace(3)\n");
+        writeln!(output, "  call void @{symbol}({arguments})").unwrap();
+        output.push_str("  ret void\n}\n");
     } else if record.prmt.is_some() {
         let arity = record.rust.arguments.len();
         let declaration = std::iter::repeat_n("i32", arity)
@@ -9844,6 +10245,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
+            .or_else(|| (record.family == "stmatrix").then(|| "unexecuted".to_owned()))
             .unwrap_or_else(|| "not recorded".to_owned());
         writeln!(output, "- `{}`: runtime `{runtime}`", record.id).unwrap();
         for lowering in &record.backend_lowerings {
@@ -9945,6 +10347,13 @@ mod tests {
         catalog
     }
 
+    fn catalog_with_stmatrix() -> CatalogFile {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        assert_eq!(stmatrices(&catalog).count(), 4);
+        catalog
+    }
+
     #[test]
     fn selection_alternatives_keep_predicates_and_constraints_grouped() {
         let selections = vec![
@@ -9976,6 +10385,107 @@ mod tests {
         assert!(rendered.contains(
             "source_record: \"SELECT_B\", asm: \"op.b $dst;\", predicates: &[\"HasB\"], constraints: GeneratedSelectionConstraints { address_space: Some(GeneratedSelectionAddressSpace::Shared), immediate_bindings: &[] }"
         ));
+    }
+
+    #[test]
+    fn stmatrix_rendering_preserves_all_four_public_and_backend_contracts() {
+        let catalog = catalog_with_stmatrix();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(stmatrices(&catalog).count(), 4);
+
+        let compatibility = render_compat_stmatrix(&catalog, "test-hash");
+        for signature in [
+            "pub unsafe fn stmatrix_m8n8_x2(smem_ptr: *mut u8, r0: u32, r1: u32)",
+            "pub unsafe fn stmatrix_m8n8_x2_trans(smem_ptr: *mut u8, r0: u32, r1: u32)",
+            "pub unsafe fn stmatrix_m8n8_x4(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u32, r3: u32)",
+            "pub unsafe fn stmatrix_m8n8_x4_trans(smem_ptr: *mut u8, r0: u32, r1: u32, r2: u32, r3: u32)",
+        ] {
+            assert!(compatibility.contains(signature));
+        }
+        assert!(compatibility.contains("All warp lanes must participate"));
+
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod stmatrix;"));
+        assert!(dialect_mod.contains("stmatrix::register(ctx)"));
+        let dialect = render_dialect_stmatrix(&catalog, "test-hash");
+        for (op_type, op_name, operands) in [
+            ("StmatrixM8n8X2Op", "nvvm.stmatrix_m8n8_x2", 3),
+            ("StmatrixM8n8X2TransOp", "nvvm.stmatrix_m8n8_x2_trans", 3),
+            ("StmatrixM8n8X4Op", "nvvm.stmatrix_m8n8_x4", 5),
+            ("StmatrixM8n8X4TransOp", "nvvm.stmatrix_m8n8_x4_trans", 5),
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op_type};")));
+            assert!(dialect.contains(&format!("name = \"{op_name}\"")));
+            assert!(dialect.contains(&format!("NOpdsInterface<{operands}>")));
+            assert!(dialect.contains(&format!("{op_type}::register(ctx)")));
+        }
+
+        let importer = render_importer(&catalog, "test-hash");
+        for (path, op_type, marker) in [
+            (
+                "cuda_device::tcgen05::stmatrix_m8n8_x2",
+                "StmatrixM8n8X2Op",
+                "v1:i0301",
+            ),
+            (
+                "cuda_device::tcgen05::stmatrix_m8n8_x2_trans",
+                "StmatrixM8n8X2TransOp",
+                "v1:i0302",
+            ),
+            (
+                "cuda_device::tcgen05::stmatrix_m8n8_x4",
+                "StmatrixM8n8X4Op",
+                "v1:i0303",
+            ),
+            (
+                "cuda_device::tcgen05::stmatrix_m8n8_x4_trans",
+                "StmatrixM8n8X4TransOp",
+                "v1:i0304",
+            ),
+        ] {
+            assert!(importer.contains(path));
+            assert!(importer.contains(&format!("{op_type}::get_concrete_op_info()")));
+            assert!(importer.contains(&format!(
+                "set_generated_intrinsic_marker(ctx, store, \"{marker}\")"
+            )));
+        }
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for StmatrixM8n8")
+                .count(),
+            4
+        );
+        assert!(lowering.contains("IntrinsicBackend::LlvmNvptx"));
+        assert!(lowering.contains("IntrinsicBackend::LibNvvm"));
+        assert!(lowering.contains("cast_to_shared_addrspace"));
+        assert!(lowering.contains("llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_b16_p3"));
+        assert!(lowering.contains("llvm_nvvm_stmatrix_sync_aligned_m8n8_x4_trans_b16_p3"));
+        assert!(
+            lowering.contains("stmatrix.sync.aligned.m8n8.x{register_count}{trans}.shared.b16")
+        );
+        assert!(lowering.contains("std::iter::once(\"~{memory}\")"));
+
+        let x2 = stmatrices(&catalog)
+            .find(|record| record.id == "stmatrix_m8n8_x2_b16")
+            .unwrap();
+        let probe = render_probe(&catalog, x2, "test-hash");
+        assert!(probe.contains(
+            "declare void @llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3(ptr addrspace(3), i32, i32)"
+        ));
+        assert!(probe.contains("%shared = addrspacecast ptr %generic to ptr addrspace(3)"));
+        assert!(probe.contains(
+            "call void @llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3(ptr addrspace(3) %shared, i32 %r0, i32 %r1)"
+        ));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/stmatrix.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/stmatrix.rs"
+        )));
     }
 
     #[test]
@@ -11153,7 +11663,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 300);
+        assert_eq!(catalog.intrinsics.len(), 304);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

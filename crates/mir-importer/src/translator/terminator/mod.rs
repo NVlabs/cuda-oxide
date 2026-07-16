@@ -2889,30 +2889,6 @@ fn try_dispatch_intrinsic(
         }
 
         // =================================================================
-        // Memory Operations (from intrinsics::memory)
-        // Note: stmatrix is under cuda_device::tcgen05::
-        // =================================================================
-        "cuda_device::tcgen05::stmatrix_m8n8_x4" => {
-            Ok(Some(intrinsics::memory::emit_stmatrix_m8n8_x4(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::tcgen05::stmatrix_m8n8_x4_trans" => {
-            Ok(Some(intrinsics::memory::emit_stmatrix_m8n8_x4_trans(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::tcgen05::stmatrix_m8n8_x2" => {
-            Ok(Some(intrinsics::memory::emit_stmatrix_m8n8_x2(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::tcgen05::stmatrix_m8n8_x2_trans" => {
-            Ok(Some(intrinsics::memory::emit_stmatrix_m8n8_x2_trans(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        // =================================================================
         // Warp-level matrix operations (from intrinsics::wmma)
         // =================================================================
         "cuda_device::wmma::movmatrix_trans_b16" => {

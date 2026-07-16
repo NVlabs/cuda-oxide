@@ -1,0 +1,98 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-stmatrix",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90",
+    "ptx_feature": "PTX ISA 7.8 minimum; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "stmatrix_libnvvm_inline_probe",
+      "coverage_count": 4,
+      "stages": [
+        {
+          "targets": ["compute_90", "ptx93"],
+          "representation": "one convergent NVVM IR 2.0 kernel containing all four inline-PTX stmatrix forms",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM verified the 1,544-byte source module with SHA-256 fe4f9eae0f68076b87a64db475a3025703b5fba3c3594234601c0b491bef5adb, emitted 1,582-byte PTX with SHA-256 f72734d526a1de3477f7a681c6918b9310634223dfcc447ab644d0825cecf95e, and produced 2,828-byte LTOIR with SHA-256 1eb129c866ca475e500c0218d85b818bb63890b9dd09026da86d8082e887af51. The PTX retained each exact instruction once."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "linked cubin retaining the combined inline-PTX stmatrix kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a 1,728-byte cubin with SHA-256 690c0e13b8a66020ebde091bf13e2b421cb191e6e2a1a04531e120f9d773912a.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["stmatrix_m8n8_x2_b16"]}],
+      "product_count": 1,
+      "fixtures": ["stmatrix_libnvvm_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x2_b16",
+        "llvm_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16",
+        "expected_ptx": {"mnemonic": "stmatrix", "modifiers": ["sync", "aligned", "m8n8", "x2", "shared", "b16"], "operands": [{"kind": "address"}, {"kind": "register_list", "length": 2}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["stmatrix_m8n8_x2_trans_b16"]}],
+      "product_count": 1,
+      "fixtures": ["stmatrix_libnvvm_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x2_trans_b16",
+        "llvm_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.trans.b16",
+        "expected_ptx": {"mnemonic": "stmatrix", "modifiers": ["sync", "aligned", "m8n8", "x2", "trans", "shared", "b16"], "operands": [{"kind": "address"}, {"kind": "register_list", "length": 2}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["stmatrix_m8n8_x4_b16"]}],
+      "product_count": 1,
+      "fixtures": ["stmatrix_libnvvm_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x4_b16",
+        "llvm_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.b16",
+        "expected_ptx": {"mnemonic": "stmatrix", "modifiers": ["sync", "aligned", "m8n8", "x4", "shared", "b16"], "operands": [{"kind": "address"}, {"kind": "register_list", "length": 4}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i32", "i32", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["stmatrix_m8n8_x4_trans_b16"]}],
+      "product_count": 1,
+      "fixtures": ["stmatrix_libnvvm_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x4_trans_b16",
+        "llvm_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.trans.b16",
+        "expected_ptx": {"mnemonic": "stmatrix", "modifiers": ["sync", "aligned", "m8n8", "x4", "trans", "shared", "b16"], "operands": [{"kind": "address"}, {"kind": "register_list", "length": 4}]},
+        "facts": {"llvm_arguments": ["anyptr", "i32", "i32", "i32", "i32"]}
+      }
+    }
+  ]
+}

@@ -4368,8 +4368,35 @@ fn test_fp8_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow
     Ok(())
 }
 
-#[test]
-fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyhow::Error> {
+const STMATRIX_TYPED_INTRINSICS: [&str; 4] = [
+    "llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_b16_p3",
+    "llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_trans_b16_p3",
+    "llvm_nvvm_stmatrix_sync_aligned_m8n8_x4_b16_p3",
+    "llvm_nvvm_stmatrix_sync_aligned_m8n8_x4_trans_b16_p3",
+];
+
+const STMATRIX_PTX: [(&str, &str); 4] = [
+    (
+        "{ .reg .u64 %ptr64; .reg .u32 %ptr32; cvta.to.shared.u64 %ptr64, $0; cvt.u32.u64 %ptr32, %ptr64; stmatrix.sync.aligned.m8n8.x2.shared.b16 [%ptr32], {$1, $2}; }",
+        "l,r,r,~{memory}",
+    ),
+    (
+        "{ .reg .u64 %ptr64; .reg .u32 %ptr32; cvta.to.shared.u64 %ptr64, $0; cvt.u32.u64 %ptr32, %ptr64; stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%ptr32], {$1, $2}; }",
+        "l,r,r,~{memory}",
+    ),
+    (
+        "{ .reg .u64 %ptr64; .reg .u32 %ptr32; cvta.to.shared.u64 %ptr64, $0; cvt.u32.u64 %ptr32, %ptr64; stmatrix.sync.aligned.m8n8.x4.shared.b16 [%ptr32], {$1, $2, $3, $4}; }",
+        "l,r,r,r,r,~{memory}",
+    ),
+    (
+        "{ .reg .u64 %ptr64; .reg .u32 %ptr32; cvta.to.shared.u64 %ptr64, $0; cvt.u32.u64 %ptr32, %ptr64; stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%ptr32], {$1, $2, $3, $4}; }",
+        "l,r,r,r,r,~{memory}",
+    ),
+];
+
+fn lower_all_stmatrix_forms(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::types::{IntegerType, Signedness};
 
@@ -4392,11 +4419,6 @@ fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyh
         .collect();
 
     for (op_info, operands) in [
-        (nvvm::StmatrixM8n8X4Op::get_concrete_op_info(), args.clone()),
-        (
-            nvvm::StmatrixM8n8X4TransOp::get_concrete_op_info(),
-            args.clone(),
-        ),
         (
             nvvm::StmatrixM8n8X2Op::get_concrete_op_info(),
             args[..3].to_vec(),
@@ -4405,82 +4427,134 @@ fn test_stmatrix_forms_lower_to_exact_convergent_memory_asm() -> Result<(), anyh
             nvvm::StmatrixM8n8X2TransOp::get_concrete_op_info(),
             args[..3].to_vec(),
         ),
+        (nvvm::StmatrixM8n8X4Op::get_concrete_op_info(), args.clone()),
+        (nvvm::StmatrixM8n8X4TransOp::get_concrete_op_info(), args),
     ] {
         Operation::new(&mut ctx, op_info, vec![], operands, vec![], 0).insert_at_back(entry, &ctx);
     }
     append_return(&mut ctx, entry);
 
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    let expected = [
-        (
-            "stmatrix.sync.aligned.m8n8.x4.shared.b16 [%ptr32], {$1, $2, $3, $4};",
-            "l,r,r,r,r,~{memory}",
-        ),
-        (
-            "stmatrix.sync.aligned.m8n8.x4.trans.shared.b16 [%ptr32], {$1, $2, $3, $4};",
-            "l,r,r,r,r,~{memory}",
-        ),
-        (
-            "stmatrix.sync.aligned.m8n8.x2.shared.b16 [%ptr32], {$1, $2};",
-            "l,r,r,~{memory}",
-        ),
-        (
-            "stmatrix.sync.aligned.m8n8.x2.trans.shared.b16 [%ptr32], {$1, $2};",
-            "l,r,r,~{memory}",
-        ),
-    ];
-    let module_region = module_ptr.deref(&ctx).get_region(0);
-    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
-    let mut lowered = Vec::new();
+    Ok((ctx, module_ptr))
+}
 
-    for op in module_block.deref(&ctx).iter(&ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
+#[test]
+fn test_stmatrix_llvm_nvptx_uses_exact_typed_p3_intrinsics() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_all_stmatrix_forms(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let mut callees = Vec::new();
+
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX stmatrix lowering must not emit inline PTX"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
             continue;
         };
-        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        if !STMATRIX_TYPED_INTRINSICS.contains(&callee.as_str()) {
             continue;
         }
-        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
-        for func_block in func_region.deref(&ctx).iter(&ctx) {
-            for body_op in func_block.deref(&ctx).iter(&ctx) {
-                let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) else {
-                    continue;
-                };
-                let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
-                    .map(|value| String::from((*value).clone()))
-                    .unwrap_or_default();
-                if !template.contains("stmatrix.sync.aligned.") {
-                    continue;
-                }
-                lowered.push((
-                    template,
-                    inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
-                        .map(|value| String::from((*value).clone()))
-                        .unwrap_or_default(),
-                    llvm::asm_kind(&ctx, &inline_asm),
-                ));
-            }
-        }
+
+        let call_op = call.get_operation().deref(&ctx);
+        assert!(matches!(call_op.get_num_operands(), 3 | 5));
+        assert_eq!(call_op.get_num_results(), 1);
+        let pointer_ty = call_op.get_operand(0).get_type(&ctx);
+        let pointer_ty = pointer_ty.deref(&ctx);
+        let pointer_ty = pointer_ty
+            .downcast_ref::<llvm_types::PointerType>()
+            .expect("stmatrix first argument is a pointer");
+        assert_eq!(pointer_ty.address_space(), 3);
+        callees.push(callee);
     }
 
-    assert_eq!(lowered.len(), expected.len());
-    for (instruction, constraints) in expected {
+    callees.sort();
+    let mut expected = STMATRIX_TYPED_INTRINSICS.map(str::to_owned);
+    expected.sort();
+    assert_eq!(callees, expected);
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+        .expect("typed stmatrix module exports to LLVM IR");
+    for intrinsic in STMATRIX_TYPED_INTRINSICS {
+        let dotted = intrinsic.replace('_', ".");
+        assert!(
+            ir.contains(&format!("@{dotted}(ptr addrspace(3)")),
+            "missing exact typed stmatrix declaration:\n{ir}"
+        );
+    }
+    assert!(!ir.contains("asm sideeffect"), "{ir}");
+    Ok(())
+}
+
+#[test]
+fn test_stmatrix_libnvvm_uses_exact_convergent_memory_asm() -> Result<(), anyhow::Error> {
+    let (ctx, module_ptr) = lower_all_stmatrix_forms(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let mut lowered = Vec::new();
+
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+        {
+            assert!(
+                !STMATRIX_TYPED_INTRINSICS.contains(&callee.to_string().as_str()),
+                "libNVVM stmatrix lowering must not emit typed intrinsic calls"
+            );
+        }
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        lowered.push((
+            inline_asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap_or_default(),
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .unwrap_or_default(),
+            llvm::asm_kind(&ctx, &inline_asm),
+            op.deref(&ctx).get_num_operands(),
+            op.deref(&ctx).get_num_results(),
+        ));
+    }
+
+    assert_eq!(lowered.len(), STMATRIX_PTX.len());
+    for (template, constraints) in STMATRIX_PTX {
         let matches: Vec<_> = lowered
             .iter()
-            .filter(|(template, _, _)| template.contains(instruction))
+            .filter(|(actual, _, _, _, _)| actual == template)
             .collect();
-        assert_eq!(
-            matches.len(),
-            1,
-            "expected one exact {instruction} lowering"
-        );
-        assert_eq!(matches[0].1, constraints);
-        assert_eq!(matches[0].2, llvm::AsmKind::Convergent);
+        assert_eq!(matches.len(), 1, "missing exact PTX {template}");
+        let (_, actual_constraints, kind, operands, results) = matches[0];
+        assert_eq!(actual_constraints, constraints);
+        assert_eq!(*kind, llvm::AsmKind::Convergent);
+        assert!(matches!(*operands, 3 | 5));
+        assert_eq!(*results, 1);
     }
+
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+        .expect("inline stmatrix module exports to LLVM IR");
+    assert_eq!(ir.matches("asm sideeffect").count(), 4, "{ir}");
+    assert_eq!(ir.matches("~{memory}").count(), 4, "{ir}");
+    assert!(ir.contains("attributes #0 = { convergent }"), "{ir}");
+    assert!(!ir.contains("@llvm.nvvm.stmatrix"), "{ir}");
     Ok(())
 }
 

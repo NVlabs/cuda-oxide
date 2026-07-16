@@ -41,11 +41,12 @@ use crate::model::{
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
     SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
-    ThreadfenceAdmission, ThreadfenceScope, VoteAdapter, VoteMode, VoteParticipation,
-    WarpBarrierAdapter, WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering,
-    WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode, WarpMatchParticipation,
-    WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
-    WarpShuffleParticipation, WarpShuffleSourceLane, WarpShuffleValueKind,
+    StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, ThreadfenceAdmission,
+    ThreadfenceScope, VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter,
+    WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
+    WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
+    WarpShuffleValueKind,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -54,7 +55,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 38;
+const OVERLAY_SCHEMA: u32 = 39;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
 const OVERLAY_SHARD_SCHEMA: u32 = 39;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
@@ -65,8 +66,9 @@ const CLUSTER_BARRIER_SHARD_SCHEMA: u32 = 31;
 const SPECIAL_REGISTER_SHARD_SCHEMA: u32 = 32;
 const DEBUG_CONTROL_SHARD_SCHEMA: u32 = 33;
 const THREADFENCE_SHARD_SCHEMA: u32 = 34;
+const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
-pub(crate) const CATALOG_SCHEMA: u32 = 37;
+pub(crate) const CATALOG_SCHEMA: u32 = 38;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -473,6 +475,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let debug_control_admission = shard.debug_control.take();
         let threadfence_admission = shard.threadfence.take();
         let cluster_memory_admission = shard.cluster_memory.take();
+        let stmatrix_admission = shard.stmatrix.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -572,6 +575,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_cluster_memory_admission(&admission)?;
         }
+        if let Some(admission) = stmatrix_admission {
+            ensure!(
+                shard.family == "stmatrix" && shard.intrinsics.is_empty(),
+                "compact stmatrix admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_stmatrix_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -660,6 +670,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.cluster_memory.is_none() || shard.schema >= CLUSTER_MEMORY_SHARD_SCHEMA,
         "compact cluster-memory admission requires overlay shard schema {}",
         CLUSTER_MEMORY_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.stmatrix.is_none() || shard.schema >= STMATRIX_SHARD_SCHEMA,
+        "compact stmatrix admission requires overlay shard schema {}",
+        STMATRIX_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1102,6 +1117,10 @@ fn validate_policy(
             policy,
             declaration.context("ldmatrix requires imported LLVM declaration")?,
         )?,
+        "stmatrix" => validate_stmatrix_policy(
+            policy,
+            declaration.context("stmatrix requires imported LLVM declaration")?,
+        )?,
         "packed_atomic" => validate_packed_atomic_policy(policy, source)?,
         "redux" => validate_redux_policy(
             policy,
@@ -1291,7 +1310,8 @@ fn validate_policy(
                         special.register,
                         SpecialRegisterKind::Envreg1 | SpecialRegisterKind::Envreg2
                     )
-                }));
+                }))
+            || policy.family == "stmatrix";
         ensure!(
             !declaration.selections.is_empty() || selectionless_closed_family,
             "{} has a declaration but no NVPTX TableGen selection record",
@@ -1306,7 +1326,7 @@ fn validate_policy(
             "vote" | "warp_barrier" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
-            "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" => 0,
+            "packed_conversion" | "register_mma" | "sparse_mma" | "prmt" | "stmatrix" => 0,
             "sreg"
                 if policy.special_register.as_ref().is_some_and(|special| {
                     matches!(
@@ -5340,6 +5360,405 @@ fn dot_product_recipe(
             ptx_modifiers: &["lo", "u32", "u32"],
         },
     }
+}
+
+#[derive(Clone, Copy)]
+struct StmatrixRecipe {
+    multiplicity: StmatrixMultiplicity,
+    layout: StmatrixLayout,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    compatibility_name: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    summary: &'static str,
+}
+
+fn stmatrix_recipe(multiplicity: StmatrixMultiplicity, layout: StmatrixLayout) -> StmatrixRecipe {
+    match (multiplicity, layout) {
+        (StmatrixMultiplicity::X2, StmatrixLayout::Normal) => StmatrixRecipe {
+            multiplicity,
+            layout,
+            abi_id: "i0301",
+            id: "stmatrix_m8n8_x2_b16",
+            operation_key: "matrix.stmatrix.m8n8.x2.normal.b16.shared",
+            source_record: "int_nvvm_stmatrix_sync_aligned_m8n8_x2_b16",
+            llvm_symbol: "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16",
+            compatibility_name: "stmatrix_m8n8_x2",
+            dialect_op_type: "StmatrixM8n8X2Op",
+            dialect_op_name: "nvvm.stmatrix_m8n8_x2",
+            summary: "Stores two 8×8 b16 matrix fragments cooperatively to shared memory.",
+        },
+        (StmatrixMultiplicity::X2, StmatrixLayout::Transposed) => StmatrixRecipe {
+            multiplicity,
+            layout,
+            abi_id: "i0302",
+            id: "stmatrix_m8n8_x2_trans_b16",
+            operation_key: "matrix.stmatrix.m8n8.x2.transposed.b16.shared",
+            source_record: "int_nvvm_stmatrix_sync_aligned_m8n8_x2_trans_b16",
+            llvm_symbol: "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.trans.b16",
+            compatibility_name: "stmatrix_m8n8_x2_trans",
+            dialect_op_type: "StmatrixM8n8X2TransOp",
+            dialect_op_name: "nvvm.stmatrix_m8n8_x2_trans",
+            summary: "Stores two transposed 8×8 b16 matrix fragments cooperatively to shared memory.",
+        },
+        (StmatrixMultiplicity::X4, StmatrixLayout::Normal) => StmatrixRecipe {
+            multiplicity,
+            layout,
+            abi_id: "i0303",
+            id: "stmatrix_m8n8_x4_b16",
+            operation_key: "matrix.stmatrix.m8n8.x4.normal.b16.shared",
+            source_record: "int_nvvm_stmatrix_sync_aligned_m8n8_x4_b16",
+            llvm_symbol: "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.b16",
+            compatibility_name: "stmatrix_m8n8_x4",
+            dialect_op_type: "StmatrixM8n8X4Op",
+            dialect_op_name: "nvvm.stmatrix_m8n8_x4",
+            summary: "Stores four 8×8 b16 matrix fragments cooperatively to shared memory.",
+        },
+        (StmatrixMultiplicity::X4, StmatrixLayout::Transposed) => StmatrixRecipe {
+            multiplicity,
+            layout,
+            abi_id: "i0304",
+            id: "stmatrix_m8n8_x4_trans_b16",
+            operation_key: "matrix.stmatrix.m8n8.x4.transposed.b16.shared",
+            source_record: "int_nvvm_stmatrix_sync_aligned_m8n8_x4_trans_b16",
+            llvm_symbol: "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.trans.b16",
+            compatibility_name: "stmatrix_m8n8_x4_trans",
+            dialect_op_type: "StmatrixM8n8X4TransOp",
+            dialect_op_name: "nvvm.stmatrix_m8n8_x4_trans",
+            summary: "Stores four transposed 8×8 b16 matrix fragments cooperatively to shared memory.",
+        },
+    }
+}
+
+fn stmatrix_variant_for_id(id: &str) -> Option<(StmatrixMultiplicity, StmatrixLayout)> {
+    match id {
+        "stmatrix_m8n8_x2_b16" => Some((StmatrixMultiplicity::X2, StmatrixLayout::Normal)),
+        "stmatrix_m8n8_x2_trans_b16" => {
+            Some((StmatrixMultiplicity::X2, StmatrixLayout::Transposed))
+        }
+        "stmatrix_m8n8_x4_b16" => Some((StmatrixMultiplicity::X4, StmatrixLayout::Normal)),
+        "stmatrix_m8n8_x4_trans_b16" => {
+            Some((StmatrixMultiplicity::X4, StmatrixLayout::Transposed))
+        }
+        _ => None,
+    }
+}
+
+fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "stmatrix runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact stmatrix admission requires both backend evidence profiles"
+    );
+    let expected_variants = [
+        (StmatrixMultiplicity::X2, StmatrixLayout::Normal),
+        (StmatrixMultiplicity::X2, StmatrixLayout::Transposed),
+        (StmatrixMultiplicity::X4, StmatrixLayout::Normal),
+        (StmatrixMultiplicity::X4, StmatrixLayout::Transposed),
+    ];
+    let actual_variants = admission
+        .variants
+        .iter()
+        .map(|variant| (variant.multiplicity, variant.layout))
+        .collect::<Vec<_>>();
+    ensure!(
+        actual_variants == expected_variants,
+        "compact stmatrix admission must contain the four reviewed variants in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = stmatrix_recipe(variant.multiplicity, variant.layout);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let count = recipe.multiplicity.register_count();
+            let mut rust_arguments = vec!["*mut u8".to_owned()];
+            rust_arguments.extend(std::iter::repeat_n("u32".to_owned(), count));
+            let mut dialect_operands = vec!["ptr".to_owned()];
+            dialect_operands.extend(std::iter::repeat_n("i32".to_owned(), count));
+            let mut llvm_arguments = vec!["anyptr".to_owned()];
+            llvm_arguments.extend(std::iter::repeat_n("i32".to_owned(), count));
+            let multiplicity = match recipe.multiplicity {
+                StmatrixMultiplicity::X2 => "x2",
+                StmatrixMultiplicity::X4 => "x4",
+            };
+            let mut modifiers = vec![
+                "sync".into(),
+                "aligned".into(),
+                "m8n8".into(),
+                multiplicity.into(),
+            ];
+            if recipe.layout == StmatrixLayout::Transposed {
+                modifiers.push("trans".into());
+            }
+            modifiers.extend(["shared".into(), "b16".into()]);
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "stmatrix".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "matrix".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments,
+                rust_result: "()".into(),
+                safe: false,
+                must_use: false,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::matrix::{}", recipe.id),
+                compatibility_rust_paths: vec![format!(
+                    "cuda_device::tcgen05::{}",
+                    recipe.compatibility_name
+                )],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands,
+                dialect_results: vec![],
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: Some(format!("{}.p3", recipe.llvm_symbol)),
+                llvm_arguments,
+                llvm_results: vec![],
+                pure: false,
+                memory: "write".into(),
+                convergent: true,
+                execution_scope: "warp".into(),
+                minimum_ptx: "7.8".into(),
+                minimum_sm: Some("sm_90".into()),
+                ptx_result: "()".into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: "9.7.14.5.16 Warp-level matrix store instruction: stmatrix"
+                    .into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-stmatrix".into(),
+                lowering: "generated_stmatrix".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("7.8".into()),
+                        minimum_sm: Some("sm_90".into()),
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some("7.8".into()),
+                        minimum_sm: Some("sm_90".into()),
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: Some(ImportedAddressSpace::Shared),
+                expected_ptx: InstructionPattern {
+                    mnemonic: "stmatrix".into(),
+                    modifiers,
+                    operands: vec![
+                        OperandPattern::Address,
+                        OperandPattern::RegisterList { length: count },
+                    ],
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_stmatrix_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let (multiplicity, layout) = stmatrix_variant_for_id(&policy.id)
+        .with_context(|| format!("{} has no closed stmatrix recipe", policy.id))?;
+    let recipe = stmatrix_recipe(multiplicity, layout);
+    let count = multiplicity.register_count();
+    let mut rust_arguments = vec!["*mut u8".to_owned()];
+    rust_arguments.extend(std::iter::repeat_n("u32".to_owned(), count));
+    let mut dialect_operands = vec!["ptr".to_owned()];
+    dialect_operands.extend(std::iter::repeat_n("i32".to_owned(), count));
+    let mut llvm_arguments = vec!["anyptr".to_owned()];
+    llvm_arguments.extend(std::iter::repeat_n("i32".to_owned(), count));
+
+    ensure!(
+        policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.as_deref()
+                == Some(format!("{}.p3", recipe.llvm_symbol).as_str()),
+        "{} stmatrix identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "matrix"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{}", recipe.id)
+            && policy.compatibility_rust_paths
+                == [format!(
+                    "cuda_device::tcgen05::{}",
+                    recipe.compatibility_name
+                )],
+        "{} stmatrix Rust API does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_stmatrix"
+            && policy.selected_address_space == Some(ImportedAddressSpace::Shared),
+        "{} stmatrix carriers or lowering do not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        declaration.properties
+            == [
+                "IntrArgMemOnly",
+                "IntrConvergent",
+                "IntrNoCallback",
+                "IntrWriteMem",
+                "NoCapture<arg0>",
+                "WriteOnly<arg0>",
+            ]
+            && !policy.pure
+            && policy.memory == "write"
+            && policy.convergent
+            && policy.execution_scope == "warp",
+        "{} stmatrix effects disagree with the imported declaration",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "7.8"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.ptx_result == "()"
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.14.5.16 Warp-level matrix store instruction: stmatrix"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-stmatrix",
+        "{} stmatrix target floor or PTX provenance changed",
+        policy.id
+    );
+    let multiplicity_name = match multiplicity {
+        StmatrixMultiplicity::X2 => "x2",
+        StmatrixMultiplicity::X4 => "x4",
+    };
+    let mut modifiers = vec![
+        "sync".into(),
+        "aligned".into(),
+        "m8n8".into(),
+        multiplicity_name.into(),
+    ];
+    if layout == StmatrixLayout::Transposed {
+        modifiers.push("trans".into());
+    }
+    modifiers.extend(["shared".into(), "b16".into()]);
+    ensure!(
+        policy.expected_ptx
+            == (InstructionPattern {
+                mnemonic: "stmatrix".into(),
+                modifiers,
+                operands: vec![
+                    OperandPattern::Address,
+                    OperandPattern::RegisterList { length: count },
+                ],
+            }),
+        "{} expected PTX does not match its closed stmatrix shape",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings.iter().all(|route| {
+                !route.evidence_profile.trim().is_empty()
+                    && route.minimum_ptx.as_deref() == Some("7.8")
+                    && route.minimum_sm.as_deref() == Some("sm_90")
+            })
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LlvmNvptx
+                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+            })
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LibNvvm
+                    && route.mechanism == BackendLoweringMechanism::InlinePtx
+            }),
+        "{} must keep its reviewed typed-NVVM and inline-PTX routes",
+        policy.id
+    );
+    ensure!(
+        policy.ldmatrix_variant.is_none()
+            && policy.ldmatrix_safety.is_none()
+            && policy.ldmatrix_adapter.is_none()
+            && policy.packed_atomic.is_none()
+            && policy.redux.is_none()
+            && policy.vote.is_none()
+            && policy.active_mask.is_none()
+            && policy.warp_match.is_none()
+            && policy.warp_barrier.is_none()
+            && policy.warp_shuffle.is_none()
+            && policy.dot_product.is_none()
+            && policy.packed_alu.is_none()
+            && policy.packed_conversion.is_none()
+            && policy.cp_async_copy.is_none()
+            && policy.cp_async_control.is_none()
+            && policy.cp_async_mbarrier.is_none()
+            && policy.mbarrier_basic.is_none()
+            && policy.register_mma.is_none()
+            && policy.sparse_mma.is_none()
+            && policy.prmt.is_none()
+            && policy.cluster_barrier.is_none()
+            && policy.special_register.is_none()
+            && policy.debug_control.is_none(),
+        "{} mixes another generated-family contract with stmatrix",
+        policy.id
+    );
+    Ok(())
 }
 
 fn validate_ldmatrix_policy(
@@ -13055,6 +13474,15 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if policy.family == "stmatrix" {
+        ensure!(
+            runtime_states
+                .iter()
+                .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+            "{} stmatrix source contract is unexecuted but backend evidence disagrees",
+            policy.id
+        );
+    }
     if let Some(packed) = &policy.packed_atomic {
         match packed.runtime_validation {
             RuntimeValidation::Unexecuted => ensure!(
@@ -14803,8 +15231,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 39);
-        assert_eq!(overlay.intrinsics.len(), 300);
+        assert_eq!(overlay.shards.len(), 40);
+        assert_eq!(overlay.intrinsics.len(), 304);
         assert_eq!(
             overlay
                 .intrinsics
@@ -14820,6 +15248,14 @@ mod tests {
                 .filter(|record| record.family == "debug_control")
                 .count(),
             3
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "stmatrix")
+                .count(),
+            4
         );
         assert_eq!(
             overlay
@@ -15106,6 +15542,37 @@ mod tests {
         }
     }
 
+    fn test_stmatrix_admission() -> StmatrixAdmission {
+        let variants = [
+            (StmatrixMultiplicity::X2, StmatrixLayout::Normal, "i0301"),
+            (
+                StmatrixMultiplicity::X2,
+                StmatrixLayout::Transposed,
+                "i0302",
+            ),
+            (StmatrixMultiplicity::X4, StmatrixLayout::Normal, "i0303"),
+            (
+                StmatrixMultiplicity::X4,
+                StmatrixLayout::Transposed,
+                "i0304",
+            ),
+        ]
+        .map(
+            |(multiplicity, layout, abi_id)| crate::model::StmatrixAdmissionVariant {
+                abi_id: abi_id.into(),
+                multiplicity,
+                layout,
+            },
+        )
+        .into();
+        StmatrixAdmission {
+            llvm_evidence_profile: "llvm-test".into(),
+            libnvvm_evidence_profile: "libnvvm-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants,
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -15125,6 +15592,7 @@ mod tests {
             debug_control: None,
             threadfence: None,
             cluster_memory: None,
+            stmatrix: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -15194,6 +15662,7 @@ mod tests {
             debug_control: None,
             threadfence: None,
             cluster_memory: None,
+            stmatrix: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -15221,6 +15690,7 @@ mod tests {
             debug_control: None,
             threadfence: None,
             cluster_memory: None,
+            stmatrix: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -15231,6 +15701,118 @@ mod tests {
                 .to_string()
                 .contains("requires overlay shard schema 31")
         );
+    }
+
+    #[test]
+    fn stmatrix_admission_is_closed_and_uses_schema_35() {
+        let shard = |schema| {
+            toml::from_str::<OverlayShardFile>(&format!(
+                r#"
+schema = {schema}
+family = "stmatrix"
+
+[stmatrix]
+llvm_evidence_profile = "llvm-test"
+libnvvm_evidence_profile = "libnvvm-test"
+runtime_validation = "unexecuted"
+
+[[stmatrix.variant]]
+abi_id = "i0301"
+multiplicity = "x2"
+layout = "normal"
+
+[[stmatrix.variant]]
+abi_id = "i0302"
+multiplicity = "x2"
+layout = "transposed"
+
+[[stmatrix.variant]]
+abi_id = "i0303"
+multiplicity = "x4"
+layout = "normal"
+
+[[stmatrix.variant]]
+abi_id = "i0304"
+multiplicity = "x4"
+layout = "transposed"
+"#
+            ))
+            .unwrap()
+        };
+        let path = Path::new("intrinsics/overlay/stmatrix.toml");
+
+        let old = shard(STMATRIX_SHARD_SCHEMA - 1);
+        assert!(
+            validate_overlay_shard_schema(&old, path)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 35")
+        );
+
+        let current = shard(STMATRIX_SHARD_SCHEMA);
+        validate_overlay_shard_schema(&current, path).unwrap();
+        let admission = current.stmatrix.unwrap();
+        let records = expand_stmatrix_admission(&admission).unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| (record.abi_id.as_str(), record.id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("i0301", "stmatrix_m8n8_x2_b16"),
+                ("i0302", "stmatrix_m8n8_x2_trans_b16"),
+                ("i0303", "stmatrix_m8n8_x4_b16"),
+                ("i0304", "stmatrix_m8n8_x4_trans_b16"),
+            ]
+        );
+
+        let mut reordered = admission.clone();
+        reordered.variants.swap(0, 1);
+        assert!(expand_stmatrix_admission(&reordered).is_err());
+
+        let mut wrong_id = admission.clone();
+        wrong_id.variants[0].abi_id = "i0302".into();
+        assert!(expand_stmatrix_admission(&wrong_id).is_err());
+
+        let mut executed = admission;
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_stmatrix_admission(&executed).is_err());
+    }
+
+    #[test]
+    fn pinned_stmatrix_records_match_llvm_and_reject_contract_drift() {
+        let records = expand_stmatrix_admission(&test_stmatrix_admission()).unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            assert!(declaration.selections.is_empty());
+            validate_imported_policy(record, declaration).unwrap();
+        }
+
+        let declaration = declarations["int_nvvm_stmatrix_sync_aligned_m8n8_x2_b16"];
+        let mut changed = records[0].clone();
+        changed.memory = "read_write".into();
+        assert!(validate_imported_policy(&changed, declaration).is_err());
+
+        let mut changed = records[0].clone();
+        changed.convergent = false;
+        assert!(validate_imported_policy(&changed, declaration).is_err());
+
+        let mut changed = records[0].clone();
+        changed.backend_lowerings[0].mechanism = BackendLoweringMechanism::InlinePtx;
+        assert!(validate_imported_policy(&changed, declaration).is_err());
+
+        let mut changed = records[0].clone();
+        changed.minimum_sm = Some("sm_80".into());
+        assert!(validate_imported_policy(&changed, declaration).is_err());
     }
 
     #[test]
@@ -15328,6 +15910,7 @@ record_count = 14
             debug_control: None,
             threadfence: None,
             cluster_memory: None,
+            stmatrix: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -15875,6 +16458,7 @@ scope = "system"
             debug_control: Some(test_debug_control_admission()),
             threadfence: None,
             cluster_memory: None,
+            stmatrix: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
@@ -15906,6 +16490,7 @@ scope = "system"
             debug_control: None,
             threadfence: None,
             cluster_memory: Some(test_cluster_memory_admission()),
+            stmatrix: None,
         };
         let path = Path::new("intrinsics/overlay/cluster_memory.toml");
         validate_overlay_shard_schema_with_max(

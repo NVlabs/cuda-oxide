@@ -1,5 +1,5 @@
 {
-  "schema": 37,
+  "schema": 38,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "a878ca895a930a0e2f495f03db1f3220793bdd175e407773b8731b918ac02bbe",
-    "abi_ledger_sha256": "1e16d0ac449707fed5cf46c64c09f3912415865034fe0ab051bf539b0f1d2186",
+    "overlay_sha256": "03db2e70d460a1de6a44dc585d1138d59900810419d9df9a162c06c48fdc9f2e",
+    "abi_ledger_sha256": "e54aabdae3ecb51f5afc8754561db2eead5f1067ff61ce1bbd070159e37dcd67",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
@@ -36,6 +36,7 @@
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8.json:eac863f6241bf09043f568769de5d98a9b5294c6fcb66a383e2db1e27ebf3f18",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-standard-int4.json:02e3dfd40df03f3d7e39ad1067ac560aafc4bb60cb71a6258f02e92e942b3c96",
       "cuda-13.3-libnvvm-13.3.33-special-registers.json:a662dd4fab997972c1961469c5405a54ef784e45b54d8ab4b50d3f775140dbe3",
+      "cuda-13.3-libnvvm-13.3.33-stmatrix.json:b598335626f5d4f736c761535060c99bfa954166e24e366a0d4022d51e76638a",
       "cuda-13.3-libnvvm-13.3.33-threadfence.json:22af6e0b46e1898ef4958e0fb7d52af8e3670b8528e54895ca4d3faf0a15f7dc",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
       "rust-llvm-22.1.2-1cb4e383-cluster-barrier.json:10b857690722e43670121d16b356ea0074105968388aa91f5012e7aaa63fd795",
@@ -61,6 +62,7 @@
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-int8.json:524e0e0651ef3c0db9eadd6d4a563095430f57656557c01080b24c49f0f110bb",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-standard-int4.json:04aa237d2de9b0aec92852f3ac9f4dd1ff08c5b6a7d0ecb263b7ac3781dd2f4b",
       "rust-llvm-22.1.2-1cb4e383-special-registers.json:25e9c6b3d16bcaf1e0de6e322a55255b2ca05c011097597a9f06bd5f7bdadf62",
+      "rust-llvm-22.1.2-1cb4e383-stmatrix.json:2613b295a6baaf873eef8111b0a9a49699df238490bbf8b05aea49e79f332dcc",
       "rust-llvm-22.1.2-1cb4e383-threadfence.json:682055fd75b61cd6f86f92e5927cde6ed44091f461fb72569cee67e2e7b0783e",
       "rust-llvm-22.1.2-1cb4e383.json:3eb72286da6334949d1b252be0c5ea74004f0f6445768c123d2868fb8de78376"
     ]
@@ -70846,6 +70848,976 @@
         ]
       },
       "summary": "Samples the SM currently executing this thread."
+    },
+    {
+      "id": "stmatrix_m8n8_x2_b16",
+      "operation_key": "matrix.stmatrix.m8n8.x2.normal.b16.shared",
+      "family": "stmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x2_b16"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0301",
+        "module": "matrix",
+        "name": "stmatrix_m8n8_x2_b16",
+        "arguments": [
+          "*mut u8",
+          "u32",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0301",
+        "public_path": "cuda_intrinsics::matrix::stmatrix_m8n8_x2_b16",
+        "compatibility_paths": [
+          "cuda_device::tcgen05::stmatrix_m8n8_x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "StmatrixM8n8X2Op",
+        "op_name": "nvvm.stmatrix_m8n8_x2",
+        "operands": [
+          "ptr",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16",
+        "resolved_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3",
+        "arguments": [
+          "anyptr",
+          "i32",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrWriteMem",
+          "NoCapture<arg0>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.16 Warp-level matrix store instruction: stmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-stmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "four opaque-pointer typed llvm.nvvm.stmatrix declarations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned llvm-as and llvm-dis accepted and canonicalized all four declarations. Canonical IR SHA-256 values were d1f71c7c75af39dccc3b8bc5da08960ac7e21862d06274c4002bd27aca2b5b83, 1b3144318581f7a5f995bc08332dd8430e4ce15e131b7f5d3f0d11367c34ce22, efd8f41836b357d64176dbf6814ab3a6ca5067f6c7d0be29c7acd337f09d7318, and b2a4b9e0c2b8ea91d7a464e0f3ed8074e00034135760edd995f354ed860745e2.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "four typed LLVM probes retaining the x2, x2.trans, x4, and x4.trans stores",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted each exact stmatrix instruction at the route floor. PTX SHA-256 values were d785aeb501608a3245f5c278c9c9abf76e8304a6859e3510f51b671254101a64, 1c42bafa2a28719b52031f9736a310bf7cd85f14246c0416366fe287115866e2, 29941042e09a032655bcd2f4cb2d240e94dcd301cefdc2e1c7d947cfb6348bc6, and bfae167f02c68d9776a8755a3abfd9abc2239619b6763bb26372ebee50304ce1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX 7.8 modules containing the four stmatrix forms",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted every module and produced 1,720-byte cubins with SHA-256 f573c8cd30697e3635bd5bdf741092b49232ccd88cb86113d55a74b6f2b23843.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-stmatrix",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one convergent NVVM IR 2.0 kernel containing all four inline-PTX stmatrix forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,544-byte source module with SHA-256 fe4f9eae0f68076b87a64db475a3025703b5fba3c3594234601c0b491bef5adb, emitted 1,582-byte PTX with SHA-256 f72734d526a1de3477f7a681c6918b9310634223dfcc447ab644d0825cecf95e, and produced 2,828-byte LTOIR with SHA-256 1eb129c866ca475e500c0218d85b818bb63890b9dd09026da86d8082e887af51. The PTX retained each exact instruction once.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the combined inline-PTX stmatrix kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a 1,728-byte cubin with SHA-256 690c0e13b8a66020ebde091bf13e2b421cb191e6e2a1a04531e120f9d773912a.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_stmatrix",
+      "expected_ptx": {
+        "mnemonic": "stmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x2",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Stores two 8×8 b16 matrix fragments cooperatively to shared memory."
+    },
+    {
+      "id": "stmatrix_m8n8_x2_trans_b16",
+      "operation_key": "matrix.stmatrix.m8n8.x2.transposed.b16.shared",
+      "family": "stmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x2_trans_b16"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0302",
+        "module": "matrix",
+        "name": "stmatrix_m8n8_x2_trans_b16",
+        "arguments": [
+          "*mut u8",
+          "u32",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0302",
+        "public_path": "cuda_intrinsics::matrix::stmatrix_m8n8_x2_trans_b16",
+        "compatibility_paths": [
+          "cuda_device::tcgen05::stmatrix_m8n8_x2_trans"
+        ]
+      },
+      "dialect": {
+        "op_type": "StmatrixM8n8X2TransOp",
+        "op_name": "nvvm.stmatrix_m8n8_x2_trans",
+        "operands": [
+          "ptr",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.trans.b16",
+        "resolved_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.trans.b16.p3",
+        "arguments": [
+          "anyptr",
+          "i32",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrWriteMem",
+          "NoCapture<arg0>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.16 Warp-level matrix store instruction: stmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-stmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "four opaque-pointer typed llvm.nvvm.stmatrix declarations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned llvm-as and llvm-dis accepted and canonicalized all four declarations. Canonical IR SHA-256 values were d1f71c7c75af39dccc3b8bc5da08960ac7e21862d06274c4002bd27aca2b5b83, 1b3144318581f7a5f995bc08332dd8430e4ce15e131b7f5d3f0d11367c34ce22, efd8f41836b357d64176dbf6814ab3a6ca5067f6c7d0be29c7acd337f09d7318, and b2a4b9e0c2b8ea91d7a464e0f3ed8074e00034135760edd995f354ed860745e2.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "four typed LLVM probes retaining the x2, x2.trans, x4, and x4.trans stores",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted each exact stmatrix instruction at the route floor. PTX SHA-256 values were d785aeb501608a3245f5c278c9c9abf76e8304a6859e3510f51b671254101a64, 1c42bafa2a28719b52031f9736a310bf7cd85f14246c0416366fe287115866e2, 29941042e09a032655bcd2f4cb2d240e94dcd301cefdc2e1c7d947cfb6348bc6, and bfae167f02c68d9776a8755a3abfd9abc2239619b6763bb26372ebee50304ce1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX 7.8 modules containing the four stmatrix forms",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted every module and produced 1,720-byte cubins with SHA-256 f573c8cd30697e3635bd5bdf741092b49232ccd88cb86113d55a74b6f2b23843.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-stmatrix",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one convergent NVVM IR 2.0 kernel containing all four inline-PTX stmatrix forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,544-byte source module with SHA-256 fe4f9eae0f68076b87a64db475a3025703b5fba3c3594234601c0b491bef5adb, emitted 1,582-byte PTX with SHA-256 f72734d526a1de3477f7a681c6918b9310634223dfcc447ab644d0825cecf95e, and produced 2,828-byte LTOIR with SHA-256 1eb129c866ca475e500c0218d85b818bb63890b9dd09026da86d8082e887af51. The PTX retained each exact instruction once.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the combined inline-PTX stmatrix kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a 1,728-byte cubin with SHA-256 690c0e13b8a66020ebde091bf13e2b421cb191e6e2a1a04531e120f9d773912a.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_stmatrix",
+      "expected_ptx": {
+        "mnemonic": "stmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x2",
+          "trans",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          }
+        ]
+      },
+      "summary": "Stores two transposed 8×8 b16 matrix fragments cooperatively to shared memory."
+    },
+    {
+      "id": "stmatrix_m8n8_x4_b16",
+      "operation_key": "matrix.stmatrix.m8n8.x4.normal.b16.shared",
+      "family": "stmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x4_b16"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0303",
+        "module": "matrix",
+        "name": "stmatrix_m8n8_x4_b16",
+        "arguments": [
+          "*mut u8",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0303",
+        "public_path": "cuda_intrinsics::matrix::stmatrix_m8n8_x4_b16",
+        "compatibility_paths": [
+          "cuda_device::tcgen05::stmatrix_m8n8_x4"
+        ]
+      },
+      "dialect": {
+        "op_type": "StmatrixM8n8X4Op",
+        "op_name": "nvvm.stmatrix_m8n8_x4",
+        "operands": [
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.b16",
+        "resolved_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.b16.p3",
+        "arguments": [
+          "anyptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrWriteMem",
+          "NoCapture<arg0>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.16 Warp-level matrix store instruction: stmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-stmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "four opaque-pointer typed llvm.nvvm.stmatrix declarations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned llvm-as and llvm-dis accepted and canonicalized all four declarations. Canonical IR SHA-256 values were d1f71c7c75af39dccc3b8bc5da08960ac7e21862d06274c4002bd27aca2b5b83, 1b3144318581f7a5f995bc08332dd8430e4ce15e131b7f5d3f0d11367c34ce22, efd8f41836b357d64176dbf6814ab3a6ca5067f6c7d0be29c7acd337f09d7318, and b2a4b9e0c2b8ea91d7a464e0f3ed8074e00034135760edd995f354ed860745e2.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "four typed LLVM probes retaining the x2, x2.trans, x4, and x4.trans stores",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted each exact stmatrix instruction at the route floor. PTX SHA-256 values were d785aeb501608a3245f5c278c9c9abf76e8304a6859e3510f51b671254101a64, 1c42bafa2a28719b52031f9736a310bf7cd85f14246c0416366fe287115866e2, 29941042e09a032655bcd2f4cb2d240e94dcd301cefdc2e1c7d947cfb6348bc6, and bfae167f02c68d9776a8755a3abfd9abc2239619b6763bb26372ebee50304ce1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX 7.8 modules containing the four stmatrix forms",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted every module and produced 1,720-byte cubins with SHA-256 f573c8cd30697e3635bd5bdf741092b49232ccd88cb86113d55a74b6f2b23843.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-stmatrix",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one convergent NVVM IR 2.0 kernel containing all four inline-PTX stmatrix forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,544-byte source module with SHA-256 fe4f9eae0f68076b87a64db475a3025703b5fba3c3594234601c0b491bef5adb, emitted 1,582-byte PTX with SHA-256 f72734d526a1de3477f7a681c6918b9310634223dfcc447ab644d0825cecf95e, and produced 2,828-byte LTOIR with SHA-256 1eb129c866ca475e500c0218d85b818bb63890b9dd09026da86d8082e887af51. The PTX retained each exact instruction once.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the combined inline-PTX stmatrix kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a 1,728-byte cubin with SHA-256 690c0e13b8a66020ebde091bf13e2b421cb191e6e2a1a04531e120f9d773912a.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_stmatrix",
+      "expected_ptx": {
+        "mnemonic": "stmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x4",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          }
+        ]
+      },
+      "summary": "Stores four 8×8 b16 matrix fragments cooperatively to shared memory."
+    },
+    {
+      "id": "stmatrix_m8n8_x4_trans_b16",
+      "operation_key": "matrix.stmatrix.m8n8.x4.transposed.b16.shared",
+      "family": "stmatrix",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_stmatrix_sync_aligned_m8n8_x4_trans_b16"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0304",
+        "module": "matrix",
+        "name": "stmatrix_m8n8_x4_trans_b16",
+        "arguments": [
+          "*mut u8",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0304",
+        "public_path": "cuda_intrinsics::matrix::stmatrix_m8n8_x4_trans_b16",
+        "compatibility_paths": [
+          "cuda_device::tcgen05::stmatrix_m8n8_x4_trans"
+        ]
+      },
+      "dialect": {
+        "op_type": "StmatrixM8n8X4TransOp",
+        "op_name": "nvvm.stmatrix_m8n8_x4_trans",
+        "operands": [
+          "ptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.trans.b16",
+        "resolved_symbol": "llvm.nvvm.stmatrix.sync.aligned.m8n8.x4.trans.b16.p3",
+        "arguments": [
+          "anyptr",
+          "i32",
+          "i32",
+          "i32",
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrConvergent",
+          "IntrNoCallback",
+          "IntrWriteMem",
+          "NoCapture<arg0>",
+          "WriteOnly<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.5.16 Warp-level matrix store instruction: stmatrix",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-stmatrix"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "four opaque-pointer typed llvm.nvvm.stmatrix declarations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned llvm-as and llvm-dis accepted and canonicalized all four declarations. Canonical IR SHA-256 values were d1f71c7c75af39dccc3b8bc5da08960ac7e21862d06274c4002bd27aca2b5b83, 1b3144318581f7a5f995bc08332dd8430e4ce15e131b7f5d3f0d11367c34ce22, efd8f41836b357d64176dbf6814ab3a6ca5067f6c7d0be29c7acd337f09d7318, and b2a4b9e0c2b8ea91d7a464e0f3ed8074e00034135760edd995f354ed860745e2.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "four typed LLVM probes retaining the x2, x2.trans, x4, and x4.trans stores",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted each exact stmatrix instruction at the route floor. PTX SHA-256 values were d785aeb501608a3245f5c278c9c9abf76e8304a6859e3510f51b671254101a64, 1c42bafa2a28719b52031f9736a310bf7cd85f14246c0416366fe287115866e2, 29941042e09a032655bcd2f4cb2d240e94dcd301cefdc2e1c7d947cfb6348bc6, and bfae167f02c68d9776a8755a3abfd9abc2239619b6763bb26372ebee50304ce1.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX 7.8 modules containing the four stmatrix forms",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted every module and produced 1,720-byte cubins with SHA-256 f573c8cd30697e3635bd5bdf741092b49232ccd88cb86113d55a74b6f2b23843.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-stmatrix",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_90",
+                "ptx93"
+              ],
+              "representation": "one convergent NVVM IR 2.0 kernel containing all four inline-PTX stmatrix forms",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,544-byte source module with SHA-256 fe4f9eae0f68076b87a64db475a3025703b5fba3c3594234601c0b491bef5adb, emitted 1,582-byte PTX with SHA-256 f72734d526a1de3477f7a681c6918b9310634223dfcc447ab644d0825cecf95e, and produced 2,828-byte LTOIR with SHA-256 1eb129c866ca475e500c0218d85b818bb63890b9dd09026da86d8082e887af51. The PTX retained each exact instruction once.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the combined inline-PTX stmatrix kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink linked the libNVVM-produced LTOIR into a 1,728-byte cubin with SHA-256 690c0e13b8a66020ebde091bf13e2b421cb191e6e2a1a04531e120f9d773912a.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_stmatrix",
+      "expected_ptx": {
+        "mnemonic": "stmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x4",
+          "trans",
+          "shared",
+          "b16"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          }
+        ]
+      },
+      "summary": "Stores four transposed 8×8 b16 matrix fragments cooperatively to shared memory."
     },
     {
       "id": "sub_bf16x2",

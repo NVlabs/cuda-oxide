@@ -175,6 +175,51 @@ pub struct OverlayShardFile {
     pub threadfence: Option<ThreadfenceAdmission>,
     #[serde(default)]
     pub cluster_memory: Option<ClusterMemoryAdmission>,
+    #[serde(default)]
+    pub stmatrix: Option<StmatrixAdmission>,
+}
+
+/// Compact admission for the four existing `stmatrix` stores.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StmatrixAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<StmatrixAdmissionVariant>,
+}
+
+/// One reviewed `stmatrix` multiplicity and layout.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StmatrixAdmissionVariant {
+    pub abi_id: String,
+    pub multiplicity: StmatrixMultiplicity,
+    pub layout: StmatrixLayout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StmatrixMultiplicity {
+    X2,
+    X4,
+}
+
+impl StmatrixMultiplicity {
+    pub const fn register_count(self) -> usize {
+        match self {
+            Self::X2 => 2,
+            Self::X4 => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StmatrixLayout {
+    Normal,
+    Transposed,
 }
 
 /// Compact admission for Hopper cluster special registers.

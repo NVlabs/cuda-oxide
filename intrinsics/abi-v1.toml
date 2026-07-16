@@ -2107,3 +2107,31 @@ status = "active"
 catalog_id = "threadfence_system"
 operation_key = "memory.fence.system.sc"
 raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0301"
+status = "active"
+catalog_id = "stmatrix_m8n8_x2_b16"
+operation_key = "matrix.stmatrix.m8n8.x2.normal.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0302"
+status = "active"
+catalog_id = "stmatrix_m8n8_x2_trans_b16"
+operation_key = "matrix.stmatrix.m8n8.x2.transposed.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0303"
+status = "active"
+catalog_id = "stmatrix_m8n8_x4_b16"
+operation_key = "matrix.stmatrix.m8n8.x4.normal.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32", "u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0304"
+status = "active"
+catalog_id = "stmatrix_m8n8_x4_trans_b16"
+operation_key = "matrix.stmatrix.m8n8.x4.transposed.b16.shared"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "u32", "u32", "u32", "u32"], result = "()" }

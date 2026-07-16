@@ -83,7 +83,6 @@ pub mod ldmatrix;
 pub mod mbarrier;
 pub mod packed;
 pub mod prmt;
-pub mod stmatrix;
 pub mod tcgen05;
 pub mod tma;
 pub mod warp;
