@@ -2401,3 +2401,171 @@ status = "active"
 catalog_id = "cp_async_bulk_wait_group_read"
 operation_key = "memory.copy.async.bulk.group.wait_read_max_pending"
 raw_rust_signature = { safe = true, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0343"
+status = "active"
+catalog_id = "tcgen05_alloc"
+operation_key = "tcgen05.alloc.cg1"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0344"
+status = "active"
+catalog_id = "tcgen05_dealloc"
+operation_key = "tcgen05.dealloc.cg1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0345"
+status = "active"
+catalog_id = "tcgen05_relinquish_alloc_permit"
+operation_key = "tcgen05.relinquish_alloc_permit.cg1"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0346"
+status = "active"
+catalog_id = "tcgen05_fence_before_thread_sync"
+operation_key = "tcgen05.fence.before_thread_sync"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0347"
+status = "active"
+catalog_id = "tcgen05_fence_after_thread_sync"
+operation_key = "tcgen05.fence.after.thread.sync"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0348"
+status = "active"
+catalog_id = "tcgen05_commit"
+operation_key = "tcgen05.commit.cg1"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0349"
+status = "active"
+catalog_id = "tcgen05_commit_shared_cluster"
+operation_key = "tcgen05.commit.shared_cluster.cg1"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0350"
+status = "active"
+catalog_id = "tcgen05_mma_ws_f16"
+operation_key = "tcgen05.mma.ws.f16.cg1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0351"
+status = "active"
+catalog_id = "tcgen05_mma_f16"
+operation_key = "tcgen05.mma.f16.cg1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0352"
+status = "active"
+catalog_id = "tcgen05_mma_ws_bf16"
+operation_key = "tcgen05.mma.ws.bf16.cg1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0353"
+status = "active"
+catalog_id = "tcgen05_mma_ws_tf32"
+operation_key = "tcgen05.mma.ws.tf32.cg1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0354"
+status = "active"
+catalog_id = "tcgen05_cp_smem_to_tmem"
+operation_key = "tcgen05.cp.128x256b.cg1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0355"
+status = "active"
+catalog_id = "tcgen05_ld_16x256b_x8_pure"
+operation_key = "tcgen05.ld.16x256b.x8"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "[f32; 32]" }
+
+[[entry]]
+abi_id = "i0356"
+status = "active"
+catalog_id = "tcgen05_ld_16x256b_pure"
+operation_key = "tcgen05.ld.16x256b.x1"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i0357"
+status = "active"
+catalog_id = "tcgen05_load_wait"
+operation_key = "tcgen05.wait.ld"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0358"
+status = "active"
+catalog_id = "tcgen05_store_wait"
+operation_key = "tcgen05.wait.st"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0359"
+status = "active"
+catalog_id = "tcgen05_alloc_cg2"
+operation_key = "tcgen05.alloc.cg2"
+raw_rust_signature = { safe = false, arguments = ["*mut u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0360"
+status = "active"
+catalog_id = "tcgen05_dealloc_cg2"
+operation_key = "tcgen05.dealloc.cg2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0361"
+status = "active"
+catalog_id = "tcgen05_relinquish_alloc_permit_cg2"
+operation_key = "tcgen05.relinquish_alloc_permit.cg2"
+raw_rust_signature = { safe = true, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0362"
+status = "active"
+catalog_id = "tcgen05_mma_f16_cg2"
+operation_key = "tcgen05.mma.f16.cg2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i0363"
+status = "active"
+catalog_id = "tcgen05_commit_cg2"
+operation_key = "tcgen05.commit.cg2"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0364"
+status = "active"
+catalog_id = "tcgen05_commit_shared_cluster_cg2"
+operation_key = "tcgen05.commit.shared_cluster.cg2"
+raw_rust_signature = { safe = false, arguments = ["*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0365"
+status = "active"
+catalog_id = "tcgen05_commit_multicast_cg2"
+operation_key = "tcgen05.commit.multicast.cg2"
+raw_rust_signature = { safe = false, arguments = ["*mut u64", "u16"], result = "()" }
+
+[[entry]]
+abi_id = "i0366"
+status = "active"
+catalog_id = "tcgen05_cp_smem_to_tmem_cg2"
+operation_key = "tcgen05.cp.128x256b.cg2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64"], result = "()" }

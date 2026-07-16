@@ -9534,20 +9534,6 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
         );
     }
-    if tcgen05_intrinsics(catalog).next().is_some() {
-        output = output.replace(
-            "use llvm_export::{ops::AsmKind, types as llvm_types};",
-            "use llvm_export::{ops as llvm_ops, ops::AsmKind, types as llvm_types};",
-        );
-        output = output.replace(
-            "builtin::types::{IntegerType, Signedness}",
-            "builtin::types::{FP32Type, IntegerType, Signedness}",
-        );
-        output = output.replace(
-            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
-            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
-        );
-    }
     for (index, record) in sregs(catalog).enumerate() {
         if index != 0 {
             output.push_str(", ");
@@ -9776,6 +9762,20 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
                 "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
                 "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
             );
+    }
+    if tcgen05_intrinsics(catalog).next().is_some() {
+        output = output.replace(
+            "use llvm_export::{ops::AsmKind, types as llvm_types};",
+            "use llvm_export::{ops as llvm_ops, ops::AsmKind, types as llvm_types};",
+        );
+        output = output.replace(
+            "builtin::types::{IntegerType, Signedness}",
+            "builtin::types::{FP32Type, IntegerType, Signedness}",
+        );
+        output = output.replace(
+            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
+            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
+        );
     }
     output.push_str("use pliron::location::Located;\n\n");
     if mbarrier_extended(catalog).next().is_some() {
@@ -15188,7 +15188,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 342);
+        assert_eq!(catalog.intrinsics.len(), 366);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -16204,6 +16204,9 @@ mod tests {
         );
         assert!(!lowering.contains(".kind::bf16"));
         assert!(lowering.contains("convert_generated_tcgen05_load("));
+        assert!(lowering.contains("builtin::types::{FP32Type, IntegerType, Signedness}"));
+        assert!(lowering.contains("ops as llvm_ops"));
+        assert!(lowering.contains("inserter::Inserter"));
 
         let bf16 = tcgen05_intrinsics(&catalog)
             .find(|record| record.id == "tcgen05_mma_ws_bf16")

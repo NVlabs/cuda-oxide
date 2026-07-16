@@ -1064,6 +1064,18 @@ fn shares_tma_2d_g2s_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
         })
 }
 
+fn shares_tcgen05_mma_ws_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
+    symbol == "llvm.nvvm.tcgen05.mma.ws.tensor"
+        && record.tcgen05.as_ref().is_some_and(|tcgen05| {
+            matches!(
+                tcgen05.operation,
+                Tcgen05Operation::MmaWsF16
+                    | Tcgen05Operation::MmaWsBf16
+                    | Tcgen05Operation::MmaWsTf32
+            )
+        })
+}
+
 fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> Result<()> {
     let mut ids = BTreeSet::new();
     let mut abi_ids = BTreeSet::new();
@@ -1123,17 +1135,18 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
             let is_resolved = record.resolved_llvm_symbol.is_some();
-            let shares_tma_symbol = shares_tma_2d_g2s_symbol(record, symbol);
-            if let Some((previous_was_resolved, previous_shared_tma_symbol)) =
-                symbol_bases.insert(symbol, (is_resolved, shares_tma_symbol))
+            let shares_reviewed_symbol = shares_tma_2d_g2s_symbol(record, symbol)
+                || shares_tcgen05_mma_ws_symbol(record, symbol);
+            if let Some((previous_was_resolved, previous_shared_symbol)) =
+                symbol_bases.insert(symbol, (is_resolved, shares_reviewed_symbol))
             {
                 ensure!(
                     (previous_was_resolved && is_resolved)
-                        || (previous_shared_tma_symbol && shares_tma_symbol),
+                        || (previous_shared_symbol && shares_reviewed_symbol),
                     "duplicate LLVM symbol {symbol} is reused without a resolved symbol"
                 );
             }
-            if !shares_tma_symbol {
+            if !shares_reviewed_symbol {
                 insert_unique(
                     &mut symbols,
                     record.resolved_llvm_symbol.as_ref().unwrap_or(symbol),
@@ -4464,10 +4477,12 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 cp_async_mbarrier: None,
                 mbarrier_basic: None,
                 movmatrix: None,
+                mbarrier_extended: None,
                 register_mma: None,
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -15841,6 +15856,7 @@ fn expand_mbarrier_extended_admission(
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -16093,6 +16109,7 @@ fn expand_wgmma_control_admission(
                 cluster_memory: None,
                 clc: None,
                 tma: None,
+                tcgen05: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -19574,8 +19591,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 46);
-        assert_eq!(overlay.intrinsics.len(), 342);
+        assert_eq!(overlay.shards.len(), 47);
+        assert_eq!(overlay.intrinsics.len(), 366);
         assert_eq!(
             overlay
                 .intrinsics
@@ -20241,6 +20258,7 @@ mod tests {
             clc: None,
             wgmma_controls: None,
             tma: None,
+            tcgen05: None,
         };
         validate_overlay_shard_schema_with_max(
             &extended_shard,
@@ -21363,12 +21381,14 @@ scope = "system"
             packed_conversion_fp8: None,
             cluster_sreg: None,
             cluster_barrier: None,
+            mbarrier_extended: None,
             special_registers: None,
             debug_control: None,
             threadfence: None,
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
             tma: None,
             tcgen05: Some(test_tcgen05_admission()),
         };
@@ -21886,6 +21906,7 @@ scope = "system"
             clc: None,
             wgmma_controls: Some(test_wgmma_control_admission()),
             tma: None,
+            tcgen05: None,
         };
         let path = Path::new("intrinsics/overlay/wgmma_control.toml");
         validate_overlay_shard_schema_with_max(&shard, path, WGMMA_CONTROL_SHARD_SCHEMA).unwrap();

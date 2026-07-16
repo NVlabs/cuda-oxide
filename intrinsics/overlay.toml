@@ -42,6 +42,7 @@ shards = [
     "overlay/sreg_special.toml",
     "overlay/stmatrix.toml",
     "overlay/sync.toml",
+    "overlay/tcgen05.toml",
     "overlay/threadfence.toml",
     "overlay/tma.toml",
     "overlay/vote.toml",

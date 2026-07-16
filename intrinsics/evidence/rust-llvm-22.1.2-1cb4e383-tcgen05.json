@@ -21,10 +21,8 @@
       "stages": [
         {
           "targets": [
-            "sm_100a",
-            "sm_101a",
-            "sm_103a",
-            "sm_110a"
+          "sm_100a",
+          "ptx86"
           ],
           "representation": "one convergent LLVM module containing the exact inline-PTX carrier for all 24 generated tcgen05 routes",
           "stage": "backend_codegen",
@@ -34,9 +32,8 @@
         },
         {
           "targets": [
-            "sm_100a",
-            "sm_103a",
-            "sm_110a"
+          "sm_100a",
+          "ptx86"
           ],
           "representation": "LLVM-produced PTX containing all 24 exact tcgen05 forms",
           "stage": "ptx_assembly",

@@ -24,9 +24,8 @@
       "stages": [
         {
           "targets": [
-            "compute_100a",
-            "compute_103a",
-            "compute_110a"
+          "compute_100a",
+          "ptx93"
           ],
           "representation": "one convergent NVVM IR 2.0 module containing the exact inline-PTX carrier for all 24 generated tcgen05 routes",
           "stage": "backend_codegen",
@@ -36,9 +35,8 @@
         },
         {
           "targets": [
-            "sm_100a",
-            "sm_103a",
-            "sm_110a"
+          "sm_100a",
+          "ptx93"
           ],
           "representation": "nvJitLink cubins retaining the combined 24-route tcgen05 kernel",
           "stage": "device_link",

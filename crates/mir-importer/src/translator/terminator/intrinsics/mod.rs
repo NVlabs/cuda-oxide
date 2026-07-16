@@ -46,7 +46,6 @@ pub mod generated;
 pub mod indexing;
 pub mod memory;
 pub mod saturating;
-pub mod tcgen05;
 pub mod tma;
 pub mod warp;
 pub mod wgmma;

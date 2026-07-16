@@ -102,7 +102,6 @@ pub mod atomic;
 mod debug;
 mod generated;
 mod grid;
-mod tcgen05;
 mod warp;
 mod wgmma;
 
@@ -114,7 +113,6 @@ pub use atomic::*;
 pub use debug::*;
 pub use generated::*;
 pub use grid::*;
-pub use tcgen05::*;
 pub use warp::*;
 pub use wgmma::*;
 
@@ -129,6 +127,5 @@ pub fn register(ctx: &mut Context) {
     warp::register(ctx);
     grid::register(ctx);
     wgmma::register(ctx);
-    tcgen05::register(ctx);
     debug::register(ctx);
 }
