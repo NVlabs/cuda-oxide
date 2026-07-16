@@ -107,6 +107,7 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         imported_sha256
     );
 
+    bind_generated_abi_ids(&mut overlay, &ledger)?;
     overlay
         .intrinsics
         .sort_by(|left, right| left.id.cmp(&right.id));
@@ -421,6 +422,68 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
         for path in &record.compatibility_rust_paths {
             insert_unique(&mut paths, path, "compatibility Rust path")?;
         }
+    }
+    Ok(())
+}
+
+struct AbiLedgerIndex<'a> {
+    by_catalog_id: BTreeMap<&'a str, &'a AbiLedgerEntry>,
+}
+
+impl<'a> AbiLedgerIndex<'a> {
+    fn new(ledger: &'a AbiLedgerFile) -> Result<Self> {
+        let mut by_catalog_id = BTreeMap::new();
+        for entry in &ledger.entries {
+            ensure!(
+                by_catalog_id
+                    .insert(entry.catalog_id.as_str(), entry)
+                    .is_none(),
+                "duplicate ABI ledger catalog ID: {}",
+                entry.catalog_id
+            );
+        }
+        Ok(Self { by_catalog_id })
+    }
+
+    fn active(&self, catalog_id: &str) -> Result<&'a AbiLedgerEntry> {
+        let entry = self
+            .by_catalog_id
+            .get(catalog_id)
+            .copied()
+            .with_context(|| format!("generated intrinsic {catalog_id} has no ABI ledger entry"))?;
+        ensure!(
+            entry.status == "active",
+            "generated intrinsic {catalog_id} maps to non-active ABI ledger entry {}",
+            entry.abi_id
+        );
+        Ok(entry)
+    }
+}
+
+fn bind_generated_abi_ids(overlay: &mut OverlayFile, ledger: &AbiLedgerFile) -> Result<()> {
+    let index = AbiLedgerIndex::new(ledger)?;
+    for record in overlay
+        .intrinsics
+        .iter_mut()
+        .filter(|record| record.abi_id.is_empty())
+    {
+        let entry = index.active(&record.id)?;
+        ensure!(
+            entry.operation_key == record.operation_key,
+            "generated intrinsic {} operation key mismatch: ledger {:?}, derived {:?}",
+            record.id,
+            entry.operation_key,
+            record.operation_key
+        );
+        let derived_signature = raw_rust_signature(record);
+        ensure!(
+            entry.raw_rust_signature == derived_signature,
+            "generated intrinsic {} raw Rust signature mismatch: ledger {:?}, derived {:?}",
+            record.id,
+            entry.raw_rust_signature,
+            derived_signature
+        );
+        record.abi_id.clone_from(&entry.abi_id);
     }
     Ok(())
 }
@@ -6987,22 +7050,114 @@ fn sparse_mma_carrier_recipe(
     }
 }
 
-struct SparseMmaRecipe {
-    id: &'static str,
-    abi_id: &'static str,
-    operation_key: &'static str,
-    source_record: &'static str,
-    llvm_symbol: &'static str,
+struct SparseMmaIdentity {
+    id: String,
+    operation_key: String,
+    source_record: String,
+    llvm_symbol: String,
     ptx_modifiers: Vec<&'static str>,
+}
+
+struct SparseMmaRecipe {
+    identity: SparseMmaIdentity,
     carrier: SparseMmaCarrierRecipe,
 }
 
-fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
-    use SparseMmaElement::{S4, S8, U4, U8};
-    use SparseMmaMetadata::{Ordered, Standard};
-    use SparseMmaOverflow::{Satfinite, Wrapping};
-    use SparseMmaShape::{M16n8k32, M16n8k64, M16n8k128};
+fn sparse_mma_shape_name(shape: SparseMmaShape) -> &'static str {
+    match shape {
+        SparseMmaShape::M16n8k32 => "m16n8k32",
+        SparseMmaShape::M16n8k64 => "m16n8k64",
+        SparseMmaShape::M16n8k128 => "m16n8k128",
+    }
+}
 
+fn sparse_mma_element_name(element: SparseMmaElement) -> &'static str {
+    match element {
+        SparseMmaElement::S4 => "s4",
+        SparseMmaElement::U4 => "u4",
+        SparseMmaElement::S8 => "s8",
+        SparseMmaElement::U8 => "u8",
+    }
+}
+
+fn sparse_mma_identity(mma: &SparseMma) -> SparseMmaIdentity {
+    let shape = sparse_mma_shape_name(mma.shape);
+    let a_element = sparse_mma_element_name(mma.a_element);
+    let b_element = sparse_mma_element_name(mma.b_element);
+    let compact_elements = if mma.a_element == mma.b_element {
+        a_element.to_owned()
+    } else {
+        format!("{a_element}_{b_element}")
+    };
+    let dotted_elements = if mma.a_element == mma.b_element {
+        a_element.to_owned()
+    } else {
+        format!("{a_element}.{b_element}")
+    };
+    let metadata_id_prefix = match mma.metadata {
+        SparseMmaMetadata::Standard => "",
+        SparseMmaMetadata::Ordered => "ordered_metadata_",
+    };
+    let metadata_source_prefix = metadata_id_prefix;
+    let metadata_symbol_prefix = match mma.metadata {
+        SparseMmaMetadata::Standard => "",
+        SparseMmaMetadata::Ordered => "ordered.metadata.",
+    };
+    let metadata_key = match mma.metadata {
+        SparseMmaMetadata::Standard => "standard_metadata",
+        SparseMmaMetadata::Ordered => "ordered_metadata",
+    };
+    let overflow_id_suffix = match mma.overflow {
+        SparseMmaOverflow::Wrapping => "",
+        SparseMmaOverflow::Satfinite => "_satfinite",
+    };
+    let overflow_source_prefix = match mma.overflow {
+        SparseMmaOverflow::Wrapping => "",
+        SparseMmaOverflow::Satfinite => "satfinite_",
+    };
+    let overflow_symbol_prefix = match mma.overflow {
+        SparseMmaOverflow::Wrapping => "",
+        SparseMmaOverflow::Satfinite => "satfinite.",
+    };
+    let overflow_key = match mma.overflow {
+        SparseMmaOverflow::Wrapping => "wrapping",
+        SparseMmaOverflow::Satfinite => "satfinite",
+    };
+
+    let mut ptx_modifiers = vec![
+        match mma.metadata {
+            SparseMmaMetadata::Standard => "sp",
+            SparseMmaMetadata::Ordered => "sp::ordered_metadata",
+        },
+        "sync",
+        "aligned",
+        shape,
+        "row",
+        "col",
+    ];
+    if mma.overflow == SparseMmaOverflow::Satfinite {
+        ptx_modifiers.push("satfinite");
+    }
+    ptx_modifiers.extend(["s32", a_element, b_element, "s32"]);
+
+    SparseMmaIdentity {
+        id: format!(
+            "mma_sp_{metadata_id_prefix}{shape}_s32_{compact_elements}{overflow_id_suffix}"
+        ),
+        operation_key: format!(
+            "matrix.mma.sp.{shape}.row.col.s32.{a_element}.{b_element}.s32.{overflow_key}.{metadata_key}"
+        ),
+        source_record: format!(
+            "int_nvvm_mma_sp_{metadata_source_prefix}{shape}_row_col_{overflow_source_prefix}{compact_elements}"
+        ),
+        llvm_symbol: format!(
+            "llvm.nvvm.mma.sp.{metadata_symbol_prefix}{shape}.row.col.{overflow_symbol_prefix}{dotted_elements}"
+        ),
+        ptx_modifiers,
+    }
+}
+
+fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
     let carrier = sparse_mma_carrier_recipe(mma.shape, mma.a_element, mma.b_element)?;
 
     if mma.accumulator != SparseMmaAccumulator::S32
@@ -7018,504 +7173,8 @@ fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
         return None;
     }
 
-    let (id, abi_id, operation_key, source_record, llvm_symbol) = match (
-        mma.shape,
-        mma.a_element,
-        mma.b_element,
-        mma.overflow,
-        mma.metadata,
-    ) {
-        (M16n8k32, S8, S8, Wrapping, Standard) => (
-            "mma_sp_m16n8k32_s32_s8",
-            "i0163",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_s8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.s8",
-        ),
-        (M16n8k32, S8, U8, Wrapping, Standard) => (
-            "mma_sp_m16n8k32_s32_s8_u8",
-            "i0164",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_s8_u8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.s8.u8",
-        ),
-        (M16n8k32, U8, U8, Wrapping, Standard) => (
-            "mma_sp_m16n8k32_s32_u8",
-            "i0165",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_u8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.u8",
-        ),
-        (M16n8k32, U8, S8, Wrapping, Standard) => (
-            "mma_sp_m16n8k32_s32_u8_s8",
-            "i0166",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_u8_s8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.u8.s8",
-        ),
-        (M16n8k32, S8, S8, Satfinite, Standard) => (
-            "mma_sp_m16n8k32_s32_s8_satfinite",
-            "i0167",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_s8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.s8",
-        ),
-        (M16n8k32, S8, U8, Satfinite, Standard) => (
-            "mma_sp_m16n8k32_s32_s8_u8_satfinite",
-            "i0168",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_s8_u8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.s8.u8",
-        ),
-        (M16n8k32, U8, U8, Satfinite, Standard) => (
-            "mma_sp_m16n8k32_s32_u8_satfinite",
-            "i0169",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_u8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.u8",
-        ),
-        (M16n8k32, U8, S8, Satfinite, Standard) => (
-            "mma_sp_m16n8k32_s32_u8_s8_satfinite",
-            "i0170",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k32_row_col_satfinite_u8_s8",
-            "llvm.nvvm.mma.sp.m16n8k32.row.col.satfinite.u8.s8",
-        ),
-        (M16n8k32, S8, S8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_s8",
-            "i0171",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.s8",
-        ),
-        (M16n8k32, S8, U8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_s8_u8",
-            "i0172",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_s8_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.s8.u8",
-        ),
-        (M16n8k32, U8, U8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_u8",
-            "i0173",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.u8",
-        ),
-        (M16n8k32, U8, S8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_u8_s8",
-            "i0174",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_u8_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.u8.s8",
-        ),
-        (M16n8k32, S8, S8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_s8_satfinite",
-            "i0175",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.s8",
-        ),
-        (M16n8k32, S8, U8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_s8_u8_satfinite",
-            "i0176",
-            "matrix.mma.sp.m16n8k32.row.col.s32.s8.u8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_s8_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.s8.u8",
-        ),
-        (M16n8k32, U8, U8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_u8_satfinite",
-            "i0177",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.u8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.u8",
-        ),
-        (M16n8k32, U8, S8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k32_s32_u8_s8_satfinite",
-            "i0178",
-            "matrix.mma.sp.m16n8k32.row.col.s32.u8.s8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_satfinite_u8_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.satfinite.u8.s8",
-        ),
-        (M16n8k64, S8, S8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s8",
-            "i0179",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.s8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.s8",
-        ),
-        (M16n8k64, S8, U8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s8_u8",
-            "i0180",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.u8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_s8_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.s8.u8",
-        ),
-        (M16n8k64, U8, U8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u8",
-            "i0181",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.u8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.u8",
-        ),
-        (M16n8k64, U8, S8, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u8_s8",
-            "i0182",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.s8.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_u8_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.u8.s8",
-        ),
-        (M16n8k64, S8, S8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s8_satfinite",
-            "i0183",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.s8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.s8",
-        ),
-        (M16n8k64, S8, U8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s8_u8_satfinite",
-            "i0184",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.u8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_s8_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.s8.u8",
-        ),
-        (M16n8k64, U8, U8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u8_satfinite",
-            "i0185",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.u8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_u8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.u8",
-        ),
-        (M16n8k64, U8, S8, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u8_s8_satfinite",
-            "i0186",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.s8.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_u8_s8",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.u8.s8",
-        ),
-        (M16n8k64, S8, S8, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_s8",
-            "i0187",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.s8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_s8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.s8",
-        ),
-        (M16n8k64, S8, U8, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_s8_u8",
-            "i0188",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.u8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_s8_u8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.s8.u8",
-        ),
-        (M16n8k64, U8, U8, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_u8",
-            "i0189",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.u8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_u8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.u8",
-        ),
-        (M16n8k64, U8, S8, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_u8_s8",
-            "i0190",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.s8.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_u8_s8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.u8.s8",
-        ),
-        (M16n8k64, S8, S8, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_s8_satfinite",
-            "i0191",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.s8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s8",
-        ),
-        (M16n8k64, S8, U8, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_s8_u8_satfinite",
-            "i0192",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s8.u8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s8_u8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s8.u8",
-        ),
-        (M16n8k64, U8, U8, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_u8_satfinite",
-            "i0193",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.u8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u8",
-        ),
-        (M16n8k64, U8, S8, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_u8_s8_satfinite",
-            "i0194",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u8.s8.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u8_s8",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u8.s8",
-        ),
-        (M16n8k64, S4, S4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s4",
-            "i0195",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.s4",
-        ),
-        (M16n8k64, S4, U4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s4_u4",
-            "i0196",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_s4_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.s4.u4",
-        ),
-        (M16n8k64, U4, U4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u4",
-            "i0197",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.u4",
-        ),
-        (M16n8k64, U4, S4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u4_s4",
-            "i0198",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_u4_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.u4.s4",
-        ),
-        (M16n8k64, S4, S4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s4_satfinite",
-            "i0199",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.s4",
-        ),
-        (M16n8k64, S4, U4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_s4_u4_satfinite",
-            "i0200",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_s4_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.s4.u4",
-        ),
-        (M16n8k64, U4, U4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u4_satfinite",
-            "i0201",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.u4",
-        ),
-        (M16n8k64, U4, S4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k64_s32_u4_s4_satfinite",
-            "i0202",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k64_row_col_satfinite_u4_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k64.row.col.satfinite.u4.s4",
-        ),
-        (M16n8k128, S4, S4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_s4",
-            "i0203",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.s4",
-        ),
-        (M16n8k128, S4, U4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_s4_u4",
-            "i0204",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_s4_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.s4.u4",
-        ),
-        (M16n8k128, U4, U4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_u4",
-            "i0205",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.u4",
-        ),
-        (M16n8k128, U4, S4, Wrapping, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_u4_s4",
-            "i0206",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.wrapping.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_u4_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.u4.s4",
-        ),
-        (M16n8k128, S4, S4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_s4_satfinite",
-            "i0207",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.s4",
-        ),
-        (M16n8k128, S4, U4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_s4_u4_satfinite",
-            "i0208",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_s4_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.s4.u4",
-        ),
-        (M16n8k128, U4, U4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_u4_satfinite",
-            "i0209",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_u4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.u4",
-        ),
-        (M16n8k128, U4, S4, Satfinite, Ordered) => (
-            "mma_sp_ordered_metadata_m16n8k128_s32_u4_s4_satfinite",
-            "i0210",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.satfinite.ordered_metadata",
-            "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_u4_s4",
-            "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.u4.s4",
-        ),
-        (M16n8k64, S4, S4, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_s4",
-            "i0211",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_s4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.s4",
-        ),
-        (M16n8k64, S4, U4, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_s4_u4",
-            "i0212",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_s4_u4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.s4.u4",
-        ),
-        (M16n8k64, U4, U4, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_u4",
-            "i0213",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_u4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.u4",
-        ),
-        (M16n8k64, U4, S4, Wrapping, Standard) => (
-            "mma_sp_m16n8k64_s32_u4_s4",
-            "i0214",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_u4_s4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.u4.s4",
-        ),
-        (M16n8k64, S4, S4, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_s4_satfinite",
-            "i0215",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s4",
-        ),
-        (M16n8k64, S4, U4, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_s4_u4_satfinite",
-            "i0216",
-            "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s4_u4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s4.u4",
-        ),
-        (M16n8k64, U4, U4, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_u4_satfinite",
-            "i0217",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u4",
-        ),
-        (M16n8k64, U4, S4, Satfinite, Standard) => (
-            "mma_sp_m16n8k64_s32_u4_s4_satfinite",
-            "i0218",
-            "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u4_s4",
-            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u4.s4",
-        ),
-        (M16n8k128, S4, S4, Wrapping, Standard) => (
-            "mma_sp_m16n8k128_s32_s4",
-            "i0219",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_s4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.s4",
-        ),
-        (M16n8k128, S4, U4, Wrapping, Standard) => (
-            "mma_sp_m16n8k128_s32_s4_u4",
-            "i0220",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_s4_u4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.s4.u4",
-        ),
-        (M16n8k128, U4, U4, Wrapping, Standard) => (
-            "mma_sp_m16n8k128_s32_u4",
-            "i0221",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_u4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.u4",
-        ),
-        (M16n8k128, U4, S4, Wrapping, Standard) => (
-            "mma_sp_m16n8k128_s32_u4_s4",
-            "i0222",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.wrapping.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_u4_s4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.u4.s4",
-        ),
-        (M16n8k128, S4, S4, Satfinite, Standard) => (
-            "mma_sp_m16n8k128_s32_s4_satfinite",
-            "i0223",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_s4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.s4",
-        ),
-        (M16n8k128, S4, U4, Satfinite, Standard) => (
-            "mma_sp_m16n8k128_s32_s4_u4_satfinite",
-            "i0224",
-            "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_s4_u4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.s4.u4",
-        ),
-        (M16n8k128, U4, U4, Satfinite, Standard) => (
-            "mma_sp_m16n8k128_s32_u4_satfinite",
-            "i0225",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_u4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.u4",
-        ),
-        (M16n8k128, U4, S4, Satfinite, Standard) => (
-            "mma_sp_m16n8k128_s32_u4_s4_satfinite",
-            "i0226",
-            "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.satfinite.standard_metadata",
-            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_u4_s4",
-            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.u4.s4",
-        ),
-        _ => return None,
-    };
-    let mut ptx_modifiers = vec![
-        match mma.metadata {
-            Standard => "sp",
-            Ordered => "sp::ordered_metadata",
-        },
-        "sync",
-        "aligned",
-        match mma.shape {
-            M16n8k32 => "m16n8k32",
-            M16n8k64 => "m16n8k64",
-            M16n8k128 => "m16n8k128",
-        },
-        "row",
-        "col",
-    ];
-    if mma.overflow == Satfinite {
-        ptx_modifiers.push("satfinite");
-    }
-    ptx_modifiers.extend([
-        "s32",
-        match mma.a_element {
-            S4 => "s4",
-            U4 => "u4",
-            S8 => "s8",
-            U8 => "u8",
-        },
-        match mma.b_element {
-            S4 => "s4",
-            U4 => "u4",
-            S8 => "s8",
-            U8 => "u8",
-        },
-        "s32",
-    ]);
     Some(SparseMmaRecipe {
-        id,
-        abi_id,
-        operation_key,
-        source_record,
-        llvm_symbol,
-        ptx_modifiers,
+        identity: sparse_mma_identity(mma),
         carrier,
     })
 }
@@ -7613,27 +7272,28 @@ fn expand_sparse_mma_integer_admission(
             signedness(variant.a_element),
             signedness(variant.b_element),
         );
+        let identity = &recipe.identity;
         records.push(OverlayIntrinsic {
-            id: recipe.id.into(),
-            abi_id: recipe.abi_id.into(),
-            operation_key: recipe.operation_key.into(),
+            id: identity.id.clone(),
+            abi_id: String::new(),
+            operation_key: identity.operation_key.clone(),
             family: "sparse_mma".into(),
             source: None,
-            source_record: Some(recipe.source_record.into()),
+            source_record: Some(identity.source_record.clone()),
             rust_module: "matrix".into(),
-            rust_name: recipe.id.into(),
+            rust_name: identity.id.clone(),
             rust_arguments: recipe.carrier.rust_arguments(),
             rust_result: "[i32; 4]".into(),
             safe: false,
             must_use: true,
             safe_allowlist_reason: None,
-            public_rust_path: format!("cuda_intrinsics::matrix::{}", recipe.id),
-            compatibility_rust_paths: vec![format!("cuda_device::wmma::{}", recipe.id)],
+            public_rust_path: format!("cuda_intrinsics::matrix::{}", identity.id),
+            compatibility_rust_paths: vec![format!("cuda_device::wmma::{}", identity.id)],
             dialect_op_type: "SparseMmaOp".into(),
             dialect_op_name: "nvvm.sparse_mma".into(),
             dialect_operands: recipe.carrier.dialect_operands(),
             dialect_results: vec!["i32".into(); 4],
-            llvm_symbol: Some(recipe.llvm_symbol.into()),
+            llvm_symbol: Some(identity.llvm_symbol.clone()),
             resolved_llvm_symbol: None,
             llvm_arguments: recipe.carrier.llvm_arguments(),
             llvm_results: vec!["i32".into(); 4],
@@ -7687,7 +7347,7 @@ fn expand_sparse_mma_integer_admission(
             selected_address_space: None,
             expected_ptx: InstructionPattern {
                 mnemonic: "mma".into(),
-                modifiers: recipe
+                modifiers: identity
                     .ptx_modifiers
                     .iter()
                     .map(|value| (*value).into())
@@ -7710,27 +7370,27 @@ fn validate_sparse_mma_policy(
         .with_context(|| format!("{} has no closed sparse-MMA contract", policy.id))?;
     let recipe = sparse_mma_recipe(mma)
         .with_context(|| format!("{} requests an unsupported sparse-MMA variant", policy.id))?;
+    let identity = &recipe.identity;
     ensure!(
-        policy.id == recipe.id
-            && policy.abi_id == recipe.abi_id
-            && policy.operation_key == recipe.operation_key
+        policy.id == identity.id
+            && policy.operation_key == identity.operation_key
             && policy.source.is_none()
-            && policy.source_record.as_deref() == Some(recipe.source_record)
-            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.source_record.as_deref() == Some(identity.source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(identity.llvm_symbol.as_str())
             && policy.resolved_llvm_symbol.is_none(),
         "{} sparse-MMA identity does not match its closed recipe",
         policy.id
     );
     ensure!(
         policy.rust_module == "matrix"
-            && policy.rust_name == recipe.id
-            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{}", recipe.id)
+            && policy.rust_name == identity.id
+            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{}", identity.id)
             && policy.rust_arguments == recipe.carrier.rust_arguments()
             && policy.rust_result == "[i32; 4]"
             && !policy.safe
             && policy.must_use
             && policy.safe_allowlist_reason.is_none()
-            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{}", recipe.id)],
+            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{}", identity.id)],
         "{} must preserve its unsafe must-use Rust sparse-MMA API",
         policy.id
     );
@@ -7774,7 +7434,7 @@ fn validate_sparse_mma_policy(
     );
     ensure!(
         policy.expected_ptx.mnemonic == "mma"
-            && policy.expected_ptx.modifiers == recipe.ptx_modifiers
+            && policy.expected_ptx.modifiers == identity.ptx_modifiers
             && policy.expected_ptx.operands == recipe.carrier.expected_ptx_operands(),
         "{} expected PTX does not match its exact sparse-MMA spelling",
         policy.id
@@ -9022,6 +8682,13 @@ mod tests {
             shards: vec![],
             intrinsics: records,
         }
+    }
+
+    fn bind_pinned_abi_ids(repo_root: &Path, overlay: &mut OverlayFile) {
+        let ledger_path = repo_root.join(format!("intrinsics/abi-v{}.toml", overlay.intrinsic_abi));
+        let ledger: AbiLedgerFile =
+            toml::from_str(&std::fs::read_to_string(ledger_path).unwrap()).unwrap();
+        bind_generated_abi_ids(overlay, &ledger).unwrap();
     }
 
     fn validate_imported_policy(
@@ -10416,8 +10083,9 @@ mod tests {
     #[test]
     fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let (overlay, _) =
+        let (mut overlay, _) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        bind_pinned_abi_ids(&repo_root, &mut overlay);
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
         let declarations: BTreeMap<_, _> = imported
@@ -10443,6 +10111,35 @@ mod tests {
                 .map(String::as_str)
                 .collect()
         );
+
+        let mut derived_ids = BTreeSet::new();
+        let mut derived_operation_keys = BTreeSet::new();
+        let mut derived_source_records = BTreeSet::new();
+        let mut derived_llvm_symbols = BTreeSet::new();
+        for record in &records {
+            let identity = &sparse_mma_recipe(record.sparse_mma.as_ref().unwrap())
+                .unwrap()
+                .identity;
+            assert_eq!(record.id, identity.id);
+            assert_eq!(record.operation_key, identity.operation_key);
+            assert_eq!(
+                record.source_record.as_deref(),
+                Some(identity.source_record.as_str())
+            );
+            assert_eq!(
+                record.llvm_symbol.as_deref(),
+                Some(identity.llvm_symbol.as_str())
+            );
+            assert_eq!(record.expected_ptx.modifiers, identity.ptx_modifiers);
+            assert!(derived_ids.insert(identity.id.clone()));
+            assert!(derived_operation_keys.insert(identity.operation_key.clone()));
+            assert!(derived_source_records.insert(identity.source_record.clone()));
+            assert!(derived_llvm_symbols.insert(identity.llvm_symbol.clone()));
+        }
+        assert_eq!(derived_ids.len(), 64);
+        assert_eq!(derived_operation_keys.len(), 64);
+        assert_eq!(derived_source_records.len(), 64);
+        assert_eq!(derived_llvm_symbols.len(), 64);
 
         let variants = records
             .iter()
@@ -13101,6 +12798,84 @@ mod tests {
             .unwrap_err();
             assert!(error.to_string().contains("raw Rust signature mismatch"));
         }
+    }
+
+    #[test]
+    fn generated_abi_binding_uses_catalog_identity_not_axis_position() {
+        let mut record = policy();
+        let mut frozen = ledger_entry(&record);
+        frozen.abi_id = "i9001".into();
+        record.abi_id.clear();
+        let mut overlay = overlay_file(vec![record]);
+
+        bind_generated_abi_ids(&mut overlay, &ledger(vec![frozen])).unwrap();
+
+        assert_eq!(overlay.intrinsics[0].abi_id, "i9001");
+    }
+
+    #[test]
+    fn generated_abi_binding_rejects_missing_tombstoned_or_ambiguous_identity() {
+        let record = policy();
+        let mut unbound = record.clone();
+        unbound.abi_id.clear();
+
+        let error = bind_generated_abi_ids(
+            &mut overlay_file(vec![unbound.clone()]),
+            &ledger(vec![ledger_entry(&distinct_policy())]),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("has no ABI ledger entry"));
+
+        let mut tombstone = ledger_entry(&record);
+        tombstone.status = "tombstone".into();
+        let error = bind_generated_abi_ids(
+            &mut overlay_file(vec![unbound.clone()]),
+            &ledger(vec![tombstone]),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("non-active ABI ledger entry"));
+
+        let first = ledger_entry(&record);
+        let mut duplicate = first.clone();
+        duplicate.abi_id = "i9002".into();
+        let error = bind_generated_abi_ids(
+            &mut overlay_file(vec![unbound]),
+            &ledger(vec![first, duplicate]),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate ABI ledger catalog ID")
+        );
+    }
+
+    #[test]
+    fn generated_abi_binding_checks_derived_operation_and_raw_signature() {
+        let record = policy();
+        let mut unbound = record.clone();
+        unbound.abi_id.clear();
+
+        let mut wrong_operation = ledger_entry(&record);
+        wrong_operation.operation_key = "launch.block_index.x".into();
+        let error = bind_generated_abi_ids(
+            &mut overlay_file(vec![unbound.clone()]),
+            &ledger(vec![wrong_operation]),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("operation key mismatch"));
+
+        let mut wrong_signature = ledger_entry(&record);
+        wrong_signature
+            .raw_rust_signature
+            .arguments
+            .push("u32".into());
+        let error = bind_generated_abi_ids(
+            &mut overlay_file(vec![unbound]),
+            &ledger(vec![wrong_signature]),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("raw Rust signature mismatch"));
     }
 
     #[test]
