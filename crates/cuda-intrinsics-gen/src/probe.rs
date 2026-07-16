@@ -4,17 +4,19 @@
  */
 
 use crate::model::{
-    BackendLoweringMechanism, CatalogIntrinsic, CatalogLlvm, CpAsyncSourceSize, EvidenceStageKind,
-    IntrinsicBackend, SparseMmaSelector, WarpShuffleAdapter,
+    BackendLoweringMechanism, CatalogInputs, CatalogIntrinsic, CatalogLlvm, CpAsyncSourceSize,
+    EvidenceStageKind, IntrinsicBackend, IntrinsicSource, SparseMmaSelector, WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
 };
 use crate::render::render_probe;
-use crate::resolve::resolve;
+use crate::resolve::{resolve, resolve_candidate};
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, ensure};
+use serde::Serialize;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -28,6 +30,64 @@ enum ProbeMode {
 struct LlcIdentity {
     version: String,
     sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CandidateProbeOptions {
+    pub intrinsic_id: String,
+    pub llc: PathBuf,
+    pub gpu_target: String,
+    pub ptx_feature: String,
+    pub ptxas: Option<PathBuf>,
+    pub skip_terminal: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CandidateProbeDraft {
+    schema: u32,
+    kind: String,
+    admitted: bool,
+    comparison_only: bool,
+    intrinsic_id: String,
+    operation_key: String,
+    source: IntrinsicSource,
+    mechanism: BackendLoweringMechanism,
+    expected_ptx: InstructionPattern,
+    target: CandidateTargetDraft,
+    catalog_inputs: CatalogInputs,
+    tools: Vec<CandidateToolDraft>,
+    artifacts: Vec<CandidateArtifactDraft>,
+    stages: Vec<CandidateStageDraft>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CandidateTargetDraft {
+    target_triple: String,
+    gpu_target: String,
+    ptx_feature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CandidateToolDraft {
+    role: String,
+    path: String,
+    version: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CandidateArtifactDraft {
+    kind: String,
+    path: String,
+    sha256: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct CandidateStageDraft {
+    stage: String,
+    outcome: String,
+    detail: String,
 }
 
 pub fn run(
@@ -126,6 +186,331 @@ pub fn run(
     }
     println!("PTX: {}", output.display());
     Ok(())
+}
+
+pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) -> Result<()> {
+    ensure!(
+        options.skip_terminal ^ options.ptxas.is_some(),
+        "candidate probe requires either --ptxas FILE or explicit --skip-terminal"
+    );
+    let backend_identity = llc_identity(&options.llc)?;
+    let candidate = resolve_candidate(
+        repo_root,
+        &options.intrinsic_id,
+        &backend_identity.version,
+        &backend_identity.sha256,
+        &options.gpu_target,
+        &options.ptx_feature,
+    )?;
+    let record = candidate
+        .catalog
+        .intrinsics
+        .first()
+        .context("candidate resolver returned no intrinsic")?;
+    let output_dir = repo_root.join("target/intrinsics/probes");
+    fs::create_dir_all(&output_dir)?;
+    let stem = candidate_artifact_stem(&record.id)?;
+    let input = output_dir.join(format!("{stem}.candidate.ll"));
+    let output = output_dir.join(format!("{stem}.candidate.ptx"));
+    let cubin = output_dir.join(format!("{stem}.candidate.cubin"));
+    let manifest = output_dir.join(format!("{stem}.candidate.json"));
+    remove_if_present(&output)?;
+    remove_if_present(&cubin)?;
+
+    let catalog_json = pretty_json(&candidate.catalog)?;
+    let catalog_hash = sha256_bytes(catalog_json.as_bytes());
+    fs::write(
+        &input,
+        render_probe(&candidate.catalog, record, &catalog_hash),
+    )
+    .with_context(|| format!("write candidate probe {}", input.display()))?;
+
+    let mut tools = vec![candidate_tool("llc", &options.llc, &backend_identity)];
+    let canonicalizes =
+        record.llvm.is_some() && candidate.mechanism == BackendLoweringMechanism::TypedNvvm;
+    if canonicalizes {
+        let (llvm_as, llvm_dis) = sibling_llvm_tools(&options.llc)?;
+        tools.push(candidate_tool(
+            "llvm-as",
+            &llvm_as,
+            &llc_identity(&llvm_as)?,
+        ));
+        tools.push(candidate_tool(
+            "llvm-dis",
+            &llvm_dis,
+            &llc_identity(&llvm_dis)?,
+        ));
+    }
+    let ptxas_identity = options.ptxas.as_deref().map(ptxas_identity).transpose()?;
+    if let (Some(ptxas), Some(identity)) = (options.ptxas.as_deref(), ptxas_identity.as_ref()) {
+        tools.push(candidate_tool("ptxas", ptxas, identity));
+    }
+    let mut draft = CandidateProbeDraft {
+        schema: 1,
+        kind: "candidate_probe".into(),
+        admitted: false,
+        comparison_only: true,
+        intrinsic_id: record.id.clone(),
+        operation_key: record.operation_key.clone(),
+        source: record.source.clone(),
+        mechanism: candidate.mechanism,
+        expected_ptx: record.expected_ptx.clone(),
+        target: CandidateTargetDraft {
+            target_triple: record.backend.target_triple.clone(),
+            gpu_target: options.gpu_target.clone(),
+            ptx_feature: options.ptx_feature.clone(),
+        },
+        catalog_inputs: candidate.catalog.inputs.clone(),
+        tools,
+        artifacts: Vec::new(),
+        stages: Vec::new(),
+    };
+    write_candidate_draft(
+        repo_root,
+        &output_dir,
+        &manifest,
+        &mut draft,
+        [
+            ("llvm_ir", input.as_path()),
+            ("ptx", output.as_path()),
+            ("cubin", cubin.as_path()),
+        ],
+    )?;
+
+    if canonicalizes {
+        let result = assert_intrinsic_declaration_canonicalizes(
+            &options.llc,
+            &input,
+            &output_dir,
+            &format!("{stem}.candidate"),
+            record,
+        );
+        match result {
+            Ok(()) => draft.stages.push(candidate_stage(
+                "declaration_canonicalization",
+                "succeeded",
+                "LLVM declaration facts matched the imported record",
+            )),
+            Err(error) => {
+                draft.stages.push(candidate_stage(
+                    "declaration_canonicalization",
+                    "failed",
+                    &format!("{error:#}"),
+                ));
+                write_candidate_draft(
+                    repo_root,
+                    &output_dir,
+                    &manifest,
+                    &mut draft,
+                    [
+                        ("llvm_ir", input.as_path()),
+                        ("ptx", output.as_path()),
+                        ("cubin", cubin.as_path()),
+                    ],
+                )?;
+                return Err(error.context("candidate declaration canonicalization failed"));
+            }
+        }
+    } else {
+        draft.stages.push(candidate_stage(
+            "declaration_canonicalization",
+            "not_applicable",
+            "candidate route does not use a typed LLVM intrinsic",
+        ));
+    }
+
+    let status = Command::new(&options.llc)
+        .arg(&input)
+        .arg("-march=nvptx64")
+        .arg(format!("-mcpu={}", options.gpu_target))
+        .arg(format!("-mattr={}", options.ptx_feature))
+        .arg("-o")
+        .arg(&output)
+        .status()
+        .with_context(|| format!("run {}", options.llc.display()))?;
+    if !status.success() {
+        draft.stages.push(candidate_stage(
+            "backend_codegen",
+            "failed",
+            &format!("llc exited with {status}"),
+        ));
+        write_candidate_draft(
+            repo_root,
+            &output_dir,
+            &manifest,
+            &mut draft,
+            [
+                ("llvm_ir", input.as_path()),
+                ("ptx", output.as_path()),
+                ("cubin", cubin.as_path()),
+            ],
+        )?;
+        anyhow::bail!("candidate LLVM probe failed with {status}");
+    }
+    let ptx = fs::read_to_string(&output)
+        .with_context(|| format!("read candidate PTX {}", output.display()))?;
+    if let Err(error) = validate_probe_instructions(record, &ptx) {
+        draft.stages.push(candidate_stage(
+            "backend_codegen",
+            "failed",
+            &format!("{error:#}"),
+        ));
+        write_candidate_draft(
+            repo_root,
+            &output_dir,
+            &manifest,
+            &mut draft,
+            [
+                ("llvm_ir", input.as_path()),
+                ("ptx", output.as_path()),
+                ("cubin", cubin.as_path()),
+            ],
+        )?;
+        return Err(error.context("candidate PTX instruction validation failed"));
+    }
+    draft.stages.push(candidate_stage(
+        "backend_codegen",
+        "succeeded",
+        "llc output matched the reviewed PTX instruction shape",
+    ));
+
+    if options.skip_terminal {
+        draft.stages.push(candidate_stage(
+            "ptx_assembly",
+            "skipped",
+            "--skip-terminal was explicit; this is a backend-only draft",
+        ));
+    } else {
+        let ptxas = options
+            .ptxas
+            .as_deref()
+            .context("candidate terminal validation has no explicit ptxas")?;
+        let status = Command::new(ptxas)
+            .arg(format!("-arch={}", options.gpu_target))
+            .arg(&output)
+            .arg("-o")
+            .arg(&cubin)
+            .status()
+            .with_context(|| format!("run {}", ptxas.display()))?;
+        if !status.success() {
+            draft.stages.push(candidate_stage(
+                "ptx_assembly",
+                "failed",
+                &format!("ptxas exited with {status}"),
+            ));
+            write_candidate_draft(
+                repo_root,
+                &output_dir,
+                &manifest,
+                &mut draft,
+                [
+                    ("llvm_ir", input.as_path()),
+                    ("ptx", output.as_path()),
+                    ("cubin", cubin.as_path()),
+                ],
+            )?;
+            anyhow::bail!("candidate ptxas probe failed with {status}");
+        }
+        draft.stages.push(candidate_stage(
+            "ptx_assembly",
+            "succeeded",
+            "the explicit ptxas accepted the generated PTX",
+        ));
+    }
+    write_candidate_draft(
+        repo_root,
+        &output_dir,
+        &manifest,
+        &mut draft,
+        [
+            ("llvm_ir", input.as_path()),
+            ("ptx", output.as_path()),
+            ("cubin", cubin.as_path()),
+        ],
+    )?;
+    println!(
+        "candidate comparison lowered {} to `{}` for {} {}; admitted=false",
+        record.id, record.expected_ptx, options.gpu_target, options.ptx_feature
+    );
+    println!("draft: {}", manifest.display());
+    Ok(())
+}
+
+fn candidate_artifact_stem(intrinsic_id: &str) -> Result<&str> {
+    ensure!(
+        !intrinsic_id.is_empty()
+            && intrinsic_id
+                .bytes()
+                .all(|byte| { byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' }),
+        "candidate intrinsic ID {intrinsic_id:?} is not safe for an artifact name"
+    );
+    Ok(intrinsic_id)
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove stale {}", path.display())),
+    }
+}
+
+fn candidate_tool(role: &str, path: &Path, identity: &LlcIdentity) -> CandidateToolDraft {
+    CandidateToolDraft {
+        role: role.into(),
+        path: path.display().to_string(),
+        version: identity.version.clone(),
+        sha256: identity.sha256.clone(),
+    }
+}
+
+fn candidate_stage(stage: &str, outcome: &str, detail: &str) -> CandidateStageDraft {
+    CandidateStageDraft {
+        stage: stage.into(),
+        outcome: outcome.into(),
+        detail: detail.into(),
+    }
+}
+
+fn write_candidate_draft<'a>(
+    repo_root: &Path,
+    output_dir: &Path,
+    manifest: &Path,
+    draft: &mut CandidateProbeDraft,
+    artifacts: impl IntoIterator<Item = (&'a str, &'a Path)>,
+) -> Result<()> {
+    draft.artifacts = artifacts
+        .into_iter()
+        .filter(|(_, path)| path.is_file())
+        .map(|(kind, path)| candidate_artifact(repo_root, output_dir, kind, path))
+        .collect::<Result<Vec<_>>>()?;
+    fs::write(manifest, pretty_json(draft)?)
+        .with_context(|| format!("write candidate draft {}", manifest.display()))
+}
+
+fn candidate_artifact(
+    repo_root: &Path,
+    output_dir: &Path,
+    kind: &str,
+    path: &Path,
+) -> Result<CandidateArtifactDraft> {
+    ensure!(
+        path.parent() == Some(output_dir),
+        "candidate artifact escaped {}",
+        output_dir.display()
+    );
+    let relative = path.strip_prefix(repo_root).with_context(|| {
+        format!(
+            "candidate artifact {} is outside the repository",
+            path.display()
+        )
+    })?;
+    Ok(CandidateArtifactDraft {
+        kind: kind.into(),
+        path: relative.display().to_string(),
+        sha256: sha256_file(path)?,
+        bytes: fs::metadata(path)?.len(),
+    })
 }
 
 fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<()> {
@@ -464,15 +849,7 @@ fn assert_intrinsic_declaration_canonicalizes(
     intrinsic_id: &str,
     record: &CatalogIntrinsic,
 ) -> Result<()> {
-    let tool_dir = llc
-        .parent()
-        .context("selected llc has no containing tool directory")?;
-    let llvm_as = tool_dir.join("llvm-as");
-    let llvm_dis = tool_dir.join("llvm-dis");
-    ensure!(
-        llvm_as.is_file() && llvm_dis.is_file(),
-        "selected LLVM toolchain omits llvm-as or llvm-dis"
-    );
+    let (llvm_as, llvm_dis) = sibling_llvm_tools(llc)?;
     let bitcode = output_dir.join(format!("{intrinsic_id}.bc"));
     let canonical = output_dir.join(format!("{intrinsic_id}.canonical.ll"));
     let status = Command::new(&llvm_as)
@@ -497,6 +874,19 @@ fn assert_intrinsic_declaration_canonicalizes(
             .as_ref()
             .context("LLVM-backed probe has no LLVM facts")?,
     )
+}
+
+fn sibling_llvm_tools(llc: &Path) -> Result<(PathBuf, PathBuf)> {
+    let tool_dir = llc
+        .parent()
+        .context("selected llc has no containing tool directory")?;
+    let llvm_as = tool_dir.join("llvm-as");
+    let llvm_dis = tool_dir.join("llvm-dis");
+    ensure!(
+        llvm_as.is_file() && llvm_dis.is_file(),
+        "selected LLVM toolchain omits llvm-as or llvm-dis"
+    );
+    Ok((llvm_as, llvm_dis))
 }
 
 fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -> Result<()> {
@@ -899,6 +1289,37 @@ fn llc_identity(llc: &Path) -> Result<LlcIdentity> {
     Ok(LlcIdentity {
         version,
         sha256: sha256_file(llc)?,
+    })
+}
+
+fn ptxas_identity(ptxas: &Path) -> Result<LlcIdentity> {
+    let output = Command::new(ptxas)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("query {} --version", ptxas.display()))?;
+    ensure!(
+        output.status.success(),
+        "{} --version failed",
+        ptxas.display()
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines = stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let version = lines
+        .iter()
+        .copied()
+        .find(|line| line.contains("release") || line.contains(", V"))
+        .or_else(|| lines.first().copied())
+        .context("ptxas --version did not report a version")?
+        .to_owned();
+    Ok(LlcIdentity {
+        version,
+        sha256: sha256_file(ptxas)?,
     })
 }
 
@@ -1657,5 +2078,57 @@ attributes #0 = { nounwind }
         validate_sparse_mma_selectors(&standard_k64, &[0], &standard_k64_zero).unwrap();
         assert!(validate_sparse_mma_selectors(&standard_k64, &[0], k64_zero).is_err());
         assert!(validate_sparse_mma_selectors(&k64, &[0], &standard_k64_zero).is_err());
+    }
+
+    #[test]
+    fn candidate_artifact_names_are_confined_to_one_safe_stem() {
+        assert_eq!(
+            candidate_artifact_stem("thread_idx_x").unwrap(),
+            "thread_idx_x"
+        );
+        for invalid in ["", "../evidence", "thread.idx.x", "ThreadIdxX"] {
+            assert!(candidate_artifact_stem(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn candidate_manifest_is_deterministic_and_never_claims_admission() {
+        let draft = CandidateProbeDraft {
+            schema: 1,
+            kind: "candidate_probe".into(),
+            admitted: false,
+            comparison_only: true,
+            intrinsic_id: "test".into(),
+            operation_key: "test.operation".into(),
+            source: IntrinsicSource::PtxNative {
+                instruction: "test".into(),
+            },
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            expected_ptx: InstructionPattern::new("test", &[], vec![]),
+            target: CandidateTargetDraft {
+                target_triple: "nvptx64-nvidia-cuda".into(),
+                gpu_target: "sm_80".into(),
+                ptx_feature: "+ptx70".into(),
+            },
+            catalog_inputs: CatalogInputs {
+                imported_sha256: "a".repeat(64),
+                overlay_sha256: "b".repeat(64),
+                abi_ledger_sha256: "c".repeat(64),
+                evidence_sha256: Vec::new(),
+            },
+            tools: Vec::new(),
+            artifacts: Vec::new(),
+            stages: Vec::new(),
+        };
+        let first = pretty_json(&draft).unwrap();
+        let second = pretty_json(&draft).unwrap();
+        assert_eq!(first.as_bytes(), second.as_bytes());
+        let json: serde_json::Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(json["admitted"], false);
+        assert_eq!(json["comparison_only"], true);
+        assert_eq!(
+            json["catalog_inputs"]["evidence_sha256"],
+            serde_json::json!([])
+        );
     }
 }

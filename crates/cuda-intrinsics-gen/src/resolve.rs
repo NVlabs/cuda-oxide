@@ -50,7 +50,90 @@ const OVERLAY_SCHEMA: u32 = 30;
 const OVERLAY_SHARD_SCHEMA: u32 = 26;
 pub(crate) const CATALOG_SCHEMA: u32 = 29;
 
+struct ResolutionBase {
+    overlay: OverlayFile,
+    imported: ImportedFile,
+    source: CatalogSource,
+    imported_sha256: String,
+    overlay_sha256: String,
+    abi_ledger_sha256: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct CandidateResolution {
+    pub catalog: CatalogFile,
+    pub mechanism: BackendLoweringMechanism,
+}
+
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
+    let base = load_resolution_base(repo_root)?;
+    let ResolutionBase {
+        overlay,
+        imported,
+        source,
+        imported_sha256,
+        overlay_sha256,
+        abi_ledger_sha256,
+    } = base;
+    let imported_by_record = index_imported_intrinsics(&imported)?;
+    let llvm_revision = source.llvm_revision.clone();
+    let (evidence_files, evidence_hashes) = read_evidence(repo_root)?;
+    let evidence_by_profile_id = index_evidence(&evidence_files, &llvm_revision)?;
+
+    let mut intrinsics = Vec::with_capacity(overlay.intrinsics.len());
+    for policy in &overlay.intrinsics {
+        let source = resolve_policy_source(policy)?;
+        let declaration = resolve_imported_declaration(policy, &source, &imported_by_record)?;
+        validate_policy(policy, &source, declaration, overlay.intrinsic_abi)?;
+        let evidence = evidence_by_profile_id
+            .get(&(overlay.backend_profile.as_str(), policy.id.as_str()))
+            .with_context(|| {
+                format!(
+                    "intrinsic {} has no evidence record in selected profile {}",
+                    policy.id, overlay.backend_profile
+                )
+            })?;
+        validate_evidence(policy, evidence, None)?;
+        let backend_lowerings = resolve_backend_lowerings(policy, &evidence_by_profile_id)?;
+        intrinsics.push(resolve_record(
+            policy,
+            source,
+            declaration,
+            evidence.record,
+            &overlay.backend_profile,
+            evidence.backend_version,
+            evidence.backend_sha256,
+            backend_lowerings,
+            overlay.intrinsic_abi,
+        )?);
+    }
+    for (_, evidence_id) in evidence_by_profile_id.keys() {
+        ensure!(
+            overlay
+                .intrinsics
+                .iter()
+                .any(|record| record.id == *evidence_id),
+            "evidence exists for unknown catalog ID {evidence_id}"
+        );
+    }
+
+    Ok(CatalogFile {
+        schema: CATALOG_SCHEMA,
+        catalog_version: overlay.catalog_version,
+        intrinsic_abi: overlay.intrinsic_abi,
+        generator_version: env!("CARGO_PKG_VERSION").to_owned(),
+        source,
+        inputs: CatalogInputs {
+            imported_sha256,
+            overlay_sha256,
+            abi_ledger_sha256,
+            evidence_sha256: evidence_hashes,
+        },
+        intrinsics,
+    })
+}
+
+fn load_resolution_base(repo_root: &Path) -> Result<ResolutionBase> {
     let lock = read_upstream_lock(repo_root)?;
     let imported_path = repo_root.join("intrinsics/imported.json");
     let overlay_path = repo_root.join("intrinsics/overlay.toml");
@@ -114,73 +197,9 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
         .sort_by(|left, right| left.id.cmp(&right.id));
     validate_unique_overlay(&overlay.intrinsics, overlay.intrinsic_abi)?;
     validate_abi_ledger(&overlay, &ledger)?;
-    let imported_by_record: BTreeMap<_, _> = imported
-        .intrinsics
-        .iter()
-        .map(|intrinsic| (intrinsic.source_record.as_str(), intrinsic))
-        .collect();
-    ensure!(
-        imported_by_record.len() == imported.intrinsics.len(),
-        "imported.json contains duplicate source records"
-    );
-
-    let (evidence_files, evidence_hashes) = read_evidence(repo_root)?;
-    let evidence_by_profile_id = index_evidence(&evidence_files, &lock.llvm.revision)?;
-
-    let mut intrinsics = Vec::with_capacity(overlay.intrinsics.len());
-    for policy in &overlay.intrinsics {
-        let source = resolve_policy_source(policy)?;
-        let declaration = match &source {
-            IntrinsicSource::LlvmImported { source_record } => Some(
-                *imported_by_record
-                    .get(source_record.as_str())
-                    .with_context(|| {
-                        format!(
-                            "overlay intrinsic {} references missing imported record {}",
-                            policy.id, source_record
-                        )
-                    })?,
-            ),
-            IntrinsicSource::PtxNative { .. } => None,
-        };
-        validate_policy(policy, &source, declaration, overlay.intrinsic_abi)?;
-        let evidence = evidence_by_profile_id
-            .get(&(overlay.backend_profile.as_str(), policy.id.as_str()))
-            .with_context(|| {
-                format!(
-                    "intrinsic {} has no evidence record in selected profile {}",
-                    policy.id, overlay.backend_profile
-                )
-            })?;
-        validate_evidence(policy, evidence, None)?;
-        let backend_lowerings = resolve_backend_lowerings(policy, &evidence_by_profile_id)?;
-        intrinsics.push(resolve_record(
-            policy,
-            source,
-            declaration,
-            evidence.record,
-            &overlay.backend_profile,
-            evidence.backend_version,
-            evidence.backend_sha256,
-            backend_lowerings,
-            overlay.intrinsic_abi,
-        )?);
-    }
-    for (_, evidence_id) in evidence_by_profile_id.keys() {
-        ensure!(
-            overlay
-                .intrinsics
-                .iter()
-                .any(|record| record.id == *evidence_id),
-            "evidence exists for unknown catalog ID {evidence_id}"
-        );
-    }
-
-    Ok(CatalogFile {
-        schema: CATALOG_SCHEMA,
-        catalog_version: overlay.catalog_version,
-        intrinsic_abi: overlay.intrinsic_abi,
-        generator_version: env!("CARGO_PKG_VERSION").to_owned(),
+    Ok(ResolutionBase {
+        overlay,
+        imported,
         source: CatalogSource {
             llvm_repository: lock.llvm.repository,
             llvm_revision: lock.llvm.revision,
@@ -190,14 +209,232 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
                 .built_from_llvm_revision
                 .context("pinned llvm-tblgen has no source revision")?,
         },
-        inputs: CatalogInputs {
-            imported_sha256,
-            overlay_sha256,
-            abi_ledger_sha256: sha256_file(&ledger_path)?,
-            evidence_sha256: evidence_hashes,
-        },
-        intrinsics,
+        imported_sha256,
+        overlay_sha256,
+        abi_ledger_sha256: sha256_file(&ledger_path)?,
     })
+}
+
+fn index_imported_intrinsics(
+    imported: &ImportedFile,
+) -> Result<BTreeMap<&str, &ImportedIntrinsic>> {
+    let imported_by_record: BTreeMap<_, _> = imported
+        .intrinsics
+        .iter()
+        .map(|intrinsic| (intrinsic.source_record.as_str(), intrinsic))
+        .collect();
+    ensure!(
+        imported_by_record.len() == imported.intrinsics.len(),
+        "imported.json contains duplicate source records"
+    );
+    Ok(imported_by_record)
+}
+
+fn resolve_imported_declaration<'a>(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+    imported_by_record: &'a BTreeMap<&str, &'a ImportedIntrinsic>,
+) -> Result<Option<&'a ImportedIntrinsic>> {
+    match source {
+        IntrinsicSource::LlvmImported { source_record } => Ok(Some(
+            *imported_by_record
+                .get(source_record.as_str())
+                .with_context(|| {
+                    format!(
+                        "overlay intrinsic {} references missing imported record {}",
+                        policy.id, source_record
+                    )
+                })?,
+        )),
+        IntrinsicSource::PtxNative { .. } => Ok(None),
+    }
+}
+
+pub(crate) fn resolve_candidate(
+    repo_root: &Path,
+    intrinsic_id: &str,
+    backend_version: &str,
+    backend_sha256: &str,
+    gpu_target: &str,
+    ptx_feature: &str,
+) -> Result<CandidateResolution> {
+    let base = load_resolution_base(repo_root)?;
+    let imported_by_record = index_imported_intrinsics(&base.imported)?;
+    let policy = base
+        .overlay
+        .intrinsics
+        .iter()
+        .find(|policy| policy.id == intrinsic_id)
+        .with_context(|| format!("unknown overlay intrinsic {intrinsic_id}"))?;
+    let source = resolve_policy_source(policy)?;
+    let declaration = resolve_imported_declaration(policy, &source, &imported_by_record)?;
+    validate_policy(policy, &source, declaration, base.overlay.intrinsic_abi)?;
+    ensure!(
+        !backend_version.trim().is_empty()
+            && backend_sha256.len() == 64
+            && backend_sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "candidate backend identity is incomplete"
+    );
+    let (mechanism, target) = candidate_llvm_route(policy)?;
+    validate_candidate_target(&target, gpu_target, ptx_feature, intrinsic_id)?;
+
+    let record = materialize_record(
+        policy,
+        source,
+        declaration,
+        CatalogBackend {
+            profile: "candidate-comparison".into(),
+            version: backend_version.into(),
+            sha256: backend_sha256.into(),
+            status: "candidate".into(),
+            target_triple: "nvptx64-nvidia-cuda".into(),
+            gpu_target: gpu_target.into(),
+            ptx_feature: ptx_feature.into(),
+        },
+        Vec::new(),
+        base.overlay.intrinsic_abi,
+    )?;
+    Ok(CandidateResolution {
+        catalog: CatalogFile {
+            schema: CATALOG_SCHEMA,
+            catalog_version: base.overlay.catalog_version,
+            intrinsic_abi: base.overlay.intrinsic_abi,
+            generator_version: env!("CARGO_PKG_VERSION").to_owned(),
+            source: base.source,
+            inputs: CatalogInputs {
+                imported_sha256: base.imported_sha256,
+                overlay_sha256: base.overlay_sha256,
+                abi_ledger_sha256: base.abi_ledger_sha256,
+                evidence_sha256: Vec::new(),
+            },
+            intrinsics: vec![record],
+        },
+        mechanism,
+    })
+}
+
+fn candidate_llvm_route(
+    policy: &OverlayIntrinsic,
+) -> Result<(BackendLoweringMechanism, CatalogTargetRequirement)> {
+    let routes = policy
+        .backend_lowerings
+        .iter()
+        .filter(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
+        .collect::<Vec<_>>();
+    ensure!(
+        routes.len() <= 1,
+        "{} has more than one LLVM-NVPTX route",
+        policy.id
+    );
+    if let Some(route) = routes.first() {
+        return Ok((route.mechanism, backend_target_requirement(policy, route)?));
+    }
+    ensure!(
+        matches!(
+            resolve_policy_source(policy)?,
+            IntrinsicSource::LlvmImported { .. }
+        ),
+        "{} has no LLVM-NVPTX candidate route",
+        policy.id
+    );
+    Ok((
+        BackendLoweringMechanism::TypedNvvm,
+        CatalogTargetRequirement {
+            minimum_ptx: parse_ptx_version(&policy.minimum_ptx, &policy.id)?,
+            hardware: parse_hardware_target(policy)?,
+        },
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateGpuTargetKind {
+    Base,
+    ExactArchitecture,
+    FamilyTarget,
+}
+
+fn validate_candidate_target(
+    requirement: &CatalogTargetRequirement,
+    gpu_target: &str,
+    ptx_feature: &str,
+    intrinsic_id: &str,
+) -> Result<()> {
+    let (sm, kind) = parse_candidate_gpu_target(gpu_target)?;
+    let ptx = parse_candidate_ptx_feature(ptx_feature)?;
+    ensure!(
+        ptx >= requirement.minimum_ptx,
+        "candidate target {gpu_target} / {ptx_feature} is below {intrinsic_id} PTX floor {}",
+        requirement.minimum_ptx
+    );
+    let hardware_matches = match &requirement.hardware {
+        CatalogHardwareTarget::All => true,
+        CatalogHardwareTarget::AnyOf { alternatives } => {
+            alternatives.iter().any(|target| match target {
+                CatalogHardwareAlternative::MinimumSm { sm: minimum } => sm >= *minimum,
+                CatalogHardwareAlternative::ExactArchitecture { sm: exact } => {
+                    sm == *exact && kind == CandidateGpuTargetKind::ExactArchitecture
+                }
+                CatalogHardwareAlternative::FamilyTarget { sm: family } => {
+                    sm == *family && kind == CandidateGpuTargetKind::FamilyTarget
+                }
+            })
+        }
+    };
+    ensure!(
+        hardware_matches,
+        "candidate GPU target {gpu_target} does not satisfy {intrinsic_id} hardware requirement {:?}",
+        requirement.hardware
+    );
+    Ok(())
+}
+
+fn parse_candidate_gpu_target(value: &str) -> Result<(u16, CandidateGpuTargetKind)> {
+    let target = value.strip_prefix("sm_").with_context(|| {
+        format!("candidate GPU target {value:?} must use sm_NN, sm_NNa, or sm_NNf")
+    })?;
+    let (digits, kind) = match target.as_bytes().last().copied() {
+        Some(b'a') => (
+            &target[..target.len() - 1],
+            CandidateGpuTargetKind::ExactArchitecture,
+        ),
+        Some(b'f') => (
+            &target[..target.len() - 1],
+            CandidateGpuTargetKind::FamilyTarget,
+        ),
+        _ => (target, CandidateGpuTargetKind::Base),
+    };
+    ensure!(
+        matches!(digits.len(), 2 | 3) && digits.bytes().all(|byte| byte.is_ascii_digit()),
+        "candidate GPU target {value:?} must use sm_NN, sm_NNa, or sm_NNf"
+    );
+    let sm: u16 = digits
+        .parse()
+        .with_context(|| format!("candidate GPU target {value:?} is too large"))?;
+    let suffix = match kind {
+        CandidateGpuTargetKind::Base => "",
+        CandidateGpuTargetKind::ExactArchitecture => "a",
+        CandidateGpuTargetKind::FamilyTarget => "f",
+    };
+    ensure!(
+        sm > 0 && format!("sm_{sm}{suffix}") == value,
+        "candidate GPU target {value:?} is not canonical"
+    );
+    Ok((sm, kind))
+}
+
+fn parse_candidate_ptx_feature(value: &str) -> Result<PtxVersion> {
+    let digits = value
+        .strip_prefix("+ptx")
+        .with_context(|| format!("candidate PTX feature {value:?} must use +ptxNN"))?;
+    ensure!(
+        matches!(digits.len(), 2 | 3) && digits.bytes().all(|byte| byte.is_ascii_digit()),
+        "candidate PTX feature {value:?} must use +ptxNN"
+    );
+    let split = digits.len() - 1;
+    let version = format!("{}.{}", &digits[..split], &digits[split..]);
+    version
+        .parse()
+        .map_err(|reason: String| anyhow::anyhow!("candidate PTX feature {value:?}: {reason}"))
 }
 
 fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, String)> {
@@ -8968,6 +9205,32 @@ fn resolve_record(
     backend_lowerings: Vec<CatalogBackendLowering>,
     intrinsic_abi: u32,
 ) -> Result<CatalogIntrinsic> {
+    materialize_record(
+        policy,
+        source,
+        declaration,
+        CatalogBackend {
+            profile: backend_profile.to_owned(),
+            version: backend_version.to_owned(),
+            sha256: backend_sha256.to_owned(),
+            status: evidence.status.clone(),
+            target_triple: evidence.target_triple.clone(),
+            gpu_target: evidence.gpu_target.clone(),
+            ptx_feature: evidence.ptx_feature.clone(),
+        },
+        backend_lowerings,
+        intrinsic_abi,
+    )
+}
+
+fn materialize_record(
+    policy: &OverlayIntrinsic,
+    source: IntrinsicSource,
+    declaration: Option<&ImportedIntrinsic>,
+    backend: CatalogBackend,
+    backend_lowerings: Vec<CatalogBackendLowering>,
+    intrinsic_abi: u32,
+) -> Result<CatalogIntrinsic> {
     let llvm = if let Some(declaration) = declaration {
         Some(CatalogLlvm {
             symbol: policy
@@ -9047,15 +9310,7 @@ fn resolve_record(
             ptx_isa_section: policy.ptx_isa_section.clone(),
             ptx_isa_url: policy.ptx_isa_url.clone(),
         },
-        backend: CatalogBackend {
-            profile: backend_profile.to_owned(),
-            version: backend_version.to_owned(),
-            sha256: backend_sha256.to_owned(),
-            status: evidence.status.clone(),
-            target_triple: evidence.target_triple.clone(),
-            gpu_target: evidence.gpu_target.clone(),
-            ptx_feature: evidence.ptx_feature.clone(),
-        },
+        backend,
         backend_lowerings,
         packed_atomic: policy.packed_atomic.clone(),
         redux: policy.redux.clone(),
@@ -14384,5 +14639,139 @@ mod tests {
             constraints: Default::default(),
         });
         reject(&valid, &selected, "selectionless");
+    }
+
+    #[test]
+    fn candidate_targets_are_canonical_and_satisfy_every_floor() {
+        let requirement = CatalogTargetRequirement {
+            minimum_ptx: "7.0".parse().unwrap(),
+            hardware: CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm: 80 }],
+            },
+        };
+        validate_candidate_target(&requirement, "sm_80", "+ptx70", "test").unwrap();
+        validate_candidate_target(&requirement, "sm_90a", "+ptx86", "test").unwrap();
+        assert!(
+            validate_candidate_target(&requirement, "sm_75", "+ptx70", "test")
+                .unwrap_err()
+                .to_string()
+                .contains("hardware requirement")
+        );
+        assert!(
+            validate_candidate_target(&requirement, "sm_80", "+ptx69", "test")
+                .unwrap_err()
+                .to_string()
+                .contains("PTX floor")
+        );
+        for malformed in ["compute_80", "sm_080", "sm_80x"] {
+            assert!(
+                validate_candidate_target(&requirement, malformed, "+ptx70", "test").is_err(),
+                "{malformed}"
+            );
+        }
+        for malformed in ["ptx70", "+ptx7", "+ptx070"] {
+            assert!(
+                validate_candidate_target(&requirement, "sm_80", malformed, "test").is_err(),
+                "{malformed}"
+            );
+        }
+
+        let exact = CatalogTargetRequirement {
+            minimum_ptx: "8.6".parse().unwrap(),
+            hardware: CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::ExactArchitecture { sm: 100 }],
+            },
+        };
+        validate_candidate_target(&exact, "sm_100a", "+ptx86", "test").unwrap();
+        assert!(validate_candidate_target(&exact, "sm_100", "+ptx86", "test").is_err());
+        assert!(validate_candidate_target(&exact, "sm_100f", "+ptx86", "test").is_err());
+    }
+
+    struct CandidateTestRepo(PathBuf);
+
+    impl Drop for CandidateTestRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn repo_without_evidence() -> CandidateTestRepo {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = std::env::temp_dir().join(format!(
+            "cuda-intrinsics-candidate-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let input = root.join("intrinsics");
+        fs::create_dir_all(input.join("overlay")).unwrap();
+        for name in [
+            "upstream.lock",
+            "imported.json",
+            "overlay.toml",
+            "abi-v1.toml",
+        ] {
+            fs::copy(source.join("intrinsics").join(name), input.join(name)).unwrap();
+        }
+        for entry in fs::read_dir(source.join("intrinsics/overlay")).unwrap() {
+            let entry = entry.unwrap();
+            if entry.path().extension().and_then(|value| value.to_str()) == Some("toml") {
+                fs::copy(entry.path(), input.join("overlay").join(entry.file_name())).unwrap();
+            }
+        }
+        CandidateTestRepo(root)
+    }
+
+    #[test]
+    fn candidate_resolution_is_the_only_path_that_can_omit_evidence() {
+        let repo = repo_without_evidence();
+        let candidate = resolve_candidate(
+            &repo.0,
+            "thread_idx_x",
+            "LLVM version candidate",
+            &"a".repeat(64),
+            "sm_80",
+            "+ptx70",
+        )
+        .unwrap();
+        assert_eq!(candidate.catalog.intrinsics.len(), 1);
+        assert_eq!(candidate.catalog.intrinsics[0].id, "thread_idx_x");
+        assert_eq!(candidate.catalog.intrinsics[0].backend.status, "candidate");
+        assert!(candidate.catalog.inputs.evidence_sha256.is_empty());
+
+        let error = resolve(&repo.0).unwrap_err();
+        assert!(
+            error.to_string().contains("intrinsics/evidence"),
+            "{error:#}"
+        );
+        let error = resolve_candidate(
+            &repo.0,
+            "not_an_intrinsic",
+            "LLVM version candidate",
+            &"a".repeat(64),
+            "sm_80",
+            "+ptx70",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown overlay intrinsic"));
+    }
+
+    #[test]
+    fn candidate_resolution_cannot_change_normal_catalog_bytes() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let before = crate::util::pretty_json(&resolve(&repo_root).unwrap()).unwrap();
+        resolve_candidate(
+            &repo_root,
+            "thread_idx_x",
+            "LLVM version candidate",
+            &"a".repeat(64),
+            "sm_80",
+            "+ptx70",
+        )
+        .unwrap();
+        let after = crate::util::pretty_json(&resolve(&repo_root).unwrap()).unwrap();
+        assert_eq!(before.as_bytes(), after.as_bytes());
     }
 }
