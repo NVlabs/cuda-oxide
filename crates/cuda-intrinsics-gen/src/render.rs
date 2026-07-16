@@ -4324,26 +4324,36 @@ fn is_u32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
     })
 }
 
+fn verify_packed_atomic_signature(
+    ctx: &Context,
+    op_ptr: Ptr<Operation>,
+    op_name: &str,
+) -> Result<(), Error> {
+    let op = op_ptr.deref(ctx);
+    if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+        return verify_err!(op.loc(), "{} requires exactly two operands and one result", op_name);
+    }
+    let pointer_ty = op.get_operand(0).get_type(ctx);
+    let pointer_object = pointer_ty.deref(ctx);
+    let Some(pointer) = pointer_object.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{} address must be a MIR pointer", op_name);
+    };
+    if !pointer.is_mutable()
+        || !matches!(pointer.address_space(), address_space::GENERIC | address_space::GLOBAL)
+        || !is_u32(ctx, pointer.pointee)
+    {
+        return verify_err!(op.loc(), "{} address must be a mutable generic/global pointer to u32", op_name);
+    }
+    if !is_u32(ctx, op.get_operand(1).get_type(ctx)) || !is_u32(ctx, op.get_result(0).get_type(ctx)) {
+        return verify_err!(op.loc(), "{} addend and result must be u32", op_name);
+    }
+    Ok(())
+}
+
 impl Verify for PackedAtomicAddOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_signature(ctx, self.get_operation(), "nvvm.packed_atomic_add")?;
         let op = self.get_operation().deref(ctx);
-        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
-            return verify_err!(op.loc(), "nvvm.packed_atomic_add requires exactly two operands and one result");
-        }
-        let pointer_ty = op.get_operand(0).get_type(ctx);
-        let pointer_object = pointer_ty.deref(ctx);
-        let Some(pointer) = pointer_object.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "nvvm.packed_atomic_add address must be a MIR pointer");
-        };
-        if !pointer.is_mutable()
-            || !matches!(pointer.address_space(), address_space::GENERIC | address_space::GLOBAL)
-            || !is_u32(ctx, pointer.pointee)
-        {
-            return verify_err!(op.loc(), "nvvm.packed_atomic_add address must be a mutable generic/global pointer to u32");
-        }
-        if !is_u32(ctx, op.get_operand(1).get_type(ctx)) || !is_u32(ctx, op.get_result(0).get_type(ctx)) {
-            return verify_err!(op.loc(), "nvvm.packed_atomic_add addend and result must be u32");
-        }
         if self.get_attr_nvvm_packed_atomic_format(ctx).is_none()
             || self.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() != Some(&PackedAtomicStateSpaceAttr::Global)
             || self.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() != Some(&PackedAtomicOrderingAttr::Relaxed)
@@ -4358,6 +4368,42 @@ impl Verify for PackedAtomicAddOp {
     }
 }
 
+/// Compatibility operation for the existing `nvvm.atom_add_f16x2` carrier.
+#[pliron_op(
+    name = "nvvm.atom_add_f16x2",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddF16x2Op;
+
+impl NvvmAtomAddF16x2Op {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+}
+
+impl Verify for NvvmAtomAddF16x2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_signature(ctx, self.get_operation(), "nvvm.atom_add_f16x2")
+    }
+}
+
+/// Compatibility operation for the existing `nvvm.atom_add_bf16x2` carrier.
+#[pliron_op(
+    name = "nvvm.atom_add_bf16x2",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddBf16x2Op;
+
+impl NvvmAtomAddBf16x2Op {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+}
+
+impl Verify for NvvmAtomAddBf16x2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_signature(ctx, self.get_operation(), "nvvm.atom_add_bf16x2")
+    }
+}
+
 pub(super) fn register(ctx: &mut Context) {
     PackedAtomicFormatAttr::register(ctx);
     PackedAtomicStateSpaceAttr::register(ctx);
@@ -4367,6 +4413,8 @@ pub(super) fn register(ctx: &mut Context) {
     PackedAtomicSubnormalAttr::register(ctx);
     PackedAtomicAtomicityAttr::register(ctx);
     PackedAtomicAddOp::register(ctx);
+    NvvmAtomAddF16x2Op::register(ctx);
+    NvvmAtomAddBf16x2Op::register(ctx);
 }
 "##,
     );
@@ -6140,7 +6188,7 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
         }
-        output.push_str("PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr");
+        output.push_str("NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr");
     }
     if redux(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
@@ -6518,6 +6566,9 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output = output.replace(
             "        convert_packed_atom_add(ctx, rewriter, self.get_operation(), ptx_type)",
             "        drop((format, state_space, ordering, scope, rounding, subnormal, atomicity));\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), ptx_type)",
+        );
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for NvvmAtomAddF16x2Op {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), \"f16x2\")\n    }\n}\n\n#[op_interface_impl]\nimpl MirToLlvmConversion for NvvmAtomAddBf16x2Op {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), \"bf16x2\")\n    }\n}\n\n",
         );
     }
     for record in redux(catalog) {
@@ -8868,6 +8919,30 @@ mod tests {
             rendered.matches("PackedAtomicFormatAttr::Bf16x2)").count(),
             1
         );
+        for (op_type, ptx_type) in [
+            ("NvvmAtomAddF16x2Op", "f16x2"),
+            ("NvvmAtomAddBf16x2Op", "bf16x2"),
+        ] {
+            assert_eq!(
+                rendered
+                    .matches(&format!("impl MirToLlvmConversion for {op_type}"))
+                    .count(),
+                1
+            );
+            assert!(rendered.contains(&format!(
+                "convert_packed_atom_add(ctx, rewriter, self.get_operation(), \"{ptx_type}\")"
+            )));
+        }
+
+        let dialect = render_dialect_packed_atomic(&catalog, "test-hash");
+        for (op_type, op_name) in [
+            ("NvvmAtomAddF16x2Op", "nvvm.atom_add_f16x2"),
+            ("NvvmAtomAddBf16x2Op", "nvvm.atom_add_bf16x2"),
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op_type};")));
+            assert!(dialect.contains(&format!("name = \"{op_name}\"")));
+            assert!(dialect.contains(&format!("{op_type}::register(ctx);")));
+        }
     }
 
     #[test]

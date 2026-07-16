@@ -128,43 +128,48 @@ fn is_u32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
         })
 }
 
+fn verify_packed_atomic_signature(
+    ctx: &Context,
+    op_ptr: Ptr<Operation>,
+    op_name: &str,
+) -> Result<(), Error> {
+    let op = op_ptr.deref(ctx);
+    if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+        return verify_err!(
+            op.loc(),
+            "{} requires exactly two operands and one result",
+            op_name
+        );
+    }
+    let pointer_ty = op.get_operand(0).get_type(ctx);
+    let pointer_object = pointer_ty.deref(ctx);
+    let Some(pointer) = pointer_object.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{} address must be a MIR pointer", op_name);
+    };
+    if !pointer.is_mutable()
+        || !matches!(
+            pointer.address_space(),
+            address_space::GENERIC | address_space::GLOBAL
+        )
+        || !is_u32(ctx, pointer.pointee)
+    {
+        return verify_err!(
+            op.loc(),
+            "{} address must be a mutable generic/global pointer to u32",
+            op_name
+        );
+    }
+    if !is_u32(ctx, op.get_operand(1).get_type(ctx)) || !is_u32(ctx, op.get_result(0).get_type(ctx))
+    {
+        return verify_err!(op.loc(), "{} addend and result must be u32", op_name);
+    }
+    Ok(())
+}
+
 impl Verify for PackedAtomicAddOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_signature(ctx, self.get_operation(), "nvvm.packed_atomic_add")?;
         let op = self.get_operation().deref(ctx);
-        if op.get_num_operands() != 2 || op.get_num_results() != 1 {
-            return verify_err!(
-                op.loc(),
-                "nvvm.packed_atomic_add requires exactly two operands and one result"
-            );
-        }
-        let pointer_ty = op.get_operand(0).get_type(ctx);
-        let pointer_object = pointer_ty.deref(ctx);
-        let Some(pointer) = pointer_object.downcast_ref::<MirPtrType>() else {
-            return verify_err!(
-                op.loc(),
-                "nvvm.packed_atomic_add address must be a MIR pointer"
-            );
-        };
-        if !pointer.is_mutable()
-            || !matches!(
-                pointer.address_space(),
-                address_space::GENERIC | address_space::GLOBAL
-            )
-            || !is_u32(ctx, pointer.pointee)
-        {
-            return verify_err!(
-                op.loc(),
-                "nvvm.packed_atomic_add address must be a mutable generic/global pointer to u32"
-            );
-        }
-        if !is_u32(ctx, op.get_operand(1).get_type(ctx))
-            || !is_u32(ctx, op.get_result(0).get_type(ctx))
-        {
-            return verify_err!(
-                op.loc(),
-                "nvvm.packed_atomic_add addend and result must be u32"
-            );
-        }
         if self.get_attr_nvvm_packed_atomic_format(ctx).is_none()
             || self.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref()
                 != Some(&PackedAtomicStateSpaceAttr::Global)
@@ -188,6 +193,46 @@ impl Verify for PackedAtomicAddOp {
     }
 }
 
+/// Compatibility operation for the existing `nvvm.atom_add_f16x2` carrier.
+#[pliron_op(
+    name = "nvvm.atom_add_f16x2",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddF16x2Op;
+
+impl NvvmAtomAddF16x2Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for NvvmAtomAddF16x2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_signature(ctx, self.get_operation(), "nvvm.atom_add_f16x2")
+    }
+}
+
+/// Compatibility operation for the existing `nvvm.atom_add_bf16x2` carrier.
+#[pliron_op(
+    name = "nvvm.atom_add_bf16x2",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct NvvmAtomAddBf16x2Op;
+
+impl NvvmAtomAddBf16x2Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for NvvmAtomAddBf16x2Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_packed_atomic_signature(ctx, self.get_operation(), "nvvm.atom_add_bf16x2")
+    }
+}
+
 pub(super) fn register(ctx: &mut Context) {
     PackedAtomicFormatAttr::register(ctx);
     PackedAtomicStateSpaceAttr::register(ctx);
@@ -197,4 +242,6 @@ pub(super) fn register(ctx: &mut Context) {
     PackedAtomicSubnormalAttr::register(ctx);
     PackedAtomicAtomicityAttr::register(ctx);
     PackedAtomicAddOp::register(ctx);
+    NvvmAtomAddF16x2Op::register(ctx);
+    NvvmAtomAddBf16x2Op::register(ctx);
 }

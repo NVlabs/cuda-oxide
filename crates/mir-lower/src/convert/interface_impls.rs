@@ -52,16 +52,15 @@ use dialect_nvvm::ops::{
     MapaSharedClusterOp, MbarrierArriveClusterOp, MbarrierArriveExpectTxClusterOp,
     MbarrierArriveExpectTxSharedOp, MbarrierTryWaitParityClusterOp, MbarrierTryWaitParitySharedOp,
     MbarrierTryWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
-    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NanosleepOp, NvvmAtomAddBf16x2Op,
-    NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
-    PmEventOp, ReadPtxSregClock64Op, ReadPtxSregClockOp, ReadPtxSregDynamicSmemSizeOp,
-    ReadPtxSregEnvReg1Op, ReadPtxSregEnvReg2Op, ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp,
-    ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp,
-    ReadPtxSregWarpIdOp, StmatrixM8n8X2Op, StmatrixM8n8X2TransOp, StmatrixM8n8X4Op,
-    StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op, Tcgen05AllocOp, Tcgen05CommitCg2Op,
-    Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp, Tcgen05CommitSharedClusterCg2Op,
-    Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op, Tcgen05CpSmemToTmemOp,
-    Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
+    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NanosleepOp, NvvmAtomicCmpxchgOp,
+    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PmEventOp, ReadPtxSregClock64Op,
+    ReadPtxSregClockOp, ReadPtxSregDynamicSmemSizeOp, ReadPtxSregEnvReg1Op, ReadPtxSregEnvReg2Op,
+    ReadPtxSregGlobaltimerOp, ReadPtxSregGridIdOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp,
+    ReadPtxSregSmIdOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp, StmatrixM8n8X2Op,
+    StmatrixM8n8X2TransOp, StmatrixM8n8X4Op, StmatrixM8n8X4TransOp, Tcgen05AllocCg2Op,
+    Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp,
+    Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op,
+    Tcgen05CpSmemToTmemOp, Tcgen05DeallocCg2Op, Tcgen05DeallocOp, Tcgen05FenceAfterThreadSyncOp,
     Tcgen05FenceBeforeThreadSyncOp, Tcgen05Ld16x256bPureOp, Tcgen05Ld16x256bX8PureOp,
     Tcgen05LoadWaitOp, Tcgen05MmaF16Cg2Op, Tcgen05MmaF16Op, Tcgen05MmaWsBf16Op, Tcgen05MmaWsF16Op,
     Tcgen05MmaWsTf32Op, Tcgen05RelinquishAllocPermitCg2Op, Tcgen05RelinquishAllocPermitOp,
@@ -2410,40 +2409,6 @@ impl MirToLlvmConversion for MovmatrixTransB16Op {
 }
 
 // ---- NVVM Atomic ops -------------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for NvvmAtomAddF16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::atomic::convert_atom_add_f16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for NvvmAtomAddBf16x2Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::atomic::convert_atom_add_bf16x2(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
 
 #[op_interface_impl]
 impl MirToLlvmConversion for NvvmAtomicLoadOp {

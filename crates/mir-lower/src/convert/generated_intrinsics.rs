@@ -44,28 +44,28 @@ use dialect_nvvm::ops::{
     MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MaxBf16x2Op,
     MaxF16x2Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
     MbarrierTestWaitSharedOp, MinBf16x2Op, MinF16x2Op, MulBf16x2Op, MulF16x2Op, NegBf16x2Op,
-    NegF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr,
-    PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr,
-    PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp,
-    ReadPtxSregClusterCtaidXOp, ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp,
-    ReadPtxSregClusterCtarankOp, ReadPtxSregClusterIdXOp, ReadPtxSregClusterIdYOp,
-    ReadPtxSregClusterIdZOp, ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp,
-    ReadPtxSregClusterNctaidZOp, ReadPtxSregClusterNctarankOp, ReadPtxSregCtaidXOp,
-    ReadPtxSregCtaidYOp, ReadPtxSregCtaidZOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp,
-    ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp,
-    ReadPtxSregLanemaskLtOp, ReadPtxSregNclusterIdXOp, ReadPtxSregNclusterIdYOp,
-    ReadPtxSregNclusterIdZOp, ReadPtxSregNctaidXOp, ReadPtxSregNctaidYOp, ReadPtxSregNctaidZOp,
-    ReadPtxSregNtidXOp, ReadPtxSregNtidYOp, ReadPtxSregNtidZOp, ReadPtxSregTidXOp,
-    ReadPtxSregTidYOp, ReadPtxSregTidZOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp,
-    ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp,
-    RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp,
-    RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ShflSyncBflyF32Op,
-    ShflSyncBflyI32Op, ShflSyncBflyI64Op, ShflSyncDownF32Op, ShflSyncDownI32Op, ShflSyncDownI64Op,
-    ShflSyncIdxF32Op, ShflSyncIdxI32Op, ShflSyncIdxI64Op, ShflSyncUpF32Op, ShflSyncUpI32Op,
-    ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr,
-    SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr,
-    SparseMmaShapeAttr, SubBf16x2Op, SubF16x2Op, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
-    VoteSyncUniOp,
+    NegF16x2Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp,
+    PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
+    PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
+    PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, ReadPtxSregClusterCtaidXOp,
+    ReadPtxSregClusterCtaidYOp, ReadPtxSregClusterCtaidZOp, ReadPtxSregClusterCtarankOp,
+    ReadPtxSregClusterIdXOp, ReadPtxSregClusterIdYOp, ReadPtxSregClusterIdZOp,
+    ReadPtxSregClusterNctaidXOp, ReadPtxSregClusterNctaidYOp, ReadPtxSregClusterNctaidZOp,
+    ReadPtxSregClusterNctarankOp, ReadPtxSregCtaidXOp, ReadPtxSregCtaidYOp, ReadPtxSregCtaidZOp,
+    ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp, ReadPtxSregLanemaskGtOp,
+    ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp, ReadPtxSregNclusterIdXOp,
+    ReadPtxSregNclusterIdYOp, ReadPtxSregNclusterIdZOp, ReadPtxSregNctaidXOp, ReadPtxSregNctaidYOp,
+    ReadPtxSregNctaidZOp, ReadPtxSregNtidXOp, ReadPtxSregNtidYOp, ReadPtxSregNtidZOp,
+    ReadPtxSregTidXOp, ReadPtxSregTidYOp, ReadPtxSregTidZOp, ReduxSyncAddOp, ReduxSyncAndOp,
+    ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp,
+    ReduxSyncXorOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr,
+    RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+    ShflSyncBflyF32Op, ShflSyncBflyI32Op, ShflSyncBflyI64Op, ShflSyncDownF32Op, ShflSyncDownI32Op,
+    ShflSyncDownI64Op, ShflSyncIdxF32Op, ShflSyncIdxI32Op, ShflSyncIdxI64Op, ShflSyncUpF32Op,
+    ShflSyncUpI32Op, ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr,
+    SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr,
+    SparseMmaSelectorAttr, SparseMmaShapeAttr, SubBf16x2Op, SubF16x2Op, VoteSyncAllOp,
+    VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
 use llvm_export::types as llvm_types;
 use pliron::{
@@ -3501,6 +3501,30 @@ impl MirToLlvmConversion for PackedAtomicAddOp {
             atomicity,
         ));
         convert_packed_atom_add(ctx, rewriter, self.get_operation(), ptx_type)
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for NvvmAtomAddF16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_packed_atom_add(ctx, rewriter, self.get_operation(), "f16x2")
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for NvvmAtomAddBf16x2Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_packed_atom_add(ctx, rewriter, self.get_operation(), "bf16x2")
     }
 }
 

@@ -29,23 +29,16 @@
 //! mir-lower handle ordering-to-fence and scope-to-syncscope mapping through
 //! one code path.
 
-use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
     attribute::Attribute,
     builtin::op_interfaces::{
         NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface,
     },
-    builtin::types::{IntegerType, Signedness},
-    common_traits::Verify,
     context::{Context, Ptr},
     derive::{op_interface, op_interface_impl},
-    location::Located,
     op::Op,
     operation::Operation,
-    result::Error,
-    r#type::Typed,
     value::Value,
-    verify_err,
 };
 use pliron_derive::{pliron_attr, pliron_op};
 
@@ -520,153 +513,6 @@ impl NvvmAtomicOpInterface for NvvmAtomicCmpxchgOp {
 }
 
 // =============================================================================
-// Packed Atomic Helpers
-// =============================================================================
-
-fn is_u32_type(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
-    ty.deref(ctx)
-        .downcast_ref::<IntegerType>()
-        .is_some_and(|integer| {
-            integer.width() == 32 && integer.signedness() == Signedness::Unsigned
-        })
-}
-
-/// Verify the exact raw-`u32` shape used by packed atomic-add intrinsics.
-fn verify_packed_atomic(ctx: &Context, op_ptr: Ptr<Operation>, op_name: &str) -> Result<(), Error> {
-    let op = &*op_ptr.deref(ctx);
-    if op.get_num_operands() != 2 || op.get_num_results() != 1 {
-        return verify_err!(op.loc(), "{} requires 2 operands and 1 result", op_name);
-    }
-
-    let addr_ty = op.get_operand(0).get_type(ctx);
-    let addr_ty_obj = addr_ty.deref(ctx);
-    let Some(addr_ty) = addr_ty_obj.downcast_ref::<MirPtrType>() else {
-        return verify_err!(op.loc(), "{} address must be a MIR pointer", op_name);
-    };
-    if !addr_ty.is_mutable() || !is_u32_type(ctx, addr_ty.pointee) {
-        return verify_err!(
-            op.loc(),
-            "{} address must be a mutable pointer to u32",
-            op_name
-        );
-    }
-    if !matches!(
-        addr_ty.address_space(),
-        address_space::GENERIC | address_space::GLOBAL
-    ) {
-        return verify_err!(
-            op.loc(),
-            "{} address must be generic or global memory",
-            op_name
-        );
-    }
-
-    if !is_u32_type(ctx, op.get_operand(1).get_type(ctx)) {
-        return verify_err!(op.loc(), "{} addend must be u32", op_name);
-    }
-    if !is_u32_type(ctx, op.get_result(0).get_type(ctx)) {
-        return verify_err!(op.loc(), "{} result must be u32", op_name);
-    }
-    Ok(())
-}
-
-// =============================================================================
-// NvvmAtomAddF16x2Op
-// =============================================================================
-
-/// Packed f16x2 atomic add on global memory.
-///
-/// Adds two packed f16 lanes element-wise with independent 16-bit atomicity.
-/// The two lane operations occur in unspecified order, so the returned `u32`
-/// is not guaranteed to be one coherent previous 32-bit snapshot.
-///
-/// Lowered to inline PTX:
-/// ```ptx
-/// atom.global.add.noftz.f16x2 $0, [$1], $2;
-/// ```
-///
-/// # Operands
-///
-/// - `addr` (ptr): pointer to the packed f16x2 value in global memory
-/// - `val`  (u32): packed f16x2 addend
-///
-/// # Results
-///
-/// - `old` (u32): the previous packed f16x2 value at `*addr`
-///
-/// # Verification
-///
-/// - `addr` must be a mutable generic/global pointer to `u32`
-/// - `val` and `old` must be `u32`
-#[pliron_op(
-    name = "nvvm.atom_add_f16x2",
-    format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct NvvmAtomAddF16x2Op;
-
-impl NvvmAtomAddF16x2Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomAddF16x2Op { op }
-    }
-}
-
-impl Verify for NvvmAtomAddF16x2Op {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_packed_atomic(ctx, self.get_operation(), "nvvm.atom_add_f16x2")
-    }
-}
-
-// =============================================================================
-// NvvmAtomAddBf16x2Op
-// =============================================================================
-
-/// Packed bf16x2 atomic add on global memory.
-///
-/// Adds two packed bf16 lanes element-wise with independent 16-bit atomicity.
-/// The two lane operations occur in unspecified order, so the returned `u32`
-/// is not guaranteed to be one coherent previous 32-bit snapshot.
-///
-/// Lowered to inline PTX:
-/// ```ptx
-/// atom.global.add.noftz.bf16x2 $0, [$1], $2;
-/// ```
-///
-/// # Operands
-///
-/// - `addr` (ptr): pointer to the packed bf16x2 value in global memory
-/// - `val`  (u32): packed bf16x2 addend
-///
-/// # Results
-///
-/// - `old` (u32): the previous packed bf16x2 value at `*addr`
-///
-/// # Verification
-///
-/// - `addr` must be a mutable generic/global pointer to `u32`
-/// - `val` and `old` must be `u32`
-#[pliron_op(
-    name = "nvvm.atom_add_bf16x2",
-    format,
-    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
-)]
-pub struct NvvmAtomAddBf16x2Op;
-
-impl NvvmAtomAddBf16x2Op {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        NvvmAtomAddBf16x2Op { op }
-    }
-}
-
-impl Verify for NvvmAtomAddBf16x2Op {
-    fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_packed_atomic(ctx, self.get_operation(), "nvvm.atom_add_bf16x2")
-    }
-}
-
-// =============================================================================
 // Registration
 // =============================================================================
 
@@ -682,6 +528,4 @@ pub fn register(ctx: &mut Context) {
     NvvmAtomicStoreOp::register(ctx);
     NvvmAtomicRmwOp::register(ctx);
     NvvmAtomicCmpxchgOp::register(ctx);
-    NvvmAtomAddF16x2Op::register(ctx);
-    NvvmAtomAddBf16x2Op::register(ctx);
 }
