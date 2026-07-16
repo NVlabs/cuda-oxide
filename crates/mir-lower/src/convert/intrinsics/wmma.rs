@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Warp-level matrix intrinsic lowering (`movmatrix`, `mma.sync`, `mma.sp`).
+//! Warp-level matrix intrinsic lowering.
 
 use crate::convert::intrinsics::common::*;
 use llvm_export::ops::{self as llvm, AsmKind, InlineAsmOpExt};
@@ -17,11 +17,7 @@ use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
 
-/// Convert `nvvm.movmatrix_trans_b16` to inline PTX.
-///
-/// `movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;`
-///
-/// Warp-synchronous, uses convergent inline assembly.
+/// Lower `movmatrix.sync.aligned.m8n8.trans.b16`.
 pub(crate) fn convert_movmatrix_trans_b16(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -36,26 +32,22 @@ pub(crate) fn convert_movmatrix_trans_b16(
         );
     }
 
-    let a_val = operands[0];
-
-    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-
+    let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let inline_asm = llvm::InlineAsmOp::build(
         ctx,
-        i32_ty.into(),
-        vec![a_val],
+        result_ty.into(),
+        vec![operands[0]],
         "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;",
         "=r,r",
         AsmKind::Convergent,
     );
-
     let asm_op = inline_asm.get_operation();
     rewriter.insert_operation(ctx, asm_op);
     rewriter.replace_operation(ctx, op, asm_op);
     Ok(())
 }
 
-/// Result carrier used by generated register-MMA recipes.
+/// Result carrier used by generated MMA recipes.
 #[derive(Clone, Copy)]
 pub(crate) enum GeneratedMmaResultType {
     F32,
@@ -63,7 +55,7 @@ pub(crate) enum GeneratedMmaResultType {
     I32,
 }
 
-/// Lower one generated register-MMA variant to convergent inline PTX.
+/// Lower one generated register-MMA variant.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn convert_generated_register_mma(
     ctx: &mut Context,
@@ -88,7 +80,7 @@ pub(crate) fn convert_generated_register_mma(
     )
 }
 
-/// Lower one generated sparse-MMA variant to convergent inline PTX.
+/// Lower one generated sparse-MMA variant.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn convert_generated_sparse_mma(
     ctx: &mut Context,
@@ -151,247 +143,6 @@ fn convert_generated_mma(
     for index in 0..result_count {
         let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
             .map_err(|error| pliron::input_error_noloc!("{}", error))?;
-        rewriter.insert_operation(ctx, extract.get_operation());
-        results.push(extract.get_operation().deref(ctx).get_result(0));
-    }
-    rewriter.replace_operation_with_values(ctx, op, results);
-    Ok(())
-}
-
-/// Convert `mma_m16n8k16_f32_bf16` to one register-only inline PTX operation.
-///
-/// Operand order is C[0..4], A[0..4], B[0..2]. The four D registers are
-/// returned as an LLVM struct and then split back into the dialect op's four
-/// SSA results. There are no hidden pointer, stack, load, or store operands.
-pub(crate) fn convert_mma_m16n8k16_f32_bf16(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 10 {
-        return pliron::input_err_noloc!(
-            "mma_m16n8k16_f32_bf16 requires 10 register operands, got {}",
-            operands.len()
-        );
-    }
-
-    let f32_ty = FP32Type::get(ctx);
-    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); 4]);
-    let template = concat!(
-        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 ",
-        "{$0, $1, $2, $3}, ",
-        "{$8, $9, $10, $11}, ",
-        "{$12, $13}, ",
-        "{$4, $5, $6, $7};"
-    );
-    let constraints = "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r";
-    let inline_asm = inline_asm_convergent(
-        ctx,
-        rewriter,
-        result_ty.into(),
-        operands,
-        template,
-        constraints,
-    );
-
-    let aggregate = inline_asm.deref(ctx).get_result(0);
-    let mut results = Vec::with_capacity(4);
-    for index in 0..4 {
-        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
-            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
-        rewriter.insert_operation(ctx, extract.get_operation());
-        results.push(extract.get_operation().deref(ctx).get_result(0));
-    }
-    rewriter.replace_operation_with_values(ctx, op, results);
-    Ok(())
-}
-
-/// Convert `mma_m16n8k16_f32_f16` to one register-only inline PTX operation.
-///
-/// Operand order is C[0..4], A[0..4], B[0..2]. The four D registers are
-/// returned as an LLVM struct and then split back into the dialect op's four
-/// SSA results. There are no hidden pointer, stack, load, or store operands.
-pub(crate) fn convert_mma_m16n8k16_f32_f16(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 10 {
-        return pliron::input_err_noloc!(
-            "mma_m16n8k16_f32_f16 requires 10 register operands, got {}",
-            operands.len()
-        );
-    }
-
-    let f32_ty = FP32Type::get(ctx);
-    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); 4]);
-    let template = concat!(
-        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 ",
-        "{$0, $1, $2, $3}, ",
-        "{$8, $9, $10, $11}, ",
-        "{$12, $13}, ",
-        "{$4, $5, $6, $7};"
-    );
-    let constraints = "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r";
-    let inline_asm = inline_asm_convergent(
-        ctx,
-        rewriter,
-        result_ty.into(),
-        operands,
-        template,
-        constraints,
-    );
-
-    let aggregate = inline_asm.deref(ctx).get_result(0);
-    let mut results = Vec::with_capacity(4);
-    for index in 0..4 {
-        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
-            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
-        rewriter.insert_operation(ctx, extract.get_operation());
-        results.push(extract.get_operation().deref(ctx).get_result(0));
-    }
-    rewriter.replace_operation_with_values(ctx, op, results);
-    Ok(())
-}
-
-/// Convert `mma_m16n8k8_f32_tf32` to one register-only inline PTX operation.
-///
-/// Operand order is C[0..4], A[0..4], B[0..2]. The four D registers are
-/// returned as an LLVM struct and then split back into the dialect op's four
-/// SSA results. There are no hidden pointer, stack, load, or store operands.
-pub(crate) fn convert_mma_m16n8k8_f32_tf32(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 10 {
-        return pliron::input_err_noloc!(
-            "mma_m16n8k8_f32_tf32 requires 10 register operands, got {}",
-            operands.len()
-        );
-    }
-
-    let f32_ty = FP32Type::get(ctx);
-    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); 4]);
-    let template = concat!(
-        "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 ",
-        "{$0, $1, $2, $3}, ",
-        "{$8, $9, $10, $11}, ",
-        "{$12, $13}, ",
-        "{$4, $5, $6, $7};"
-    );
-    let constraints = "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r";
-    let inline_asm = inline_asm_convergent(
-        ctx,
-        rewriter,
-        result_ty.into(),
-        operands,
-        template,
-        constraints,
-    );
-
-    let aggregate = inline_asm.deref(ctx).get_result(0);
-    let mut results = Vec::with_capacity(4);
-    for index in 0..4 {
-        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
-            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
-        rewriter.insert_operation(ctx, extract.get_operation());
-        results.push(extract.get_operation().deref(ctx).get_result(0));
-    }
-    rewriter.replace_operation_with_values(ctx, op, results);
-    Ok(())
-}
-
-/// Convert `mma_m16n8k32_s32_s8` to one register-only inline PTX operation.
-///
-/// Operand order is C[0..4], A[0..4], B[0..2]. The four D registers are
-/// returned as an LLVM struct and then split back into the dialect op's four
-/// SSA results. All operands and results use the `r` (integer) constraint.
-pub(crate) fn convert_mma_m16n8k32_s32_s8(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 10 {
-        return pliron::input_err_noloc!(
-            "mma_m16n8k32_s32_s8 requires 10 register operands, got {}",
-            operands.len()
-        );
-    }
-
-    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty.into(); 4]);
-    let template = concat!(
-        "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 ",
-        "{$0, $1, $2, $3}, ",
-        "{$8, $9, $10, $11}, ",
-        "{$12, $13}, ",
-        "{$4, $5, $6, $7};"
-    );
-    let constraints = "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r";
-    let inline_asm = inline_asm_convergent(
-        ctx,
-        rewriter,
-        result_ty.into(),
-        operands,
-        template,
-        constraints,
-    );
-
-    let aggregate = inline_asm.deref(ctx).get_result(0);
-    let mut results = Vec::with_capacity(4);
-    for index in 0..4 {
-        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
-            .map_err(|error| pliron::input_error_noloc!("{}", error))?;
-        rewriter.insert_operation(ctx, extract.get_operation());
-        results.push(extract.get_operation().deref(ctx).get_result(0));
-    }
-    rewriter.replace_operation_with_values(ctx, op, results);
-    Ok(())
-}
-
-/// Convert `mma_m8n8k4_f64` to inline PTX assembly.
-///
-/// The operation consumes the two C registers plus A and B directly, and
-/// returns both D fragment registers. No pointer or memory operand is involved.
-pub(crate) fn convert_mma_m8n8k4_f64(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 4 {
-        return pliron::input_err_noloc!(
-            "mma_m8n8k4_f64 requires 4 f64 operands (c0, c1, a, b), got {}",
-            operands.len()
-        );
-    }
-
-    let f64_ty = FP64Type::get(ctx);
-    let result_ty = llvm_types::StructType::get_unnamed(ctx, vec![f64_ty.into(), f64_ty.into()]);
-    let inline_asm = inline_asm_convergent(
-        ctx,
-        rewriter,
-        result_ty.into(),
-        operands,
-        "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 \
-         {$0, $1}, {$4}, {$5}, {$2, $3};",
-        "=d,=d,d,d,d,d",
-    );
-
-    let aggregate = inline_asm.deref(ctx).get_result(0);
-    let mut results = Vec::with_capacity(2);
-    for index in 0..2 {
-        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index])?;
         rewriter.insert_operation(ctx, extract.get_operation());
         results.push(extract.get_operation().deref(ctx).get_result(0));
     }

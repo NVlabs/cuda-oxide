@@ -43,8 +43,9 @@ use dialect_nvvm::ops::{
     LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr,
     MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MaxBf16x2Op,
     MaxF16x2Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
-    MbarrierTestWaitSharedOp, MinBf16x2Op, MinF16x2Op, MulBf16x2Op, MulF16x2Op, NegBf16x2Op,
-    NegF16x2Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp,
+    MbarrierTestWaitSharedOp, MinBf16x2Op, MinF16x2Op, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op,
+    MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MulBf16x2Op, MulF16x2Op,
+    NegBf16x2Op, NegF16x2Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp,
     PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
     PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
     PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, ReadPtxSregClusterCtaidXOp,
@@ -1758,6 +1759,111 @@ impl MirToLlvmConversion for RegisterMmaOp {
             recipe.2,
             recipe.3,
             recipe.4,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM16N8K16F32Bf16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_register_mma(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            GeneratedMmaResultType::F32,
+            4,
+            10,
+            "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};",
+            "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM16N8K16F32F16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_register_mma(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            GeneratedMmaResultType::F32,
+            4,
+            10,
+            "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};",
+            "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM16N8K32S32S8Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_register_mma(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            GeneratedMmaResultType::I32,
+            4,
+            10,
+            "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};",
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM16N8K8F32Tf32Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_register_mma(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            GeneratedMmaResultType::F32,
+            4,
+            10,
+            "mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};",
+            "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r",
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MmaM8N8K4F64Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        _operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        convert_generated_register_mma(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            GeneratedMmaResultType::F64,
+            2,
+            4,
+            "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64 {$0, $1}, {$4}, {$5}, {$2, $3};",
+            "=d,=d,d,d,d,d",
         )
     }
 }

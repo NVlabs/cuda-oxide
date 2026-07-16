@@ -3889,6 +3889,17 @@ fn register_mma_carriers(record: &CatalogIntrinsic) -> (&'static str, &'static s
     }
 }
 
+fn register_mma_compat_op_type(record: &CatalogIntrinsic) -> Option<&'static str> {
+    match record.id.as_str() {
+        "mma_m16n8k16_f32_bf16" => Some("MmaM16N8K16F32Bf16Op"),
+        "mma_m16n8k16_f32_f16" => Some("MmaM16N8K16F32F16Op"),
+        "mma_m16n8k8_f32_tf32" => Some("MmaM16N8K8F32Tf32Op"),
+        "mma_m16n8k32_s32_s8" => Some("MmaM16N8K32S32S8Op"),
+        "mma_m8n8k4_f64" => Some("MmaM8N8K4F64Op"),
+        _ => None,
+    }
+}
+
 fn render_dialect_register_mma(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -3896,7 +3907,10 @@ fn render_dialect_register_mma(catalog: &CatalogFile, hash: &str) -> String {
 
 use pliron::{
     attribute::Attribute,
-    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{FP32Type, FP64Type, IntegerType, Signedness},
+    },
     common_traits::Verify,
     context::{Context, Ptr},
     location::Located,
@@ -4027,17 +4041,87 @@ impl Verify for RegisterMmaOp {
     }
 }
 
-pub(super) fn register(ctx: &mut Context) {
-    RegisterMmaShapeAttr::register(ctx);
-    RegisterMmaOperationAttr::register(ctx);
-    RegisterMmaAccumulatorAttr::register(ctx);
-    RegisterMmaElementAttr::register(ctx);
-    RegisterMmaLayoutAttr::register(ctx);
-    RegisterMmaOverflowAttr::register(ctx);
-    RegisterMmaOp::register(ctx);
-}
 "#,
     );
+    output.push_str(
+        r#"
+fn is_compat_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool {
+    match carrier {
+        MmaCarrier::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
+        MmaCarrier::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
+        MmaCarrier::I32 | MmaCarrier::U32 => ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 32),
+    }
+}
+
+fn verify_compat_register_mma(
+    ctx: &Context,
+    op_ptr: Ptr<Operation>,
+    op_name: &str,
+    operand_carriers: &[MmaCarrier],
+    result_carriers: &[MmaCarrier],
+) -> Result<(), Error> {
+    let op = op_ptr.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != operand_carriers.len() || op.get_num_results() != result_carriers.len() {
+        return verify_err!(op.loc(), "{} has the wrong register count", op_name);
+    }
+    for (index, (operand, carrier)) in operands.iter().zip(operand_carriers).enumerate() {
+        if !is_compat_carrier(ctx, operand.get_type(ctx), *carrier) {
+            return verify_err!(op.loc(), "{} operand {} has the wrong carrier type", op_name, index);
+        }
+    }
+    for (index, carrier) in result_carriers.iter().enumerate() {
+        if !is_compat_carrier(ctx, op.get_result(index).get_type(ctx), *carrier) {
+            return verify_err!(op.loc(), "{} result {} has the wrong carrier type", op_name, index);
+        }
+    }
+    Ok(())
+}
+
+"#,
+    );
+    for record in
+        register_mmas(catalog).filter(|record| register_mma_compat_op_type(record).is_some())
+    {
+        let op_type = register_mma_compat_op_type(record).unwrap();
+        let op_name = format!("nvvm.{}", record.id);
+        let operand_count = record.dialect.operands.len();
+        let result_count = record.dialect.results.len();
+        let (operands, results) = register_mma_carriers(record);
+        writeln!(output, "/// Compatibility carrier for `{}`.", record.id).unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {op_name:?},\n    format,\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<{result_count}>],\n)]\npub struct {op_type};\n"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "impl {op_type} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{ Self {{ op }} }}\n}}\n"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "impl Verify for {op_type} {{\n    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_compat_register_mma(ctx, self.get_operation(), {op_name:?}, {operands}, {results})\n    }}\n}}\n"
+        )
+        .unwrap();
+    }
+    output.push_str(
+        "pub(super) fn register(ctx: &mut Context) {\n    RegisterMmaShapeAttr::register(ctx);\n    RegisterMmaOperationAttr::register(ctx);\n    RegisterMmaAccumulatorAttr::register(ctx);\n    RegisterMmaElementAttr::register(ctx);\n    RegisterMmaLayoutAttr::register(ctx);\n    RegisterMmaOverflowAttr::register(ctx);\n    RegisterMmaOp::register(ctx);\n",
+    );
+    for record in
+        register_mmas(catalog).filter(|record| register_mma_compat_op_type(record).is_some())
+    {
+        writeln!(
+            output,
+            "    {}::register(ctx);",
+            register_mma_compat_op_type(record).unwrap()
+        )
+        .unwrap();
+    }
+    output.push_str("}\n");
     output
 }
 
@@ -6173,6 +6257,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
     }
     if register_mmas(catalog).next().is_some() {
+        for record in
+            register_mmas(catalog).filter(|record| register_mma_compat_op_type(record).is_some())
+        {
+            output.push_str(", ");
+            output.push_str(register_mma_compat_op_type(record).unwrap());
+        }
         output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
     }
     if sparse_mmas(catalog).next().is_some() {
@@ -6419,6 +6509,21 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.register_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_register_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
         );
+        for record in
+            register_mmas(catalog).filter(|record| register_mma_compat_op_type(record).is_some())
+        {
+            let op_type = register_mma_compat_op_type(record).unwrap();
+            let (c_count, a_count, b_count, result_count) = register_mma_fragment_counts(record);
+            let expected_operands = c_count + a_count + b_count;
+            writeln!(
+                output,
+                "#[op_interface_impl]\nimpl MirToLlvmConversion for {op_type} {{\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_register_mma(\n            ctx, rewriter, self.get_operation(), {}, {result_count}, {expected_operands}, {:?}, {:?},\n        )\n    }}\n}}\n",
+                register_mma_result_variant(record),
+                register_mma_template(record),
+                register_mma_constraints(record),
+            )
+            .unwrap();
+        }
     }
     if sparse_mmas(catalog).next().is_some() {
         output.push_str(
@@ -9814,6 +9919,17 @@ mod tests {
         assert!(dialect.contains("RegisterMmaElementAttr::U8"));
         assert!(dialect.contains("RegisterMmaOverflowAttr::Wrapping"));
         assert!(dialect.contains("RegisterMmaOverflowAttr::Satfinite"));
+        for (op_type, op_name) in [
+            ("MmaM16N8K16F32Bf16Op", "nvvm.mma_m16n8k16_f32_bf16"),
+            ("MmaM16N8K16F32F16Op", "nvvm.mma_m16n8k16_f32_f16"),
+            ("MmaM16N8K8F32Tf32Op", "nvvm.mma_m16n8k8_f32_tf32"),
+            ("MmaM16N8K32S32S8Op", "nvvm.mma_m16n8k32_s32_s8"),
+            ("MmaM8N8K4F64Op", "nvvm.mma_m8n8k4_f64"),
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op_type};")));
+            assert!(dialect.contains(&format!("name = {op_name:?}")));
+            assert!(dialect.contains(&format!("{op_type}::register(ctx);")));
+        }
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("enum GeneratedMmaImportAdapter"));
@@ -9863,6 +9979,20 @@ mod tests {
         assert!(lowering.contains("mma.sync.aligned.m16n8k128.row.col.s32.b1.b1.s32.and.popc"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.xor.popc"));
         assert!(lowering.contains("mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc"));
+        for op_type in [
+            "MmaM16N8K16F32Bf16Op",
+            "MmaM16N8K16F32F16Op",
+            "MmaM16N8K8F32Tf32Op",
+            "MmaM16N8K32S32S8Op",
+            "MmaM8N8K4F64Op",
+        ] {
+            assert_eq!(
+                lowering
+                    .matches(&format!("impl MirToLlvmConversion for {op_type}"))
+                    .count(),
+                1
+            );
+        }
         assert!(lowering.contains(
             r#"(GeneratedMmaResultType::I32, 4, 7, "mma.sync.aligned.m16n8k32.row.col.s32.s4.u4.s32 {$0, $1, $2, $3}, {$8, $9}, {$10}, {$4, $5, $6, $7};", "=r,=r,=r,=r,r,r,r,r,r,r,r")"#
         ));

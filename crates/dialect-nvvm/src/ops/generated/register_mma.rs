@@ -11,7 +11,10 @@
 
 use pliron::{
     attribute::Attribute,
-    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{FP32Type, FP64Type, IntegerType, Signedness},
+    },
     common_traits::Verify,
     context::{Context, Ptr},
     location::Located,
@@ -1604,6 +1607,251 @@ impl Verify for RegisterMmaOp {
     }
 }
 
+fn is_compat_carrier(ctx: &Context, ty: TypeHandle, carrier: MmaCarrier) -> bool {
+    match carrier {
+        MmaCarrier::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
+        MmaCarrier::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
+        MmaCarrier::I32 | MmaCarrier::U32 => ty
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 32),
+    }
+}
+
+fn verify_compat_register_mma(
+    ctx: &Context,
+    op_ptr: Ptr<Operation>,
+    op_name: &str,
+    operand_carriers: &[MmaCarrier],
+    result_carriers: &[MmaCarrier],
+) -> Result<(), Error> {
+    let op = op_ptr.deref(ctx);
+    let operands: Vec<_> = op.operands().collect();
+    if operands.len() != operand_carriers.len() || op.get_num_results() != result_carriers.len() {
+        return verify_err!(op.loc(), "{} has the wrong register count", op_name);
+    }
+    for (index, (operand, carrier)) in operands.iter().zip(operand_carriers).enumerate() {
+        if !is_compat_carrier(ctx, operand.get_type(ctx), *carrier) {
+            return verify_err!(
+                op.loc(),
+                "{} operand {} has the wrong carrier type",
+                op_name,
+                index
+            );
+        }
+    }
+    for (index, carrier) in result_carriers.iter().enumerate() {
+        if !is_compat_carrier(ctx, op.get_result(index).get_type(ctx), *carrier) {
+            return verify_err!(
+                op.loc(),
+                "{} result {} has the wrong carrier type",
+                op_name,
+                index
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Compatibility carrier for `mma_m16n8k16_f32_bf16`.
+#[pliron_op(
+    name = "nvvm.mma_m16n8k16_f32_bf16",
+    format,
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K16F32Bf16Op;
+
+impl MmaM16N8K16F32Bf16Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for MmaM16N8K16F32Bf16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_register_mma(
+            ctx,
+            self.get_operation(),
+            "nvvm.mma_m16n8k16_f32_bf16",
+            &[
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+            ],
+            &[
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+            ],
+        )
+    }
+}
+
+/// Compatibility carrier for `mma_m16n8k16_f32_f16`.
+#[pliron_op(
+    name = "nvvm.mma_m16n8k16_f32_f16",
+    format,
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K16F32F16Op;
+
+impl MmaM16N8K16F32F16Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for MmaM16N8K16F32F16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_register_mma(
+            ctx,
+            self.get_operation(),
+            "nvvm.mma_m16n8k16_f32_f16",
+            &[
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+            ],
+            &[
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+            ],
+        )
+    }
+}
+
+/// Compatibility carrier for `mma_m16n8k32_s32_s8`.
+#[pliron_op(
+    name = "nvvm.mma_m16n8k32_s32_s8",
+    format,
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K32S32S8Op;
+
+impl MmaM16N8K32S32S8Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for MmaM16N8K32S32S8Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_register_mma(
+            ctx,
+            self.get_operation(),
+            "nvvm.mma_m16n8k32_s32_s8",
+            &[
+                MmaCarrier::I32,
+                MmaCarrier::I32,
+                MmaCarrier::I32,
+                MmaCarrier::I32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+            ],
+            &[
+                MmaCarrier::I32,
+                MmaCarrier::I32,
+                MmaCarrier::I32,
+                MmaCarrier::I32,
+            ],
+        )
+    }
+}
+
+/// Compatibility carrier for `mma_m16n8k8_f32_tf32`.
+#[pliron_op(
+    name = "nvvm.mma_m16n8k8_f32_tf32",
+    format,
+    interfaces = [NOpdsInterface<10>, NResultsInterface<4>],
+)]
+pub struct MmaM16N8K8F32Tf32Op;
+
+impl MmaM16N8K8F32Tf32Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for MmaM16N8K8F32Tf32Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_register_mma(
+            ctx,
+            self.get_operation(),
+            "nvvm.mma_m16n8k8_f32_tf32",
+            &[
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+                MmaCarrier::U32,
+            ],
+            &[
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+                MmaCarrier::F32,
+            ],
+        )
+    }
+}
+
+/// Compatibility carrier for `mma_m8n8k4_f64`.
+#[pliron_op(
+    name = "nvvm.mma_m8n8k4_f64",
+    format,
+    interfaces = [NOpdsInterface<4>, NResultsInterface<2>],
+)]
+pub struct MmaM8N8K4F64Op;
+
+impl MmaM8N8K4F64Op {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for MmaM8N8K4F64Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        verify_compat_register_mma(
+            ctx,
+            self.get_operation(),
+            "nvvm.mma_m8n8k4_f64",
+            &[
+                MmaCarrier::F64,
+                MmaCarrier::F64,
+                MmaCarrier::F64,
+                MmaCarrier::F64,
+            ],
+            &[MmaCarrier::F64, MmaCarrier::F64],
+        )
+    }
+}
+
 pub(super) fn register(ctx: &mut Context) {
     RegisterMmaShapeAttr::register(ctx);
     RegisterMmaOperationAttr::register(ctx);
@@ -1612,4 +1860,9 @@ pub(super) fn register(ctx: &mut Context) {
     RegisterMmaLayoutAttr::register(ctx);
     RegisterMmaOverflowAttr::register(ctx);
     RegisterMmaOp::register(ctx);
+    MmaM16N8K16F32Bf16Op::register(ctx);
+    MmaM16N8K16F32F16Op::register(ctx);
+    MmaM16N8K32S32S8Op::register(ctx);
+    MmaM16N8K8F32Tf32Op::register(ctx);
+    MmaM8N8K4F64Op::register(ctx);
 }
