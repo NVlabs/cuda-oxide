@@ -541,20 +541,25 @@ run_cargo() {
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
         local instruction_re='mma\.sp::ordered_metadata\.sync\.aligned\.m16n8k64\.row\.col\.kind::f8f6f4\.f32\.[[:alnum:]]+\.[[:alnum:]]+\.f32'
         local fp8_re='cvt\.rn\.satfinite(\.relu)?\.(e4m3x2|e5m2x2)\.f32'
+        local tf32_re='cvt\.(rna|rn|rz)(\.relu)?(\.satfinite)?\.tf32\.f32'
         local instruction_count unique_instruction_count
         local fp8_count unique_fp8_count
+        local tf32_count unique_tf32_count
         instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
         unique_instruction_count="$(grep -oE "${instruction_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
         fp8_count="$(grep -oE "${fp8_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
         unique_fp8_count="$(grep -oE "${fp8_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
+        tf32_count="$(grep -oE "${tf32_re}" "${llvm_ptx}" 2>/dev/null | wc -l)"
+        unique_tf32_count="$(grep -oE "${tf32_re}" "${llvm_ptx}" 2>/dev/null | sort -u | wc -l)"
         if [[ ! -s "${llvm_ptx}" ]] \
             || ! grep -qx '\.version 8\.7' "${llvm_ptx}" \
             || ! grep -qx '\.target sm_120a' "${llvm_ptx}" \
             || [[ ${instruction_count} -ne 25 || ${unique_instruction_count} -ne 25 ]] \
-            || [[ ${fp8_count} -ne 4 || ${unique_fp8_count} -ne 4 ]]; then
-            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 f8f6f4 and 4 FP8 instructions\n' >>"${log}"
+            || [[ ${fp8_count} -ne 4 || ${unique_fp8_count} -ne 4 ]] \
+            || [[ ${tf32_count} -ne 10 || ${unique_tf32_count} -ne 10 ]]; then
+            printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 f8f6f4, 4 FP8, and 10 TF32 instructions\n' >>"${log}"
             if [[ ${VERBOSE} -eq 1 ]]; then
-                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 f8f6f4 and 4 FP8 instructions\n'
+                printf 'direct LLVM route did not emit exact PTX 8.7/sm_120a with 25 f8f6f4, 4 FP8, and 10 TF32 instructions\n'
             fi
             CARGO_EC=1
             return
@@ -571,15 +576,20 @@ run_cargo() {
         fi
         local nvvm_ll="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ll"
         local inline_fp8_re='call i16 asm "cvt\.rn\.satfinite(\.relu)?\.(e4m3x2|e5m2x2)\.f32 \$0, \$2, \$1;", "=h,f,f"'
+        local inline_tf32_re='call i32 asm "cvt\.(rna|rn|rz)(\.relu)?(\.satfinite)?\.tf32\.f32 \$0, \$1;", "=r,f"'
         local inline_fp8_count unique_inline_fp8_count
+        local inline_tf32_count unique_inline_tf32_count
         inline_fp8_count="$(grep -oE "${inline_fp8_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
         unique_inline_fp8_count="$(grep -oE "${inline_fp8_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
+        inline_tf32_count="$(grep -oE "${inline_tf32_re}" "${nvvm_ll}" 2>/dev/null | wc -l)"
+        unique_inline_tf32_count="$(grep -oE "${inline_tf32_re}" "${nvvm_ll}" 2>/dev/null | sort -u | wc -l)"
         if [[ ! -s "${nvvm_ll}" ]] \
             || [[ ${inline_fp8_count} -ne 4 || ${unique_inline_fp8_count} -ne 4 ]] \
-            || grep -q 'llvm\.nvvm\.ff\.to\.' "${nvvm_ll}"; then
-            printf 'libNVVM route did not emit exactly 4 unique ordered FP8 inline-PTX calls\n' >>"${log}"
+            || [[ ${inline_tf32_count} -ne 10 || ${unique_inline_tf32_count} -ne 10 ]] \
+            || grep -qE 'llvm\.nvvm\.(ff\.to\.|f2tf32)' "${nvvm_ll}"; then
+            printf 'libNVVM route did not emit exactly 4 unique ordered FP8 and 10 unique TF32 inline-PTX calls\n' >>"${log}"
             if [[ ${VERBOSE} -eq 1 ]]; then
-                printf 'libNVVM route did not emit exactly 4 unique ordered FP8 inline-PTX calls\n'
+                printf 'libNVVM route did not emit exactly 4 unique ordered FP8 and 10 unique TF32 inline-PTX calls\n'
             fi
             CARGO_EC=1
         fi
@@ -618,6 +628,16 @@ run_cargo() {
     else
         cargo oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
+    fi
+    if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "standalone_device_fn" ]]; then
+        local ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local tf32_count
+        tf32_count="$(grep -oF 'cvt.rna.tf32.f32' "${ptx}" 2>/dev/null | wc -l)"
+        if [[ ! -s "${ptx}" || ${tf32_count} -ne 6 ]] \
+            || grep -qE '(\.extern.*f2tf32|call[^;]*f2tf32)' "${ptx}"; then
+            printf 'standalone_device_fn did not emit exactly 6 direct generated TF32 conversions\n' >>"${log}"
+            CARGO_EC=1
+        fi
     fi
     if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "cluster" ]]; then
         local ptx="crates/rustc-codegen-cuda/examples/cluster/cluster.ptx"

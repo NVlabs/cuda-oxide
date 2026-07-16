@@ -2576,3 +2576,73 @@ status = "active"
 catalog_id = "elect_sync"
 operation_key = "warp.elect.sync"
 raw_rust_signature = { safe = false, arguments = ["u32"], result = "(u32, bool)" }
+
+[[entry]]
+abi_id = "i0368"
+status = "active"
+catalog_id = "cvt_rna_tf32_f32"
+operation_key = "convert.f32.tf32.rna"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0369"
+status = "active"
+catalog_id = "cvt_rna_satfinite_tf32_f32"
+operation_key = "convert.f32.tf32.rna.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0370"
+status = "active"
+catalog_id = "cvt_rn_tf32_f32"
+operation_key = "convert.f32.tf32.rn"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0371"
+status = "active"
+catalog_id = "cvt_rn_relu_tf32_f32"
+operation_key = "convert.f32.tf32.rn.relu"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0372"
+status = "active"
+catalog_id = "cvt_rn_satfinite_tf32_f32"
+operation_key = "convert.f32.tf32.rn.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0373"
+status = "active"
+catalog_id = "cvt_rn_relu_satfinite_tf32_f32"
+operation_key = "convert.f32.tf32.rn.relu.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0374"
+status = "active"
+catalog_id = "cvt_rz_tf32_f32"
+operation_key = "convert.f32.tf32.rz"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0375"
+status = "active"
+catalog_id = "cvt_rz_relu_tf32_f32"
+operation_key = "convert.f32.tf32.rz.relu"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0376"
+status = "active"
+catalog_id = "cvt_rz_satfinite_tf32_f32"
+operation_key = "convert.f32.tf32.rz.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0377"
+status = "active"
+catalog_id = "cvt_rz_relu_satfinite_tf32_f32"
+operation_key = "convert.f32.tf32.rz.relu.satfinite"
+raw_rust_signature = { safe = true, arguments = ["f32"], result = "u32" }

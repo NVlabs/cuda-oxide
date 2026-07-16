@@ -164,6 +164,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub packed_conversion_fp8: Option<PackedConversionFp8Admission>,
     #[serde(default)]
+    pub scalar_conversion: Option<ScalarConversionAdmission>,
+    #[serde(default)]
     pub cluster_sreg: Option<ClusterSregAdmission>,
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrierAdmission>,
@@ -538,6 +540,26 @@ pub struct PackedConversionFp8Admission {
     pub product_count: usize,
 }
 
+/// Compact admission for scalar F32-to-TF32 conversions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarConversionAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ScalarConversionAdmissionVariant>,
+}
+
+/// One reviewed scalar conversion variant.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarConversionAdmissionVariant {
+    pub abi_id: String,
+    pub rounding: ScalarConversionRounding,
+    pub saturation: ScalarConversionSaturation,
+}
+
 /// Compact admission for a closed dense integer register-MMA family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -686,6 +708,8 @@ pub struct OverlayIntrinsic {
     pub packed_alu: Option<PackedAlu>,
     #[serde(default)]
     pub packed_conversion: Option<PackedConversion>,
+    #[serde(default)]
+    pub scalar_conversion: Option<ScalarConversion>,
     #[serde(default)]
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default)]
@@ -1885,6 +1909,60 @@ pub enum PackedConversionAdapter {
     ReverseHighLowOperands,
 }
 
+/// Closed contract for one scalar floating-point conversion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarConversion {
+    pub source_format: ScalarConversionSourceFormat,
+    pub destination_format: ScalarConversionDestinationFormat,
+    pub rounding: ScalarConversionRounding,
+    pub saturation: ScalarConversionSaturation,
+    pub result_representation: ScalarConversionResultRepresentation,
+    pub adapter: ScalarConversionAdapter,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarConversionSourceFormat {
+    F32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarConversionDestinationFormat {
+    Tf32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarConversionRounding {
+    NearestAway,
+    NearestEven,
+    TowardZero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarConversionSaturation {
+    None,
+    Relu,
+    Satfinite,
+    ReluSatfinite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarConversionResultRepresentation {
+    RawU32Bits,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarConversionAdapter {
+    DirectF32ToRawU32Bits,
+}
+
 /// Closed contract for classic global-to-shared `cp.async` copies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2341,6 +2419,8 @@ pub struct CatalogIntrinsic {
     pub packed_alu: Option<PackedAlu>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packed_conversion: Option<PackedConversion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scalar_conversion: Option<ScalarConversion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

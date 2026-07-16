@@ -19,9 +19,10 @@ use crate::model::{
     PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
     PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
     RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation, SparseMma,
-    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
-    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape, RuntimeValidation,
+    ScalarConversionRounding, ScalarConversionSaturation, SparseMma, SparseMmaAccumulator,
+    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout,
+    SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
     SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
     StmatrixLayout, StmatrixMultiplicity, Tcgen05Adapter, Tcgen05Operation, Tcgen05SourceContract,
     TmaAdapter, TmaOperation, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter,
@@ -243,6 +244,12 @@ pub fn all_outputs(
         "crates/dialect-nvvm/src/ops/generated/packed_conversion.rs".into(),
         render_dialect_packed_conversion(catalog, catalog_sha256),
     );
+    if scalar_conversions(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/scalar_conversion.rs".into(),
+            render_dialect_scalar_conversion(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/prmt.rs".into(),
         render_dialect_prmt(catalog, catalog_sha256),
@@ -651,6 +658,21 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                             )
                     }),
                 "{} is outside the closed generated packed-conversion recipe",
+                record.id
+            ),
+            "scalar_conversion" => ensure!(
+                record.rust.module == "convert"
+                    && record.rust.arguments == ["f32"]
+                    && record.rust.result == "u32"
+                    && record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.op_type == "ScalarConversionOp"
+                    && record.dialect.op_name == "nvvm.scalar_conversion"
+                    && record.dialect.operands == ["f32"]
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_scalar_conversion"
+                    && record.scalar_conversion.is_some(),
+                "{} is outside the closed generated scalar-conversion recipe",
                 record.id
             ),
             "prmt" => ensure!(
@@ -1604,6 +1626,50 @@ fn packed_conversions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
         .intrinsics
         .iter()
         .filter(|record| record.family == "packed_conversion")
+}
+
+fn scalar_conversions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "scalar_conversion")
+}
+
+fn scalar_conversion_rounding_attr(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .scalar_conversion
+        .as_ref()
+        .expect("scalar-conversion contract")
+        .rounding
+    {
+        ScalarConversionRounding::NearestAway => "ScalarConversionRoundingAttr::NearestAway",
+        ScalarConversionRounding::NearestEven => "ScalarConversionRoundingAttr::NearestEven",
+        ScalarConversionRounding::TowardZero => "ScalarConversionRoundingAttr::TowardZero",
+    }
+}
+
+fn scalar_conversion_saturation_attr(record: &CatalogIntrinsic) -> &'static str {
+    match record
+        .scalar_conversion
+        .as_ref()
+        .expect("scalar-conversion contract")
+        .saturation
+    {
+        ScalarConversionSaturation::None => "ScalarConversionSaturationAttr::None",
+        ScalarConversionSaturation::Relu => "ScalarConversionSaturationAttr::Relu",
+        ScalarConversionSaturation::Satfinite => "ScalarConversionSaturationAttr::Satfinite",
+        ScalarConversionSaturation::ReluSatfinite => {
+            "ScalarConversionSaturationAttr::ReluSatfinite"
+        }
+    }
+}
+
+fn scalar_conversion_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
+    format!(
+        "{}.{}",
+        record.expected_ptx.mnemonic,
+        record.expected_ptx.modifiers.join(".")
+    )
 }
 
 fn prmts(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -4455,6 +4521,26 @@ fn render_compat_packed_conversion(
         .unwrap();
         output.push_str("}\n\n");
     }
+    if containing_module == "convert" {
+        for record in scalar_conversions(catalog) {
+            let path = record
+                .rust
+                .compatibility_paths
+                .iter()
+                .find(|path| path.starts_with("cuda_device::convert::"))
+                .expect("scalar-conversion compatibility path");
+            writeln!(output, "/// {}", record.summary).unwrap();
+            output.push_str("#[must_use]\n#[inline(never)]\n");
+            writeln!(output, "pub fn {}(value: f32) -> u32 {{", record.rust.name).unwrap();
+            output.push_str("    let _ = value;\n");
+            writeln!(
+                output,
+                "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+            )
+            .unwrap();
+            output.push_str("}\n\n");
+        }
+    }
     output
 }
 
@@ -4463,6 +4549,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         "mod active_mask;\nmod cluster_barrier;\nmod cp_async;\nmod dotprod;\nmod ldmatrix;\nmod mbarrier_basic;\nmod movmatrix;\nmod packed_alu;\nmod packed_atomic;\nmod packed_conversion;\nmod prmt;\nmod redux;\nmod register_mma;\nmod sparse_mma;\nmod sreg;\nmod sync;\nmod vote;\nmod warp_barrier;\nmod warp_match;\nmod warp_shuffle;\n\npub use active_mask::*;\npub use cluster_barrier::*;\npub use cp_async::*;\npub use dotprod::*;\npub use ldmatrix::*;\npub use mbarrier_basic::*;\npub use movmatrix::*;\npub use packed_alu::*;\npub use packed_atomic::*;\npub use packed_conversion::*;\npub use prmt::*;\npub use redux::*;\npub use register_mma::*;\npub use sparse_mma::*;\npub use sreg::*;\npub use sync::*;\npub use vote::*;\npub use warp_barrier::*;\npub use warp_match::*;\npub use warp_shuffle::*;\n\nuse pliron::context::Context;\n\npub(super) fn register(ctx: &mut Context) {\n    active_mask::register(ctx);\n    cluster_barrier::register(ctx);\n    cp_async::register(ctx);\n    dotprod::register(ctx);\n    ldmatrix::register(ctx);\n    mbarrier_basic::register(ctx);\n    movmatrix::register(ctx);\n    packed_alu::register(ctx);\n    packed_atomic::register(ctx);\n    packed_conversion::register(ctx);\n    prmt::register(ctx);\n    redux::register(ctx);\n    register_mma::register(ctx);\n    sparse_mma::register(ctx);\n    sreg::register(ctx);\n    sync::register(ctx);\n    vote::register(ctx);\n    warp_barrier::register(ctx);\n    warp_match::register(ctx);\n    warp_shuffle::register(ctx);\n}\n",
     );
+    if scalar_conversions(catalog).next().is_some() {
+        output = output
+            .replace("mod redux;", "mod redux;\nmod scalar_conversion;")
+            .replace(
+                "pub use redux::*;",
+                "pub use redux::*;\npub use scalar_conversion::*;",
+            )
+            .replace(
+                "    redux::register(ctx);",
+                "    redux::register(ctx);\n    scalar_conversion::register(ctx);",
+            );
+    }
     if debug_controls(catalog).next().is_some() {
         output = output
             .replace("mod dotprod;", "mod debug_control;\nmod dotprod;")
@@ -6806,6 +6904,147 @@ fn render_dialect_packed_conversion(catalog: &CatalogFile, hash: &str) -> String
     output
 }
 
+fn render_dialect_scalar_conversion(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r##"//! One structural operation for generated `f32` to TF32 conversions.
+
+use pliron::{
+    attribute::Attribute,
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{FP32Type, IntegerType, Signedness},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.scalar_conversion_rounding", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarConversionRoundingAttr {
+    NearestAway,
+    NearestEven,
+    TowardZero,
+}
+
+#[pliron_attr(name = "nvvm.scalar_conversion_saturation", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarConversionSaturationAttr {
+    None,
+    Relu,
+    Satfinite,
+    ReluSatfinite,
+}
+
+/// Converts one `f32` value and returns the raw TF32 bits.
+#[pliron_op(
+    name = "nvvm.scalar_conversion",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<1>],
+    attributes = (
+        nvvm_scalar_conversion_rounding: ScalarConversionRoundingAttr,
+        nvvm_scalar_conversion_saturation: ScalarConversionSaturationAttr
+    )
+)]
+pub struct ScalarConversionOp;
+
+impl ScalarConversionOp {
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    pub fn build(
+        ctx: &mut Context,
+        value: Value,
+        rounding: ScalarConversionRoundingAttr,
+        saturation: ScalarConversionSaturationAttr,
+    ) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![value],
+            vec![],
+            0,
+        );
+        let this = Self { op };
+        this.set_attr_nvvm_scalar_conversion_rounding(ctx, rounding);
+        this.set_attr_nvvm_scalar_conversion_saturation(ctx, saturation);
+        this.get_operation()
+    }
+}
+
+impl Verify for ScalarConversionOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let Some(rounding) = self.get_attr_nvvm_scalar_conversion_rounding(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_conversion requires rounding");
+        };
+        let Some(saturation) = self.get_attr_nvvm_scalar_conversion_saturation(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_conversion requires saturation");
+        };
+        let admitted = matches!(
+            (&*rounding, &*saturation),
+"##,
+    );
+    for (index, record) in scalar_conversions(catalog).enumerate() {
+        if index != 0 {
+            output.push_str(" |\n");
+        }
+        writeln!(
+            output,
+            "            ({}, {})",
+            scalar_conversion_rounding_attr(record),
+            scalar_conversion_saturation_attr(record),
+        )
+        .unwrap();
+    }
+    output.push_str(
+        r##"        );
+        if !admitted {
+            return verify_err!(op.loc(), "nvvm.scalar_conversion variant is not admitted");
+        }
+        if !op
+            .get_operand(0)
+            .get_type(ctx)
+            .deref(ctx)
+            .downcast_ref::<FP32Type>()
+            .is_some()
+        {
+            return verify_err!(op.loc(), "nvvm.scalar_conversion operand must be f32");
+        }
+        if !op
+            .get_result(0)
+            .get_type(ctx)
+            .deref(ctx)
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 32)
+        {
+            return verify_err!(op.loc(), "nvvm.scalar_conversion result must be a 32-bit integer");
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    ScalarConversionRoundingAttr::register(ctx);
+    ScalarConversionSaturationAttr::register(ctx);
+    ScalarConversionOp::register(ctx);
+}
+"##,
+    );
+    output
+}
+
 fn render_dialect_prmt(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -7491,6 +7730,49 @@ fn render_importer_pure_value_dispatch(
     output.push_str("        }\n");
 }
 
+fn render_importer_scalar_conversion_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    output.push_str(
+        "            require_arity(name, args.len(), 1, &loc)?;\n\
+                     let (value, last_op) = rvalue::translate_operand(\n\
+                         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n\
+                     )?;\n",
+    );
+    writeln!(
+        output,
+        "            let intrinsic = ScalarConversionOp::build(ctx, value, {}, {});",
+        scalar_conversion_rounding_attr(record),
+        scalar_conversion_saturation_attr(record),
+    )
+    .unwrap();
+    output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+    writeln!(
+        output,
+        "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    output.push_str(
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+                     let result = intrinsic.deref(ctx).get_result(0);\n",
+    );
+    writeln!(
+        output,
+        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        format!("{} call without target block", record.rust.name)
+    )
+    .unwrap();
+    output.push_str("        }\n");
+}
+
 fn render_importer_elect_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -7592,6 +7874,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     if prmts(catalog).next().is_some() {
         output.push_str(", PrmtModeAttr, PrmtOp");
+    }
+    if scalar_conversions(catalog).next().is_some() {
+        output.push_str(
+            ", ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr",
+        );
     }
     if cluster_barriers(catalog).next().is_some() {
         output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp");
@@ -8426,6 +8713,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     for record in packed_conversions(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
+    }
+    for record in scalar_conversions(catalog) {
+        render_importer_scalar_conversion_dispatch(&mut output, catalog, record);
     }
     for record in movmatrix(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
@@ -9783,6 +10073,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_s2g}, warp::{",
         );
     }
+    if scalar_conversions(catalog).next().is_some() {
+        output = output.replace(
+            "prmt::convert_generated_prmt, ",
+            "prmt::convert_generated_prmt, scalar_conversion::convert_generated_scalar_conversion, ",
+        );
+    }
     if elect_intrinsics(catalog).next().is_some() {
         output = output.replace(
             "warp::{convert_active_mask,",
@@ -9825,6 +10121,11 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     }
     if prmts(catalog).next().is_some() {
         output.push_str(", PrmtModeAttr, PrmtOp");
+    }
+    if scalar_conversions(catalog).next().is_some() {
+        output.push_str(
+            ", ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr",
+        );
     }
     if cluster_barriers(catalog).next().is_some() {
         output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp, ClusterSyncOp");
@@ -10479,6 +10780,25 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.prmt mode has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_prmt(ctx, rewriter, self.get_operation(), recipe.0, recipe.1)\n    }\n}\n\n",
+        );
+    }
+    if scalar_conversions(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for ScalarConversionOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_scalar_conversion_rounding(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_conversion_saturation(ctx).as_deref(),\n        ) {\n",
+        );
+        for record in scalar_conversions(catalog) {
+            writeln!(
+                output,
+                "            (Some(&{}), Some(&{})) => ({:?}, {:?}),",
+                scalar_conversion_rounding_attr(record),
+                scalar_conversion_saturation_attr(record),
+                record.llvm_identifier(),
+                scalar_conversion_ptx_mnemonic(record),
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_conversion variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_conversion(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1,\n        )\n    }\n}\n\n",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -11509,6 +11829,30 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             layout(mma.b_layout),
         );
     }
+    if let Some(conversion) = &record.scalar_conversion {
+        let rounding = match conversion.rounding {
+            ScalarConversionRounding::NearestAway => {
+                "GeneratedScalarConversionRounding::NearestAway"
+            }
+            ScalarConversionRounding::NearestEven => {
+                "GeneratedScalarConversionRounding::NearestEven"
+            }
+            ScalarConversionRounding::TowardZero => "GeneratedScalarConversionRounding::TowardZero",
+        };
+        let saturation = match conversion.saturation {
+            ScalarConversionSaturation::None => "GeneratedScalarConversionSaturation::None",
+            ScalarConversionSaturation::Relu => "GeneratedScalarConversionSaturation::Relu",
+            ScalarConversionSaturation::Satfinite => {
+                "GeneratedScalarConversionSaturation::Satfinite"
+            }
+            ScalarConversionSaturation::ReluSatfinite => {
+                "GeneratedScalarConversionSaturation::ReluSatfinite"
+            }
+        };
+        return format!(
+            "GeneratedIntrinsicVariant::ScalarConversion {{ rounding: {rounding}, saturation: {saturation} }}"
+        );
+    }
     let Some(ldmatrix) = &record.ldmatrix else {
         return "GeneratedIntrinsicVariant::Scalar".to_owned();
     };
@@ -11590,12 +11934,12 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
     replace_exact_render_fragment(
         &mut output,
         "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedClusterBarrierMode { Arrive, ArriveAligned, ArriveRelaxed, ArriveRelaxedAligned, Wait, WaitAligned }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaShape { M16n8k32, M16n8k64, M16n8k128 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaAccumulator { F32, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaElement { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaMetadata { Standard, Ordered }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSparseMmaSelector { ImmediateZeroOrOne, ImmediateZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPrmtMode { Generic, F4e, B4e, Rc8, Ecl, Ecr, Rc16 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedClusterBarrierMode { Arrive, ArriveAligned, ArriveRelaxed, ArriveRelaxedAligned, Wait, WaitAligned }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarConversionRounding { NearestAway, NearestEven, TowardZero }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarConversionSaturation { None, Relu, Satfinite, ReluSatfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
     );
     replace_exact_render_fragment(
         &mut output,
         "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}",
-        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n    Prmt { mode: GeneratedPrmtMode },\n    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n}",
+        "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n    Prmt { mode: GeneratedPrmtMode },\n    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n}",
     );
     if wgmma_controls(catalog).next().is_some() {
         replace_exact_render_fragment(
@@ -11605,8 +11949,8 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         );
         replace_exact_render_fragment(
             &mut output,
-            "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n}",
-            "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    WgmmaControl { mode: GeneratedWgmmaControlMode },\n}",
+            "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n}",
+            "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n    WgmmaControl { mode: GeneratedWgmmaControlMode },\n}",
         );
     }
     for record in records.iter().copied() {
@@ -11742,6 +12086,26 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             "        GeneratedIntrinsicVariant::ClusterBarrier { mode } => {\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }\n        }\n        GeneratedIntrinsicVariant::WgmmaControl { mode } => match mode {\n            GeneratedWgmmaControlMode::Fence => Operation::get_op::<WgmmaFenceSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::CommitGroup => Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::WaitGroup => Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some(),\n        },\n    }\n}\n",
         );
     }
+    if scalar_conversions(catalog).next().is_some() {
+        let scalar_match = "        GeneratedIntrinsicVariant::ScalarConversion { rounding, saturation } => {\n            let Some(op) = Operation::get_op::<ScalarConversionOp>(operation, ctx) else { return false; };\n            let rounding_matches = match rounding {\n                GeneratedScalarConversionRounding::NearestAway => op.get_attr_nvvm_scalar_conversion_rounding(ctx).as_deref() == Some(&ScalarConversionRoundingAttr::NearestAway),\n                GeneratedScalarConversionRounding::NearestEven => op.get_attr_nvvm_scalar_conversion_rounding(ctx).as_deref() == Some(&ScalarConversionRoundingAttr::NearestEven),\n                GeneratedScalarConversionRounding::TowardZero => op.get_attr_nvvm_scalar_conversion_rounding(ctx).as_deref() == Some(&ScalarConversionRoundingAttr::TowardZero),\n            };\n            let saturation_matches = match saturation {\n                GeneratedScalarConversionSaturation::None => op.get_attr_nvvm_scalar_conversion_saturation(ctx).as_deref() == Some(&ScalarConversionSaturationAttr::None),\n                GeneratedScalarConversionSaturation::Relu => op.get_attr_nvvm_scalar_conversion_saturation(ctx).as_deref() == Some(&ScalarConversionSaturationAttr::Relu),\n                GeneratedScalarConversionSaturation::Satfinite => op.get_attr_nvvm_scalar_conversion_saturation(ctx).as_deref() == Some(&ScalarConversionSaturationAttr::Satfinite),\n                GeneratedScalarConversionSaturation::ReluSatfinite => op.get_attr_nvvm_scalar_conversion_saturation(ctx).as_deref() == Some(&ScalarConversionSaturationAttr::ReluSatfinite),\n            };\n            rounding_matches && saturation_matches\n        }\n";
+        if wgmma_controls(catalog).next().is_some() {
+            replace_exact_render_fragment(
+                &mut output,
+                "        GeneratedIntrinsicVariant::WgmmaControl { mode } => match mode {\n            GeneratedWgmmaControlMode::Fence => Operation::get_op::<WgmmaFenceSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::CommitGroup => Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::WaitGroup => Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some(),\n        },\n    }\n}\n",
+                &format!(
+                    "        GeneratedIntrinsicVariant::WgmmaControl {{ mode }} => match mode {{\n            GeneratedWgmmaControlMode::Fence => Operation::get_op::<WgmmaFenceSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::CommitGroup => Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::WaitGroup => Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some(),\n        }},\n{scalar_match}    }}\n}}\n"
+                ),
+            );
+        } else {
+            replace_exact_render_fragment(
+                &mut output,
+                "        GeneratedIntrinsicVariant::ClusterBarrier { mode } => {\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }\n        }\n    }\n}\n",
+                &format!(
+                    "        GeneratedIntrinsicVariant::ClusterBarrier {{ mode }} => {{\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else {{ return false; }};\n            match mode {{\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }}\n        }}\n{scalar_match}    }}\n}}\n"
+                ),
+            );
+        }
+    }
     output.push_str(
         "\nuse dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
@@ -11750,6 +12114,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             &mut output,
             "SparseMmaSelectorAttr, SparseMmaShapeAttr};",
             "SparseMmaSelectorAttr, SparseMmaShapeAttr, WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp};",
+        );
+    }
+    if scalar_conversions(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr",
+            "ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr",
         );
     }
     output.push_str(
@@ -13179,6 +13550,17 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         writeln!(output, "  ret {result_ty} %result\n}}\n").unwrap();
+    } else if record.scalar_conversion.is_some() {
+        writeln!(output, "declare i32 @{}(float)", llvm(record).symbol).unwrap();
+        output.push('\n');
+        writeln!(output, "define i32 @probe_{}(float %value) {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call i32 @{}(float %value)",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n");
     } else if let Some(width) = record.scalar_width() {
         writeln!(output, "declare i{width} @{}()", llvm(record).symbol).unwrap();
         output.push('\n');
@@ -13384,6 +13766,16 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             )
             .unwrap();
         }
+    }
+    output.push_str("\n## Scalar TF32-conversion contract\n\n");
+    for record in scalar_conversions(catalog) {
+        writeln!(
+            output,
+            "- `{}` converts one `f32` value to raw TF32 bits with `{}`. LLVM-NVPTX uses the typed intrinsic; libNVVM uses pure inline PTX so the native target floor is preserved.",
+            record.id,
+            scalar_conversion_ptx_mnemonic(record),
+        )
+        .unwrap();
     }
     output.push_str("\n## Warp vote contracts\n\n");
     for record in vote_intrinsics(catalog) {
@@ -14496,6 +14888,89 @@ mod tests {
                 .contains("pub fn cvt_rn_satfinite_relu_e5m2x2_f32(lo: f32, hi: f32) -> u16")
         );
         assert!(!compatibility.contains("cvt_f32x2_bf16x2"));
+    }
+
+    #[test]
+    fn scalar_tf32_conversions_render_one_exact_attribute_carrier() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let records = scalar_conversions(&catalog).collect::<Vec<_>>();
+        assert_eq!(records.len(), 10);
+
+        for record in &records {
+            assert_eq!(record.rust.arguments, ["f32"]);
+            assert_eq!(record.rust.result, "u32");
+            assert!(record.backend_lowerings.iter().any(|lowering| {
+                lowering.backend == IntrinsicBackend::LlvmNvptx
+                    && lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+            }));
+            assert!(record.backend_lowerings.iter().any(|lowering| {
+                lowering.backend == IntrinsicBackend::LibNvvm
+                    && lowering.mechanism == BackendLoweringMechanism::InlinePtx
+            }));
+        }
+
+        let dialect = render_dialect_scalar_conversion(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct ScalarConversionOp;").count(), 1);
+        assert!(dialect.contains("pub enum ScalarConversionRoundingAttr"));
+        assert!(dialect.contains("pub enum ScalarConversionSaturationAttr"));
+        assert_eq!(
+            dialect
+                .matches("ScalarConversionOp::register(ctx);")
+                .count(),
+            1
+        );
+        for record in &records {
+            assert!(dialect.contains(scalar_conversion_rounding_attr(record)));
+            assert!(dialect.contains(scalar_conversion_saturation_attr(record)));
+        }
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert_eq!(
+            importer
+                .matches("let intrinsic = ScalarConversionOp::build")
+                .count(),
+            10
+        );
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for ScalarConversionOp")
+                .count(),
+            1
+        );
+        for record in &records {
+            assert!(lowering.contains(&record.llvm_identifier()));
+            assert!(lowering.contains(&scalar_conversion_ptx_mnemonic(record)));
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains(&format!("declare i32 @{}(float)", llvm(record).symbol)));
+        }
+
+        let targets = render_targets(&catalog, "test-hash");
+        let production_targets = targets.split("\n#[cfg(test)]").next().unwrap();
+        assert_eq!(
+            production_targets
+                .matches("GeneratedIntrinsicVariant::ScalarConversion {")
+                .count(),
+            11
+        );
+        assert!(targets.contains("Operation::get_op::<ScalarConversionOp>"));
+        assert!(targets.contains("GeneratedScalarConversionRounding::NearestAway"));
+        assert!(targets.contains("GeneratedScalarConversionSaturation::ReluSatfinite"));
+
+        let compatibility = render_compat_packed_conversion(
+            &catalog,
+            "test-hash",
+            "cuda_device::convert::",
+            "convert",
+            ("lo", "hi"),
+        );
+        assert!(compatibility.contains("pub fn cvt_rna_tf32_f32(value: f32) -> u32"));
+        assert!(compatibility.contains("pub fn cvt_rz_relu_satfinite_tf32_f32(value: f32) -> u32"));
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub fn i0368(_arg0: f32) -> u32"));
+        assert!(raw.contains("pub fn i0377(_arg0: f32) -> u32"));
     }
 
     #[test]
@@ -15694,7 +16169,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 367);
+        assert_eq!(catalog.intrinsics.len(), 377);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

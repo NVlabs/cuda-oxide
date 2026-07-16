@@ -4411,6 +4411,286 @@ fn test_fp8_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow
     Ok(())
 }
 
+const SCALAR_CONVERSION_INTRINSICS: [&str; 10] = [
+    "llvm_nvvm_f2tf32_rna",
+    "llvm_nvvm_f2tf32_rna_satfinite",
+    "llvm_nvvm_f2tf32_rn",
+    "llvm_nvvm_f2tf32_rn_relu",
+    "llvm_nvvm_f2tf32_rn_satfinite",
+    "llvm_nvvm_f2tf32_rn_relu_satfinite",
+    "llvm_nvvm_f2tf32_rz",
+    "llvm_nvvm_f2tf32_rz_relu",
+    "llvm_nvvm_f2tf32_rz_satfinite",
+    "llvm_nvvm_f2tf32_rz_relu_satfinite",
+];
+
+const SCALAR_CONVERSION_PTX: [&str; 10] = [
+    "cvt.rna.tf32.f32 $0, $1;",
+    "cvt.rna.satfinite.tf32.f32 $0, $1;",
+    "cvt.rn.tf32.f32 $0, $1;",
+    "cvt.rn.relu.tf32.f32 $0, $1;",
+    "cvt.rn.satfinite.tf32.f32 $0, $1;",
+    "cvt.rn.relu.satfinite.tf32.f32 $0, $1;",
+    "cvt.rz.tf32.f32 $0, $1;",
+    "cvt.rz.relu.tf32.f32 $0, $1;",
+    "cvt.rz.satfinite.tf32.f32 $0, $1;",
+    "cvt.rz.relu.satfinite.tf32.f32 $0, $1;",
+];
+
+fn lower_all_scalar_conversions(
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::builtin::types::FP32Type;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into()]);
+    let value = entry.deref(&ctx).get_argument(0);
+
+    let variants = [
+        (
+            nvvm::ScalarConversionRoundingAttr::NearestAway,
+            nvvm::ScalarConversionSaturationAttr::None,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::NearestAway,
+            nvvm::ScalarConversionSaturationAttr::Satfinite,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::NearestEven,
+            nvvm::ScalarConversionSaturationAttr::None,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::NearestEven,
+            nvvm::ScalarConversionSaturationAttr::Relu,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::NearestEven,
+            nvvm::ScalarConversionSaturationAttr::Satfinite,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::NearestEven,
+            nvvm::ScalarConversionSaturationAttr::ReluSatfinite,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::TowardZero,
+            nvvm::ScalarConversionSaturationAttr::None,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::TowardZero,
+            nvvm::ScalarConversionSaturationAttr::Relu,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::TowardZero,
+            nvvm::ScalarConversionSaturationAttr::Satfinite,
+        ),
+        (
+            nvvm::ScalarConversionRoundingAttr::TowardZero,
+            nvvm::ScalarConversionSaturationAttr::ReluSatfinite,
+        ),
+    ];
+    for (rounding, saturation) in variants {
+        nvvm::ScalarConversionOp::build(&mut ctx, value, rounding, saturation)
+            .insert_at_back(entry, &ctx);
+    }
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_scalar_conversions_llvm_nvptx_use_exact_typed_calls() -> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+    use pliron::builtin::types::{FP32Type, IntegerType};
+
+    let (ctx, module_ptr) = lower_all_scalar_conversions(mir_lower::IntrinsicBackend::LlvmNvptx)?;
+    let mut calls = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        assert!(
+            Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_none(),
+            "LLVM-NVPTX scalar conversions must use typed intrinsics"
+        );
+        let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx) else {
+            continue;
+        };
+        let CallOpCallable::Direct(callee) = call.callee(&ctx) else {
+            continue;
+        };
+        let callee = callee.to_string();
+        if !SCALAR_CONVERSION_INTRINSICS.contains(&callee.as_str()) {
+            continue;
+        }
+
+        let call_op = call.get_operation();
+        assert_eq!(call_op.deref(&ctx).get_num_operands(), 1, "{callee}");
+        assert_eq!(call_op.deref(&ctx).get_num_results(), 1, "{callee}");
+        let block = call_op.deref(&ctx).get_parent_block().unwrap();
+        assert_eq!(
+            call_op.deref(&ctx).get_operand(0),
+            block.deref(&ctx).get_argument(0),
+            "{callee} source operand"
+        );
+
+        let function_ty = call.callee_type(&ctx);
+        let function_ty = function_ty.deref(&ctx);
+        let function_ty = function_ty
+            .downcast_ref::<llvm_types::FuncType>()
+            .expect("scalar conversion callee has an LLVM function type");
+        assert_eq!(function_ty.arg_types().len(), 1, "{callee}");
+        assert!(
+            function_ty.arg_types()[0]
+                .deref(&ctx)
+                .downcast_ref::<FP32Type>()
+                .is_some(),
+            "{callee} source type"
+        );
+        assert_eq!(
+            function_ty
+                .result_type()
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("scalar conversion result is an integer")
+                .width(),
+            32,
+            "{callee} result type"
+        );
+        calls.push(callee);
+    }
+    calls.sort();
+    let mut expected = SCALAR_CONVERSION_INTRINSICS.map(str::to_owned);
+    expected.sort();
+    assert_eq!(calls, expected);
+
+    let module_region = module_ptr.deref(&ctx).get_region(0);
+    let module_block = module_region.deref(&ctx).iter(&ctx).next().unwrap();
+    let mut declarations: Vec<_> = module_block
+        .deref(&ctx)
+        .iter(&ctx)
+        .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, &ctx))
+        .map(|func| func.get_symbol_name(&ctx).to_string())
+        .filter(|name| SCALAR_CONVERSION_INTRINSICS.contains(&name.as_str()))
+        .collect();
+    declarations.sort();
+    assert_eq!(declarations, expected);
+    Ok(())
+}
+
+#[test]
+fn test_scalar_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    let (ctx, module_ptr) = lower_all_scalar_conversions(mir_lower::IntrinsicBackend::LibNvvm)?;
+    let mut templates = Vec::new();
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
+            && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+        {
+            assert!(
+                !SCALAR_CONVERSION_INTRINSICS.contains(&callee.to_string().as_str()),
+                "libNVVM scalar conversions must not use typed intrinsics"
+            );
+        }
+        let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+        let template = inline_asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+        assert!(
+            SCALAR_CONVERSION_PTX.contains(&template.as_str()),
+            "unexpected scalar conversion template `{template}`"
+        );
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("=r,f"),
+            "{template}"
+        );
+        assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_convergent(&ctx)
+                .map(|value| bool::from((*value).clone())),
+            Some(false),
+            "{template}"
+        );
+
+        let asm_op = inline_asm.get_operation();
+        assert_eq!(asm_op.deref(&ctx).get_num_operands(), 1, "{template}");
+        assert_eq!(asm_op.deref(&ctx).get_num_results(), 1, "{template}");
+        let block = asm_op.deref(&ctx).get_parent_block().unwrap();
+        assert_eq!(
+            asm_op.deref(&ctx).get_operand(0),
+            block.deref(&ctx).get_argument(0),
+            "{template} source operand"
+        );
+        assert_eq!(
+            asm_op
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("scalar conversion result is an integer")
+                .width(),
+            32,
+            "{template} result type"
+        );
+        templates.push(template);
+    }
+    templates.sort();
+    let mut expected = SCALAR_CONVERSION_PTX.map(str::to_owned);
+    expected.sort();
+    assert_eq!(templates, expected);
+    Ok(())
+}
+
+#[test]
+fn test_scalar_conversion_invalid_variant_fails_closed() {
+    use pliron::builtin::types::FP32Type;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![f32_ty.into()]);
+    let value = entry.deref(&ctx).get_argument(0);
+    nvvm::ScalarConversionOp::build(
+        &mut ctx,
+        value,
+        nvvm::ScalarConversionRoundingAttr::NearestAway,
+        nvvm::ScalarConversionSaturationAttr::Relu,
+    )
+    .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    let result = mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: mir_lower::IntrinsicBackend::LlvmNvptx,
+            ..Default::default()
+        },
+    );
+    let error = result.expect_err("unadmitted scalar conversion must not lower");
+    assert!(
+        error.to_string().contains("scalar_conversion"),
+        "unexpected error: {error}"
+    );
+}
+
 const STMATRIX_TYPED_INTRINSICS: [&str; 4] = [
     "llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_b16_p3",
     "llvm_nvvm_stmatrix_sync_aligned_m8n8_x2_trans_b16_p3",

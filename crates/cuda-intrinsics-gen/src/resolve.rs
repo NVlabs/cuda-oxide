@@ -37,8 +37,11 @@ use crate::model::{
     ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
     RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
     RegisterMmaIntegerAdmission, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
-    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator,
-    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, ScalarConversion,
+    ScalarConversionAdapter, ScalarConversionAdmission, ScalarConversionDestinationFormat,
+    ScalarConversionResultRepresentation, ScalarConversionRounding, ScalarConversionSaturation,
+    ScalarConversionSourceFormat, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
     SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
@@ -60,9 +63,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 39;
+const OVERLAY_SCHEMA: u32 = 40;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 42;
+const OVERLAY_SHARD_SCHEMA: u32 = 43;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -78,7 +81,8 @@ const TMA_SHARD_SCHEMA: u32 = 41;
 const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
-pub(crate) const CATALOG_SCHEMA: u32 = 38;
+const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
+pub(crate) const CATALOG_SCHEMA: u32 = 39;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -747,6 +751,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let sparse_mma_f8f6f4_admission = shard.sparse_mma_f8f6f4_f32.take();
         let prmt_admission = shard.prmt.take();
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
+        let scalar_conversion_admission = shard.scalar_conversion.take();
         let cluster_sreg_admission = shard.cluster_sreg.take();
         let cluster_barrier_admission = shard.cluster_barrier.take();
         let mbarrier_extended_admission = shard.mbarrier_extended.take();
@@ -815,6 +820,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact FP8 conversion admission must be the only content of a packed_conversion shard"
             );
             shard.intrinsics = expand_packed_conversion_fp8_admission(&admission)?;
+        }
+        if let Some(admission) = scalar_conversion_admission {
+            ensure!(
+                shard.family == "scalar_conversion" && shard.intrinsics.is_empty(),
+                "compact scalar-conversion admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_scalar_conversion_admission(&admission)?;
         }
         if let Some(admission) = cluster_sreg_admission {
             ensure!(
@@ -958,6 +970,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.packed_conversion_fp8.is_none() || shard.schema >= PACKED_CONVERSION_FP8_SHARD_SCHEMA,
         "compact FP8 conversion admission requires overlay shard schema {}",
         PACKED_CONVERSION_FP8_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.scalar_conversion.is_none() || shard.schema >= SCALAR_CONVERSION_SHARD_SCHEMA,
+        "compact scalar-conversion admission requires overlay shard schema {}",
+        SCALAR_CONVERSION_SHARD_SCHEMA
     );
     ensure!(
         shard.cluster_sreg.is_none() || shard.schema >= CLUSTER_SREG_SHARD_SCHEMA,
@@ -1109,7 +1126,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -1131,6 +1148,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.prmt,
             record.cluster_barrier,
             record.cluster_memory,
+            record.scalar_conversion,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -1533,6 +1551,10 @@ fn validate_policy(
         "warp_shuffle" => validate_warp_shuffle_policy(policy, declaration)?,
         "packed_alu" => validate_packed_alu_policy(policy, source, declaration)?,
         "packed_conversion" => validate_packed_conversion_policy(policy, source, declaration)?,
+        "scalar_conversion" => validate_scalar_conversion_policy(
+            policy,
+            declaration.context("scalar_conversion requires imported LLVM declaration")?,
+        )?,
         "cp_async_copy" => validate_cp_async_copy_policy(
             policy,
             declaration.context("cp_async_copy requires imported LLVM declaration")?,
@@ -1655,6 +1677,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "tcgen05") == policy.tcgen05.is_some(),
         "{} mixes the tcgen05 contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "scalar_conversion") == policy.scalar_conversion.is_some(),
+        "{} mixes the scalar-conversion contract with another generated family",
         policy.id
     );
     ensure!(
@@ -2333,6 +2360,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -2791,6 +2819,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -3385,6 +3414,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -4483,6 +4513,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -6678,6 +6709,7 @@ fn validate_selected_target_predicates(
             | "cp_async_control"
             | "mbarrier_basic"
             | "cluster_barrier"
+            | "scalar_conversion"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -7232,6 +7264,7 @@ fn expand_special_register_admission(
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -7864,6 +7897,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         dot_product: None,
         packed_alu: None,
         packed_conversion: None,
+        scalar_conversion: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -8793,6 +8827,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -11465,6 +11500,7 @@ fn packed_conversion_overlay_record(
         dot_product: None,
         packed_alu: None,
         packed_conversion: Some(conversion.clone()),
+        scalar_conversion: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -11633,6 +11669,474 @@ fn validate_packed_conversion_policy(
         );
     }
     ensure_no_other_family_contract(policy, "packed conversion")?;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ScalarConversionRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_name: &'static str,
+    selection_record: &'static str,
+    selection_asm: &'static str,
+    minimum_ptx: &'static str,
+    minimum_sm: &'static str,
+    ptx_modifiers: &'static [&'static str],
+}
+
+fn scalar_conversion_recipe(
+    rounding: ScalarConversionRounding,
+    saturation: ScalarConversionSaturation,
+) -> Option<ScalarConversionRecipe> {
+    use ScalarConversionRounding::{NearestAway, NearestEven, TowardZero};
+    use ScalarConversionSaturation::{None, Relu, ReluSatfinite, Satfinite};
+
+    Some(match (rounding, saturation) {
+        (NearestAway, None) => ScalarConversionRecipe {
+            id: "cvt_rna_tf32_f32",
+            abi_id: "i0368",
+            operation_key: "convert.f32.tf32.rna",
+            source_record: "int_nvvm_f2tf32_rna",
+            llvm_symbol: "llvm.nvvm.f2tf32.rna",
+            rust_name: "cvt_rna_tf32_f32",
+            selection_record: "CVT_to_tf32_rna",
+            selection_asm: "cvt.rna.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_modifiers: &["rna", "tf32", "f32"],
+        },
+        (NearestAway, Satfinite) => ScalarConversionRecipe {
+            id: "cvt_rna_satfinite_tf32_f32",
+            abi_id: "i0369",
+            operation_key: "convert.f32.tf32.rna.satfinite",
+            source_record: "int_nvvm_f2tf32_rna_satfinite",
+            llvm_symbol: "llvm.nvvm.f2tf32.rna.satfinite",
+            rust_name: "cvt_rna_satfinite_tf32_f32",
+            selection_record: "CVT_to_tf32_rna_satf",
+            selection_asm: "cvt.rna.satfinite.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "8.1",
+            minimum_sm: "sm_80",
+            ptx_modifiers: &["rna", "satfinite", "tf32", "f32"],
+        },
+        (NearestEven, None) => ScalarConversionRecipe {
+            id: "cvt_rn_tf32_f32",
+            abi_id: "i0370",
+            operation_key: "convert.f32.tf32.rn",
+            source_record: "int_nvvm_f2tf32_rn",
+            llvm_symbol: "llvm.nvvm.f2tf32.rn",
+            rust_name: "cvt_rn_tf32_f32",
+            selection_record: "CVT_to_tf32_rn",
+            selection_asm: "cvt.rn.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "7.8",
+            minimum_sm: "sm_90",
+            ptx_modifiers: &["rn", "tf32", "f32"],
+        },
+        (NearestEven, Relu) => ScalarConversionRecipe {
+            id: "cvt_rn_relu_tf32_f32",
+            abi_id: "i0371",
+            operation_key: "convert.f32.tf32.rn.relu",
+            source_record: "int_nvvm_f2tf32_rn_relu",
+            llvm_symbol: "llvm.nvvm.f2tf32.rn.relu",
+            rust_name: "cvt_rn_relu_tf32_f32",
+            selection_record: "CVT_to_tf32_rn_relu",
+            selection_asm: "cvt.rn.relu.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "7.8",
+            minimum_sm: "sm_90",
+            ptx_modifiers: &["rn", "relu", "tf32", "f32"],
+        },
+        (NearestEven, Satfinite) => ScalarConversionRecipe {
+            id: "cvt_rn_satfinite_tf32_f32",
+            abi_id: "i0372",
+            operation_key: "convert.f32.tf32.rn.satfinite",
+            source_record: "int_nvvm_f2tf32_rn_satfinite",
+            llvm_symbol: "llvm.nvvm.f2tf32.rn.satfinite",
+            rust_name: "cvt_rn_satfinite_tf32_f32",
+            selection_record: "CVT_to_tf32_rn_satf",
+            selection_asm: "cvt.rn.satfinite.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "8.6",
+            minimum_sm: "sm_100",
+            ptx_modifiers: &["rn", "satfinite", "tf32", "f32"],
+        },
+        (NearestEven, ReluSatfinite) => ScalarConversionRecipe {
+            id: "cvt_rn_relu_satfinite_tf32_f32",
+            abi_id: "i0373",
+            operation_key: "convert.f32.tf32.rn.relu.satfinite",
+            source_record: "int_nvvm_f2tf32_rn_relu_satfinite",
+            llvm_symbol: "llvm.nvvm.f2tf32.rn.relu.satfinite",
+            rust_name: "cvt_rn_relu_satfinite_tf32_f32",
+            selection_record: "CVT_to_tf32_rn_relu_satf",
+            selection_asm: "cvt.rn.relu.satfinite.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "8.6",
+            minimum_sm: "sm_100",
+            ptx_modifiers: &["rn", "relu", "satfinite", "tf32", "f32"],
+        },
+        (TowardZero, None) => ScalarConversionRecipe {
+            id: "cvt_rz_tf32_f32",
+            abi_id: "i0374",
+            operation_key: "convert.f32.tf32.rz",
+            source_record: "int_nvvm_f2tf32_rz",
+            llvm_symbol: "llvm.nvvm.f2tf32.rz",
+            rust_name: "cvt_rz_tf32_f32",
+            selection_record: "CVT_to_tf32_rz",
+            selection_asm: "cvt.rz.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "7.8",
+            minimum_sm: "sm_90",
+            ptx_modifiers: &["rz", "tf32", "f32"],
+        },
+        (TowardZero, Relu) => ScalarConversionRecipe {
+            id: "cvt_rz_relu_tf32_f32",
+            abi_id: "i0375",
+            operation_key: "convert.f32.tf32.rz.relu",
+            source_record: "int_nvvm_f2tf32_rz_relu",
+            llvm_symbol: "llvm.nvvm.f2tf32.rz.relu",
+            rust_name: "cvt_rz_relu_tf32_f32",
+            selection_record: "CVT_to_tf32_rz_relu",
+            selection_asm: "cvt.rz.relu.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "7.8",
+            minimum_sm: "sm_90",
+            ptx_modifiers: &["rz", "relu", "tf32", "f32"],
+        },
+        (TowardZero, Satfinite) => ScalarConversionRecipe {
+            id: "cvt_rz_satfinite_tf32_f32",
+            abi_id: "i0376",
+            operation_key: "convert.f32.tf32.rz.satfinite",
+            source_record: "int_nvvm_f2tf32_rz_satfinite",
+            llvm_symbol: "llvm.nvvm.f2tf32.rz.satfinite",
+            rust_name: "cvt_rz_satfinite_tf32_f32",
+            selection_record: "CVT_to_tf32_rz_satf",
+            selection_asm: "cvt.rz.satfinite.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "8.6",
+            minimum_sm: "sm_100",
+            ptx_modifiers: &["rz", "satfinite", "tf32", "f32"],
+        },
+        (TowardZero, ReluSatfinite) => ScalarConversionRecipe {
+            id: "cvt_rz_relu_satfinite_tf32_f32",
+            abi_id: "i0377",
+            operation_key: "convert.f32.tf32.rz.relu.satfinite",
+            source_record: "int_nvvm_f2tf32_rz_relu_satfinite",
+            llvm_symbol: "llvm.nvvm.f2tf32.rz.relu.satfinite",
+            rust_name: "cvt_rz_relu_satfinite_tf32_f32",
+            selection_record: "CVT_to_tf32_rz_relu_satf",
+            selection_asm: "cvt.rz.relu.satfinite.tf32.f32 \t$dst, $src;",
+            minimum_ptx: "8.6",
+            minimum_sm: "sm_100",
+            ptx_modifiers: &["rz", "relu", "satfinite", "tf32", "f32"],
+        },
+        _ => return Option::None,
+    })
+}
+
+fn expand_scalar_conversion_admission(
+    admission: &ScalarConversionAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "scalar-conversion runtime may be marked executed only with GPU evidence"
+    );
+    let expected = [
+        (
+            ScalarConversionRounding::NearestAway,
+            ScalarConversionSaturation::None,
+        ),
+        (
+            ScalarConversionRounding::NearestAway,
+            ScalarConversionSaturation::Satfinite,
+        ),
+        (
+            ScalarConversionRounding::NearestEven,
+            ScalarConversionSaturation::None,
+        ),
+        (
+            ScalarConversionRounding::NearestEven,
+            ScalarConversionSaturation::Relu,
+        ),
+        (
+            ScalarConversionRounding::NearestEven,
+            ScalarConversionSaturation::Satfinite,
+        ),
+        (
+            ScalarConversionRounding::NearestEven,
+            ScalarConversionSaturation::ReluSatfinite,
+        ),
+        (
+            ScalarConversionRounding::TowardZero,
+            ScalarConversionSaturation::None,
+        ),
+        (
+            ScalarConversionRounding::TowardZero,
+            ScalarConversionSaturation::Relu,
+        ),
+        (
+            ScalarConversionRounding::TowardZero,
+            ScalarConversionSaturation::Satfinite,
+        ),
+        (
+            ScalarConversionRounding::TowardZero,
+            ScalarConversionSaturation::ReluSatfinite,
+        ),
+    ];
+    let actual = admission
+        .variants
+        .iter()
+        .map(|variant| (variant.rounding, variant.saturation))
+        .collect::<Vec<_>>();
+    ensure!(
+        actual == expected,
+        "compact scalar-conversion admission must list the canonical ten variants"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = scalar_conversion_recipe(variant.rounding, variant.saturation)
+                .context("scalar conversion is outside the closed recipe set")?;
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must reserve ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            scalar_conversion_overlay_record(
+                recipe,
+                admission,
+                variant.rounding,
+                variant.saturation,
+            )
+        })
+        .collect()
+}
+
+fn scalar_conversion_overlay_record(
+    recipe: ScalarConversionRecipe,
+    admission: &ScalarConversionAdmission,
+    rounding: ScalarConversionRounding,
+    saturation: ScalarConversionSaturation,
+) -> Result<OverlayIntrinsic> {
+    Ok(OverlayIntrinsic {
+        id: recipe.id.into(),
+        abi_id: recipe.abi_id.into(),
+        operation_key: recipe.operation_key.into(),
+        family: "scalar_conversion".into(),
+        source: None,
+        source_record: Some(recipe.source_record.into()),
+        rust_module: "convert".into(),
+        rust_name: recipe.rust_name.into(),
+        rust_arguments: vec!["f32".into()],
+        rust_result: "u32".into(),
+        safe: true,
+        must_use: true,
+        safe_allowlist_reason: Some("This conversion has no caller obligations.".into()),
+        public_rust_path: format!("cuda_intrinsics::convert::{}", recipe.rust_name),
+        compatibility_rust_paths: vec![format!(
+            "cuda_device::convert::{}",
+            recipe.rust_name
+        )],
+        dialect_op_type: "ScalarConversionOp".into(),
+        dialect_op_name: "nvvm.scalar_conversion".into(),
+        dialect_operands: vec!["f32".into()],
+        dialect_results: vec!["i32".into()],
+        llvm_symbol: Some(recipe.llvm_symbol.into()),
+        resolved_llvm_symbol: None,
+        llvm_arguments: vec!["f32".into()],
+        llvm_results: vec!["i32".into()],
+        pure: true,
+        memory: "none".into(),
+        convergent: false,
+        execution_scope: "thread".into(),
+        minimum_ptx: recipe.minimum_ptx.into(),
+        minimum_sm: Some(recipe.minimum_sm.into()),
+        ptx_result: "u32".into(),
+        targets: "all".into(),
+        ptx_isa_version: "9.3".into(),
+        ptx_isa_section: "9.7.9.22 Data Movement and Conversion Instructions: cvt".into(),
+        ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cvt".into(),
+        lowering: "generated_scalar_conversion".into(),
+        backend_lowerings: [
+            (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
+            (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
+        ]
+        .into_iter()
+        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+            backend,
+            mechanism: match backend {
+                IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
+                IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+            },
+            evidence_profile: evidence_profile.clone(),
+            minimum_ptx: Some(recipe.minimum_ptx.into()),
+            minimum_sm: Some(recipe.minimum_sm.into()),
+        })
+        .collect(),
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        scalar_conversion: Some(ScalarConversion {
+            source_format: ScalarConversionSourceFormat::F32,
+            destination_format: ScalarConversionDestinationFormat::Tf32,
+            rounding,
+            saturation,
+            result_representation: ScalarConversionResultRepresentation::RawU32Bits,
+            adapter: ScalarConversionAdapter::DirectF32ToRawU32Bits,
+            runtime_validation: admission.runtime_validation,
+        }),
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        movmatrix: None,
+        mbarrier_extended: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        cluster_barrier: None,
+        wgmma_control: None,
+        special_register: None,
+        debug_control: None,
+        cluster_memory: None,
+        clc: None,
+        tma: None,
+        tcgen05: None,
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: InstructionPattern {
+            mnemonic: "cvt".into(),
+            modifiers: recipe.ptx_modifiers.iter().map(|value| (*value).into()).collect(),
+            operands: vec![OperandPattern::Register, OperandPattern::Register],
+        },
+        summary: format!(
+            "Converts one f32 value with {} and returns raw TF32 bits.",
+            recipe.ptx_modifiers[0]
+        ),
+    })
+}
+
+fn validate_scalar_conversion_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let conversion = policy
+        .scalar_conversion
+        .as_ref()
+        .with_context(|| format!("{} has no scalar-conversion contract", policy.id))?;
+    let recipe = scalar_conversion_recipe(conversion.rounding, conversion.saturation)
+        .with_context(|| {
+            format!(
+                "{} is outside the closed scalar-conversion recipe",
+                policy.id
+            )
+        })?;
+    ensure!(
+        conversion.source_format == ScalarConversionSourceFormat::F32
+            && conversion.destination_format == ScalarConversionDestinationFormat::Tf32
+            && conversion.result_representation == ScalarConversionResultRepresentation::RawU32Bits
+            && conversion.adapter == ScalarConversionAdapter::DirectF32ToRawU32Bits
+            && conversion.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} changed its scalar-conversion representation or adapter",
+        policy.id
+    );
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none()
+            && policy.llvm_arguments == ["f32"]
+            && policy.llvm_results == ["i32"],
+        "{} scalar-conversion identity or LLVM source changed",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == ["IntrNoMem", "IntrSpeculatable"]
+            && declaration.selections.len() == 1
+            && declaration.selections[0].source_record == recipe.selection_record
+            && declaration.selections[0].asm == recipe.selection_asm
+            && declaration.selections[0].constraints.is_empty(),
+        "{} imported scalar-conversion declaration or selection changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "convert"
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == ["f32"]
+            && policy.rust_result == "u32"
+            && policy.safe
+            && policy.must_use
+            && policy.compatibility_rust_paths
+                == [format!("cuda_device::convert::{}", recipe.rust_name)]
+            && policy.dialect_op_type == "ScalarConversionOp"
+            && policy.dialect_op_name == "nvvm.scalar_conversion"
+            && policy.dialect_operands == ["f32"]
+            && policy.dialect_results == ["i32"]
+            && policy.lowering == "generated_scalar_conversion",
+        "{} changed its scalar-conversion API, carrier, or lowering",
+        policy.id
+    );
+    ensure!(
+        policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
+            && policy.ptx_result == "u32"
+            && policy.targets == "all",
+        "{} scalar-conversion effects or target floor changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: "cvt".into(),
+                modifiers: recipe
+                    .ptx_modifiers
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                operands: vec![OperandPattern::Register, OperandPattern::Register],
+            },
+        "{} expected PTX changed",
+        policy.id
+    );
+    let expected_backends = [
+        (
+            IntrinsicBackend::LlvmNvptx,
+            BackendLoweringMechanism::TypedNvvm,
+        ),
+        (
+            IntrinsicBackend::LibNvvm,
+            BackendLoweringMechanism::InlinePtx,
+        ),
+    ];
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && expected_backends.into_iter().all(|(backend, mechanism)| {
+                policy.backend_lowerings.iter().any(|lowering| {
+                    lowering.backend == backend
+                        && lowering.mechanism == mechanism
+                        && lowering.minimum_ptx.as_deref() == Some(recipe.minimum_ptx)
+                        && lowering.minimum_sm.as_deref() == Some(recipe.minimum_sm)
+                        && !lowering.evidence_profile.trim().is_empty()
+                })
+            }),
+        "{} must define the typed LLVM and inline-PTX libNVVM routes",
+        policy.id
+    );
+    validate_selected_target_predicates(policy, &declaration.selections[0])?;
+    ensure_no_other_family_contract(policy, "scalar conversion")?;
     Ok(())
 }
 
@@ -12729,6 +13233,7 @@ fn expand_register_mma_integer_admission(
             dot_product: None,
             packed_alu: None,
             packed_conversion: None,
+            scalar_conversion: None,
             cp_async_copy: None,
             cp_async_control: None,
             cp_async_mbarrier: None,
@@ -12913,6 +13418,7 @@ fn expand_register_mma_binary_admission(
             dot_product: None,
             packed_alu: None,
             packed_conversion: None,
+            scalar_conversion: None,
             cp_async_copy: None,
             cp_async_control: None,
             cp_async_mbarrier: None,
@@ -13561,6 +14067,7 @@ fn sparse_mma_overlay_record(
         dot_product: None,
         packed_alu: None,
         packed_conversion: None,
+        scalar_conversion: None,
         cp_async_copy: None,
         cp_async_control: None,
         cp_async_mbarrier: None,
@@ -14005,6 +14512,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -14360,6 +14868,7 @@ fn expand_cluster_barrier_admission(
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -14793,6 +15302,7 @@ fn expand_debug_control_admission(
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -15167,6 +15677,7 @@ fn expand_cluster_memory_admission(
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -15993,6 +16504,7 @@ fn expand_mbarrier_extended_admission(
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -16247,6 +16759,7 @@ fn expand_wgmma_control_admission(
                 dot_product: None,
                 packed_alu: None,
                 packed_conversion: None,
+                scalar_conversion: None,
                 cp_async_copy: None,
                 cp_async_control: None,
                 cp_async_mbarrier: None,
@@ -16536,6 +17049,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && policy.selected_address_space.is_none()
             && (policy.family == "packed_alu") == policy.packed_alu.is_some()
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
+            && (policy.family == "scalar_conversion") == policy.scalar_conversion.is_some()
             && (policy.family == "cp_async_copy") == policy.cp_async_copy.is_some()
             && (policy.family == "cp_async_control") == policy.cp_async_control.is_some()
             && (policy.family == "cp_async_mbarrier") == policy.cp_async_mbarrier.is_some()
@@ -17417,6 +17931,7 @@ fn validate_evidence(
             validate_typed_llvm_evidence(policy, record)?;
         }
         validate_packed_conversion_backend_evidence(policy, record, lowering)?;
+        validate_scalar_conversion_backend_evidence(policy, record, lowering)?;
         validate_inline_ptx_fallback_evidence(policy, record, lowering)?;
         if lowering.backend == IntrinsicBackend::LlvmNvptx
             && matches!(record.status.as_str(), "validated" | "executed")
@@ -17543,6 +18058,37 @@ fn validate_packed_conversion_backend_evidence(
             Ok(())
         }
     }
+}
+
+fn validate_scalar_conversion_backend_evidence(
+    policy: &OverlayIntrinsic,
+    record: &EvidenceRecord,
+    lowering: &crate::model::OverlayBackendLowering,
+) -> Result<()> {
+    if policy.family != "scalar_conversion" {
+        return Ok(());
+    }
+    match lowering.backend {
+        IntrinsicBackend::LlvmNvptx => ensure!(
+            successful_stage(
+                record,
+                BackendLoweringMechanism::TypedNvvm,
+                EvidenceStageKind::DeclarationCanonicalization,
+            )
+            .is_some(),
+            "{} LLVM scalar-conversion evidence must canonicalize the typed declaration",
+            policy.id
+        ),
+        IntrinsicBackend::LibNvvm => ensure!(
+            record.resolved_llvm_symbol.is_none()
+                && record.concrete_llvm_arguments.is_empty()
+                && record.concrete_llvm_results.is_empty()
+                && record.declaration_attributes_canonicalized.is_none(),
+            "{} libNVVM scalar-conversion evidence must describe the selected inline-PTX route",
+            policy.id
+        ),
+    };
+    Ok(())
 }
 
 fn validate_typed_llvm_evidence(policy: &OverlayIntrinsic, record: &EvidenceRecord) -> Result<()> {
@@ -18037,6 +18583,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(conversion) = &policy.scalar_conversion {
+        match conversion.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} scalar-conversion runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} scalar-conversion runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -18170,6 +18732,7 @@ fn materialize_record(
         dot_product: policy.dot_product.clone(),
         packed_alu: policy.packed_alu.clone(),
         packed_conversion: policy.packed_conversion.clone(),
+        scalar_conversion: policy.scalar_conversion.clone(),
         cp_async_copy: policy.cp_async_copy.clone(),
         cp_async_control: policy.cp_async_control.clone(),
         cp_async_mbarrier: policy.cp_async_mbarrier.clone(),
@@ -18236,7 +18799,7 @@ fn imported_result_facts(properties: &[String]) -> Result<CatalogLlvmResultFacts
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ImportedSelection;
+    use crate::model::{ImportedSelection, ScalarConversionAdmissionVariant};
 
     fn sreg_pattern(special_register: &str) -> InstructionPattern {
         InstructionPattern::new(
@@ -18299,6 +18862,7 @@ mod tests {
             dot_product: None,
             packed_alu: None,
             packed_conversion: None,
+            scalar_conversion: None,
             cp_async_copy: None,
             cp_async_control: None,
             cp_async_mbarrier: None,
@@ -19751,8 +20315,16 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 48);
-        assert_eq!(overlay.intrinsics.len(), 367);
+        assert_eq!(overlay.shards.len(), 49);
+        assert_eq!(overlay.intrinsics.len(), 377);
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "scalar_conversion")
+                .count(),
+            10
+        );
         assert_eq!(
             overlay
                 .intrinsics
@@ -20264,6 +20836,7 @@ mod tests {
             sparse_mma_f8f6f4_f32,
             prmt,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -20340,6 +20913,7 @@ mod tests {
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -20373,6 +20947,7 @@ mod tests {
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: Some(test_cluster_barrier_admission()),
             mbarrier_extended: None,
@@ -20407,6 +20982,7 @@ mod tests {
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: Some(test_mbarrier_extended_admission()),
@@ -20641,6 +21217,7 @@ record_count = 14
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -21270,6 +21847,7 @@ scope = "system"
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -21395,6 +21973,7 @@ scope = "system"
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -21539,6 +22118,7 @@ scope = "system"
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -21584,6 +22164,7 @@ scope = "system"
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -21621,6 +22202,7 @@ scope = "system"
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -22055,6 +22637,7 @@ scope = "system"
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: None,
+            scalar_conversion: None,
             cluster_sreg: None,
             cluster_barrier: None,
             mbarrier_extended: None,
@@ -26080,6 +26663,109 @@ scope = "system"
         };
         validate_candidate_target(&family, "sm_120f", "+ptx87", "test").unwrap();
         assert!(validate_candidate_target(&family, "sm_120a", "+ptx87", "test").is_err());
+    }
+
+    #[test]
+    fn scalar_conversion_admission_is_closed_and_backend_specific() {
+        let variants = [
+            (
+                "i0368",
+                ScalarConversionRounding::NearestAway,
+                ScalarConversionSaturation::None,
+            ),
+            (
+                "i0369",
+                ScalarConversionRounding::NearestAway,
+                ScalarConversionSaturation::Satfinite,
+            ),
+            (
+                "i0370",
+                ScalarConversionRounding::NearestEven,
+                ScalarConversionSaturation::None,
+            ),
+            (
+                "i0371",
+                ScalarConversionRounding::NearestEven,
+                ScalarConversionSaturation::Relu,
+            ),
+            (
+                "i0372",
+                ScalarConversionRounding::NearestEven,
+                ScalarConversionSaturation::Satfinite,
+            ),
+            (
+                "i0373",
+                ScalarConversionRounding::NearestEven,
+                ScalarConversionSaturation::ReluSatfinite,
+            ),
+            (
+                "i0374",
+                ScalarConversionRounding::TowardZero,
+                ScalarConversionSaturation::None,
+            ),
+            (
+                "i0375",
+                ScalarConversionRounding::TowardZero,
+                ScalarConversionSaturation::Relu,
+            ),
+            (
+                "i0376",
+                ScalarConversionRounding::TowardZero,
+                ScalarConversionSaturation::Satfinite,
+            ),
+            (
+                "i0377",
+                ScalarConversionRounding::TowardZero,
+                ScalarConversionSaturation::ReluSatfinite,
+            ),
+        ];
+        let admission = ScalarConversionAdmission {
+            llvm_evidence_profile: "llvm-scalar".into(),
+            libnvvm_evidence_profile: "libnvvm-scalar".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: variants
+                .iter()
+                .map(
+                    |(abi_id, rounding, saturation)| ScalarConversionAdmissionVariant {
+                        abi_id: (*abi_id).into(),
+                        rounding: *rounding,
+                        saturation: *saturation,
+                    },
+                )
+                .collect(),
+        };
+
+        let records = expand_scalar_conversion_admission(&admission).unwrap();
+        assert_eq!(records.len(), 10);
+        for (record, (abi_id, rounding, saturation)) in records.iter().zip(variants) {
+            assert_eq!(record.abi_id, abi_id);
+            assert_eq!(record.rust_arguments, ["f32"]);
+            assert_eq!(record.rust_result, "u32");
+            assert_eq!(
+                record.compatibility_rust_paths,
+                [format!("cuda_device::convert::{}", record.rust_name)]
+            );
+            let conversion = record.scalar_conversion.as_ref().unwrap();
+            assert_eq!(conversion.rounding, rounding);
+            assert_eq!(conversion.saturation, saturation);
+            assert!(record.backend_lowerings.iter().any(|lowering| {
+                lowering.backend == IntrinsicBackend::LlvmNvptx
+                    && lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+            }));
+            assert!(record.backend_lowerings.iter().any(|lowering| {
+                lowering.backend == IntrinsicBackend::LibNvvm
+                    && lowering.mechanism == BackendLoweringMechanism::InlinePtx
+            }));
+        }
+
+        let mut reordered = admission.clone();
+        reordered.variants.swap(0, 1);
+        assert!(
+            expand_scalar_conversion_admission(&reordered)
+                .unwrap_err()
+                .to_string()
+                .contains("canonical ten variants")
+        );
     }
 
     struct CandidateTestRepo(PathBuf);

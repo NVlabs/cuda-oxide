@@ -8,6 +8,12 @@
 use cuda_device::{
     DisjointSlice,
     barrier::Barrier,
+    convert::{
+        cvt_rn_relu_satfinite_tf32_f32, cvt_rn_relu_tf32_f32, cvt_rn_satfinite_tf32_f32,
+        cvt_rn_tf32_f32, cvt_rna_satfinite_tf32_f32, cvt_rna_tf32_f32,
+        cvt_rz_relu_satfinite_tf32_f32, cvt_rz_relu_tf32_f32, cvt_rz_satfinite_tf32_f32,
+        cvt_rz_tf32_f32,
+    },
     cuda_module, kernel, thread,
     tma::{self, TmaDescriptor},
 };
@@ -39,6 +45,32 @@ mod kernels {
             for (offset, value) in values.into_iter().enumerate() {
                 // SAFETY: the bounds check covers this thread's unique slots.
                 unsafe { *output.get_unchecked_mut(start + offset) = value };
+            }
+        }
+    }
+
+    /// Keeps every generated TF32 conversion in device code.
+    ///
+    /// This kernel is compile-only and is never launched by the example.
+    #[kernel]
+    pub fn compile_tf32_conversions(mut output: DisjointSlice<u32>, value: f32) {
+        let values = [
+            cvt_rna_tf32_f32(value),
+            cvt_rna_satfinite_tf32_f32(value),
+            cvt_rn_tf32_f32(value),
+            cvt_rn_relu_tf32_f32(value),
+            cvt_rn_satfinite_tf32_f32(value),
+            cvt_rn_relu_satfinite_tf32_f32(value),
+            cvt_rz_tf32_f32(value),
+            cvt_rz_relu_tf32_f32(value),
+            cvt_rz_satfinite_tf32_f32(value),
+            cvt_rz_relu_satfinite_tf32_f32(value),
+        ];
+        let start = thread::index_1d().get() * values.len();
+        if start + values.len() <= output.len() {
+            for (offset, converted) in values.into_iter().enumerate() {
+                // SAFETY: the bounds check covers this thread's unique slots.
+                unsafe { *output.get_unchecked_mut(start + offset) = converted };
             }
         }
     }

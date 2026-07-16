@@ -214,8 +214,12 @@ fn generated_requirement_error(
 mod tests {
     use super::*;
     use crate::generated_intrinsic_targets::GENERATED_INTRINSIC_MARKER_ATTR;
+    use dialect_nvvm::ops::{
+        ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr,
+    };
+    use pliron::basic_block::BasicBlock;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
-    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
     use pliron::identifier::Identifier;
     use pliron::op::Op;
 
@@ -234,6 +238,122 @@ mod tests {
             vec![],
             0,
         );
+        if let Some(marker) = marker {
+            op.deref_mut(ctx).attributes.set(
+                Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
+                StringAttr::new(marker.to_string()),
+            );
+        }
+        op
+    }
+
+    struct ScalarConversionCase {
+        rounding: ScalarConversionRoundingAttr,
+        saturation: ScalarConversionSaturationAttr,
+        marker: &'static str,
+        id: &'static str,
+        minimum_ptx: u16,
+        minimum_sm: u16,
+    }
+
+    fn scalar_conversion_cases() -> [ScalarConversionCase; 10] {
+        use ScalarConversionRoundingAttr::{NearestAway, NearestEven, TowardZero};
+        use ScalarConversionSaturationAttr::{None, Relu, ReluSatfinite, Satfinite};
+
+        [
+            ScalarConversionCase {
+                rounding: NearestAway,
+                saturation: None,
+                marker: "v1:i0368",
+                id: "cvt_rna_tf32_f32",
+                minimum_ptx: 70,
+                minimum_sm: 80,
+            },
+            ScalarConversionCase {
+                rounding: NearestAway,
+                saturation: Satfinite,
+                marker: "v1:i0369",
+                id: "cvt_rna_satfinite_tf32_f32",
+                minimum_ptx: 81,
+                minimum_sm: 80,
+            },
+            ScalarConversionCase {
+                rounding: NearestEven,
+                saturation: None,
+                marker: "v1:i0370",
+                id: "cvt_rn_tf32_f32",
+                minimum_ptx: 78,
+                minimum_sm: 90,
+            },
+            ScalarConversionCase {
+                rounding: NearestEven,
+                saturation: Relu,
+                marker: "v1:i0371",
+                id: "cvt_rn_relu_tf32_f32",
+                minimum_ptx: 78,
+                minimum_sm: 90,
+            },
+            ScalarConversionCase {
+                rounding: NearestEven,
+                saturation: Satfinite,
+                marker: "v1:i0372",
+                id: "cvt_rn_satfinite_tf32_f32",
+                minimum_ptx: 86,
+                minimum_sm: 100,
+            },
+            ScalarConversionCase {
+                rounding: NearestEven,
+                saturation: ReluSatfinite,
+                marker: "v1:i0373",
+                id: "cvt_rn_relu_satfinite_tf32_f32",
+                minimum_ptx: 86,
+                minimum_sm: 100,
+            },
+            ScalarConversionCase {
+                rounding: TowardZero,
+                saturation: None,
+                marker: "v1:i0374",
+                id: "cvt_rz_tf32_f32",
+                minimum_ptx: 78,
+                minimum_sm: 90,
+            },
+            ScalarConversionCase {
+                rounding: TowardZero,
+                saturation: Relu,
+                marker: "v1:i0375",
+                id: "cvt_rz_relu_tf32_f32",
+                minimum_ptx: 78,
+                minimum_sm: 90,
+            },
+            ScalarConversionCase {
+                rounding: TowardZero,
+                saturation: Satfinite,
+                marker: "v1:i0376",
+                id: "cvt_rz_satfinite_tf32_f32",
+                minimum_ptx: 86,
+                minimum_sm: 100,
+            },
+            ScalarConversionCase {
+                rounding: TowardZero,
+                saturation: ReluSatfinite,
+                marker: "v1:i0377",
+                id: "cvt_rz_relu_satfinite_tf32_f32",
+                minimum_ptx: 86,
+                minimum_sm: 100,
+            },
+        ]
+    }
+
+    fn scalar_conversion_op(
+        ctx: &mut Context,
+        rounding: ScalarConversionRoundingAttr,
+        saturation: ScalarConversionSaturationAttr,
+        marker: Option<&str>,
+    ) -> Ptr<Operation> {
+        let f32_ty = FP32Type::get(ctx);
+        let block = BasicBlock::new(ctx, None, vec![f32_ty.into()]);
+        let value = block.deref(ctx).get_argument(0);
+        let op = ScalarConversionOp::build(ctx, value, rounding, saturation);
         if let Some(marker) = marker {
             op.deref_mut(ctx).attributes.set(
                 Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap(),
@@ -1230,6 +1350,133 @@ mod tests {
                     requirement.hardware,
                     GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::MinimumSm(80)]),
                     "{marker}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_conversion_markers_and_attributes_select_exact_targets() {
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+
+        for case in scalar_conversion_cases() {
+            let marked = scalar_conversion_op(
+                &mut ctx,
+                case.rounding.clone(),
+                case.saturation.clone(),
+                Some(case.marker),
+            );
+            let requirements = collect_generated_intrinsic_requirements(
+                &ctx,
+                marked,
+                GeneratedMarkerPolicy::Required,
+            )
+            .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            assert_eq!(requirements.targets[0].marker, case.marker);
+            assert_eq!(requirements.targets[0].id, case.id);
+
+            let structural = scalar_conversion_op(&mut ctx, case.rounding, case.saturation, None);
+            let requirements = collect_generated_intrinsic_requirements(
+                &ctx,
+                structural,
+                GeneratedMarkerPolicy::Optional,
+            )
+            .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            assert_eq!(requirements.targets[0].marker, case.marker);
+            assert_eq!(requirements.targets[0].id, case.id);
+        }
+    }
+
+    #[test]
+    fn scalar_conversion_rejects_wrong_same_op_marker_and_invalid_attributes() {
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+
+        let wrong_marker = scalar_conversion_op(
+            &mut ctx,
+            ScalarConversionRoundingAttr::NearestAway,
+            ScalarConversionSaturationAttr::None,
+            Some("v1:i0369"),
+        );
+        let error = collect_generated_intrinsic_requirements(
+            &ctx,
+            wrong_marker,
+            GeneratedMarkerPolicy::Required,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("does not match the exact variant attributes"),
+            "{error}"
+        );
+
+        for saturation in [
+            ScalarConversionSaturationAttr::Relu,
+            ScalarConversionSaturationAttr::ReluSatfinite,
+        ] {
+            let invalid = scalar_conversion_op(
+                &mut ctx,
+                ScalarConversionRoundingAttr::NearestAway,
+                saturation,
+                None,
+            );
+            let error = collect_generated_intrinsic_requirements(
+                &ctx,
+                invalid,
+                GeneratedMarkerPolicy::Optional,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                error.contains("matches 0 generated catalog variants"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_conversion_collector_preserves_all_backend_floor_groups() {
+        use crate::generated_intrinsic_targets::{
+            GeneratedHardwareAlternative, GeneratedHardwareTarget,
+        };
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+
+        for case in scalar_conversion_cases() {
+            let op =
+                scalar_conversion_op(&mut ctx, case.rounding, case.saturation, Some(case.marker));
+            let requirements =
+                collect_generated_intrinsic_requirements(&ctx, op, GeneratedMarkerPolicy::Required)
+                    .unwrap();
+            assert_eq!(requirements.targets.len(), 1);
+            let target = requirements.targets[0];
+            assert_eq!(target.backend_requirements.len(), 2, "{}", case.marker);
+
+            for backend in [
+                GeneratedIntrinsicBackend::LlvmNvptx,
+                GeneratedIntrinsicBackend::LibNvvm,
+            ] {
+                let backend_requirements = requirements.clone().for_backend(backend);
+                let requirement = backend_requirements.requirement(target);
+                assert_eq!(
+                    requirement.minimum_ptx.encoded(),
+                    case.minimum_ptx,
+                    "{} {backend:?}",
+                    case.marker
+                );
+                assert!(
+                    matches!(
+                        requirement.hardware,
+                        GeneratedHardwareTarget::AnyOf(alternatives)
+                            if alternatives
+                                == [GeneratedHardwareAlternative::MinimumSm(case.minimum_sm)]
+                    ),
+                    "{} {backend:?}",
+                    case.marker
                 );
             }
         }

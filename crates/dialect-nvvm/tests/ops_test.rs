@@ -25,11 +25,13 @@ use dialect_nvvm::ops::{
     ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
     ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr,
     RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr,
-    RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op,
-    ShflSyncIdxI64Op, ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr,
-    SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr,
-    SparseMmaSelectorAttr, SparseMmaShapeAttr, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp,
-    ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
+    RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ScalarConversionOp,
+    ScalarConversionRoundingAttr, ScalarConversionSaturationAttr, ShflSyncBflyI64Op,
+    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, SparseMmaAccumulatorAttr,
+    SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp,
+    SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr, StmatrixM8n8X4Op,
+    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp,
+    VoteSyncBallotOp, VoteSyncUniOp,
 };
 
 #[test]
@@ -155,6 +157,103 @@ fn generated_cluster_barrier_requires_one_closed_mode_and_no_values() {
     ClusterBarrierOp::new(wrong_shape)
         .set_attr_nvvm_cluster_barrier_mode(&ctx, ClusterBarrierModeAttr::Wait);
     assert!(verify_op(&ClusterBarrierOp::new(wrong_shape), &ctx).is_err());
+}
+
+#[test]
+fn generated_scalar_conversion_accepts_only_reviewed_f32_to_i32_variants() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let block = BasicBlock::new(&mut ctx, None, vec![f32_ty.into(), i32_ty.into()]);
+    let f32_value = block.deref(&ctx).get_argument(0);
+    let i32_value = block.deref(&ctx).get_argument(1);
+
+    for (rounding, saturation) in [
+        (
+            ScalarConversionRoundingAttr::NearestAway,
+            ScalarConversionSaturationAttr::None,
+        ),
+        (
+            ScalarConversionRoundingAttr::NearestAway,
+            ScalarConversionSaturationAttr::Satfinite,
+        ),
+        (
+            ScalarConversionRoundingAttr::NearestEven,
+            ScalarConversionSaturationAttr::None,
+        ),
+        (
+            ScalarConversionRoundingAttr::NearestEven,
+            ScalarConversionSaturationAttr::Relu,
+        ),
+        (
+            ScalarConversionRoundingAttr::NearestEven,
+            ScalarConversionSaturationAttr::Satfinite,
+        ),
+        (
+            ScalarConversionRoundingAttr::NearestEven,
+            ScalarConversionSaturationAttr::ReluSatfinite,
+        ),
+        (
+            ScalarConversionRoundingAttr::TowardZero,
+            ScalarConversionSaturationAttr::None,
+        ),
+        (
+            ScalarConversionRoundingAttr::TowardZero,
+            ScalarConversionSaturationAttr::Relu,
+        ),
+        (
+            ScalarConversionRoundingAttr::TowardZero,
+            ScalarConversionSaturationAttr::Satfinite,
+        ),
+        (
+            ScalarConversionRoundingAttr::TowardZero,
+            ScalarConversionSaturationAttr::ReluSatfinite,
+        ),
+    ] {
+        let op = ScalarConversionOp::build(&mut ctx, f32_value, rounding, saturation);
+        assert!(verify_op(&ScalarConversionOp::new(op), &ctx).is_ok());
+    }
+
+    let invalid_variant = ScalarConversionOp::build(
+        &mut ctx,
+        f32_value,
+        ScalarConversionRoundingAttr::NearestAway,
+        ScalarConversionSaturationAttr::Relu,
+    );
+    assert!(verify_op(&ScalarConversionOp::new(invalid_variant), &ctx).is_err());
+
+    let wrong_operand = Operation::new(
+        &mut ctx,
+        ScalarConversionOp::get_concrete_op_info(),
+        vec![i32_ty.into()],
+        vec![i32_value],
+        vec![],
+        0,
+    );
+    let wrong_operand = ScalarConversionOp::new(wrong_operand);
+    wrong_operand
+        .set_attr_nvvm_scalar_conversion_rounding(&ctx, ScalarConversionRoundingAttr::NearestEven);
+    wrong_operand
+        .set_attr_nvvm_scalar_conversion_saturation(&ctx, ScalarConversionSaturationAttr::None);
+    assert!(verify_op(&wrong_operand, &ctx).is_err());
+
+    let wrong_result = Operation::new(
+        &mut ctx,
+        ScalarConversionOp::get_concrete_op_info(),
+        vec![i64_ty.into()],
+        vec![f32_value],
+        vec![],
+        0,
+    );
+    let wrong_result = ScalarConversionOp::new(wrong_result);
+    wrong_result
+        .set_attr_nvvm_scalar_conversion_rounding(&ctx, ScalarConversionRoundingAttr::TowardZero);
+    wrong_result
+        .set_attr_nvvm_scalar_conversion_saturation(&ctx, ScalarConversionSaturationAttr::None);
+    assert!(verify_op(&wrong_result, &ctx).is_err());
 }
 
 #[test]
