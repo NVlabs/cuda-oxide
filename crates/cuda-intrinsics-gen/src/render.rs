@@ -7432,8 +7432,8 @@ fn render_importer_elect_dispatch(
                                      loc.clone(),\n\
                                      TranslationErr::unsupported(\n\
                                          \"warp::elect_sync destination must be a (u32, bool) tuple\"\n\
-                                             .to_owned(),\n\
-                                     ),\n\
+                                             .to_owned()\n\
+                                     )\n\
                                  );\n\
                              }\n\
                          }\n\
@@ -7457,9 +7457,11 @@ fn render_importer_elect_dispatch(
     .unwrap();
     output.push_str(
         "            helpers::insert_op(ctx, elect, block_ptr, last_op);\n\
+                     let leader = elect.deref(ctx).get_result(0);\n\
+                     let elected = elect.deref(ctx).get_result(1);\n\
                      let tuple = Operation::new(\n\
                          ctx, MirConstructTupleOp::get_concrete_op_info(), vec![tuple_ty],\n\
-                         vec![elect.deref(ctx).get_result(0), elect.deref(ctx).get_result(1)],\n\
+                         vec![leader, elected],\n\
                          vec![], 0,\n\
                      );\n\
                      tuple.deref_mut(ctx).set_loc(loc.clone());\n\
@@ -7743,9 +7745,7 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         );
     }
     if elect_intrinsics(catalog).next().is_some() {
-        output.push_str(
-            "use dialect_mir::{ops::MirConstructTupleOp, types::MirTupleType};\nuse pliron::r#type::Typed as _;\n\n",
-        );
+        output.push_str("use dialect_mir::{ops::MirConstructTupleOp, types::MirTupleType};\n\n");
     }
     writeln!(
         output,
@@ -15473,7 +15473,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 366);
+        assert_eq!(catalog.intrinsics.len(), 367);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "74f83fa357a7b663158817034af194c70fac702002fd29e9cdc3d2cccd466127",
-    "abi_ledger_sha256": "7464b428973e7b374bddc6f4b4fa754c50b0ad0765bb94ee50a9bfb7840542c7",
+    "overlay_sha256": "82b8cd00354bd833cce38536e2a000f4e1de70645b66a6531deb37525a22c0d3",
+    "abi_ledger_sha256": "0396a9063cae996840d131e2371dc90b3f7943478f8f23d2a8dd2404837b93cd",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
@@ -20,6 +20,7 @@
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-debug-control.json:184227ee2b4791011f563f597d8f6fb2393430b327a72c758c34ceec44c9469b",
+      "cuda-13.3-libnvvm-13.3.33-elect.json:2938ffa5d489034e248616c6bce0a584d454839cefe3856a61ac9ceae883f2ab",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-extended.json:3e01efcd940547e514dcc750aa5fb83fd59cc53f8d2b888788044bcefc1152cd",
       "cuda-13.3-libnvvm-13.3.33-movmatrix.json:4063d72012f78cc980a2d8d7a2f7f888e1ebc5bee41ccf4969ab6f5077cf2d87",
@@ -45,7 +46,7 @@
       "cuda-13.3-libnvvm-13.3.33-threadfence.json:22af6e0b46e1898ef4958e0fb7d52af8e3670b8528e54895ca4d3faf0a15f7dc",
       "cuda-13.3-libnvvm-13.3.33-tma.json:4234bdb8305a79abd0870ee1572d1be6910052ca23ef5e358aca1e74a0331496",
       "cuda-13.3-libnvvm-13.3.33-wgmma-control.json:6afe57cb717496e040ed81f12d28f1b8a3fe3603e98180626de4bfb265d02c61",
-      "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
+      "cuda-13.3-libnvvm-13.3.33.json:d1b3990743c3b79e3a8b7114f65066ea3a654a6e803b9d73cedb0d8679e4c14e",
       "rust-llvm-22.1.2-1cb4e383-clc.json:3cff4d4dbf0c505db87979c021de292395ef6383a72f610cb0d30196f644692f",
       "rust-llvm-22.1.2-1cb4e383-cluster-barrier.json:10b857690722e43670121d16b356ea0074105968388aa91f5012e7aaa63fd795",
       "rust-llvm-22.1.2-1cb4e383-cluster-memory.json:7556423a1daebe9b5269d3db8e94ef4114192b8d719a33fb01a34aa6b53a874d",
@@ -53,6 +54,7 @@
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-debug-control.json:eaee9dadc7aa4d82eae6fe1d4a557cddc6cadc770de670dd9be3c16c6478bc48",
+      "rust-llvm-22.1.2-1cb4e383-elect.json:42323b89102e76bc816ba694ae0a9a07dc3957289fb8debed6887097556c3c7f",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-extended.json:120f506b5f7e3419120c4cac99e3a8761ee2a9745c71abb3ba82c5df6952c829",
       "rust-llvm-22.1.2-1cb4e383-packed-conversion-fp8.json:7badda2f91c5c81f7ad375517b3b4d86ac0b6ad373c711d77584606273536693",
@@ -77,7 +79,7 @@
       "rust-llvm-22.1.2-1cb4e383-threadfence.json:682055fd75b61cd6f86f92e5927cde6ed44091f461fb72569cee67e2e7b0783e",
       "rust-llvm-22.1.2-1cb4e383-tma.json:f218df74abe72c0a072d926608ea76f5aedae93486ed5ed69a6538282bf7693e",
       "rust-llvm-22.1.2-1cb4e383-wgmma-control.json:5313c7c088b6489341c4b9e46038b773c4768a954b4b538d22f2aed470905027",
-      "rust-llvm-22.1.2-1cb4e383.json:e59785fbee1209a1fb8628ba6cb3e09d6b28bc2c02b9e384fe62db2442a331e8"
+      "rust-llvm-22.1.2-1cb4e383.json:2dd8e22c8f6a78cf4c94ec33358171bbab1b052c27586ff91eb0f693ef566d83"
     ]
   },
   "intrinsics": [
@@ -19642,6 +19644,281 @@
         ]
       },
       "summary": "Returns the launch-time dynamic shared-memory size in bytes."
+    },
+    {
+      "id": "elect_sync",
+      "operation_key": "warp.elect.sync",
+      "family": "elect",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_elect_sync"
+      },
+      "selections": [
+        {
+          "source_record": "INT_ELECT_SYNC_I",
+          "asm": "elect.sync \t$dest|$pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        },
+        {
+          "source_record": "INT_ELECT_SYNC_R",
+          "asm": "elect.sync \t$dest|$pred, $mask;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 80",
+            "Subtarget->getSmVersion() >= 90"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0367",
+        "module": "warp",
+        "name": "elect_sync",
+        "arguments": [
+          "u32"
+        ],
+        "result": "(u32, bool)",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0367",
+        "public_path": "cuda_intrinsics::warp::elect_sync",
+        "compatibility_paths": [
+          "cuda_device::warp::elect_sync"
+        ]
+      },
+      "dialect": {
+        "op_type": "ElectSyncOp",
+        "op_name": "nvvm.elect_sync",
+        "operands": [
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.elect.sync",
+        "arguments": [
+          "i32"
+        ],
+        "results": [
+          "i32",
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrInaccessibleMemOnly"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "inaccessible_read_write",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "(u32, bool)",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.15 Parallel Synchronization and Communication Instructions: elect.sync",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-elect-sync"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx80"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-elect",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90"
+              ],
+              "representation": "typed llvm.nvvm.elect.sync declaration and register/immediate calls",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 1,080-byte source with SHA-256 e83b2cd7839b679e3d23da509c817d79108c84ce4eabefc70282dd2065cf69a1 and produced 2,100-byte bitcode with SHA-256 77043e86454445b633d31ec577a6c27c5a2675b960421a0739a621de3896a9e9.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "typed LLVM probe retaining register and immediate member-mask forms",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM 22 emitted exactly elect.sync %r2|%p1, %r1 and elect.sync %r3|%p2, -1 with no extern calls; the 826-byte PTX had SHA-256 86e7fcebf74be1752a172688c87ec3bf042a296f7846df731b0385ad9145bf23.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx80"
+              ],
+              "representation": "LLVM-produced PTX retaining both elect.sync selections",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 4,328-byte cubin with SHA-256 f13f6d2c6aa0971a28ecf01f5008727bc513b0acef9cdd075973f03f30c15876.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-elect",
+          "target": {
+            "minimum_ptx": "8.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM elect.sync call",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "Direct CUDA 13.3 libNVVM PTX compilation rejected llvm.nvvm.elect.sync with 'Callsite was not defined with variable arguments' and NVVM_ERROR_COMPILATION. The 525-byte source had SHA-256 50c9d2f3d137bc6a626c3f26618fe2e27f4fbf5611793390f98d49ab8b365e68.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "typed libNVVM elect.sync LTOIR",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "failed",
+              "detail": "libNVVM produced 1,760-byte LTOIR with SHA-256 8ece269aaf4f669c1b16eb297b6fa7729de34d449cc17b9ca48149db87c28f7e, but CUDA 13.3 nvJitLink rejected it with the same broken-callsite error and produced no cubin.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "convergent inline PTX materializing the predicate as i32 then truncating to i1",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained both exact inline elect.sync blocks with no extern calls. The 1,915-byte source had SHA-256 e59f441c92eaa1b3194fbfaa77a7f9614161dec2464feb7d3e9cf36f1c27b622; direct 515-byte PTX had SHA-256 eceb98cddfddfdf09a72710cd13462af745eb44eb8b15b5082e560a58a5845d5; 2,120-byte LTOIR had SHA-256 7a8dd8f0a26a975352370eb00246f79f9c111d59d8d9847efd785c3264e4a92b.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin from the reviewed inline-PTX LTOIR",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,560-byte cubin with SHA-256 fe782c618044a7c8e6777ad12d29b31e8e3c9ebdbb6c4eabf6319f3045b67397. Direct ptxas also accepted the retained PTX and produced a 3,560-byte cubin with SHA-256 dca3adbbd0f75cc7d15f3b10e94f621d47fb9d658d3a3ae623d1b1ee769be76e.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_elect",
+      "expected_ptx": {
+        "mnemonic": "elect",
+        "modifiers": [
+          "sync"
+        ],
+        "operands": [
+          {
+            "kind": "register_predicate_pair"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Elects one participating warp lane and returns its lane ID and elected predicate."
     },
     {
       "id": "envreg1",

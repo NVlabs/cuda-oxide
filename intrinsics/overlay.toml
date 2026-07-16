@@ -12,6 +12,7 @@ shards = [
     "overlay/cp_async_mbarrier.toml",
     "overlay/debug_control.toml",
     "overlay/dotprod.toml",
+    "overlay/elect.toml",
     "overlay/ldmatrix.toml",
     "overlay/mbarrier_basic.toml",
     "overlay/mbarrier_extended.toml",

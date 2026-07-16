@@ -1,0 +1,92 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-elect",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": ["i32"],
+    "llvm_results": ["i32", "i1"],
+    "concrete_llvm_arguments": ["i32"],
+    "concrete_llvm_results": ["i32", "i1"],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90",
+    "ptx_feature": "PTX ISA 8.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+    "status": "validated",
+    "declaration_attributes_canonicalized": true,
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "elect_sync_inline_probe",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "typed libNVVM elect.sync call",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "Direct CUDA 13.3 libNVVM PTX compilation rejected llvm.nvvm.elect.sync with 'Callsite was not defined with variable arguments' and NVVM_ERROR_COMPILATION. The 525-byte source had SHA-256 50c9d2f3d137bc6a626c3f26618fe2e27f4fbf5611793390f98d49ab8b365e68."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "typed libNVVM elect.sync LTOIR",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "libNVVM produced 1,760-byte LTOIR with SHA-256 8ece269aaf4f669c1b16eb297b6fa7729de34d449cc17b9ca48149db87c28f7e, but CUDA 13.3 nvJitLink rejected it with the same broken-callsite error and produced no cubin.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "convergent inline PTX materializing the predicate as i32 then truncating to i1",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained both exact inline elect.sync blocks with no extern calls. The 1,915-byte source had SHA-256 e59f441c92eaa1b3194fbfaa77a7f9614161dec2464feb7d3e9cf36f1c27b622; direct 515-byte PTX had SHA-256 eceb98cddfddfdf09a72710cd13462af745eb44eb8b15b5082e560a58a5845d5; 2,120-byte LTOIR had SHA-256 7a8dd8f0a26a975352370eb00246f79f9c111d59d8d9847efd785c3264e4a92b."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "linked cubin from the reviewed inline-PTX LTOIR",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 3,560-byte cubin with SHA-256 fe782c618044a7c8e6777ad12d29b31e8e3c9ebdbb6c4eabf6319f3045b67397. Direct ptxas also accepted the retained PTX and produced a 3,560-byte cubin with SHA-256 dca3adbbd0f75cc7d15f3b10e94f621d47fb9d658d3a3ae623d1b1ee769be76e.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["elect_sync"]}],
+      "product_count": 1,
+      "fixtures": ["elect_sync_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_elect_sync",
+        "llvm_symbol": "llvm.nvvm.elect.sync",
+        "expected_ptx": {
+          "mnemonic": "elect",
+          "modifiers": ["sync"],
+          "operands": [
+            {"kind": "register_predicate_pair"},
+            {"kind": "register_or_immediate"}
+          ]
+        },
+        "facts": {}
+      }
+    }
+  ]
+}

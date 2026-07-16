@@ -102,7 +102,6 @@ pub mod atomic;
 mod debug;
 mod generated;
 mod grid;
-mod warp;
 mod wgmma;
 
 use pliron::context::Context;
@@ -113,7 +112,6 @@ pub use atomic::*;
 pub use debug::*;
 pub use generated::*;
 pub use grid::*;
-pub use warp::*;
 pub use wgmma::*;
 
 /// Register all NVVM dialect operations with the context.
@@ -124,7 +122,6 @@ pub fn register(ctx: &mut Context) {
     atomic::register(ctx);
     asm::register(ctx);
     generated::register(ctx);
-    warp::register(ctx);
     grid::register(ctx);
     wgmma::register(ctx);
     debug::register(ctx);

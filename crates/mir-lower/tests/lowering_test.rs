@@ -1000,104 +1000,96 @@ fn generated_threadfences_use_typed_intrinsics_on_both_backends() -> Result<(), 
     Ok(())
 }
 
-/// `elect.sync` (Hopper sm_90+) lowers to convergent inline PTX, not to an
-/// LLVM intrinsic: current LLVM ships no NVPTX selection pattern for
-/// `@llvm.nvvm.elect.sync` (llc dies with "Cannot select"). Inline asm is
-/// opaque to LLVM, so a wrong template / swapped constraint order / missing
-/// `convergent` would compile cleanly and only surface as wrong PTX or a
-/// ptxas/runtime failure far downstream. This pins the exact contract:
-///   - template `{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }`
-///   - constraints `=r,=r,r` (leader out, elected out, mask in)
-///   - convergent = true
-///   - two `extractvalue`s (both struct fields of the `{i32,i32}` asm result)
-///   - one `trunc` (predicate i32 -> i1)
+/// LLVM uses its typed intrinsic. libNVVM uses the reviewed inline-PTX fallback.
 #[test]
-fn test_elect_sync_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
+fn generated_elect_sync_uses_the_selected_backend_route() -> Result<(), anyhow::Error> {
     use pliron::builtin::types::{IntegerType, Signedness};
 
-    let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
-    let mask = entry.deref(&ctx).get_argument(0);
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let mut ctx = make_test_ctx();
+        let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+        let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
+        let mask = entry.deref(&ctx).get_argument(0);
+        Operation::new(
+            &mut ctx,
+            nvvm::ElectSyncOp::get_concrete_op_info(),
+            vec![i32_ty.into(), i1_ty.into()],
+            vec![mask],
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
 
-    // ElectSyncOp: 1 i32 operand (mask) -> 2 results [leader i32, is_elected i1].
-    let op = Operation::new(
-        &mut ctx,
-        nvvm::ElectSyncOp::get_concrete_op_info(),
-        vec![i32_ty.into(), i1_ty.into()],
-        vec![mask],
-        vec![],
-        0,
-    );
-    op.insert_at_back(entry, &ctx);
-    append_return(&mut ctx, entry);
+        mir_lower::lower_mir_to_llvm_with_options(
+            &mut ctx,
+            module_ptr,
+            mir_lower::LoweringOptions {
+                intrinsic_backend: backend,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
 
-    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-    let mut found_asm = false;
-    let mut extract_count = 0usize;
-    let mut trunc_count = 0usize;
-
-    let module_op = module_ptr.deref(&ctx);
-    let region = module_op.get_region(0);
-    let block = region.deref(&ctx).iter(&ctx).next().unwrap();
-
-    for op in block.deref(&ctx).iter(&ctx) {
-        let Some(func_op) = Operation::get_op::<llvm::FuncOp>(op, &ctx) else {
-            continue;
-        };
-        if func_op.get_symbol_name(&ctx).to_string() != "kernel_func" {
-            continue;
+        let mut inline_asm_count = 0;
+        let mut typed_call_count = 0;
+        let mut extract_count = 0;
+        let mut trunc_count = 0;
+        for body_op in lowered_kernel_body(&ctx, module_ptr) {
+            if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_template(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some("{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }")
+                );
+                assert_eq!(
+                    inline_asm
+                        .get_attr_inline_asm_constraints(&ctx)
+                        .map(|value| String::from((*value).clone()))
+                        .as_deref(),
+                    Some("=r,=r,r")
+                );
+                assert!(
+                    inline_asm
+                        .get_attr_inline_asm_convergent(&ctx)
+                        .is_some_and(|value| bool::from((*value).clone()))
+                );
+                inline_asm_count += 1;
+            }
+            if let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx)
+                && let CallOpCallable::Direct(callee) = call.callee(&ctx)
+                && callee.to_string() == "llvm_nvvm_elect_sync"
+            {
+                typed_call_count += 1;
+            }
+            if Operation::get_op::<llvm::ExtractValueOp>(body_op, &ctx).is_some() {
+                extract_count += 1;
+            }
+            if Operation::get_op::<llvm::TruncOp>(body_op, &ctx).is_some() {
+                trunc_count += 1;
+            }
         }
-        let func_region = func_op.get_operation().deref(&ctx).get_region(0);
-        for func_block in func_region.deref(&ctx).iter(&ctx) {
-            for body_op in func_block.deref(&ctx).iter(&ctx) {
-                if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
-                    assert_eq!(
-                        inline_asm
-                            .get_attr_inline_asm_template(&ctx)
-                            .map(|s| String::from((*s).clone()))
-                            .as_deref(),
-                        Some("{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }"),
-                        "elect.sync must use the exact inline PTX template"
-                    );
-                    assert_eq!(
-                        inline_asm
-                            .get_attr_inline_asm_constraints(&ctx)
-                            .map(|s| String::from((*s).clone()))
-                            .as_deref(),
-                        Some("=r,=r,r"),
-                        "elect.sync constraints must be [leader out, elected out, mask in]"
-                    );
-                    assert!(
-                        inline_asm
-                            .get_attr_inline_asm_convergent(&ctx)
-                            .is_some_and(|b| bool::from((*b).clone())),
-                        "elect.sync inline asm must be convergent"
-                    );
-                    found_asm = true;
-                }
-                if Operation::get_op::<llvm::ExtractValueOp>(body_op, &ctx).is_some() {
-                    extract_count += 1;
-                }
-                if Operation::get_op::<llvm::TruncOp>(body_op, &ctx).is_some() {
-                    trunc_count += 1;
-                }
+
+        assert_eq!(extract_count, 2);
+        match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => {
+                assert_eq!(typed_call_count, 1);
+                assert_eq!(inline_asm_count, 0);
+                assert_eq!(trunc_count, 0);
+            }
+            mir_lower::IntrinsicBackend::LibNvvm => {
+                assert_eq!(typed_call_count, 0);
+                assert_eq!(inline_asm_count, 1);
+                assert_eq!(trunc_count, 1);
             }
         }
     }
-
-    assert!(found_asm, "elect.sync must lower to inline asm");
-    assert_eq!(
-        extract_count, 2,
-        "must extract both fields of the {{i32,i32}} elect.sync result struct"
-    );
-    assert_eq!(
-        trunc_count, 1,
-        "elect.sync predicate must be truncated from i32 to i1"
-    );
-
     Ok(())
 }
 

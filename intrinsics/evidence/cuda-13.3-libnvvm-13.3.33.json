@@ -3096,6 +3096,26 @@
           "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
         }
       ]
+    },
+    {
+      "id": "elect_sync",
+      "source_record": "int_nvvm_elect_sync",
+      "llvm_symbol": "llvm.nvvm.elect.sync",
+      "llvm_arguments": ["i32"],
+      "llvm_results": ["i32", "i1"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_90",
+      "ptx_feature": "PTX ISA 8.0 instruction floor; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "elect",
+        "modifiers": ["sync"],
+        "operands": [
+          {"kind": "register_predicate_pair"},
+          {"kind": "register_or_immediate"}
+        ]
+      }
     }
   ]
 }

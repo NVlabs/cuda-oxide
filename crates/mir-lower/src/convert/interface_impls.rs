@@ -36,8 +36,8 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    ElectSyncOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp,
-    NvvmAtomicStoreOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
+    InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
+    VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -911,25 +911,6 @@ impl MirToLlvmConversion for VprintfOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::debug::convert_vprintf(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-// ---- NVVM Warp ops ---------------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ElectSyncOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::warp::convert_elect_sync_inline(
             ctx,
             rewriter,
             self.get_operation(),

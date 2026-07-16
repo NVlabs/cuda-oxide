@@ -2569,3 +2569,10 @@ status = "active"
 catalog_id = "tcgen05_cp_smem_to_tmem_cg2"
 operation_key = "tcgen05.cp.128x256b.cg2"
 raw_rust_signature = { safe = false, arguments = ["u32", "u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0367"
+status = "active"
+catalog_id = "elect_sync"
+operation_key = "warp.elect.sync"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "(u32, bool)" }

@@ -19751,8 +19751,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 47);
-        assert_eq!(overlay.intrinsics.len(), 366);
+        assert_eq!(overlay.shards.len(), 48);
+        assert_eq!(overlay.intrinsics.len(), 367);
         assert_eq!(
             overlay
                 .intrinsics
