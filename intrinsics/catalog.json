@@ -1,5 +1,5 @@
 {
-  "schema": 32,
+  "schema": 33,
   "catalog_version": "0.1.0",
   "intrinsic_abi": 1,
   "generator_version": "0.1.0",
@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "d0fbcc40d42559fd870350811befb15c8c55faaa259bda46331cc12f9183ff9b",
-    "abi_ledger_sha256": "1c5cdc222c3f72c3a6b1c4ade15a85457a28f02caba7ce2cd9f0bba6c7f708c7",
+    "overlay_sha256": "0f6a6a5242de6008e1d66a99d403423c457e32fc94ce3899b70e6719773afe7d",
+    "abi_ledger_sha256": "9294b3f5ecd7c5a7bf9746ff2420547779f636792e3059009b80fdef8e318f95",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
@@ -34,6 +34,7 @@
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-int8.json:eac863f6241bf09043f568769de5d98a9b5294c6fcb66a383e2db1e27ebf3f18",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-standard-int4.json:02e3dfd40df03f3d7e39ad1067ac560aafc4bb60cb71a6258f02e92e942b3c96",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
+      "rust-llvm-22.1.2-1cb4e383-cluster-sreg.json:91bad86696394b7eb34261fef0025087550558fe21ecb402e6d9da91fbc09136",
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
@@ -2167,6 +2168,1548 @@
         ]
       },
       "summary": "Returns the Z index of the current cooperative thread array (CTA) within its grid."
+    },
+    {
+      "id": "cluster_block_count",
+      "operation_key": "launch.cluster.block_count",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_nctarank"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_NCTARANK",
+          "asm": "mov.u32 \t$d, %cluster_nctarank;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0276",
+        "module": "sreg",
+        "name": "cluster_block_count",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only block count has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0276",
+        "public_path": "cuda_intrinsics::sreg::cluster_block_count",
+        "compatibility_paths": []
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterNctarankOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_nctarank",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.nctarank",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.17 Special Registers: %cluster_nctarank",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-nctarank"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_nctarank"
+          }
+        ]
+      },
+      "summary": "Returns the total number of blocks in the thread block cluster."
+    },
+    {
+      "id": "cluster_block_idx_x",
+      "operation_key": "launch.cluster.block_index.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_ctaid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_CTAID_x",
+          "asm": "mov.u32 \t$d, %cluster_ctaid.x;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0263",
+        "module": "sreg",
+        "name": "cluster_block_idx_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only block index within its cluster has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0263",
+        "public_path": "cuda_intrinsics::sreg::cluster_block_idx_x",
+        "compatibility_paths": [
+          "cuda_device::cluster::cluster_ctaidX"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterCtaidXOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_ctaid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.ctaid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,2147483647>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "2147483647"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.14 Special Registers: %cluster_ctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-ctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_ctaid.x"
+          }
+        ]
+      },
+      "summary": "Returns the block's X index within its thread block cluster."
+    },
+    {
+      "id": "cluster_block_idx_y",
+      "operation_key": "launch.cluster.block_index.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_ctaid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_CTAID_y",
+          "asm": "mov.u32 \t$d, %cluster_ctaid.y;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0264",
+        "module": "sreg",
+        "name": "cluster_block_idx_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only block index within its cluster has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0264",
+        "public_path": "cuda_intrinsics::sreg::cluster_block_idx_y",
+        "compatibility_paths": [
+          "cuda_device::cluster::cluster_ctaidY"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterCtaidYOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_ctaid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.ctaid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,65535>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "65535"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.14 Special Registers: %cluster_ctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-ctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_ctaid.y"
+          }
+        ]
+      },
+      "summary": "Returns the block's Y index within its thread block cluster."
+    },
+    {
+      "id": "cluster_block_idx_z",
+      "operation_key": "launch.cluster.block_index.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_ctaid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_CTAID_z",
+          "asm": "mov.u32 \t$d, %cluster_ctaid.z;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0265",
+        "module": "sreg",
+        "name": "cluster_block_idx_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only block index within its cluster has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0265",
+        "public_path": "cuda_intrinsics::sreg::cluster_block_idx_z",
+        "compatibility_paths": [
+          "cuda_device::cluster::cluster_ctaidZ"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterCtaidZOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_ctaid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.ctaid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,65535>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "65535"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.14 Special Registers: %cluster_ctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-ctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_ctaid.z"
+          }
+        ]
+      },
+      "summary": "Returns the block's Z index within its thread block cluster."
+    },
+    {
+      "id": "cluster_block_rank",
+      "operation_key": "launch.cluster.block_rank",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_ctarank"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_CTARANK",
+          "asm": "mov.u32 \t$d, %cluster_ctarank;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0275",
+        "module": "sreg",
+        "name": "cluster_block_rank",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only block rank within its cluster has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0275",
+        "public_path": "cuda_intrinsics::sreg::cluster_block_rank",
+        "compatibility_paths": []
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterCtarankOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_ctarank",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.ctarank",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.16 Special Registers: %cluster_ctarank",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-ctarank"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_ctarank"
+          }
+        ]
+      },
+      "summary": "Returns the block's linear rank within its thread block cluster."
+    },
+    {
+      "id": "cluster_dim_x",
+      "operation_key": "launch.cluster.dimension.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_nctaid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_NCTAID_x",
+          "asm": "mov.u32 \t$d, %cluster_nctaid.x;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0266",
+        "module": "sreg",
+        "name": "cluster_dim_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster dimension has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0266",
+        "public_path": "cuda_intrinsics::sreg::cluster_dim_x",
+        "compatibility_paths": [
+          "cuda_device::cluster::cluster_nctaidX"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterNctaidXOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_nctaid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.nctaid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,2147483648>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "2147483648"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.15 Special Registers: %cluster_nctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-nctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_nctaid.x"
+          }
+        ]
+      },
+      "summary": "Returns the number of blocks in the cluster's X dimension."
+    },
+    {
+      "id": "cluster_dim_y",
+      "operation_key": "launch.cluster.dimension.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_nctaid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_NCTAID_y",
+          "asm": "mov.u32 \t$d, %cluster_nctaid.y;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0267",
+        "module": "sreg",
+        "name": "cluster_dim_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster dimension has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0267",
+        "public_path": "cuda_intrinsics::sreg::cluster_dim_y",
+        "compatibility_paths": [
+          "cuda_device::cluster::cluster_nctaidY"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterNctaidYOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_nctaid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.nctaid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65536>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65536"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.15 Special Registers: %cluster_nctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-nctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_nctaid.y"
+          }
+        ]
+      },
+      "summary": "Returns the number of blocks in the cluster's Y dimension."
+    },
+    {
+      "id": "cluster_dim_z",
+      "operation_key": "launch.cluster.dimension.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_cluster_nctaid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTER_NCTAID_z",
+          "asm": "mov.u32 \t$d, %cluster_nctaid.z;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0268",
+        "module": "sreg",
+        "name": "cluster_dim_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster dimension has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0268",
+        "public_path": "cuda_intrinsics::sreg::cluster_dim_z",
+        "compatibility_paths": [
+          "cuda_device::cluster::cluster_nctaidZ"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterNctaidZOp",
+        "op_name": "nvvm.read_ptx_sreg_cluster_nctaid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.cluster.nctaid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65536>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65536"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.15 Special Registers: %cluster_nctaid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-cluster-nctaid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%cluster_nctaid.z"
+          }
+        ]
+      },
+      "summary": "Returns the number of blocks in the cluster's Z dimension."
+    },
+    {
+      "id": "cluster_grid_dim_x",
+      "operation_key": "launch.cluster.grid_dimension.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nclusterid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NCLUSTERID_x",
+          "asm": "mov.u32 \t$d, %nclusterid.x;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0272",
+        "module": "sreg",
+        "name": "cluster_grid_dim_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster-grid dimension has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0272",
+        "public_path": "cuda_intrinsics::sreg::cluster_grid_dim_x",
+        "compatibility_paths": [
+          "cuda_device::cluster::__cluster_grid_dimX"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNclusterIdXOp",
+        "op_name": "nvvm.read_ptx_sreg_nclusterid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nclusterid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,2147483648>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "2147483648"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.13 Special Registers: %nclusterid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nclusterid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nclusterid.x"
+          }
+        ]
+      },
+      "summary": "Returns the number of clusters in the grid's X dimension."
+    },
+    {
+      "id": "cluster_grid_dim_y",
+      "operation_key": "launch.cluster.grid_dimension.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nclusterid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NCLUSTERID_y",
+          "asm": "mov.u32 \t$d, %nclusterid.y;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0273",
+        "module": "sreg",
+        "name": "cluster_grid_dim_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster-grid dimension has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0273",
+        "public_path": "cuda_intrinsics::sreg::cluster_grid_dim_y",
+        "compatibility_paths": [
+          "cuda_device::cluster::__cluster_grid_dimY"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNclusterIdYOp",
+        "op_name": "nvvm.read_ptx_sreg_nclusterid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nclusterid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65536>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65536"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.13 Special Registers: %nclusterid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nclusterid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nclusterid.y"
+          }
+        ]
+      },
+      "summary": "Returns the number of clusters in the grid's Y dimension."
+    },
+    {
+      "id": "cluster_grid_dim_z",
+      "operation_key": "launch.cluster.grid_dimension.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_nclusterid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_NCLUSTERID_z",
+          "asm": "mov.u32 \t$d, %nclusterid.z;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0274",
+        "module": "sreg",
+        "name": "cluster_grid_dim_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster-grid dimension has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0274",
+        "public_path": "cuda_intrinsics::sreg::cluster_grid_dim_z",
+        "compatibility_paths": [
+          "cuda_device::cluster::__cluster_grid_dimZ"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregNclusterIdZOp",
+        "op_name": "nvvm.read_ptx_sreg_nclusterid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.nclusterid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,1,65536>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "1",
+            "upper_exclusive": "65536"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "grid"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.13 Special Registers: %nclusterid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-nclusterid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%nclusterid.z"
+          }
+        ]
+      },
+      "summary": "Returns the number of clusters in the grid's Z dimension."
+    },
+    {
+      "id": "cluster_idx_x",
+      "operation_key": "launch.cluster.index.x",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_clusterid_x"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTERID_x",
+          "asm": "mov.u32 \t$d, %clusterid.x;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0269",
+        "module": "sreg",
+        "name": "cluster_idx_x",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster index has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0269",
+        "public_path": "cuda_intrinsics::sreg::cluster_idx_x",
+        "compatibility_paths": [
+          "cuda_device::cluster::__cluster_idxX"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterIdXOp",
+        "op_name": "nvvm.read_ptx_sreg_clusterid_x",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.clusterid.x",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,2147483647>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "2147483647"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.12 Special Registers: %clusterid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clusterid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clusterid.x"
+          }
+        ]
+      },
+      "summary": "Returns the cluster's X index within the grid."
+    },
+    {
+      "id": "cluster_idx_y",
+      "operation_key": "launch.cluster.index.y",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_clusterid_y"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTERID_y",
+          "asm": "mov.u32 \t$d, %clusterid.y;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0270",
+        "module": "sreg",
+        "name": "cluster_idx_y",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster index has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0270",
+        "public_path": "cuda_intrinsics::sreg::cluster_idx_y",
+        "compatibility_paths": [
+          "cuda_device::cluster::__cluster_idxY"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterIdYOp",
+        "op_name": "nvvm.read_ptx_sreg_clusterid_y",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.clusterid.y",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,65535>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "65535"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.12 Special Registers: %clusterid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clusterid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clusterid.y"
+          }
+        ]
+      },
+      "summary": "Returns the cluster's Y index within the grid."
+    },
+    {
+      "id": "cluster_idx_z",
+      "operation_key": "launch.cluster.index.z",
+      "family": "sreg",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_read_ptx_sreg_clusterid_z"
+      },
+      "selections": [
+        {
+          "source_record": "INT_PTX_SREG_CLUSTERID_z",
+          "asm": "mov.u32 \t$d, %clusterid.z;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0271",
+        "module": "sreg",
+        "name": "cluster_idx_z",
+        "arguments": [],
+        "result": "u32",
+        "safe": true,
+        "must_use": false,
+        "safe_allowlist_reason": "reading the read-only cluster index has no caller obligations",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0271",
+        "public_path": "cuda_intrinsics::sreg::cluster_idx_z",
+        "compatibility_paths": [
+          "cuda_device::cluster::__cluster_idxZ"
+        ]
+      },
+      "dialect": {
+        "op_type": "ReadPtxSregClusterIdZOp",
+        "op_name": "nvvm.read_ptx_sreg_clusterid_z",
+        "operands": [],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.read.ptx.sreg.clusterid.z",
+        "arguments": [],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoUndef<ret>",
+          "Range<ret,0,65535>"
+        ],
+        "result_facts": {
+          "no_undef": true,
+          "range": {
+            "lower": "0",
+            "upper_exclusive": "65535"
+          }
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "10.12 Special Registers: %clusterid",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-clusterid"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "lowering": "direct_nvvm",
+      "expected_ptx": {
+        "mnemonic": "mov",
+        "modifiers": [
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clusterid.z"
+          }
+        ]
+      },
+      "summary": "Returns the cluster's Z index within the grid."
     },
     {
       "id": "cp_async_ca_16",

@@ -1841,3 +1841,101 @@ status = "active"
 catalog_id = "cvt_rn_satfinite_relu_e5m2x2_f32"
 operation_key = "packed.convert.f32x2.e5m2x2.nearest_even.satfinite.relu"
 raw_rust_signature = { safe = true, arguments = ["f32", "f32"], result = "u16" }
+
+[[entry]]
+abi_id = "i0263"
+status = "active"
+catalog_id = "cluster_block_idx_x"
+operation_key = "launch.cluster.block_index.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0264"
+status = "active"
+catalog_id = "cluster_block_idx_y"
+operation_key = "launch.cluster.block_index.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0265"
+status = "active"
+catalog_id = "cluster_block_idx_z"
+operation_key = "launch.cluster.block_index.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0266"
+status = "active"
+catalog_id = "cluster_dim_x"
+operation_key = "launch.cluster.dimension.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0267"
+status = "active"
+catalog_id = "cluster_dim_y"
+operation_key = "launch.cluster.dimension.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0268"
+status = "active"
+catalog_id = "cluster_dim_z"
+operation_key = "launch.cluster.dimension.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0269"
+status = "active"
+catalog_id = "cluster_idx_x"
+operation_key = "launch.cluster.index.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0270"
+status = "active"
+catalog_id = "cluster_idx_y"
+operation_key = "launch.cluster.index.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0271"
+status = "active"
+catalog_id = "cluster_idx_z"
+operation_key = "launch.cluster.index.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0272"
+status = "active"
+catalog_id = "cluster_grid_dim_x"
+operation_key = "launch.cluster.grid_dimension.x"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0273"
+status = "active"
+catalog_id = "cluster_grid_dim_y"
+operation_key = "launch.cluster.grid_dimension.y"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0274"
+status = "active"
+catalog_id = "cluster_grid_dim_z"
+operation_key = "launch.cluster.grid_dimension.z"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0275"
+status = "active"
+catalog_id = "cluster_block_rank"
+operation_key = "launch.cluster.block_rank"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }
+
+[[entry]]
+abi_id = "i0276"
+status = "active"
+catalog_id = "cluster_block_count"
+operation_key = "launch.cluster.block_count"
+raw_rust_signature = { safe = true, arguments = [], result = "u32" }

@@ -163,6 +163,17 @@ pub struct OverlayShardFile {
     pub prmt: Option<PrmtAdmission>,
     #[serde(default)]
     pub packed_conversion_fp8: Option<PackedConversionFp8Admission>,
+    #[serde(default)]
+    pub cluster_sreg: Option<ClusterSregAdmission>,
+}
+
+/// Compact admission for Hopper cluster special registers.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterSregAdmission {
+    pub axes: Vec<String>,
+    pub xyz_product_count: usize,
+    pub record_count: usize,
 }
 
 /// Compact admission for the closed `prmt` family.

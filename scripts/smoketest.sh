@@ -606,6 +606,9 @@ run_cargo() {
     local verb="run"
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
     local -a args=("${verb}" "${ex}")
+    if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "cluster" ]]; then
+        args+=("--arch=sm_90")
+    fi
     if [[ "${cat}" == "ltoir" || ( "${cat}" == "auto-nvvm" && ${COMPILE_ONLY} -eq 1 ) ]]; then
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_ARCH}")
     fi
@@ -615,6 +618,29 @@ run_cargo() {
     else
         cargo oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
+    fi
+    if [[ ${CARGO_EC} -eq 0 && ${COMPILE_ONLY} -eq 1 && "${ex}" == "cluster" ]]; then
+        local ptx="crates/rustc-codegen-cuda/examples/cluster/cluster.ptx"
+        local body cluster_count cluster_unique ncluster_count ncluster_unique mad_count mul_count store_count
+        body="$(awk '/^\.visible \.entry compile_cluster_grid_helpers\(/,/^}/' "${ptx}" 2>/dev/null)"
+        cluster_count="$(grep -oE '%clusterid\.[xyz]' <<<"${body}" | wc -l)"
+        cluster_unique="$(grep -oE '%clusterid\.[xyz]' <<<"${body}" | sort -u | wc -l)"
+        ncluster_count="$(grep -oE '%nclusterid\.[xyz]' <<<"${body}" | wc -l)"
+        ncluster_unique="$(grep -oE '%nclusterid\.[xyz]' <<<"${body}" | sort -u | wc -l)"
+        mad_count="$(grep -c 'mad\.lo\.s32' <<<"${body}")"
+        mul_count="$(grep -c 'mul\.lo\.s32' <<<"${body}")"
+        store_count="$(grep -c 'st\.global\.b32' <<<"${body}")"
+        if [[ ! -s "${ptx}" || -z "${body}" ]] \
+            || ! grep -qx '\.target sm_90' "${ptx}" \
+            || [[ ${cluster_count} -ne 3 || ${cluster_unique} -ne 3 ]] \
+            || [[ ${ncluster_count} -ne 3 || ${ncluster_unique} -ne 3 ]] \
+            || [[ ${mad_count} -ne 2 || ${mul_count} -ne 2 || ${store_count} -ne 2 ]]; then
+            printf 'cluster helper did not emit the exact 6-read, 2-mad, 2-mul formula\n' >>"${log}"
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                printf 'cluster helper did not emit the exact 6-read, 2-mad, 2-mul formula\n'
+            fi
+            CARGO_EC=1
+        fi
     fi
 }
 

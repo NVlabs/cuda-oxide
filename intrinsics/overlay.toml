@@ -1,4 +1,4 @@
-schema = 33
+schema = 34
 catalog_version = "0.1.0"
 intrinsic_abi = 1
 backend_profile = "rust-llvm-22.1.2-1cb4e383"
@@ -32,6 +32,7 @@ shards = [
     "overlay/sparse_mma_ordered_int8.toml",
     "overlay/sparse_mma_ordered_int8_m16n8k64.toml",
     "overlay/sreg.toml",
+    "overlay/sreg_cluster.toml",
     "overlay/sync.toml",
     "overlay/vote.toml",
     "overlay/warp_barrier.toml",

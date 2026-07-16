@@ -60,6 +60,10 @@ pub fn all_outputs(
         render_compat_sreg(catalog, catalog_sha256),
     );
     outputs.insert(
+        "crates/cuda-device/src/generated/cluster_sreg.rs".into(),
+        render_compat_cluster_sreg(catalog, catalog_sha256),
+    );
+    outputs.insert(
         "crates/cuda-device/src/generated/dotprod.rs".into(),
         render_compat_dotprod(catalog, catalog_sha256),
     );
@@ -2081,6 +2085,50 @@ fn render_compat_sreg(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "pub {safety}fn {name}() -> {} {{",
+            record.rust.result
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_compat_cluster_sreg(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "// This file is included inside `cuda_device::cluster`.\n// Its private leaves let public helpers compose generated reads.\n\n",
+    );
+    for record in sregs(catalog) {
+        let Some(path) = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::cluster::__"))
+        else {
+            continue;
+        };
+        let name = path.rsplit("::").next().unwrap();
+        writeln!(
+            output,
+            "/// Private compatibility spelling for `{}`.",
+            record.rust.public_path
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "/// The compiler replaces this call with `{}`.",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push_str("#[allow(non_snake_case)]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub(crate) fn {name}() -> {} {{",
             record.rust.result
         )
         .unwrap();
@@ -8094,6 +8142,37 @@ mod tests {
     }
 
     #[test]
+    fn cluster_composites_use_generated_private_sreg_leaves() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+
+        let leaves = render_compat_cluster_sreg(&catalog, "test-hash");
+        assert_eq!(leaves.matches("pub(crate) fn __cluster_").count(), 6);
+        for name in [
+            "__cluster_idxX",
+            "__cluster_idxY",
+            "__cluster_idxZ",
+            "__cluster_grid_dimX",
+            "__cluster_grid_dimY",
+            "__cluster_grid_dimZ",
+        ] {
+            assert!(leaves.contains(&format!("pub(crate) fn {name}() -> u32")));
+        }
+        assert!(!leaves.contains("pub fn cluster_ctaidX"));
+        assert!(!leaves.contains("pub fn cluster_nctaidX"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::cluster::__cluster_idxX"));
+        assert!(importer.contains("cuda_device::cluster::__cluster_grid_dimZ"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/cluster_sreg.rs"
+        )));
+    }
+
+    #[test]
     fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
@@ -9159,7 +9238,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 262);
+        assert_eq!(catalog.intrinsics.len(), 276);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records

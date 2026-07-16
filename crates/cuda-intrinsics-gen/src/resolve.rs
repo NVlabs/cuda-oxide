@@ -10,29 +10,29 @@ use crate::model::{
     CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget, CatalogInputs,
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
-    CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter, CpAsyncControlOperation,
-    CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace,
-    CpAsyncSourceSize, DotProductAdapter, DotProductOperation, DotProductSignedness,
-    EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix, EvidenceMatrixTemplate,
-    EvidenceRecord, EvidenceRecordDefaults, EvidenceStage, EvidenceStageKind, ImportedAddressSpace,
-    ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource, LdmatrixAdapter,
-    LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
-    LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
-    MatchOperandEncoding, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierStateSpace,
-    OverlayBackendLowering, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
-    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
-    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
-    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
-    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
-    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
-    PackedConversionFp8Admission, PackedConversionRounding, PackedConversionSaturation,
-    PackedConversionSourceFormat, PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission,
-    PrmtMode, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaBinaryAdmission,
-    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaIntegerAdmission,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation,
-    RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter,
+    CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
+    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DotProductAdapter, DotProductOperation,
+    DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix,
+    EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
+    EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
+    IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
+    LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
+    LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding, MbarrierBasicAdapter,
+    MbarrierBasicOperation, MbarrierStateSpace, OverlayBackendLowering, OverlayFile,
+    OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
+    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
+    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
+    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
+    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
+    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionFp8Admission,
+    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
+    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
+    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
+    RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaIntegerAdmission, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, SparseMma, SparseMmaAccumulator,
+    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, VoteAdapter,
     VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
@@ -48,13 +48,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 33;
+const OVERLAY_SCHEMA: u32 = 34;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 29;
+const OVERLAY_SHARD_SCHEMA: u32 = 30;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
-pub(crate) const CATALOG_SCHEMA: u32 = 32;
+const CLUSTER_SREG_SHARD_SCHEMA: u32 = 30;
+pub(crate) const CATALOG_SCHEMA: u32 = 33;
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -453,6 +454,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let sparse_mma_f8f6f4_admission = shard.sparse_mma_f8f6f4_f32.take();
         let prmt_admission = shard.prmt.take();
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
+        let cluster_sreg_admission = shard.cluster_sreg.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -509,6 +511,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
                 "compact FP8 conversion admission must be the only content of a packed_conversion shard"
             );
             shard.intrinsics = expand_packed_conversion_fp8_admission(&admission)?;
+        }
+        if let Some(admission) = cluster_sreg_admission {
+            ensure!(
+                shard.family == "sreg" && shard.intrinsics.is_empty() && compact_mma_count == 0,
+                "compact cluster-sreg admission must be the only content of an sreg shard"
+            );
+            shard.intrinsics = expand_cluster_sreg_admission(&admission)?;
         }
         ensure!(
             !shard.intrinsics.is_empty(),
@@ -568,6 +577,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.packed_conversion_fp8.is_none() || shard.schema >= PACKED_CONVERSION_FP8_SHARD_SCHEMA,
         "compact FP8 conversion admission requires overlay shard schema {}",
         PACKED_CONVERSION_FP8_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.cluster_sreg.is_none() || shard.schema >= CLUSTER_SREG_SHARD_SCHEMA,
+        "compact cluster-sreg admission requires overlay shard schema {}",
+        CLUSTER_SREG_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -2995,31 +3009,439 @@ fn validate_sreg_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrins
         policy.id
     );
     ensure!(
-        policy.resolved_llvm_symbol.is_none()
-            && policy.backend_lowerings.is_empty()
-            && policy.ldmatrix_variant.is_none()
-            && policy.ldmatrix_safety.is_none()
-            && policy.ldmatrix_adapter.is_none()
-            && policy.packed_atomic.is_none()
-            && policy.redux.is_none()
-            && policy.vote.is_none()
-            && policy.active_mask.is_none()
-            && policy.warp_match.is_none()
-            && policy.warp_barrier.is_none()
-            && policy.warp_shuffle.is_none()
-            && policy.dot_product.is_none()
-            && policy.packed_alu.is_none()
-            && policy.packed_conversion.is_none()
-            && policy.cp_async_copy.is_none()
-            && policy.cp_async_control.is_none()
-            && policy.mbarrier_basic.is_none()
-            && policy.selected_address_space.is_none(),
-        "{} mixes another generated-family contract with an sreg",
+        policy.resolved_llvm_symbol.is_none() && policy.backend_lowerings.is_empty(),
+        "{} uses a backend contract outside the direct-NVVM sreg recipe",
         policy.id
     );
+    ensure_no_other_family_contract(policy, "sreg")?;
     if policy.id.starts_with("lanemask_") {
         validate_lanemask_policy(policy, declaration)?;
     }
+    if is_cluster_sreg_source(&declaration.source_record) {
+        validate_cluster_sreg_policy(policy, declaration)?;
+    }
+    Ok(())
+}
+
+fn is_cluster_sreg_source(source_record: &str) -> bool {
+    source_record == "int_nvvm_read_ptx_sreg_cluster_ctarank"
+        || source_record == "int_nvvm_read_ptx_sreg_cluster_nctarank"
+        || source_record.starts_with("int_nvvm_read_ptx_sreg_cluster_ctaid_")
+        || source_record.starts_with("int_nvvm_read_ptx_sreg_cluster_nctaid_")
+        || source_record.starts_with("int_nvvm_read_ptx_sreg_clusterid_")
+        || source_record.starts_with("int_nvvm_read_ptx_sreg_nclusterid_")
+}
+
+#[derive(Clone)]
+struct ClusterSregRecipe {
+    id: String,
+    abi_id: String,
+    operation_key: String,
+    source_suffix: String,
+    llvm_suffix: String,
+    selection_record: String,
+    ptx_register: String,
+    compatibility_path: Option<String>,
+    op_type: String,
+    scope: &'static str,
+    section: &'static str,
+    anchor: &'static str,
+    range: Option<&'static str>,
+    safe_reason: String,
+    summary: String,
+}
+
+#[derive(Clone, Copy)]
+struct ClusterSregXyzFamilyRecipe {
+    id_prefix: &'static str,
+    abi_start: u16,
+    operation_key_prefix: &'static str,
+    source_prefix: &'static str,
+    llvm_prefix: &'static str,
+    selection_prefix: &'static str,
+    ptx_prefix: &'static str,
+    compatibility_prefix: Option<&'static str>,
+    op_type_prefix: &'static str,
+    scope: &'static str,
+    section: &'static str,
+    anchor: &'static str,
+    x_range: &'static str,
+    yz_range: &'static str,
+    safe_reason: &'static str,
+    summary: &'static str,
+}
+
+const CLUSTER_SREG_AXES: [&str; 3] = ["x", "y", "z"];
+
+const CLUSTER_SREG_XYZ_FAMILIES: [ClusterSregXyzFamilyRecipe; 4] = [
+    ClusterSregXyzFamilyRecipe {
+        id_prefix: "cluster_block_idx",
+        abi_start: 263,
+        operation_key_prefix: "launch.cluster.block_index",
+        source_prefix: "cluster_ctaid_",
+        llvm_prefix: "cluster.ctaid.",
+        selection_prefix: "INT_PTX_SREG_CLUSTER_CTAID_",
+        ptx_prefix: "%cluster_ctaid.",
+        compatibility_prefix: Some("cuda_device::cluster::cluster_ctaid"),
+        op_type_prefix: "ReadPtxSregClusterCtaid",
+        scope: "cta",
+        section: "10.14 Special Registers: %cluster_ctaid",
+        anchor: "cluster-ctaid",
+        x_range: "Range<ret,0,2147483647>",
+        yz_range: "Range<ret,0,65535>",
+        safe_reason: "reading the read-only block index within its cluster has no caller obligations",
+        summary: "Returns the block's {axis} index within its thread block cluster.",
+    },
+    ClusterSregXyzFamilyRecipe {
+        id_prefix: "cluster_dim",
+        abi_start: 266,
+        operation_key_prefix: "launch.cluster.dimension",
+        source_prefix: "cluster_nctaid_",
+        llvm_prefix: "cluster.nctaid.",
+        selection_prefix: "INT_PTX_SREG_CLUSTER_NCTAID_",
+        ptx_prefix: "%cluster_nctaid.",
+        compatibility_prefix: Some("cuda_device::cluster::cluster_nctaid"),
+        op_type_prefix: "ReadPtxSregClusterNctaid",
+        scope: "cluster",
+        section: "10.15 Special Registers: %cluster_nctaid",
+        anchor: "cluster-nctaid",
+        x_range: "Range<ret,1,2147483648>",
+        yz_range: "Range<ret,1,65536>",
+        safe_reason: "reading the read-only cluster dimension has no caller obligations",
+        summary: "Returns the number of blocks in the cluster's {axis} dimension.",
+    },
+    ClusterSregXyzFamilyRecipe {
+        id_prefix: "cluster_idx",
+        abi_start: 269,
+        operation_key_prefix: "launch.cluster.index",
+        source_prefix: "clusterid_",
+        llvm_prefix: "clusterid.",
+        selection_prefix: "INT_PTX_SREG_CLUSTERID_",
+        ptx_prefix: "%clusterid.",
+        compatibility_prefix: Some("cuda_device::cluster::__cluster_idx"),
+        op_type_prefix: "ReadPtxSregClusterId",
+        scope: "cluster",
+        section: "10.12 Special Registers: %clusterid",
+        anchor: "clusterid",
+        x_range: "Range<ret,0,2147483647>",
+        yz_range: "Range<ret,0,65535>",
+        safe_reason: "reading the read-only cluster index has no caller obligations",
+        summary: "Returns the cluster's {axis} index within the grid.",
+    },
+    ClusterSregXyzFamilyRecipe {
+        id_prefix: "cluster_grid_dim",
+        abi_start: 272,
+        operation_key_prefix: "launch.cluster.grid_dimension",
+        source_prefix: "nclusterid_",
+        llvm_prefix: "nclusterid.",
+        selection_prefix: "INT_PTX_SREG_NCLUSTERID_",
+        ptx_prefix: "%nclusterid.",
+        compatibility_prefix: Some("cuda_device::cluster::__cluster_grid_dim"),
+        op_type_prefix: "ReadPtxSregNclusterId",
+        scope: "grid",
+        section: "10.13 Special Registers: %nclusterid",
+        anchor: "nclusterid",
+        x_range: "Range<ret,1,2147483648>",
+        yz_range: "Range<ret,1,65536>",
+        safe_reason: "reading the read-only cluster-grid dimension has no caller obligations",
+        summary: "Returns the number of clusters in the grid's {axis} dimension.",
+    },
+];
+
+fn cluster_sreg_recipes() -> Vec<ClusterSregRecipe> {
+    let mut recipes = Vec::with_capacity(14);
+    for family in CLUSTER_SREG_XYZ_FAMILIES {
+        for (axis_index, axis) in CLUSTER_SREG_AXES.into_iter().enumerate() {
+            let axis_upper = axis.to_ascii_uppercase();
+            recipes.push(ClusterSregRecipe {
+                id: format!("{}_{axis}", family.id_prefix),
+                abi_id: format!("i{:04}", family.abi_start + axis_index as u16),
+                operation_key: format!("{}.{axis}", family.operation_key_prefix),
+                source_suffix: format!("{}{axis}", family.source_prefix),
+                llvm_suffix: format!("{}{axis}", family.llvm_prefix),
+                selection_record: format!("{}{axis}", family.selection_prefix),
+                ptx_register: format!("{}{axis}", family.ptx_prefix),
+                compatibility_path: family
+                    .compatibility_prefix
+                    .map(|prefix| format!("{prefix}{axis_upper}")),
+                op_type: format!("{}{axis_upper}Op", family.op_type_prefix),
+                scope: family.scope,
+                section: family.section,
+                anchor: family.anchor,
+                range: Some(if axis == "x" {
+                    family.x_range
+                } else {
+                    family.yz_range
+                }),
+                safe_reason: family.safe_reason.into(),
+                summary: family.summary.replace("{axis}", &axis_upper),
+            });
+        }
+    }
+    recipes.extend([
+        ClusterSregRecipe {
+            id: "cluster_block_rank".into(),
+            abi_id: "i0275".into(),
+            operation_key: "launch.cluster.block_rank".into(),
+            source_suffix: "cluster_ctarank".into(),
+            llvm_suffix: "cluster.ctarank".into(),
+            selection_record: "INT_PTX_SREG_CLUSTER_CTARANK".into(),
+            ptx_register: "%cluster_ctarank".into(),
+            compatibility_path: None,
+            op_type: "ReadPtxSregClusterCtarankOp".into(),
+            scope: "cta",
+            section: "10.16 Special Registers: %cluster_ctarank",
+            anchor: "cluster-ctarank",
+            range: None,
+            safe_reason:
+                "reading the read-only block rank within its cluster has no caller obligations"
+                    .into(),
+            summary: "Returns the block's linear rank within its thread block cluster.".into(),
+        },
+        ClusterSregRecipe {
+            id: "cluster_block_count".into(),
+            abi_id: "i0276".into(),
+            operation_key: "launch.cluster.block_count".into(),
+            source_suffix: "cluster_nctarank".into(),
+            llvm_suffix: "cluster.nctarank".into(),
+            selection_record: "INT_PTX_SREG_CLUSTER_NCTARANK".into(),
+            ptx_register: "%cluster_nctarank".into(),
+            compatibility_path: None,
+            op_type: "ReadPtxSregClusterNctarankOp".into(),
+            scope: "cluster",
+            section: "10.17 Special Registers: %cluster_nctarank",
+            anchor: "cluster-nctarank",
+            range: None,
+            safe_reason: "reading the read-only block count has no caller obligations".into(),
+            summary: "Returns the total number of blocks in the thread block cluster.".into(),
+        },
+    ]);
+    recipes
+}
+
+fn expand_cluster_sreg_admission(
+    admission: &ClusterSregAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.axes == CLUSTER_SREG_AXES,
+        "cluster-sreg axes must be exactly x, y, z"
+    );
+    ensure!(
+        admission.xyz_product_count == 12 && admission.record_count == 14,
+        "cluster-sreg admission must expand to 12 xyz and 14 total records"
+    );
+    let recipes = cluster_sreg_recipes();
+    ensure!(
+        recipes.len() == admission.record_count,
+        "cluster-sreg recipe count disagrees with its admission"
+    );
+    Ok(recipes.into_iter().map(cluster_sreg_policy).collect())
+}
+
+fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
+    let compatibility_rust_paths = recipe.compatibility_path.iter().cloned().collect();
+    OverlayIntrinsic {
+        id: recipe.id.clone(),
+        abi_id: recipe.abi_id,
+        operation_key: recipe.operation_key,
+        family: "sreg".into(),
+        source: None,
+        source_record: Some(format!("int_nvvm_read_ptx_sreg_{}", recipe.source_suffix)),
+        rust_module: "sreg".into(),
+        rust_name: recipe.id.clone(),
+        rust_arguments: vec![],
+        rust_result: "u32".into(),
+        safe: true,
+        must_use: false,
+        safe_allowlist_reason: Some(recipe.safe_reason),
+        public_rust_path: format!("cuda_intrinsics::sreg::{}", recipe.id),
+        compatibility_rust_paths,
+        dialect_op_type: recipe.op_type,
+        dialect_op_name: format!("nvvm.read_ptx_sreg_{}", recipe.source_suffix),
+        dialect_operands: vec![],
+        dialect_results: vec![],
+        llvm_symbol: Some(format!("llvm.nvvm.read.ptx.sreg.{}", recipe.llvm_suffix)),
+        resolved_llvm_symbol: None,
+        llvm_arguments: vec![],
+        llvm_results: vec!["i32".into()],
+        pure: true,
+        memory: "none".into(),
+        convergent: false,
+        execution_scope: recipe.scope.into(),
+        minimum_ptx: "7.8".into(),
+        minimum_sm: Some("sm_90".into()),
+        ptx_result: "u32".into(),
+        targets: "all".into(),
+        ptx_isa_version: "9.3".into(),
+        ptx_isa_section: recipe.section.into(),
+        ptx_isa_url: format!(
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-{}",
+            recipe.anchor
+        ),
+        lowering: "direct_nvvm".into(),
+        backend_lowerings: vec![],
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: InstructionPattern {
+            mnemonic: "mov".into(),
+            modifiers: vec!["u32".into()],
+            operands: vec![
+                OperandPattern::Register,
+                OperandPattern::Exact {
+                    value: recipe.ptx_register,
+                },
+            ],
+        },
+        summary: recipe.summary,
+    }
+}
+
+fn validate_cluster_sreg_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    ensure!(
+        !declaration.source_record.ends_with("_w"),
+        "{} selects an unused always-zero fourth cluster-register component",
+        policy.id
+    );
+    let recipe = cluster_sreg_recipes()
+        .into_iter()
+        .find(|recipe| recipe.id == policy.id)
+        .with_context(|| format!("{} is not a reviewed cluster special register", policy.id))?;
+
+    let source_record = format!("int_nvvm_read_ptx_sreg_{}", recipe.source_suffix);
+    let llvm_symbol = format!("llvm.nvvm.read.ptx.sreg.{}", recipe.llvm_suffix);
+    let compatibility_paths = recipe
+        .compatibility_path
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    ensure!(
+        policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} cluster-register identity does not match its closed recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "sreg"
+            && policy.rust_name == policy.id
+            && policy.rust_arguments.is_empty()
+            && policy.rust_result == "u32"
+            && policy.safe
+            && !policy.must_use
+            && policy
+                .safe_allowlist_reason
+                .as_deref()
+                .is_some_and(|reason| !reason.is_empty())
+            && policy.public_rust_path == format!("cuda_intrinsics::sreg::{}", policy.id)
+            && policy.compatibility_rust_paths == compatibility_paths,
+        "{} must preserve its reviewed raw and compatibility APIs",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.op_type
+            && policy.dialect_op_name == format!("nvvm.read_ptx_sreg_{}", recipe.source_suffix)
+            && policy.dialect_operands.is_empty()
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments.is_empty()
+            && policy.llvm_results == ["i32"]
+            && policy.lowering == "direct_nvvm",
+        "{} is outside the closed cluster-register lowering recipe",
+        policy.id
+    );
+    ensure!(
+        policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == recipe.scope
+            && policy.minimum_ptx == "7.8"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.ptx_result == "u32"
+            && policy.targets == "all",
+        "{} cluster-register effects or target floor disagree with PTX",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.section
+            && policy.ptx_isa_url
+                == format!(
+                    "https://docs.nvidia.com/cuda/parallel-thread-execution/#special-registers-{}",
+                    recipe.anchor
+                ),
+        "{} cluster-register PTX provenance disagrees with the reviewed recipe",
+        policy.id
+    );
+    let mut properties = vec!["IntrNoMem", "IntrSpeculatable", "NoUndef<ret>"];
+    properties.extend(recipe.range);
+    ensure!(
+        declaration.arguments.is_empty()
+            && declaration.results == ["i32"]
+            && declaration.classes
+                == [
+                    "SDPatternOperator",
+                    "Intrinsic",
+                    "DefaultAttrsIntrinsic",
+                    "NVVMPureIntrinsic",
+                    "PTXReadSRegIntrinsicNB_r32",
+                ]
+            && declaration.properties == properties,
+        "{} declaration shape or properties disagree with LLVM TableGen",
+        policy.id
+    );
+    let [selection] = declaration.selections.as_slice() else {
+        bail!("{} must have exactly one LLVM selection", policy.id);
+    };
+    ensure!(
+        selection.source_record == recipe.selection_record
+            && selection.asm == format!("mov.u32 \t$d, {};", recipe.ptx_register)
+            && selection.predicates
+                == [
+                    "Subtarget->getSmVersion() >= 90",
+                    "Subtarget->getPTXVersion() >= 78",
+                ]
+            && selection.constraints.address_space.is_none()
+            && selection.constraints.immediate_bindings.is_empty(),
+        "{} selector disagrees with LLVM TableGen",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "mov"
+            && policy.expected_ptx.modifiers == ["u32"]
+            && policy.expected_ptx.operands
+                == [
+                    OperandPattern::Register,
+                    OperandPattern::Exact {
+                        value: recipe.ptx_register,
+                    },
+                ],
+        "{} expected PTX does not match its cluster register",
+        policy.id
+    );
     Ok(())
 }
 
@@ -9138,11 +9560,6 @@ fn validate_matrix_identity(template: &EvidenceMatrixTemplate) -> Result<()> {
         (None, None) => bail!("evidence matrix template has no source"),
     }
     reject_disallowed_placeholder(&template.expected_ptx.mnemonic, "PTX mnemonic")?;
-    for operand in &template.expected_ptx.operands {
-        if let OperandPattern::Exact { value } = operand {
-            reject_disallowed_placeholder(value, "exact PTX operand")?;
-        }
-    }
     Ok(())
 }
 
@@ -9184,6 +9601,11 @@ fn materialize_evidence_record(
     let mut expected_ptx = template.expected_ptx.clone();
     for modifier in &mut expected_ptx.modifiers {
         *modifier = expand_axis_placeholders(modifier, bindings, used_axes, "PTX modifier")?;
+    }
+    for operand in &mut expected_ptx.operands {
+        if let OperandPattern::Exact { value } = operand {
+            *value = expand_axis_placeholders(value, bindings, used_axes, "exact PTX operand")?;
+        }
     }
 
     let mut stages = defaults.stages.clone();
@@ -10570,7 +10992,7 @@ mod tests {
                         "modifiers": ["u32"],
                         "operands": [
                             {"kind": "register"},
-                            {"kind": "exact", "value": "%tid.x"}
+                            {"kind": "exact", "value": "%tid.${axis}"}
                         ]
                     }
                 }
@@ -11610,6 +12032,25 @@ mod tests {
     }
 
     #[test]
+    fn exact_operand_matrix_placeholders_fail_closed() {
+        let base = policy_matrix_json();
+
+        let mut unknown = base.clone();
+        unknown["matrices"][0]["template"]["expected_ptx"]["operands"][1]["value"] =
+            "%tid.${other}".into();
+        assert_synthetic_evidence_error(&unknown, "unknown matrix axis other");
+
+        let mut unterminated = base.clone();
+        unterminated["matrices"][0]["template"]["expected_ptx"]["operands"][1]["value"] =
+            "%tid.${axis".into();
+        assert_synthetic_evidence_error(&unterminated, "unterminated matrix placeholder");
+
+        let mut disallowed = base;
+        disallowed["matrices"][0]["template"]["expected_ptx"]["mnemonic"] = "mov.${axis}".into();
+        assert_synthetic_evidence_error(&disallowed, "PTX mnemonic cannot contain");
+    }
+
+    #[test]
     fn evidence_matrix_rejects_bad_axes_fixture_ids_and_stage_conflicts() {
         let base = synthetic_matrix_json();
 
@@ -11705,8 +12146,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 34);
-        assert_eq!(overlay.intrinsics.len(), 262);
+        assert_eq!(overlay.shards.len(), 35);
+        assert_eq!(overlay.intrinsics.len(), 276);
         assert_eq!(
             overlay
                 .intrinsics
@@ -11927,12 +12368,14 @@ mod tests {
             sparse_mma_f8f6f4_f32,
             prmt,
             packed_conversion_fp8: None,
+            cluster_sreg: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(27, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(28, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(29, None, None), path).unwrap();
+        validate_overlay_shard_schema(&shard(30, None, None), path).unwrap();
         validate_overlay_shard_schema(&shard(27, Some(test_f8f6f4_admission()), None), path)
             .unwrap();
         validate_overlay_shard_schema_with_max(
@@ -11950,7 +12393,7 @@ mod tests {
         .unwrap();
 
         assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
-        assert!(validate_overlay_shard_schema(&shard(30, None, None), path).is_err());
+        assert!(validate_overlay_shard_schema(&shard(31, None, None), path).is_err());
         let error =
             validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
                 .unwrap_err();
@@ -11979,6 +12422,7 @@ mod tests {
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
             packed_conversion_fp8: Some(test_fp8_conversion_admission()),
+            cluster_sreg: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -11988,6 +12432,128 @@ mod tests {
                 .to_string()
                 .contains("requires overlay shard schema 29")
         );
+    }
+
+    #[test]
+    fn cluster_sreg_admission_uses_its_fixed_introduction_schema() {
+        let shard = |schema| {
+            toml::from_str::<OverlayShardFile>(&format!(
+                r#"
+schema = {schema}
+family = "sreg"
+
+[cluster_sreg]
+axes = ["x", "y", "z"]
+xyz_product_count = 12
+record_count = 14
+"#
+            ))
+            .unwrap()
+        };
+        let path = Path::new("intrinsics/overlay/sreg_cluster.toml");
+
+        let old = shard(CLUSTER_SREG_SHARD_SCHEMA - 1);
+        assert!(
+            validate_overlay_shard_schema(&old, path)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 30")
+        );
+
+        let current = shard(CLUSTER_SREG_SHARD_SCHEMA);
+        validate_overlay_shard_schema(&current, path).unwrap();
+        let admission = current.cluster_sreg.unwrap();
+        assert_eq!(expand_cluster_sreg_admission(&admission).unwrap().len(), 14);
+
+        let mut wrong_axes = admission.clone();
+        wrong_axes.axes.swap(0, 1);
+        assert!(expand_cluster_sreg_admission(&wrong_axes).is_err());
+
+        let mut wrong_count = admission;
+        wrong_count.record_count = 13;
+        assert!(expand_cluster_sreg_admission(&wrong_count).is_err());
+    }
+
+    #[test]
+    fn pinned_cluster_sregs_preserve_helpers_and_reject_unused_w_components() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        let records = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| {
+                record
+                    .source_record
+                    .as_deref()
+                    .is_some_and(is_cluster_sreg_source)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(records.len(), 14);
+        let actual_abi_ids = records
+            .iter()
+            .map(|record| record.abi_id.clone())
+            .collect::<BTreeSet<_>>();
+        let expected_abi_ids = (263..=276)
+            .map(|id| format!("i{id:04}"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual_abi_ids, expected_abi_ids);
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+            assert!(!declaration.source_record.ends_with("_w"));
+        }
+
+        let compatibility_paths = records
+            .iter()
+            .flat_map(|record| record.compatibility_rust_paths.iter().map(String::as_str))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            compatibility_paths,
+            [
+                "cuda_device::cluster::cluster_ctaidX",
+                "cuda_device::cluster::cluster_ctaidY",
+                "cuda_device::cluster::cluster_ctaidZ",
+                "cuda_device::cluster::cluster_nctaidX",
+                "cuda_device::cluster::cluster_nctaidY",
+                "cuda_device::cluster::cluster_nctaidZ",
+                "cuda_device::cluster::__cluster_grid_dimX",
+                "cuda_device::cluster::__cluster_grid_dimY",
+                "cuda_device::cluster::__cluster_grid_dimZ",
+                "cuda_device::cluster::__cluster_idxX",
+                "cuda_device::cluster::__cluster_idxY",
+                "cuda_device::cluster::__cluster_idxZ",
+            ]
+            .into_iter()
+            .collect()
+        );
+
+        let error = validate_sreg_policy(
+            records[0],
+            declarations["int_nvvm_read_ptx_sreg_cluster_ctaid_w"],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unused always-zero"));
+
+        let mut mixed = (*records[0]).clone();
+        mixed.sparse_mma = overlay
+            .intrinsics
+            .iter()
+            .find_map(|record| record.sparse_mma.clone());
+        let error = validate_sreg_policy(
+            &mixed,
+            declarations[mixed.source_record.as_deref().unwrap()],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("mixes another generated-family"));
     }
 
     #[test]

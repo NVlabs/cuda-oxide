@@ -143,6 +143,8 @@ pub fn cluster_nctaidZ() -> u32 {
     unreachable!("cluster_nctaidZ called outside CUDA kernel context")
 }
 
+include!("generated/cluster_sreg.rs");
+
 // =============================================================================
 // Cluster Index Intrinsics (Cluster's position within grid)
 // =============================================================================
@@ -156,9 +158,14 @@ pub fn cluster_nctaidZ() -> u32 {
 ///
 /// Lowers to documented `%clusterid.{x,y,z}` / `%nclusterid.{x,y}` reads and
 /// computes `x + y * nx + z * nx * ny`.
-#[inline(never)]
+#[inline(always)]
 pub fn cluster_idx() -> u32 {
-    unreachable!("cluster_idx called outside CUDA kernel context")
+    let x = __cluster_idxX();
+    let y = __cluster_idxY();
+    let z = __cluster_idxZ();
+    let nx = __cluster_grid_dimX();
+    let ny = __cluster_grid_dimY();
+    x + y * nx + z * nx * ny
 }
 
 /// Get total number of clusters in the grid.
@@ -166,9 +173,9 @@ pub fn cluster_idx() -> u32 {
 /// # PTX
 ///
 /// Lowers to documented `%nclusterid.{x,y,z}` reads and computes `nx * ny * nz`.
-#[inline(never)]
+#[inline(always)]
 pub fn num_clusters() -> u32 {
-    unreachable!("num_clusters called outside CUDA kernel context")
+    __cluster_grid_dimX() * __cluster_grid_dimY() * __cluster_grid_dimZ()
 }
 
 // =============================================================================
