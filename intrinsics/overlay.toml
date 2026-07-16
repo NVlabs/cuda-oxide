@@ -45,4 +45,5 @@ shards = [
     "overlay/warp_barrier.toml",
     "overlay/warp_match.toml",
     "overlay/warp_shuffle.toml",
+    "overlay/wgmma_control.toml",
 ]

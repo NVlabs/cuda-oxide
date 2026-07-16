@@ -4884,6 +4884,57 @@
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         }
       ]
+    },
+    {
+      "id": "wgmma_fence",
+      "source_record": "int_nvvm_wgmma_fence_sync_aligned",
+      "llvm_symbol": "llvm.nvvm.wgmma.fence.sync.aligned",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90a",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "wgmma",
+        "modifiers": ["fence", "sync", "aligned"],
+        "operands": []
+      }
+    },
+    {
+      "id": "wgmma_commit_group",
+      "source_record": "int_nvvm_wgmma_commit_group_sync_aligned",
+      "llvm_symbol": "llvm.nvvm.wgmma.commit_group.sync.aligned",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90a",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "wgmma",
+        "modifiers": ["commit_group", "sync", "aligned"],
+        "operands": []
+      }
+    },
+    {
+      "id": "wgmma_wait_group",
+      "source_record": "int_nvvm_wgmma_wait_group_sync_aligned",
+      "llvm_symbol": "llvm.nvvm.wgmma.wait_group.sync.aligned",
+      "llvm_arguments": ["i64"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90a",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "wgmma",
+        "modifiers": ["wait_group", "sync", "aligned"],
+        "operands": [{"kind": "immediate"}]
+      }
     }
   ]
 }

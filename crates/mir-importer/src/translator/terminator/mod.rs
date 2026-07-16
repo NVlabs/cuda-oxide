@@ -2533,14 +2533,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // WGMMA (from intrinsics::wgmma)
         // =================================================================
-        "cuda_device::wgmma::wgmma_fence" => Ok(Some(intrinsics::wgmma::emit_wgmma_fence(
-            ctx, args, target, block_ptr, prev_op, block_map, loc,
-        )?)),
-        "cuda_device::wgmma::wgmma_commit_group" => {
-            Ok(Some(intrinsics::wgmma::emit_wgmma_commit_group(
-                ctx, args, target, block_ptr, prev_op, block_map, loc,
-            )?))
-        }
         "cuda_device::wgmma::make_smem_desc" => {
             Ok(Some(intrinsics::wgmma::emit_wgmma_make_smem_desc(
                 ctx,
@@ -2896,22 +2888,6 @@ fn try_dispatch_intrinsic(
                 block_map,
                 loc,
                 false,
-            )?))
-        }
-
-        // =================================================================
-        // Prefix-based matches (for const generics like wgmma_wait_group::<N>)
-        // =================================================================
-        path if path.starts_with("cuda_device::wgmma::wgmma_wait_group") => {
-            // Extract N from path like "cuda_device::wgmma::wgmma_wait_group::<0>"
-            let n = path
-                .split("::<")
-                .nth(1)
-                .and_then(|s| s.strip_suffix('>'))
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
-            Ok(Some(intrinsics::wgmma::emit_wgmma_wait_group(
-                ctx, args, target, block_ptr, prev_op, block_map, loc, n,
             )?))
         }
 

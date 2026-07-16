@@ -181,6 +181,8 @@ pub struct OverlayShardFile {
     pub stmatrix: Option<StmatrixAdmission>,
     #[serde(default)]
     pub clc: Option<ClcAdmission>,
+    #[serde(default)]
+    pub wgmma_controls: Option<WgmmaControlAdmission>,
 }
 
 /// Compact admission for the four existing `stmatrix` stores.
@@ -336,11 +338,60 @@ pub struct ClusterMemoryAdmissionVariant {
     pub operation: ClusterMemoryOperation,
 }
 
+/// Compact admission for the three WGMMA control instructions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WgmmaControlAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<WgmmaControlAdmissionVariant>,
+}
+
+/// One reviewed WGMMA control operation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WgmmaControlAdmissionVariant {
+    pub abi_id: String,
+    pub mode: WgmmaControlMode,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClusterMemoryOperation {
     MapSharedRank,
     ReadU32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WgmmaControlMode {
+    Fence,
+    CommitGroup,
+    WaitGroup,
+}
+
+/// Closed semantics for one WGMMA control operation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WgmmaControl {
+    pub mode: WgmmaControlMode,
+    pub adapter: WgmmaControlAdapter,
+    pub participation: WgmmaControlParticipation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WgmmaControlAdapter {
+    NoArguments,
+    ConstGenericU32ToI64Immediate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WgmmaControlParticipation {
+    WarpgroupAllThreadsSameInstruction,
 }
 
 /// Compact admission for the reviewed non-launch special-register reads.
@@ -613,6 +664,8 @@ pub struct OverlayIntrinsic {
     pub prmt: Option<Prmt>,
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrier>,
+    #[serde(default)]
+    pub wgmma_control: Option<WgmmaControl>,
     #[serde(default)]
     pub special_register: Option<SpecialRegister>,
     #[serde(default)]
@@ -2145,6 +2198,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cluster_barrier: Option<ClusterBarrier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wgmma_control: Option<WgmmaControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub special_register: Option<SpecialRegister>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_control: Option<DebugControl>,
@@ -2382,17 +2437,74 @@ impl CatalogIntrinsic {
     }
 
     pub fn llvm_identifier(&self) -> String {
-        self.llvm
-            .as_ref()
-            .expect("LLVM-backed intrinsic")
-            .symbol
-            .replace('.', "_")
+        llvm_symbol_to_identifier(&self.llvm.as_ref().expect("LLVM-backed intrinsic").symbol)
     }
+}
+
+fn llvm_symbol_to_identifier(symbol: &str) -> String {
+    if !symbol.contains('_') {
+        return symbol.replace('.', "_");
+    }
+
+    let suffix = symbol
+        .strip_prefix("llvm.")
+        .expect("LLVM intrinsic symbol must start with llvm.");
+    let mut output = String::from("llvm__");
+    for ch in suffix.chars() {
+        match ch {
+            '.' => output.push_str("_d"),
+            '_' => output.push_str("_u"),
+            ch if ch.is_ascii_alphanumeric() => output.push(ch),
+            _ => panic!("LLVM intrinsic symbol contains an unsupported character"),
+        }
+    }
+    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn llvm_identifier_encoding_preserves_literal_underscores() {
+        assert_eq!(
+            llvm_symbol_to_identifier("llvm.nvvm.read.ptx.sreg.tid.x"),
+            "llvm_nvvm_read_ptx_sreg_tid_x"
+        );
+        assert_eq!(
+            llvm_symbol_to_identifier("llvm.nvvm.wgmma.wait_group.sync.aligned"),
+            "llvm__nvvm_dwgmma_dwait_ugroup_dsync_daligned"
+        );
+    }
+
+    #[test]
+    fn wgmma_control_contract_is_closed() {
+        let parsed: WgmmaControl = serde_json::from_str(
+            r#"{
+                "mode": "wait_group",
+                "adapter": "const_generic_u32_to_i64_immediate",
+                "participation": "warpgroup_all_threads_same_instruction"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.mode, WgmmaControlMode::WaitGroup);
+        assert_eq!(
+            parsed.adapter,
+            WgmmaControlAdapter::ConstGenericU32ToI64Immediate
+        );
+        assert_eq!(
+            parsed.participation,
+            WgmmaControlParticipation::WarpgroupAllThreadsSameInstruction
+        );
+
+        let open_ended = r#"{
+            "mode": "wait_group",
+            "adapter": "const_generic_u32_to_i64_immediate",
+            "participation": "warpgroup_all_threads_same_instruction",
+            "custom_ptx": "wgmma.wait_group.sync.aligned 0;"
+        }"#;
+        assert!(serde_json::from_str::<WgmmaControl>(open_ended).is_err());
+    }
 
     #[test]
     fn locked_tool_rejects_misspelled_security_field() {

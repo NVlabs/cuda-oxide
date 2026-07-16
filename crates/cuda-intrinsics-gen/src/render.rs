@@ -25,7 +25,8 @@ use crate::model::{
     SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
     StmatrixLayout, StmatrixMultiplicity, VoteAdapter, VoteMode, WarpBarrierAdapter,
     WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode,
-    WarpShuffleOperandEncoding, WarpShuffleValueKind,
+    WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode,
+    WgmmaControlParticipation,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -108,6 +109,16 @@ pub fn all_outputs(
         outputs.insert(
             "crates/cuda-device/src/generated/movmatrix.rs".into(),
             render_compat_movmatrix(catalog, catalog_sha256),
+        );
+    }
+    if wgmma_controls(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/wgmma_control.rs".into(),
+            render_compat_wgmma_control(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/wgmma_control.rs".into(),
+            render_dialect_wgmma_control(catalog, catalog_sha256),
         );
     }
     outputs.insert(
@@ -350,6 +361,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
                     || (record.family == "cluster_memory" && record.cluster_memory.is_some())
                     || (record.family == "clc" && record.clc.is_some())
+                    || (record.family == "wgmma_control" && record.wgmma_control.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -876,6 +888,84 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                             }
                     }),
                 "{} is outside the closed generated CLC recipe",
+                record.id
+            ),
+            "wgmma_control" => ensure!(
+                record.rust.module == "wgmma"
+                    && record.rust.result == "()"
+                    && !record.rust.safe
+                    && !record.rust.must_use
+                    && record.dialect.results.is_empty()
+                    && record.llvm.as_ref().is_some_and(|llvm| llvm.results.is_empty())
+                    && !record.semantics.pure
+                    && record.semantics.memory == "read_write"
+                    && record.semantics.convergent
+                    && record.semantics.execution_scope == "warpgroup"
+                    && record.target.minimum_ptx.encoded() == 80
+                    && record.target.hardware
+                        == CatalogHardwareTarget::AnyOf {
+                            alternatives: vec![CatalogHardwareAlternative::ExactArchitecture {
+                                sm: 90,
+                            }],
+                        }
+                    && record.backend_lowerings.len() == 2
+                    && record.backend_lowerings.iter().any(|lowering| {
+                        lowering.backend == IntrinsicBackend::LlvmNvptx
+                            && lowering.mechanism == BackendLoweringMechanism::TypedNvvm
+                    })
+                    && record.backend_lowerings.iter().any(|lowering| {
+                        lowering.backend == IntrinsicBackend::LibNvvm
+                            && lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    })
+                    && record.lowering == "generated_wgmma_control"
+                    && record.wgmma_control.as_ref().is_some_and(|control| {
+                        control.participation
+                            == WgmmaControlParticipation::WarpgroupAllThreadsSameInstruction
+                            && match control.mode {
+                                WgmmaControlMode::Fence => {
+                                    control.adapter == WgmmaControlAdapter::NoArguments
+                                        && record.id == "wgmma_fence"
+                                        && record.rust.arguments.is_empty()
+                                        && record.dialect.op_type == "WgmmaFenceSyncAlignedOp"
+                                        && record.dialect.op_name
+                                            == "nvvm.wgmma_fence_sync_aligned"
+                                        && record.dialect.operands.is_empty()
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments.is_empty()
+                                        })
+                                }
+                                WgmmaControlMode::CommitGroup => {
+                                    control.adapter == WgmmaControlAdapter::NoArguments
+                                        && record.id == "wgmma_commit_group"
+                                        && record.rust.arguments.is_empty()
+                                        && record.dialect.op_type
+                                            == "WgmmaCommitGroupSyncAlignedOp"
+                                        && record.dialect.op_name
+                                            == "nvvm.wgmma_commit_group_sync_aligned"
+                                        && record.dialect.operands.is_empty()
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments.is_empty()
+                                        })
+                                }
+                                WgmmaControlMode::WaitGroup => {
+                                    control.adapter
+                                        == WgmmaControlAdapter::ConstGenericU32ToI64Immediate
+                                        && record.id == "wgmma_wait_group"
+                                        && record.rust.arguments == ["u64"]
+                                        && record.rust.compatibility_paths
+                                            == ["cuda_device::wgmma::__wgmma_wait_group"]
+                                        && record.dialect.op_type
+                                            == "WgmmaWaitGroupSyncAlignedOp"
+                                        && record.dialect.op_name
+                                            == "nvvm.wgmma_wait_group_sync_aligned"
+                                        && record.dialect.operands == ["i64"]
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments == ["i64"]
+                                        })
+                                }
+                            }
+                    }),
+                "{} is outside the closed generated WGMMA-control recipe",
                 record.id
             ),
             "cp_async_copy" => ensure!(
@@ -1457,6 +1547,41 @@ fn clc_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "clc")
+}
+
+fn wgmma_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "wgmma_control")
+}
+
+fn wgmma_control(catalog: &CatalogFile, mode: WgmmaControlMode) -> &CatalogIntrinsic {
+    wgmma_controls(catalog)
+        .find(|record| {
+            record
+                .wgmma_control
+                .as_ref()
+                .is_some_and(|control| control.mode == mode)
+        })
+        .expect("complete WGMMA-control family")
+}
+
+fn wgmma_control_template(record: &CatalogIntrinsic) -> String {
+    let operand = if record
+        .wgmma_control
+        .as_ref()
+        .is_some_and(|control| control.mode == WgmmaControlMode::WaitGroup)
+    {
+        " $0"
+    } else {
+        ""
+    };
+    format!(
+        "{}.{}{operand};",
+        record.expected_ptx.mnemonic,
+        record.expected_ptx.modifiers.join(".")
+    )
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2439,6 +2564,21 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                          /// The target CTA must publish the value with the required cluster synchronization before this weak load.\n",
                     ),
                 }
+            } else if let Some(control) = &record.wgmma_control {
+                output.push_str(
+                    "/// All four warps in the warpgroup must execute this instruction in convergence with the same control flow.\n",
+                );
+                match control.mode {
+                    WgmmaControlMode::Fence => output.push_str(
+                        "/// Issue it after register writes and before the WGMMA operations that consume those registers.\n",
+                    ),
+                    WgmmaControlMode::CommitGroup => output.push_str(
+                        "/// Issue it only after the warpgroup has submitted the WGMMA operations to commit.\n",
+                    ),
+                    WgmmaControlMode::WaitGroup => output.push_str(
+                        "/// `_arg0` must be a compile-time constant shared by the whole warpgroup.\n",
+                    ),
+                }
             } else if let Some(bridge) = &record.cp_async_mbarrier {
                 output.push_str(
                     "/// `_arg0` must point to a live, initialized, eight-byte-aligned mbarrier object in shared memory.\n\
@@ -3275,6 +3415,43 @@ fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_wgmma_control(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(wgmma_controls(catalog).count(), 3);
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::wgmma` to keep its public API stable.\n\n");
+
+    for mode in [WgmmaControlMode::Fence, WgmmaControlMode::CommitGroup] {
+        let record = wgmma_control(catalog, mode);
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[inline(never)]\n");
+        writeln!(output, "pub fn {}() {{", record.rust.name).unwrap();
+        writeln!(
+            output,
+            "    unreachable!({:?})",
+            format!("{} called outside CUDA kernel context", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+
+    let wait = wgmma_control(catalog, WgmmaControlMode::WaitGroup);
+    writeln!(output, "/// {}", wait.summary).unwrap();
+    output.push_str(
+        r#"#[inline(always)]
+pub fn wgmma_wait_group<const N: u32>() {
+    __wgmma_wait_group(N as u64);
+}
+
+#[doc(hidden)]
+#[inline(never)]
+pub(crate) fn __wgmma_wait_group(_max_pending: u64) {
+    unreachable!("wgmma_wait_group called outside CUDA kernel context")
+}
+"#,
+    );
+    output
+}
+
 fn render_compat_packed_atomic(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::atomic` to keep existing paths stable.\n\n");
@@ -3853,6 +4030,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             "    mbarrier_basic::register(ctx);\n",
             "    mbarrier_basic::register(ctx);\n    mbarrier_extended::register(ctx);\n",
         );
+    }
+    if wgmma_controls(catalog).next().is_some() {
+        output = output
+            .replace("mod warp_shuffle;", "mod warp_shuffle;\nmod wgmma_control;")
+            .replace(
+                "pub use warp_shuffle::*;",
+                "pub use warp_shuffle::*;\npub use wgmma_control::*;",
+            )
+            .replace(
+                "    warp_shuffle::register(ctx);",
+                "    warp_shuffle::register(ctx);\n    wgmma_control::register(ctx);",
+            );
     }
     output
 }
@@ -6332,6 +6521,109 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_wgmma_control(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(wgmma_controls(catalog).count(), 3);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r##"//! Structural operations for generated WGMMA controls.
+
+use pliron::{
+    builtin::{op_interfaces::{NOpdsInterface, NResultsInterface}, types::IntegerType},
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::{TypeHandle, Typed},
+    value::Value,
+    verify_err,
+};
+use pliron_derive::pliron_op;
+
+#[pliron_op(
+    name = "nvvm.wgmma_fence_sync_aligned",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+)]
+pub struct WgmmaFenceSyncAlignedOp;
+
+impl WgmmaFenceSyncAlignedOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    pub fn build(ctx: &mut Context) -> Ptr<Operation> {
+        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0)
+    }
+}
+
+#[pliron_op(
+    name = "nvvm.wgmma_commit_group_sync_aligned",
+    format,
+    verifier = "succ",
+    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
+)]
+pub struct WgmmaCommitGroupSyncAlignedOp;
+
+impl WgmmaCommitGroupSyncAlignedOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    pub fn build(ctx: &mut Context) -> Ptr<Operation> {
+        Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0)
+    }
+}
+
+#[pliron_op(
+    name = "nvvm.wgmma_wait_group_sync_aligned",
+    format,
+    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
+)]
+pub struct WgmmaWaitGroupSyncAlignedOp;
+
+impl WgmmaWaitGroupSyncAlignedOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    pub fn build(ctx: &mut Context, max_pending: Value) -> Ptr<Operation> {
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![max_pending],
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for WgmmaWaitGroupSyncAlignedOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 1 || op.get_num_results() != 0 {
+            return verify_err!(op.loc(), "nvvm.wgmma_wait_group_sync_aligned takes one operand and no results");
+        }
+        if !is_i64(ctx, op.get_operand(0).get_type(ctx)) {
+            return verify_err!(op.loc(), "nvvm.wgmma_wait_group_sync_aligned operand must be i64");
+        }
+        Ok(())
+    }
+}
+
+fn is_i64(ctx: &Context, ty: TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == 64)
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    WgmmaFenceSyncAlignedOp::register(ctx);
+    WgmmaCommitGroupSyncAlignedOp::register(ctx);
+    WgmmaWaitGroupSyncAlignedOp::register(ctx);
+}
+"##,
+    );
+    output
+}
+
 fn render_dialect_debug_control(catalog: &CatalogFile, hash: &str) -> String {
     assert_eq!(debug_controls(catalog).count(), 3);
     let mut output = rust_header(catalog, hash);
@@ -6560,6 +6852,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    if wgmma_controls(catalog).next().is_some() {
+        output.push_str(
+            ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
+        );
+    }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
@@ -6753,6 +7050,8 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     );
     if debug_controls(catalog).next().is_some() {
         output.push_str("use dialect_mir::ops::{MirConstantOp, MirUnreachableOp};\n\n");
+    } else if wgmma_controls(catalog).next().is_some() {
+        output.push_str("use dialect_mir::ops::MirConstantOp;\n\n");
     }
     if register_mmas(catalog).next().is_some() || sparse_mmas(catalog).next().is_some() {
         output.push_str(
@@ -7677,6 +7976,86 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    for record in wgmma_controls(catalog) {
+        let control = record.wgmma_control.as_ref().unwrap();
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        match control.mode {
+            WgmmaControlMode::Fence | WgmmaControlMode::CommitGroup => {
+                output.push_str("            require_arity(name, args.len(), 0, &loc)?;\n");
+                writeln!(
+                    output,
+                    "            let control = {}::build(ctx);",
+                    record.dialect.op_type
+                )
+                .unwrap();
+                output.push_str("            control.deref_mut(ctx).set_loc(loc.clone());\n");
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, control, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, control, block_ptr, prev_op);\n",
+                );
+            }
+            WgmmaControlMode::WaitGroup => {
+                output.push_str(
+                    "            require_arity(name, args.len(), 1, &loc)?;\n\
+                     if !matches!(&args[0], mir::Operand::Constant(_)) {\n\
+                         return input_err!(\n\
+                             loc,\n\
+                             TranslationErr::unsupported(\n\
+                                 \"wgmma_wait_group requires a compile-time constant\".to_owned()\n\
+                             )\n\
+                         );\n\
+                     }\n\
+                     let (max_pending, last_op) = rvalue::translate_operand(\n\
+                         ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n\
+                     )?;\n\
+                     if max_pending\n\
+                         .defining_op()\n\
+                         .and_then(|op| Operation::get_op::<MirConstantOp>(op, ctx))\n\
+                         .is_none()\n\
+                     {\n\
+                         return input_err!(\n\
+                             loc,\n\
+                             TranslationErr::unsupported(\n\
+                                 \"wgmma_wait_group requires a compile-time constant\".to_owned()\n\
+                             )\n\
+                         );\n\
+                     }\n\
+                     let control = WgmmaWaitGroupSyncAlignedOp::build(ctx, max_pending);\n\
+                     control.deref_mut(ctx).set_loc(loc.clone());\n",
+                );
+                writeln!(
+                    output,
+                    "            helpers::set_generated_intrinsic_marker(ctx, control, {:?});",
+                    intrinsic_marker(catalog, record)
+                )
+                .unwrap();
+                output.push_str(
+                    "            helpers::insert_op(ctx, control, block_ptr, last_op);\n",
+                );
+            }
+        }
+        output.push_str(
+            "            if let Some(target_idx) = target {\n\
+                 Ok(Some(helpers::emit_goto(ctx, *target_idx, control, block_map, loc)))\n\
+             } else {\n",
+        );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+    }
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -8357,6 +8736,11 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    if wgmma_controls(catalog).next().is_some() {
+        output.push_str(
+            ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
+        );
+    }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
             output.push_str(", ");
@@ -8933,6 +9317,68 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(
             "            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
         );
+    }
+    if wgmma_controls(catalog).next().is_some() {
+        output.push_str(
+            "fn convert_generated_wgmma_control(\n\
+                 ctx: &mut Context,\n\
+                 rewriter: &mut DialectConversionRewriter,\n\
+                 op: Ptr<Operation>,\n\
+                 intrinsic_name: &str,\n\
+                 ptx: &str,\n\
+                 has_immediate: bool,\n\
+             ) -> Result<()> {\n\
+                 let operands: Vec<_> = op.deref(ctx).operands().collect();\n\
+                 if operands.len() != usize::from(has_immediate) {\n\
+                     return pliron::input_err!(\n\
+                         op.deref(ctx).loc(),\n\
+                         \"generated WGMMA control has the wrong operand count\",\n\
+                     );\n\
+                 }\n\
+                 let void_ty = llvm_types::VoidType::get(ctx);\n\
+                 match context::lowering_options(ctx).intrinsic_backend {\n\
+                     IntrinsicBackend::LlvmNvptx => {\n\
+                         let arguments = if has_immediate {\n\
+                             vec![IntegerType::get(ctx, 64, Signedness::Signless).into()]\n\
+                         } else {\n\
+                             vec![]\n\
+                         };\n\
+                         let function_ty = llvm_types::FuncType::get(\n\
+                             ctx, void_ty.into(), arguments, false,\n\
+                         );\n\
+                         call_intrinsic(\n\
+                             ctx, rewriter, op, intrinsic_name, function_ty, operands,\n\
+                         )?;\n\
+                     }\n\
+                     IntrinsicBackend::LibNvvm => {\n\
+                         let constraints = if has_immediate {\n\
+                             \"n,~{memory}\"\n\
+                         } else {\n\
+                             \"~{memory}\"\n\
+                         };\n\
+                         inline_asm_convergent(\n\
+                             ctx, rewriter, void_ty.into(), operands, ptx, constraints,\n\
+                         );\n\
+                     }\n\
+                 }\n\
+                 rewriter.erase_operation(ctx, op);\n\
+                 Ok(())\n\
+             }\n\n",
+        );
+        for record in wgmma_controls(catalog) {
+            let has_immediate = record
+                .wgmma_control
+                .as_ref()
+                .is_some_and(|control| control.mode == WgmmaControlMode::WaitGroup);
+            writeln!(
+                output,
+                "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {{\n        convert_generated_wgmma_control(\n            ctx, rewriter, self.get_operation(), {:?}, {:?}, {has_immediate},\n        )\n    }}\n}}\n",
+                record.dialect.op_type,
+                record.llvm_identifier(),
+                wgmma_control_template(record),
+            )
+            .unwrap();
+        }
     }
     if packed_atomics(catalog).next().is_some() {
         output.push_str(
@@ -9574,6 +10020,14 @@ fn generated_selection_alternatives(selections: &[CatalogSelection]) -> String {
 }
 
 fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
+    if let Some(control) = &record.wgmma_control {
+        let mode = match control.mode {
+            WgmmaControlMode::Fence => "GeneratedWgmmaControlMode::Fence",
+            WgmmaControlMode::CommitGroup => "GeneratedWgmmaControlMode::CommitGroup",
+            WgmmaControlMode::WaitGroup => "GeneratedWgmmaControlMode::WaitGroup",
+        };
+        return format!("GeneratedIntrinsicVariant::WgmmaControl {{ mode: {mode} }}");
+    }
     if let Some(barrier) = &record.cluster_barrier {
         let mode = match barrier.mode {
             ClusterBarrierMode::Arrive => "GeneratedClusterBarrierMode::Arrive",
@@ -9793,6 +10247,18 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}",
         "    RegisterMma { shape: GeneratedRegisterMmaShape, operation: GeneratedRegisterMmaOperation, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n    SparseMma { shape: GeneratedSparseMmaShape, accumulator: GeneratedSparseMmaAccumulator, a_element: GeneratedSparseMmaElement, b_element: GeneratedSparseMmaElement, a_layout: GeneratedSparseMmaLayout, b_layout: GeneratedSparseMmaLayout, overflow: GeneratedSparseMmaOverflow, metadata: GeneratedSparseMmaMetadata, selector: GeneratedSparseMmaSelector },\n    Prmt { mode: GeneratedPrmtMode },\n    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n}",
     );
+    if wgmma_controls(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedWgmmaControlMode { Fence, CommitGroup, WaitGroup }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        );
+        replace_exact_render_fragment(
+            &mut output,
+            "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n}",
+            "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    WgmmaControl { mode: GeneratedWgmmaControlMode },\n}",
+        );
+    }
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
             Some(llvm) => {
@@ -9884,9 +10350,23 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
         "        }\n    }\n}\n",
         "        }\n        GeneratedIntrinsicVariant::ClusterBarrier { mode } => {\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }\n        }\n    }\n}\n",
     );
+    if wgmma_controls(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "        GeneratedIntrinsicVariant::ClusterBarrier { mode } => {\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }\n        }\n    }\n}\n",
+            "        GeneratedIntrinsicVariant::ClusterBarrier { mode } => {\n            let Some(op) = Operation::get_op::<ClusterBarrierOp>(operation, ctx) else { return false; };\n            match mode {\n                GeneratedClusterBarrierMode::Arrive => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Arrive),\n                GeneratedClusterBarrierMode::ArriveAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveAligned),\n                GeneratedClusterBarrierMode::ArriveRelaxed => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxed),\n                GeneratedClusterBarrierMode::ArriveRelaxedAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::ArriveRelaxedAligned),\n                GeneratedClusterBarrierMode::Wait => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::Wait),\n                GeneratedClusterBarrierMode::WaitAligned => op.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() == Some(&ClusterBarrierModeAttr::WaitAligned),\n            }\n        }\n        GeneratedIntrinsicVariant::WgmmaControl { mode } => match mode {\n            GeneratedWgmmaControlMode::Fence => Operation::get_op::<WgmmaFenceSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::CommitGroup => Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some(),\n            GeneratedWgmmaControlMode::WaitGroup => Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some(),\n        },\n    }\n}\n",
+        );
+    }
     output.push_str(
         "\nuse dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
+    if wgmma_controls(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr};",
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr, WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp};",
+        );
+    }
     output.push_str(
         "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
     );
@@ -10455,6 +10935,24 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             writeln!(output, "  call void @{}()", llvm(record).symbol).unwrap();
         }
         output.push_str("  ret void\n}\n");
+    } else if let Some(control) = &record.wgmma_control {
+        if control.mode == WgmmaControlMode::WaitGroup {
+            writeln!(
+                output,
+                "declare void @{}(i64 immarg) #0\n",
+                llvm(record).symbol
+            )
+            .unwrap();
+        } else {
+            writeln!(output, "declare void @{}() #0\n", llvm(record).symbol).unwrap();
+        }
+        writeln!(output, "define void @probe_{}() #0 {{", record.id).unwrap();
+        if control.mode == WgmmaControlMode::WaitGroup {
+            writeln!(output, "  call void @{}(i64 0) #0", llvm(record).symbol,).unwrap();
+        } else {
+            writeln!(output, "  call void @{}() #0", llvm(record).symbol,).unwrap();
+        }
+        output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
     } else if record.cluster_barrier.is_some() {
         writeln!(output, "declare void @{}() #0", llvm(record).symbol).unwrap();
         output.push('\n');
@@ -11264,6 +11762,28 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .unwrap();
         }
     }
+    if wgmma_controls(catalog).next().is_some() {
+        output.push_str("\n## WGMMA-control contracts\n\n");
+        for record in wgmma_controls(catalog) {
+            let detail = match record.wgmma_control.as_ref().unwrap().mode {
+                WgmmaControlMode::Fence => {
+                    "It orders register writes before later WGMMA operations."
+                }
+                WgmmaControlMode::CommitGroup => {
+                    "It commits the warpgroup's prior uncommitted WGMMA operations."
+                }
+                WgmmaControlMode::WaitGroup => {
+                    "Its `u64` argument must be a compile-time constant."
+                }
+            };
+            writeln!(
+                output,
+                "- `{}` must be executed by all four warps in the warpgroup with the same control flow. {detail}",
+                record.id,
+            )
+            .unwrap();
+        }
+    }
     if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
         output.push_str("\n## Synchronization contracts\n\n");
     } else {
@@ -11557,6 +12077,7 @@ fn modules(catalog: &CatalogFile) -> BTreeSet<&str> {
 mod tests {
     use super::*;
     use crate::model::ImportedSelectionConstraints;
+    use crate::ptx::{InstructionPattern, OperandPattern};
     use std::path::Path;
 
     fn catalog_with_debug_controls() -> CatalogFile {
@@ -11578,6 +12099,255 @@ mod tests {
         let catalog = crate::resolve::test_catalog_with_clc(&repo_root).unwrap();
         assert_eq!(clc_intrinsics(&catalog).count(), 6);
         catalog
+    }
+
+    fn catalog_with_wgmma_controls() -> CatalogFile {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut catalog = crate::resolve::resolve(&repo_root).unwrap();
+        if wgmma_controls(&catalog).count() == 3 {
+            return catalog;
+        }
+        let template = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.cluster_barrier.is_some())
+            .expect("cluster-barrier template")
+            .clone();
+
+        let recipes = [
+            (
+                WgmmaControlMode::Fence,
+                "i0317",
+                "wgmma_fence",
+                "WgmmaFenceSyncAlignedOp",
+                "nvvm.wgmma_fence_sync_aligned",
+                "llvm.nvvm.wgmma.fence.sync.aligned",
+                "WGMMA_FENCE_SYNC_ALIGNED",
+                "fence.sync.aligned",
+                WgmmaControlAdapter::NoArguments,
+                "cuda_device::wgmma::wgmma_fence",
+            ),
+            (
+                WgmmaControlMode::CommitGroup,
+                "i0318",
+                "wgmma_commit_group",
+                "WgmmaCommitGroupSyncAlignedOp",
+                "nvvm.wgmma_commit_group_sync_aligned",
+                "llvm.nvvm.wgmma.commit_group.sync.aligned",
+                "WGMMA_COMMIT_GROUP_SYNC_ALIGNED",
+                "commit_group.sync.aligned",
+                WgmmaControlAdapter::NoArguments,
+                "cuda_device::wgmma::wgmma_commit_group",
+            ),
+            (
+                WgmmaControlMode::WaitGroup,
+                "i0319",
+                "wgmma_wait_group",
+                "WgmmaWaitGroupSyncAlignedOp",
+                "nvvm.wgmma_wait_group_sync_aligned",
+                "llvm.nvvm.wgmma.wait_group.sync.aligned",
+                "WGMMA_WAIT_GROUP_SYNC_ALIGNED",
+                "wait_group.sync.aligned",
+                WgmmaControlAdapter::ConstGenericU32ToI64Immediate,
+                "cuda_device::wgmma::__wgmma_wait_group",
+            ),
+        ];
+
+        for (
+            mode,
+            abi_id,
+            id,
+            op_type,
+            op_name,
+            llvm_symbol,
+            selection_record,
+            suffix,
+            adapter,
+            compatibility_path,
+        ) in recipes
+        {
+            let wait = mode == WgmmaControlMode::WaitGroup;
+            let mut record = template.clone();
+            record.id = id.into();
+            record.operation_key = format!("wgmma.control.{suffix}");
+            record.family = "wgmma_control".into();
+            record.source = crate::model::IntrinsicSource::LlvmImported {
+                source_record: format!("int_nvvm_wgmma_{}", suffix.replace('.', "_")),
+            };
+            record.selections = vec![CatalogSelection {
+                source_record: selection_record.into(),
+                asm: format!("wgmma.{suffix};"),
+                predicates: vec!["Subtarget->getPTXVersion() >= 80".into(), "hasSM90a".into()],
+                constraints: ImportedSelectionConstraints::default(),
+            }];
+            record.rust.abi_id = abi_id.into();
+            record.rust.module = "wgmma".into();
+            record.rust.name = id.into();
+            record.rust.arguments = if wait { vec!["u64".into()] } else { vec![] };
+            record.rust.result = "()".into();
+            record.rust.safe = false;
+            record.rust.must_use = false;
+            record.rust.safe_allowlist_reason = None;
+            record.rust.canonical_path =
+                format!("cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::{abi_id}");
+            record.rust.public_path = format!("cuda_intrinsics::wgmma::{id}");
+            record.rust.compatibility_paths = vec![compatibility_path.into()];
+            record.dialect.op_type = op_type.into();
+            record.dialect.op_name = op_name.into();
+            record.dialect.operands = if wait { vec!["i64".into()] } else { vec![] };
+            record.dialect.results.clear();
+            let llvm = record.llvm.as_mut().unwrap();
+            llvm.symbol = llvm_symbol.into();
+            llvm.resolved_symbol = None;
+            llvm.arguments = if wait { vec!["i64".into()] } else { vec![] };
+            llvm.results.clear();
+            llvm.properties = if wait {
+                vec!["ImmArg<arg0>".into(), "IntrConvergent".into()]
+            } else {
+                vec!["IntrConvergent".into()]
+            };
+            record.semantics.pure = false;
+            record.semantics.memory = "read_write".into();
+            record.semantics.convergent = true;
+            record.semantics.execution_scope = "warpgroup".into();
+            record.target.minimum_ptx = "8.0".parse().unwrap();
+            record.target.hardware = CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::ExactArchitecture { sm: 90 }],
+            };
+            record.target.ptx_result = "()".into();
+            record.target.targets = "sm_90a".into();
+            record.target.ptx_isa_version = "9.3".into();
+            record.target.ptx_isa_section = "WGMMA control".into();
+            record.target.ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions".into();
+            for lowering in &mut record.backend_lowerings {
+                lowering.target.minimum_ptx = "8.0".parse().unwrap();
+                lowering.target.hardware = record.target.hardware.clone();
+                lowering.mechanism = match lowering.backend {
+                    IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
+                    IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+                };
+            }
+            record.packed_atomic = None;
+            record.redux = None;
+            record.vote = None;
+            record.active_mask = None;
+            record.warp_match = None;
+            record.warp_barrier = None;
+            record.warp_shuffle = None;
+            record.dot_product = None;
+            record.packed_alu = None;
+            record.packed_conversion = None;
+            record.cp_async_copy = None;
+            record.cp_async_control = None;
+            record.cp_async_mbarrier = None;
+            record.mbarrier_basic = None;
+            record.register_mma = None;
+            record.sparse_mma = None;
+            record.prmt = None;
+            record.cluster_barrier = None;
+            record.wgmma_control = Some(crate::model::WgmmaControl {
+                mode,
+                adapter,
+                participation: WgmmaControlParticipation::WarpgroupAllThreadsSameInstruction,
+            });
+            record.special_register = None;
+            record.ldmatrix = None;
+            record.lowering = "generated_wgmma_control".into();
+            record.expected_ptx = InstructionPattern {
+                mnemonic: "wgmma".into(),
+                modifiers: suffix.split('.').map(str::to_owned).collect(),
+                operands: if wait {
+                    vec![OperandPattern::Immediate]
+                } else {
+                    vec![]
+                },
+            };
+            record.summary = format!("Generated {id} test record.");
+            catalog.intrinsics.push(record);
+        }
+        catalog
+    }
+
+    #[test]
+    fn wgmma_controls_render_closed_compatibility_and_backend_routes() {
+        let catalog = catalog_with_wgmma_controls();
+        validate_renderable(&catalog).unwrap();
+        assert_eq!(wgmma_controls(&catalog).count(), 3);
+
+        let compatibility = render_compat_wgmma_control(&catalog, "test-hash");
+        assert!(compatibility.contains("pub fn wgmma_fence()"));
+        assert!(compatibility.contains("pub fn wgmma_commit_group()"));
+        assert!(compatibility.contains("pub fn wgmma_wait_group<const N: u32>()"));
+        assert!(compatibility.contains("__wgmma_wait_group(N as u64);"));
+        assert!(compatibility.contains("pub(crate) fn __wgmma_wait_group(_max_pending: u64)"));
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub unsafe fn i0317()"));
+        assert!(raw.contains("pub unsafe fn i0318()"));
+        assert!(raw.contains("pub unsafe fn i0319(_arg0: u64)"));
+        let raw_mod = render_raw_mod(&catalog, "test-hash");
+        assert!(
+            raw_mod.contains("pub use crate::__cuda_oxide_intrinsic_abi_v1::i0317 as wgmma_fence;")
+        );
+        assert!(
+            raw_mod.contains(
+                "pub use crate::__cuda_oxide_intrinsic_abi_v1::i0319 as wgmma_wait_group;"
+            )
+        );
+
+        let dialect = render_dialect_wgmma_control(&catalog, "test-hash");
+        for op in [
+            "WgmmaFenceSyncAlignedOp",
+            "WgmmaCommitGroupSyncAlignedOp",
+            "WgmmaWaitGroupSyncAlignedOp",
+        ] {
+            assert!(dialect.contains(&format!("pub struct {op};")));
+            assert!(dialect.contains(&format!("{op}::register(ctx);")));
+        }
+        assert!(dialect.contains("operand must be i64"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert!(importer.contains("cuda_device::wgmma::wgmma_fence"));
+        assert!(importer.contains("cuda_device::wgmma::wgmma_commit_group"));
+        assert!(importer.contains("cuda_device::wgmma::__wgmma_wait_group"));
+        assert!(importer.contains("wgmma_wait_group requires a compile-time constant"));
+        assert!(importer.contains("WgmmaWaitGroupSyncAlignedOp::build(ctx, max_pending)"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("llvm_nvvm_wgmma_fence_sync_aligned"));
+        assert!(lowering.contains("llvm__nvvm_dwgmma_dcommit_ugroup_dsync_daligned"));
+        assert!(lowering.contains("llvm__nvvm_dwgmma_dwait_ugroup_dsync_daligned"));
+        assert!(lowering.contains("IntrinsicBackend::LlvmNvptx"));
+        assert!(lowering.contains("IntrinsicBackend::LibNvvm"));
+        assert!(lowering.contains("wgmma.fence.sync.aligned;"));
+        assert!(lowering.contains("wgmma.commit_group.sync.aligned;"));
+        assert!(lowering.contains("wgmma.wait_group.sync.aligned $0;"));
+        assert!(lowering.contains("\"n,~{memory}\""));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(
+            targets
+                .contains("pub enum GeneratedWgmmaControlMode { Fence, CommitGroup, WaitGroup }")
+        );
+        assert!(targets.contains("GeneratedIntrinsicVariant::WgmmaControl"));
+        assert!(targets.contains("WgmmaFenceSyncAlignedOp>(operation, ctx).is_some()"));
+
+        for record in wgmma_controls(&catalog) {
+            let probe = render_probe(&catalog, record, "test-hash");
+            assert!(probe.contains(&format!("@{}", llvm(record).symbol)));
+            assert!(!probe.contains("asm sideeffect"));
+            assert!(probe.contains("attributes #0 = { convergent }"));
+        }
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/wgmma_control.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/wgmma_control.rs"
+        )));
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## WGMMA-control contracts"));
     }
 
     #[test]
@@ -13080,7 +13850,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 316);
+        assert_eq!(catalog.intrinsics.len(), 319);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -13924,10 +14694,10 @@ mod tests {
                 .contains("clc::{convert_generated_clc_query, convert_generated_clc_try_cancel}")
         );
         assert!(lowering.contains(
-            "convert_generated_clc_try_cancel(ctx, rewriter, self.get_operation(), operands_info, \"llvm_nvvm_clusterlaunchcontrol_try_cancel_async_shared\")"
+            "convert_generated_clc_try_cancel(ctx, rewriter, self.get_operation(), operands_info, \"llvm__nvvm_dclusterlaunchcontrol_dtry_ucancel_dasync_dshared\")"
         ));
         assert!(lowering.contains(
-            "convert_generated_clc_query(ctx, rewriter, self.get_operation(), operands_info, \"llvm_nvvm_clusterlaunchcontrol_query_cancel_is_canceled\", true)"
+            "convert_generated_clc_query(ctx, rewriter, self.get_operation(), operands_info, \"llvm__nvvm_dclusterlaunchcontrol_dquery_ucancel_dis_ucanceled\", true)"
         ));
 
         let request = clc_intrinsics(&catalog)

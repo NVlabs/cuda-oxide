@@ -68,73 +68,7 @@
 // WGMMA Synchronization Primitives
 // =============================================================================
 
-/// Fence to ensure memory consistency before WGMMA operations.
-///
-/// Must be called before issuing `wgmma_mma_*` instructions. This ensures
-/// that shared memory writes are visible to the tensor core hardware.
-///
-/// # PTX
-///
-/// ```ptx
-/// wgmma.fence.sync.aligned;
-/// ```
-#[inline(never)]
-pub fn wgmma_fence() {
-    // Lowered to: call void @llvm.nvvm.wgmma.fence.sync.aligned()
-    unreachable!("wgmma_fence called outside CUDA kernel context")
-}
-
-/// Commit all pending WGMMA operations to a group.
-///
-/// After issuing one or more `wgmma_mma_*` instructions, call this to
-/// commit them as a group. The group can then be waited on with
-/// `wgmma_wait_group`.
-///
-/// # PTX
-///
-/// ```ptx
-/// wgmma.commit_group.sync.aligned;
-/// ```
-#[inline(never)]
-pub fn wgmma_commit_group() {
-    // Lowered to: call void @llvm.nvvm.wgmma.commit_group.sync.aligned()
-    unreachable!("wgmma_commit_group called outside CUDA kernel context")
-}
-
-/// Wait for WGMMA groups to complete.
-///
-/// Waits until at most N groups of WGMMA operations are still pending.
-/// Use N=0 to wait for ALL pending groups to complete.
-///
-/// # Type Parameters
-///
-/// - `N`: Maximum number of pending groups allowed (0-7). Use 0 to wait for all.
-///
-/// # PTX
-///
-/// ```ptx
-/// wgmma.wait_group.sync.aligned N;
-/// ```
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // Issue multiple WGMMA groups
-/// wgmma_mma_m64n64k16_f32_bf16(&mut acc, desc_a1, desc_b1);
-/// wgmma_commit_group();
-///
-/// wgmma_mma_m64n64k16_f32_bf16(&mut acc, desc_a2, desc_b2);
-/// wgmma_commit_group();
-///
-/// // Wait for all to complete
-/// wgmma_wait_group::<0>();
-/// ```
-#[inline(never)]
-pub fn wgmma_wait_group<const N: u32>() {
-    let _ = N;
-    // Lowered to: call void @llvm.nvvm.wgmma.wait_group.sync.aligned(i64 N)
-    unreachable!("wgmma_wait_group called outside CUDA kernel context")
-}
+include!("generated/wgmma_control.rs");
 
 // =============================================================================
 // SMEM Descriptor Creation

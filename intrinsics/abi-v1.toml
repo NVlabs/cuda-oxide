@@ -2219,3 +2219,24 @@ status = "active"
 catalog_id = "nanosleep"
 operation_key = "thread.nanosleep.u32"
 raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
+
+[[entry]]
+abi_id = "i0317"
+status = "active"
+catalog_id = "wgmma_fence"
+operation_key = "wgmma.control.fence.sync.aligned"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0318"
+status = "active"
+catalog_id = "wgmma_commit_group"
+operation_key = "wgmma.control.commit_group.sync.aligned"
+raw_rust_signature = { safe = false, arguments = [], result = "()" }
+
+[[entry]]
+abi_id = "i0319"
+status = "active"
+catalog_id = "wgmma_wait_group"
+operation_key = "wgmma.control.wait_group.sync.aligned"
+raw_rust_signature = { safe = false, arguments = ["u64"], result = "()" }

@@ -16,78 +16,12 @@
 //! | `MmaM64N64K16F32Bf16` | `wgmma.mma_async`               | Matrix multiply                |
 
 use crate::convert::intrinsics::common::*;
-use llvm_export::types as llvm_types;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::operation::Operation;
 use pliron::result::Result;
-
-pub(crate) fn convert_fence(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    inline_asm_convergent(
-        ctx,
-        rewriter,
-        void_ty.into(),
-        vec![],
-        "wgmma.fence.sync.aligned;",
-        "",
-    );
-    rewriter.erase_operation(ctx, op);
-    Ok(())
-}
-
-pub(crate) fn convert_commit_group(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-    inline_asm_convergent(
-        ctx,
-        rewriter,
-        void_ty.into(),
-        vec![],
-        "wgmma.commit_group.sync.aligned;",
-        "",
-    );
-    rewriter.erase_operation(ctx, op);
-    Ok(())
-}
-
-/// Convert WGMMA wait_group to inline PTX.
-pub(crate) fn convert_wait_group(
-    ctx: &mut Context,
-    rewriter: &mut DialectConversionRewriter,
-    op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
-) -> Result<()> {
-    let void_ty = llvm_types::VoidType::get(ctx);
-
-    let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.is_empty() {
-        return pliron::input_err_noloc!("wgmma_wait_group requires 1 operand");
-    }
-    let n = operands[0];
-
-    inline_asm_convergent(
-        ctx,
-        rewriter,
-        void_ty.into(),
-        vec![n],
-        "wgmma.wait_group.sync.aligned $0;",
-        "n",
-    );
-    rewriter.erase_operation(ctx, op);
-    Ok(())
-}
 
 /// Convert WGMMA make_smem_desc to inline PTX.
 pub(crate) fn convert_make_smem_desc(

@@ -49,7 +49,8 @@ use crate::model::{
     WarpBarrierMaskEncoding, WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter,
     WarpMatchMode, WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter,
     WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleParticipation, WarpShuffleSourceLane,
-    WarpShuffleValueKind,
+    WarpShuffleValueKind, WgmmaControl, WgmmaControlAdapter, WgmmaControlAdmission,
+    WgmmaControlMode, WgmmaControlParticipation,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
@@ -73,6 +74,7 @@ const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
 const CLC_SHARD_SCHEMA: u32 = 40;
 const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
+const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 pub(crate) const CATALOG_SCHEMA: u32 = 38;
 
 struct ResolutionBase {
@@ -553,6 +555,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let cluster_memory_admission = shard.cluster_memory.take();
         let stmatrix_admission = shard.stmatrix.take();
         let clc_admission = shard.clc.take();
+        let wgmma_control_admission = shard.wgmma_controls.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -673,6 +676,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_clc_admission(&admission)?;
         }
+        if let Some(admission) = wgmma_control_admission {
+            ensure!(
+                shard.family == "wgmma_control" && shard.intrinsics.is_empty(),
+                "compact WGMMA-control admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_wgmma_control_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -776,6 +786,11 @@ fn validate_overlay_shard_schema_with_max(
         shard.mbarrier_extended.is_none() || shard.schema >= MBARRIER_EXTENDED_SHARD_SCHEMA,
         "compact extended-mbarrier admission requires overlay shard schema {}",
         MBARRIER_EXTENDED_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.wgmma_controls.is_none() || shard.schema >= WGMMA_CONTROL_SHARD_SCHEMA,
+        "compact WGMMA-control admission requires overlay shard schema {}",
+        WGMMA_CONTROL_SHARD_SCHEMA
     );
     Ok(())
 }
@@ -1296,6 +1311,10 @@ fn validate_policy(
             policy,
             declaration.context("clc requires imported LLVM declaration")?,
         )?,
+        "wgmma_control" => validate_wgmma_control_policy(
+            policy,
+            declaration.context("wgmma_control requires imported LLVM declaration")?,
+        )?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1326,6 +1345,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some(),
         "{} mixes the cluster-barrier contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "wgmma_control") == policy.wgmma_control.is_some(),
+        "{} mixes the WGMMA-control contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1531,6 +1555,22 @@ fn selection_matches_policy(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,
 ) -> bool {
+    if policy.family == "wgmma_control" {
+        let Some(control) = &policy.wgmma_control else {
+            return false;
+        };
+        let recipe = wgmma_control_recipe(control.mode);
+        let selection_shape_matches = if control.mode == WgmmaControlMode::WaitGroup {
+            selection.asm == "wgmma.wait_group.sync.aligned \t$n;"
+        } else {
+            policy.expected_ptx.matches(&selection.asm)
+        };
+        return selection.source_record == recipe.selection_record
+            && selection_shape_matches
+            && selection.predicates == ["Subtarget->getPTXVersion() >= 80", "hasSM90a"]
+            && selection.constraints.is_empty();
+    }
+
     if policy.family == "sync" {
         if policy.id == "sync_threads" {
             return selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
@@ -1864,6 +1904,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -2318,6 +2359,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -3980,6 +4022,22 @@ fn validate_selected_target_predicates(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,
 ) -> Result<()> {
+    if policy.family == "wgmma_control" {
+        ensure!(
+            selection.predicates == ["Subtarget->getPTXVersion() >= 80", "hasSM90a"]
+                && parse_ptx_version(&policy.minimum_ptx, &policy.id)?.encoded() == 80
+                && parse_hardware_target(policy)?
+                    == CatalogHardwareTarget::AnyOf {
+                        alternatives: vec![CatalogHardwareAlternative::ExactArchitecture {
+                            sm: 90,
+                        }],
+                    },
+            "{} WGMMA-control selection must retain the PTX 8.0 and sm_90a gates",
+            policy.id
+        );
+        return Ok(());
+    }
+
     let mut imported_ptx = None;
     let mut imported_sm = None;
     let mut has_dot_instructions = false;
@@ -4692,6 +4750,7 @@ fn expand_special_register_admission(
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: Some(special_register_contract(recipe)),
                 debug_control: None,
                 cluster_memory: None,
@@ -5321,6 +5380,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         sparse_mma: None,
         prmt: None,
         cluster_barrier: None,
+        wgmma_control: None,
         special_register: None,
         debug_control: None,
         cluster_memory: None,
@@ -6247,6 +6307,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -8916,6 +8977,7 @@ fn packed_conversion_overlay_record(
         sparse_mma: None,
         prmt: None,
         cluster_barrier: None,
+        wgmma_control: None,
         special_register: None,
         debug_control: None,
         cluster_memory: None,
@@ -10177,6 +10239,7 @@ fn expand_register_mma_integer_admission(
             sparse_mma: None,
             prmt: None,
             cluster_barrier: None,
+            wgmma_control: None,
             special_register: None,
             debug_control: None,
             cluster_memory: None,
@@ -10358,6 +10421,7 @@ fn expand_register_mma_binary_admission(
             sparse_mma: None,
             prmt: None,
             cluster_barrier: None,
+            wgmma_control: None,
             special_register: None,
             debug_control: None,
             cluster_memory: None,
@@ -11003,6 +11067,7 @@ fn sparse_mma_overlay_record(
         sparse_mma: Some(mma),
         prmt: None,
         cluster_barrier: None,
+        wgmma_control: None,
         special_register: None,
         debug_control: None,
         cluster_memory: None,
@@ -11447,6 +11512,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                     adapter: recipe.adapter,
                 }),
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -11800,6 +11866,7 @@ fn expand_cluster_barrier_admission(
                     ordering: recipe.ordering,
                     aligned: recipe.aligned,
                 }),
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -12026,6 +12093,73 @@ fn debug_control_recipe(operation: DebugControlOperation) -> DebugControlRecipe 
     }
 }
 
+#[derive(Clone, Copy)]
+struct WgmmaControlRecipe {
+    mode: WgmmaControlMode,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    selection_record: &'static str,
+    llvm_symbol: &'static str,
+    compatibility_path: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    suffix: &'static str,
+    adapter: WgmmaControlAdapter,
+    summary: &'static str,
+}
+
+fn wgmma_control_recipe(mode: WgmmaControlMode) -> WgmmaControlRecipe {
+    match mode {
+        WgmmaControlMode::Fence => WgmmaControlRecipe {
+            mode,
+            abi_id: "i0317",
+            id: "wgmma_fence",
+            operation_key: "wgmma.control.fence.sync.aligned",
+            source_record: "int_nvvm_wgmma_fence_sync_aligned",
+            selection_record: "WGMMA_FENCE_SYNC_ALIGNED",
+            llvm_symbol: "llvm.nvvm.wgmma.fence.sync.aligned",
+            compatibility_path: "cuda_device::wgmma::wgmma_fence",
+            dialect_op_type: "WgmmaFenceSyncAlignedOp",
+            dialect_op_name: "nvvm.wgmma_fence_sync_aligned",
+            suffix: "fence.sync.aligned",
+            adapter: WgmmaControlAdapter::NoArguments,
+            summary: "Orders register accesses before later WGMMA operations.",
+        },
+        WgmmaControlMode::CommitGroup => WgmmaControlRecipe {
+            mode,
+            abi_id: "i0318",
+            id: "wgmma_commit_group",
+            operation_key: "wgmma.control.commit_group.sync.aligned",
+            source_record: "int_nvvm_wgmma_commit_group_sync_aligned",
+            selection_record: "WGMMA_COMMIT_GROUP_SYNC_ALIGNED",
+            llvm_symbol: "llvm.nvvm.wgmma.commit_group.sync.aligned",
+            compatibility_path: "cuda_device::wgmma::wgmma_commit_group",
+            dialect_op_type: "WgmmaCommitGroupSyncAlignedOp",
+            dialect_op_name: "nvvm.wgmma_commit_group_sync_aligned",
+            suffix: "commit_group.sync.aligned",
+            adapter: WgmmaControlAdapter::NoArguments,
+            summary: "Commits prior uncommitted WGMMA operations as one group.",
+        },
+        WgmmaControlMode::WaitGroup => WgmmaControlRecipe {
+            mode,
+            abi_id: "i0319",
+            id: "wgmma_wait_group",
+            operation_key: "wgmma.control.wait_group.sync.aligned",
+            source_record: "int_nvvm_wgmma_wait_group_sync_aligned",
+            selection_record: "WGMMA_WAIT_GROUP_SYNC_ALIGNED",
+            llvm_symbol: "llvm.nvvm.wgmma.wait_group.sync.aligned",
+            compatibility_path: "cuda_device::wgmma::__wgmma_wait_group",
+            dialect_op_type: "WgmmaWaitGroupSyncAlignedOp",
+            dialect_op_name: "nvvm.wgmma_wait_group_sync_aligned",
+            suffix: "wait_group.sync.aligned",
+            adapter: WgmmaControlAdapter::ConstGenericU32ToI64Immediate,
+            summary: "Waits until at most the requested number of WGMMA groups remain pending.",
+        },
+    }
+}
+
 fn expand_debug_control_admission(
     admission: &DebugControlAdmission,
 ) -> Result<Vec<OverlayIntrinsic>> {
@@ -12159,6 +12293,7 @@ fn expand_debug_control_admission(
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: Some(DebugControl {
                     operation,
@@ -12671,6 +12806,7 @@ fn expand_cluster_memory_admission(
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: Some(ClusterMemory {
@@ -13499,6 +13635,7 @@ fn expand_mbarrier_extended_admission(
                 sparse_mma: None,
                 prmt: None,
                 cluster_barrier: None,
+                wgmma_control: None,
                 special_register: None,
                 debug_control: None,
                 cluster_memory: None,
@@ -13630,6 +13767,271 @@ fn validate_mbarrier_extended_policy(
         "extended-mbarrier",
     )?;
     ensure_no_other_family_contract(policy, "extended mbarrier")?;
+    Ok(())
+}
+
+fn expand_wgmma_control_admission(
+    admission: &WgmmaControlAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "WGMMA-control runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact WGMMA-control admission requires both backend evidence profiles"
+    );
+    let expected_modes = [
+        WgmmaControlMode::Fence,
+        WgmmaControlMode::CommitGroup,
+        WgmmaControlMode::WaitGroup,
+    ];
+    let actual_modes = admission
+        .variants
+        .iter()
+        .map(|variant| variant.mode)
+        .collect::<Vec<_>>();
+    ensure!(
+        actual_modes == expected_modes,
+        "compact WGMMA-control admission must contain each reviewed mode once in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = wgmma_control_recipe(variant.mode);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let wait = recipe.mode == WgmmaControlMode::WaitGroup;
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "wgmma_control".into(),
+                source: None,
+                source_record: Some(recipe.source_record.into()),
+                rust_module: "wgmma".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: if wait { vec!["u64".into()] } else { vec![] },
+                rust_result: "()".into(),
+                safe: false,
+                must_use: false,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::wgmma::{}", recipe.id),
+                compatibility_rust_paths: vec![recipe.compatibility_path.into()],
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: if wait { vec!["i64".into()] } else { vec![] },
+                dialect_results: vec![],
+                llvm_symbol: Some(recipe.llvm_symbol.into()),
+                resolved_llvm_symbol: None,
+                llvm_arguments: if wait { vec!["i64".into()] } else { vec![] },
+                llvm_results: vec![],
+                pure: false,
+                memory: "read_write".into(),
+                convergent: true,
+                execution_scope: "warpgroup".into(),
+                minimum_ptx: "8.0".into(),
+                minimum_sm: None,
+                ptx_result: "()".into(),
+                targets: "sm_90a".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section:
+                    "Asynchronous Warpgroup Level Matrix Instructions: WGMMA control".into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions".into(),
+                lowering: "generated_wgmma_control".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        minimum_ptx: Some("8.0".into()),
+                        minimum_sm: None,
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        minimum_ptx: Some("8.0".into()),
+                        minimum_sm: None,
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                mbarrier_extended: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                wgmma_control: Some(WgmmaControl {
+                    mode: recipe.mode,
+                    adapter: recipe.adapter,
+                    participation: WgmmaControlParticipation::WarpgroupAllThreadsSameInstruction,
+                }),
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: None,
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "wgmma".into(),
+                    modifiers: recipe.suffix.split('.').map(str::to_owned).collect(),
+                    operands: if wait {
+                        vec![OperandPattern::Immediate]
+                    } else {
+                        vec![]
+                    },
+                },
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_wgmma_control_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let control = policy
+        .wgmma_control
+        .as_ref()
+        .with_context(|| format!("{} has no closed WGMMA-control contract", policy.id))?;
+    let recipe = wgmma_control_recipe(control.mode);
+    let wait = recipe.mode == WgmmaControlMode::WaitGroup;
+    ensure!(
+        control.adapter == recipe.adapter
+            && control.participation
+                == WgmmaControlParticipation::WarpgroupAllThreadsSameInstruction
+            && policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} identity or semantics do not match its closed WGMMA-control recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "wgmma"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments
+                == if wait {
+                    vec!["u64"]
+                } else {
+                    Vec::<&str>::new()
+                }
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::wgmma::{}", recipe.id)
+            && policy.compatibility_rust_paths == [recipe.compatibility_path],
+        "{} Rust API does not match its closed WGMMA-control recipe",
+        policy.id
+    );
+    let expected_arguments = if wait {
+        vec!["i64"]
+    } else {
+        Vec::<&str>::new()
+    };
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == expected_arguments
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == expected_arguments
+            && policy.llvm_results.is_empty()
+            && policy.lowering == "generated_wgmma_control",
+        "{} carrier or lowering does not match its closed WGMMA-control recipe",
+        policy.id
+    );
+    let expected_properties = if wait {
+        vec!["ImmArg<arg0>", "IntrConvergent"]
+    } else {
+        vec!["IntrConvergent"]
+    };
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic"]
+            && declaration.properties == expected_properties
+            && !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "warpgroup",
+        "{} effects disagree with the imported WGMMA-control declaration",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "8.0"
+            && policy.minimum_sm.is_none()
+            && policy.targets == "sm_90a"
+            && policy.ptx_result == "()"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions",
+        "{} target floor or PTX provenance changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic == "wgmma"
+            && policy.expected_ptx.modifiers == recipe.suffix.split('.').collect::<Vec<_>>()
+            && policy.expected_ptx.operands
+                == if wait {
+                    vec![OperandPattern::Immediate]
+                } else {
+                    vec![]
+                },
+        "{} expected PTX does not match its exact WGMMA-control spelling",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::TypedNvvm,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.minimum_ptx.as_deref() == Some("8.0")
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must define exactly the reviewed WGMMA-control backend routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "WGMMA control")?;
     Ok(())
 }
 
@@ -13767,6 +14169,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
             && (policy.family == "prmt") == policy.prmt.is_some()
             && (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some()
+            && (policy.family == "wgmma_control") == policy.wgmma_control.is_some()
             && (policy.family == "debug_control") == policy.debug_control.is_some()
             && (policy.family == "cluster_memory") == policy.cluster_memory.is_some()
             && (policy.family == "clc") == policy.clc.is_some(),
@@ -14635,7 +15038,7 @@ fn validate_evidence(
             validate_typed_llvm_evidence(policy, record)?;
         }
         validate_packed_conversion_backend_evidence(policy, record, lowering)?;
-        validate_cluster_barrier_backend_evidence(policy, record, lowering)?;
+        validate_inline_ptx_fallback_evidence(policy, record, lowering)?;
         if lowering.backend == IntrinsicBackend::LlvmNvptx
             && matches!(record.status.as_str(), "validated" | "executed")
         {
@@ -14668,12 +15071,14 @@ fn validate_evidence(
     Ok(())
 }
 
-fn validate_cluster_barrier_backend_evidence(
+fn validate_inline_ptx_fallback_evidence(
     policy: &OverlayIntrinsic,
     record: &EvidenceRecord,
     lowering: &crate::model::OverlayBackendLowering,
 ) -> Result<()> {
-    if policy.family != "cluster_barrier" || lowering.backend != IntrinsicBackend::LibNvvm {
+    if !matches!(policy.family.as_str(), "cluster_barrier" | "wgmma_control")
+        || lowering.backend != IntrinsicBackend::LibNvvm
+    {
         return Ok(());
     }
     for stage in [
@@ -15393,6 +15798,7 @@ fn materialize_record(
         sparse_mma: policy.sparse_mma.clone(),
         prmt: policy.prmt.clone(),
         cluster_barrier: policy.cluster_barrier.clone(),
+        wgmma_control: policy.wgmma_control.clone(),
         special_register: policy.special_register.clone(),
         debug_control: policy.debug_control.clone(),
         cluster_memory: policy.cluster_memory.clone(),
@@ -15519,6 +15925,7 @@ mod tests {
             sparse_mma: None,
             prmt: None,
             cluster_barrier: None,
+            wgmma_control: None,
             special_register: None,
             debug_control: None,
             cluster_memory: None,
@@ -16958,8 +17365,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 42);
-        assert_eq!(overlay.intrinsics.len(), 316);
+        assert_eq!(overlay.shards.len(), 43);
+        assert_eq!(overlay.intrinsics.len(), 319);
         assert_eq!(
             overlay
                 .intrinsics
@@ -17205,6 +17612,25 @@ mod tests {
         }
     }
 
+    fn test_wgmma_control_admission() -> WgmmaControlAdmission {
+        let variants = [
+            WgmmaControlMode::Fence,
+            WgmmaControlMode::CommitGroup,
+            WgmmaControlMode::WaitGroup,
+        ]
+        .map(|mode| crate::model::WgmmaControlAdmissionVariant {
+            abi_id: wgmma_control_recipe(mode).abi_id.into(),
+            mode,
+        })
+        .into();
+        WgmmaControlAdmission {
+            llvm_evidence_profile: "llvm-test".into(),
+            libnvvm_evidence_profile: "libnvvm-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants,
+        }
+    }
+
     fn test_special_register_admission() -> SpecialRegisterAdmission {
         SpecialRegisterAdmission {
             llvm_evidence_profile: "rust-llvm-22.1.2-1cb4e383".into(),
@@ -17372,6 +17798,7 @@ mod tests {
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -17445,6 +17872,7 @@ mod tests {
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -17475,6 +17903,7 @@ mod tests {
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -17506,6 +17935,7 @@ mod tests {
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         validate_overlay_shard_schema_with_max(
             &extended_shard,
@@ -17737,6 +18167,7 @@ record_count = 14
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -18361,6 +18792,7 @@ scope = "system"
             cluster_memory: None,
             stmatrix: None,
             clc: Some(test_clc_admission()),
+            wgmma_controls: None,
         };
         let path = Path::new("intrinsics/overlay/clc.toml");
         validate_overlay_shard_schema_with_max(&shard(CLC_SHARD_SCHEMA), path, CLC_SHARD_SCHEMA)
@@ -18399,6 +18831,7 @@ scope = "system"
             cluster_memory: None,
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
@@ -18433,6 +18866,7 @@ scope = "system"
             cluster_memory: Some(test_cluster_memory_admission()),
             stmatrix: None,
             clc: None,
+            wgmma_controls: None,
         };
         let path = Path::new("intrinsics/overlay/cluster_memory.toml");
         validate_overlay_shard_schema_with_max(
@@ -18759,6 +19193,123 @@ scope = "system"
         let mut wrong_abi = test_mbarrier_extended_admission();
         wrong_abi.variants[0].abi_id = "i9999".into();
         assert!(expand_mbarrier_extended_admission(&wrong_abi).is_err());
+    }
+
+    #[test]
+    fn compact_wgmma_control_admission_and_semantics_fail_closed() {
+        let records = expand_wgmma_control_admission(&test_wgmma_control_admission()).unwrap();
+        assert_eq!(records.len(), 3);
+
+        let imported: ImportedFile = read_json(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("intrinsics/imported.json"),
+        )
+        .unwrap();
+        let declaration_for = |record: &OverlayIntrinsic| {
+            imported
+                .intrinsics
+                .iter()
+                .find(|declaration| {
+                    Some(declaration.source_record.as_str()) == record.source_record.as_deref()
+                })
+                .unwrap()
+        };
+        for record in &records {
+            validate_imported_policy(record, declaration_for(record)).unwrap();
+            assert_eq!(record.targets, "sm_90a");
+            assert_eq!(record.minimum_ptx, "8.0");
+            assert_eq!(record.backend_lowerings.len(), 2);
+        }
+
+        let wait = records
+            .iter()
+            .find(|record| {
+                record
+                    .wgmma_control
+                    .as_ref()
+                    .is_some_and(|control| control.mode == WgmmaControlMode::WaitGroup)
+            })
+            .unwrap();
+        assert_eq!(wait.rust_arguments, ["u64"]);
+        assert_eq!(wait.dialect_operands, ["i64"]);
+        assert_eq!(
+            wait.compatibility_rust_paths,
+            ["cuda_device::wgmma::__wgmma_wait_group"]
+        );
+
+        let mut wrong_adapter = wait.clone();
+        wrong_adapter.wgmma_control.as_mut().unwrap().adapter = WgmmaControlAdapter::NoArguments;
+        assert!(validate_imported_policy(&wrong_adapter, declaration_for(wait)).is_err());
+
+        let mut wrong_participation = wait.clone();
+        wrong_participation.execution_scope = "warp".into();
+        assert!(validate_imported_policy(&wrong_participation, declaration_for(wait)).is_err());
+
+        let mut wrong_route = wait.clone();
+        wrong_route.backend_lowerings[1].mechanism = BackendLoweringMechanism::TypedNvvm;
+        assert!(validate_imported_policy(&wrong_route, declaration_for(wait)).is_err());
+
+        let mut wrong_target = wait.clone();
+        wrong_target.targets = "all".into();
+        wrong_target.minimum_sm = Some("sm_90".into());
+        assert!(validate_imported_policy(&wrong_target, declaration_for(wait)).is_err());
+
+        let mut missing = test_wgmma_control_admission();
+        missing.variants.pop();
+        assert!(expand_wgmma_control_admission(&missing).is_err());
+
+        let mut reversed = test_wgmma_control_admission();
+        reversed.variants.reverse();
+        assert!(expand_wgmma_control_admission(&reversed).is_err());
+
+        let mut duplicate = test_wgmma_control_admission();
+        duplicate.variants[2].mode = WgmmaControlMode::Fence;
+        assert!(expand_wgmma_control_admission(&duplicate).is_err());
+
+        let mut wrong_abi = test_wgmma_control_admission();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_wgmma_control_admission(&wrong_abi).is_err());
+
+        let mut executed = test_wgmma_control_admission();
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_wgmma_control_admission(&executed).is_err());
+    }
+
+    #[test]
+    fn wgmma_control_compact_schema_is_reserved_for_aggregation() {
+        let shard = OverlayShardFile {
+            schema: WGMMA_CONTROL_SHARD_SCHEMA,
+            family: "wgmma_control".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            mbarrier_extended: None,
+            special_registers: None,
+            debug_control: None,
+            threadfence: None,
+            cluster_memory: None,
+            stmatrix: None,
+            clc: None,
+            wgmma_controls: Some(test_wgmma_control_admission()),
+        };
+        let path = Path::new("intrinsics/overlay/wgmma_control.toml");
+        validate_overlay_shard_schema_with_max(&shard, path, WGMMA_CONTROL_SHARD_SCHEMA).unwrap();
+        let mut old = shard;
+        old.schema -= 1;
+        assert!(
+            validate_overlay_shard_schema_with_max(&old, path, WGMMA_CONTROL_SHARD_SCHEMA)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 38")
+        );
     }
 
     #[test]

@@ -293,6 +293,7 @@ pub fn create_i64_constant(
 /// Pliron IR symbol system (e.g., `llvm_nvvm_read_ptx_sreg_tid_x`). These are
 /// translated to the standard LLVM intrinsic names with dots when exported to
 /// LLVM IR (e.g., `llvm.nvvm.read.ptx.sreg.tid.x`).
+/// Escape-mode identifiers preserve literal underscores with `_u`.
 pub fn ensure_intrinsic_declared(
     ctx: &mut Context,
     llvm_block: Ptr<BasicBlock>,

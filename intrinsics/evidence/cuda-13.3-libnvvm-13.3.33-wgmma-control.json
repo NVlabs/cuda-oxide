@@ -1,0 +1,105 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-wgmma-control",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90a",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "wgmma_control_inline_probe",
+      "coverage_count": 3,
+      "stages": [
+        {
+          "targets": ["compute_90a", "ptx93"],
+          "representation": "one typed libNVVM probe containing all three llvm.nvvm.wgmma control calls",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "libNVVM accepted the 864-byte source with SHA-256 9688c2fd5593eae29ec346f031fe10414406bbad1035ecd83c60f7106900a480 but emitted three unresolved extern calls. The 2,052-byte LTOIR had SHA-256 cd7b151407b8838020b4be909b2736482404de9477864c9a8a2ac9251685e293; the 937-byte PTX had SHA-256 2470f349c91be972eda200df903bc4092a5d4ebad89d08e31f231b2f36c41a43."
+        },
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "typed libNVVM probe with unresolved intrinsic-shaped extern calls",
+          "stage": "device_link",
+          "mechanism": "typed_nvvm",
+          "outcome": "failed",
+          "detail": "CUDA 13.3 nvJitLink exited with code 22 after ptxas rejected the unresolved .extern names; no cubin was produced.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        },
+        {
+          "targets": ["compute_90a", "ptx93"],
+          "representation": "one convergent NVVM IR 2.0 probe containing the three exact inline-PTX controls",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained each exact instruction once. The 760-byte source had SHA-256 cbd3c0a7fbaf951487fd7edf28eb9a841499ad5c277ab27b3eb03817f70f9d3c; the 2,040-byte LTOIR had SHA-256 a648e9385b3863bc44368471bf2a710c22e94ec68af423466b77d4fbb88d1037; the 491-byte linked PTX had SHA-256 5423249b889c249c36732c46893c3987fef414e060f48852a29887bd918fad71."
+        },
+        {
+          "targets": ["sm_90a", "ptx93"],
+          "representation": "linked cubin retaining all three WGMMA control instructions",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 3,560-byte cubin with SHA-256 a3ebc2a2c4d8a7661a85f5e06421cd24b7f35a37754509b651be7ed1c0783ae5.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["wgmma_fence"]}],
+      "product_count": 1,
+      "fixtures": ["wgmma_control_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_wgmma_fence_sync_aligned",
+        "llvm_symbol": "llvm.nvvm.wgmma.fence.sync.aligned",
+        "expected_ptx": {"mnemonic": "wgmma", "modifiers": ["fence", "sync", "aligned"], "operands": []},
+        "facts": {"llvm_arguments": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["wgmma_commit_group"]}],
+      "product_count": 1,
+      "fixtures": ["wgmma_control_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_wgmma_commit_group_sync_aligned",
+        "llvm_symbol": "llvm.nvvm.wgmma.commit_group.sync.aligned",
+        "expected_ptx": {"mnemonic": "wgmma", "modifiers": ["commit_group", "sync", "aligned"], "operands": []},
+        "facts": {"llvm_arguments": []}
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["wgmma_wait_group"]}],
+      "product_count": 1,
+      "fixtures": ["wgmma_control_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_wgmma_wait_group_sync_aligned",
+        "llvm_symbol": "llvm.nvvm.wgmma.wait_group.sync.aligned",
+        "expected_ptx": {"mnemonic": "wgmma", "modifiers": ["wait_group", "sync", "aligned"], "operands": [{"kind": "immediate"}]},
+        "facts": {"llvm_arguments": ["i64"]}
+      }
+    }
+  ]
+}

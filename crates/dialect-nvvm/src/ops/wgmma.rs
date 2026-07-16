@@ -46,101 +46,6 @@ use pliron::{
 use pliron_derive::pliron_op;
 
 // =============================================================================
-// Synchronization Operations
-// =============================================================================
-
-/// WGMMA fence for memory synchronization before MMA operations.
-///
-/// Ensures that shared memory writes are visible to the tensor core unit
-/// before issuing WGMMA operations.
-///
-/// Corresponds to `llvm.nvvm.wgmma.fence.sync.aligned`.
-///
-/// PTX: `wgmma.fence.sync.aligned;`
-///
-/// # Operands
-///
-/// - None
-///
-/// # Results
-///
-/// - None
-#[pliron_op(
-    name = "nvvm.wgmma_fence_sync_aligned",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct WgmmaFenceSyncAlignedOp;
-
-impl WgmmaFenceSyncAlignedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaFenceSyncAlignedOp { op }
-    }
-}
-
-/// WGMMA commit group - commits pending WGMMA operations.
-///
-/// Groups pending WGMMA operations for collective waiting.
-///
-/// Corresponds to `llvm.nvvm.wgmma.commit_group.sync.aligned`.
-///
-/// PTX: `wgmma.commit_group.sync.aligned;`
-///
-/// # Operands
-///
-/// - None
-///
-/// # Results
-///
-/// - None
-#[pliron_op(
-    name = "nvvm.wgmma_commit_group_sync_aligned",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<0>, NResultsInterface<0>],
-)]
-pub struct WgmmaCommitGroupSyncAlignedOp;
-
-impl WgmmaCommitGroupSyncAlignedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaCommitGroupSyncAlignedOp { op }
-    }
-}
-
-/// WGMMA wait group - waits for N groups to complete.
-///
-/// Blocks until at most N WGMMA groups are still pending.
-///
-/// Corresponds to `llvm.nvvm.wgmma.wait_group.sync.aligned`.
-///
-/// PTX: `wgmma.wait_group.sync.aligned N;`
-///
-/// # Operands
-///
-/// - `N` (i64): maximum pending groups (0-7)
-///
-/// # Results
-///
-/// - None
-#[pliron_op(
-    name = "nvvm.wgmma_wait_group_sync_aligned",
-    format,
-    verifier = "succ",
-    interfaces = [NOpdsInterface<1>, NResultsInterface<0>],
-)]
-pub struct WgmmaWaitGroupSyncAlignedOp;
-
-impl WgmmaWaitGroupSyncAlignedOp {
-    /// Wrap an existing operation pointer.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        WgmmaWaitGroupSyncAlignedOp { op }
-    }
-}
-
-// =============================================================================
 // Descriptor Operations
 // =============================================================================
 
@@ -212,9 +117,6 @@ impl WgmmaMmaM64N64K16F32Bf16Op {
 
 /// Register WGMMA operations with the context.
 pub(super) fn register(ctx: &mut Context) {
-    WgmmaFenceSyncAlignedOp::register(ctx);
-    WgmmaCommitGroupSyncAlignedOp::register(ctx);
-    WgmmaWaitGroupSyncAlignedOp::register(ctx);
     WgmmaMakeSmemDescOp::register(ctx);
     WgmmaMmaM64N64K16F32Bf16Op::register(ctx);
 }

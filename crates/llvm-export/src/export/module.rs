@@ -65,7 +65,7 @@ fn index_module_symbols(
         } else if let Some(func) = Operation::get_op::<ops::FuncOp>(operation, state.ctx) {
             let raw_name = func.get_symbol_name(state.ctx);
             let exported_name = if raw_name.starts_with("llvm_") {
-                raw_name.replace('_', ".")
+                super::names::decode_intrinsic_identifier(&raw_name)
             } else {
                 super::names::strip_device_prefix(&raw_name)
             };
