@@ -173,6 +173,8 @@ pub struct OverlayShardFile {
     pub debug_control: Option<DebugControlAdmission>,
     #[serde(default)]
     pub threadfence: Option<ThreadfenceAdmission>,
+    #[serde(default)]
+    pub cluster_memory: Option<ClusterMemoryAdmission>,
 }
 
 /// Compact admission for Hopper cluster special registers.
@@ -229,6 +231,32 @@ pub enum ClusterBarrierOrdering {
     Release,
     Relaxed,
     Acquire,
+}
+
+/// Compact admission for cluster address mapping and remote shared reads.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterMemoryAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ClusterMemoryAdmissionVariant>,
+}
+
+/// One reviewed cluster-memory operation and its reserved ABI ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterMemoryAdmissionVariant {
+    pub abi_id: String,
+    pub operation: ClusterMemoryOperation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterMemoryOperation {
+    MapSharedRank,
+    ReadU32,
 }
 
 /// Compact admission for the reviewed non-launch special-register reads.
@@ -483,6 +511,8 @@ pub struct OverlayIntrinsic {
     #[serde(default)]
     pub debug_control: Option<DebugControl>,
     #[serde(default)]
+    pub cluster_memory: Option<ClusterMemory>,
+    #[serde(default)]
     pub ldmatrix_variant: Option<LdmatrixVariant>,
     #[serde(default)]
     pub ldmatrix_safety: Option<LdmatrixSafety>,
@@ -541,6 +571,30 @@ pub struct DebugControl {
     pub operation: DebugControlOperation,
     pub adapter: DebugControlAdapter,
     pub runtime_validation: RuntimeValidation,
+}
+
+/// Closed contract for cluster address mapping and remote shared reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterMemory {
+    pub operation: ClusterMemoryOperation,
+    pub adapter: ClusterMemoryAdapter,
+    pub source_contract: ClusterMemorySourceContract,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterMemoryAdapter {
+    GenericConstAndMutPointerRankToSamePointer,
+    ConstU32PointerRankToU32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClusterMemorySourceContract {
+    LlvmMapaSharedClusterAs7IdentityInlinePtx,
+    PtxNativeMapaThenWeakClusterLoad,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1905,6 +1959,8 @@ pub struct CatalogIntrinsic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_control: Option<DebugControl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_memory: Option<ClusterMemory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ldmatrix: Option<CatalogLdmatrix>,
     pub lowering: String,
     pub expected_ptx: InstructionPattern,
@@ -2724,6 +2780,40 @@ runtime_validation = "unexecuted"
         ] {
             assert!(
                 toml::from_str::<DebugControl>(&invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn cluster_memory_contract_rejects_open_ended_policy() {
+        let valid = r#"
+operation = "map_shared_rank"
+adapter = "generic_const_and_mut_pointer_rank_to_same_pointer"
+source_contract = "llvm_mapa_shared_cluster_as7_identity_inline_ptx"
+runtime_validation = "unexecuted"
+"#;
+        let parsed = toml::from_str::<ClusterMemory>(valid).unwrap();
+        assert_eq!(parsed.operation, ClusterMemoryOperation::MapSharedRank);
+        assert_eq!(
+            parsed.source_contract,
+            ClusterMemorySourceContract::LlvmMapaSharedClusterAs7IdentityInlinePtx
+        );
+
+        for invalid in [
+            valid.replace("map_shared_rank", "map_generic_rank"),
+            valid.replace(
+                "generic_const_and_mut_pointer_rank_to_same_pointer",
+                "direct",
+            ),
+            valid.replace(
+                "llvm_mapa_shared_cluster_as7_identity_inline_ptx",
+                "llvm_typed_as3",
+            ),
+            format!("{valid}unreviewed = true\n"),
+        ] {
+            assert!(
+                toml::from_str::<ClusterMemory>(&invalid).is_err(),
                 "{invalid}"
             );
         }

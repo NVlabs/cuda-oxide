@@ -11,12 +11,13 @@ use crate::model::{
     CatalogIntrinsic, CatalogLdmatrix, CatalogLlvm, CatalogLlvmResultFacts, CatalogRust,
     CatalogSelection, CatalogSemantics, CatalogSource, CatalogTarget, CatalogTargetRequirement,
     ClusterBarrier, ClusterBarrierAdmission, ClusterBarrierMode, ClusterBarrierOrdering,
-    ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy, CpAsyncControlAdapter,
-    CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation,
-    CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl, DebugControlAdapter,
-    DebugControlAdmission, DebugControlOperation, DotProductAdapter, DotProductOperation,
-    DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6, EvidenceMatrix,
-    EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
+    ClusterMemory, ClusterMemoryAdapter, ClusterMemoryAdmission, ClusterMemoryOperation,
+    ClusterMemorySourceContract, ClusterSregAdmission, CpAsyncAdapter, CpAsyncCachePolicy,
+    CpAsyncControlAdapter, CpAsyncControlOperation, CpAsyncCopySize, CpAsyncMbarrierAdapter,
+    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControl,
+    DebugControlAdapter, DebugControlAdmission, DebugControlOperation, DotProductAdapter,
+    DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6,
+    EvidenceMatrix, EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
     EvidenceStageKind, ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend,
     IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout,
     LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
@@ -55,7 +56,7 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 38;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 34;
+const OVERLAY_SHARD_SCHEMA: u32 = 39;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -64,6 +65,7 @@ const CLUSTER_BARRIER_SHARD_SCHEMA: u32 = 31;
 const SPECIAL_REGISTER_SHARD_SCHEMA: u32 = 32;
 const DEBUG_CONTROL_SHARD_SCHEMA: u32 = 33;
 const THREADFENCE_SHARD_SCHEMA: u32 = 34;
+const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
 pub(crate) const CATALOG_SCHEMA: u32 = 37;
 
 struct ResolutionBase {
@@ -470,6 +472,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let special_register_admission = shard.special_registers.take();
         let debug_control_admission = shard.debug_control.take();
         let threadfence_admission = shard.threadfence.take();
+        let cluster_memory_admission = shard.cluster_memory.take();
         let compact_mma_count = usize::from(int4_mma_admission.is_some())
             + usize::from(int8_mma_admission.is_some())
             + usize::from(binary_mma_admission.is_some())
@@ -562,6 +565,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics = expand_threadfence_admission(&admission)?;
         }
+        if let Some(admission) = cluster_memory_admission {
+            ensure!(
+                shard.family == "cluster_memory" && shard.intrinsics.is_empty(),
+                "compact cluster-memory admission must be the only content of its shard"
+            );
+            shard.intrinsics = expand_cluster_memory_admission(&admission)?;
+        }
         ensure!(
             !shard.intrinsics.is_empty(),
             "overlay shard {} contains no intrinsic records",
@@ -646,6 +656,11 @@ fn validate_overlay_shard_schema_with_max(
         "compact threadfence admission requires overlay shard schema {}",
         THREADFENCE_SHARD_SCHEMA
     );
+    ensure!(
+        shard.cluster_memory.is_none() || shard.schema >= CLUSTER_MEMORY_SHARD_SCHEMA,
+        "compact cluster-memory admission requires overlay shard schema {}",
+        CLUSTER_MEMORY_SHARD_SCHEMA
+    );
     Ok(())
 }
 
@@ -712,7 +727,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             );
         }
         let op_variant = format!(
-            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
+            "{}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
             record.dialect_op_name,
             record.ldmatrix_variant,
             record.packed_atomic,
@@ -731,6 +746,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             record.sparse_mma,
             record.prmt,
             record.cluster_barrier,
+            record.cluster_memory,
         );
         insert_unique(&mut op_variants, &op_variant, "dialect op variant")?;
         if let Some(symbol) = &record.llvm_symbol {
@@ -1151,6 +1167,7 @@ fn validate_policy(
             declaration.context("cluster_barrier requires imported LLVM declaration")?,
         )?,
         "debug_control" => validate_debug_control_policy(policy, source)?,
+        "cluster_memory" => validate_cluster_memory_policy(policy, source, declaration)?,
         family => bail!("{} uses unsupported generated family {family:?}", policy.id),
     }
     ensure!(
@@ -1181,6 +1198,11 @@ fn validate_policy(
     ensure!(
         (policy.family == "debug_control") == policy.debug_control.is_some(),
         "{} mixes the debug-control contract with another generated family",
+        policy.id
+    );
+    ensure!(
+        (policy.family == "cluster_memory") == policy.cluster_memory.is_some(),
+        "{} mixes the cluster-memory contract with another generated family",
         policy.id
     );
     ensure!(
@@ -1242,8 +1264,13 @@ fn validate_policy(
             .iter()
             .any(|property| property == "IntrConvergent");
         let convergence_supplied_by_ptx =
-            matches!(policy.family.as_str(), "register_mma" | "sparse_mma")
+            (matches!(policy.family.as_str(), "register_mma" | "sparse_mma")
                 && (policy.register_mma.is_some() || policy.sparse_mma.is_some())
+                || (policy.family == "cluster_memory"
+                    && policy.cluster_memory.is_some()
+                    && policy.backend_lowerings.iter().all(|lowering| {
+                        lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                    })))
                 && policy.convergent
                 && !imported_convergent;
         ensure!(
@@ -1298,6 +1325,7 @@ fn validate_policy(
             {
                 2
             }
+            "cluster_memory" if policy.id == "map_shared_rank" => 2,
             _ => 1,
         };
         ensure!(
@@ -1650,6 +1678,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 cluster_barrier: None,
                 special_register: None,
                 debug_control: None,
+                cluster_memory: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -3984,6 +4013,7 @@ fn expand_special_register_admission(
                 cluster_barrier: None,
                 special_register: Some(special_register_contract(recipe)),
                 debug_control: None,
+                cluster_memory: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -4609,6 +4639,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         cluster_barrier: None,
         special_register: None,
         debug_control: None,
+        cluster_memory: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -7798,6 +7829,7 @@ fn packed_conversion_overlay_record(
         cluster_barrier: None,
         special_register: None,
         debug_control: None,
+        cluster_memory: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -9055,6 +9087,7 @@ fn expand_register_mma_integer_admission(
             cluster_barrier: None,
             special_register: None,
             debug_control: None,
+            cluster_memory: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -9232,6 +9265,7 @@ fn expand_register_mma_binary_admission(
             cluster_barrier: None,
             special_register: None,
             debug_control: None,
+            cluster_memory: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -9873,6 +9907,7 @@ fn sparse_mma_overlay_record(
         cluster_barrier: None,
         special_register: None,
         debug_control: None,
+        cluster_memory: None,
         ldmatrix_variant: None,
         ldmatrix_safety: None,
         ldmatrix_adapter: None,
@@ -10313,6 +10348,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 cluster_barrier: None,
                 special_register: None,
                 debug_control: None,
+                cluster_memory: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -10662,6 +10698,7 @@ fn expand_cluster_barrier_admission(
                 }),
                 special_register: None,
                 debug_control: None,
+                cluster_memory: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -11021,6 +11058,7 @@ fn expand_debug_control_admission(
                     adapter: recipe.adapter,
                     runtime_validation: admission.runtime_validation,
                 }),
+                cluster_memory: None,
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
@@ -11135,6 +11173,547 @@ fn validate_debug_control_policy(
     Ok(())
 }
 
+#[derive(Clone)]
+struct ClusterMemoryRecipe {
+    operation: ClusterMemoryOperation,
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: Option<&'static str>,
+    llvm_symbol: Option<&'static str>,
+    ptx_native_instruction: Option<&'static str>,
+    rust_arguments: &'static [&'static str],
+    rust_result: &'static str,
+    compatibility_paths: &'static [&'static str],
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    dialect_results: &'static [&'static str],
+    llvm_arguments: &'static [&'static str],
+    llvm_results: &'static [&'static str],
+    adapter: ClusterMemoryAdapter,
+    source_contract: ClusterMemorySourceContract,
+    memory: &'static str,
+    expected_ptx: InstructionPattern,
+    inline_ptx: &'static str,
+    inline_constraints: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_anchor: &'static str,
+    summary: &'static str,
+}
+
+fn cluster_memory_recipe(operation: ClusterMemoryOperation) -> ClusterMemoryRecipe {
+    match operation {
+        ClusterMemoryOperation::MapSharedRank => ClusterMemoryRecipe {
+            operation,
+            abi_id: "i0320",
+            id: "map_shared_rank",
+            operation_key: "cluster.shared_address.map_rank",
+            source_record: Some("int_nvvm_mapa_shared_cluster"),
+            llvm_symbol: Some("llvm.nvvm.mapa.shared.cluster"),
+            ptx_native_instruction: None,
+            rust_arguments: &["*const u8", "u32"],
+            rust_result: "*const u8",
+            compatibility_paths: &[
+                "cuda_device::cluster::map_shared_rank",
+                "cuda_device::cluster::map_shared_rank_mut",
+            ],
+            dialect_op_type: "MapaSharedClusterOp",
+            dialect_op_name: "nvvm.mapa_shared_cluster",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["ptr"],
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &["shared_cluster_ptr"],
+            adapter: ClusterMemoryAdapter::GenericConstAndMutPointerRankToSamePointer,
+            source_contract: ClusterMemorySourceContract::LlvmMapaSharedClusterAs7IdentityInlinePtx,
+            memory: "none",
+            expected_ptx: InstructionPattern {
+                mnemonic: "mapa".into(),
+                modifiers: vec!["shared::cluster".into(), "u64".into()],
+                operands: vec![
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                    OperandPattern::Register,
+                ],
+            },
+            inline_ptx: "mapa.shared::cluster.u64 $0, $1, $2;",
+            inline_constraints: "=l,l,r",
+            ptx_isa_section: "9.7.9.24 Data Movement and Conversion Instructions: mapa",
+            ptx_isa_anchor: "data-movement-and-conversion-instructions-mapa",
+            summary: "Maps a CTA-shared address to the same offset in another cluster rank.",
+        },
+        ClusterMemoryOperation::ReadU32 => ClusterMemoryRecipe {
+            operation,
+            abi_id: "i0321",
+            id: "dsmem_read_u32",
+            operation_key: "cluster.shared_memory.map_rank_then_read_u32",
+            source_record: None,
+            llvm_symbol: None,
+            ptx_native_instruction: Some("mapa.shared::cluster.u64 + ld.shared::cluster.u32"),
+            rust_arguments: &["*const u32", "u32"],
+            rust_result: "u32",
+            compatibility_paths: &["cuda_device::cluster::dsmem_read_u32"],
+            dialect_op_type: "DsmemReadU32Op",
+            dialect_op_name: "nvvm.dsmem_read_u32",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["i32"],
+            llvm_arguments: &[],
+            llvm_results: &[],
+            adapter: ClusterMemoryAdapter::ConstU32PointerRankToU32,
+            source_contract: ClusterMemorySourceContract::PtxNativeMapaThenWeakClusterLoad,
+            memory: "read",
+            expected_ptx: InstructionPattern {
+                mnemonic: "ld".into(),
+                modifiers: vec!["shared::cluster".into(), "u32".into()],
+                operands: vec![OperandPattern::Register, OperandPattern::Address],
+            },
+            inline_ptx: "{ .reg .u64 %mapped; mapa.shared::cluster.u64 %mapped, $1, $2; ld.shared::cluster.u32 $0, [%mapped]; }",
+            inline_constraints: "=r,l,r,~{memory}",
+            ptx_isa_section: "9.7.9.8 Data Movement and Conversion Instructions: ld",
+            ptx_isa_anchor: "data-movement-and-conversion-instructions-ld",
+            summary: "Maps a CTA-shared address to another cluster rank and reads one weak u32 value.",
+        },
+    }
+}
+
+pub(crate) fn cluster_memory_inline_recipe(
+    operation: ClusterMemoryOperation,
+) -> (&'static str, &'static str) {
+    let recipe = cluster_memory_recipe(operation);
+    (recipe.inline_ptx, recipe.inline_constraints)
+}
+
+#[cfg(test)]
+pub(crate) fn test_cluster_memory_records(template: &CatalogIntrinsic) -> Vec<CatalogIntrinsic> {
+    [
+        ClusterMemoryOperation::MapSharedRank,
+        ClusterMemoryOperation::ReadU32,
+    ]
+    .into_iter()
+    .map(|operation| {
+        let recipe = cluster_memory_recipe(operation);
+        let minimum_ptx = "7.8".parse::<PtxVersion>().unwrap();
+        let hardware = CatalogHardwareTarget::AnyOf {
+            alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm: 90 }],
+        };
+        let mut record = template.clone();
+        record.id = recipe.id.into();
+        record.operation_key = recipe.operation_key.into();
+        record.family = "cluster_memory".into();
+        record.source = match (recipe.source_record, recipe.ptx_native_instruction) {
+            (Some(source_record), None) => IntrinsicSource::LlvmImported {
+                source_record: source_record.into(),
+            },
+            (None, Some(instruction)) => IntrinsicSource::PtxNative {
+                instruction: instruction.into(),
+            },
+            _ => unreachable!("closed cluster-memory recipe has one source"),
+        };
+        record.selections = if operation == ClusterMemoryOperation::MapSharedRank {
+            ["mapa_shared_cluster_64", "mapa_shared_cluster_64i"]
+                .into_iter()
+                .map(|source_record| CatalogSelection {
+                    source_record: source_record.into(),
+                    asm: "mapa.shared::cluster.u64 \t$d, $a, $b;".into(),
+                    predicates: vec![
+                        "Subtarget->getSmVersion() >= 90".into(),
+                        "Subtarget->getPTXVersion() >= 78".into(),
+                    ],
+                    constraints: Default::default(),
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+        record.rust = CatalogRust {
+            abi_id: recipe.abi_id.into(),
+            module: "cluster".into(),
+            name: recipe.id.into(),
+            arguments: recipe
+                .rust_arguments
+                .iter()
+                .map(|value| (*value).into())
+                .collect(),
+            result: recipe.rust_result.into(),
+            safe: false,
+            must_use: true,
+            safe_allowlist_reason: None,
+            canonical_path: canonical_rust_path(1, recipe.abi_id),
+            public_path: format!("cuda_intrinsics::cluster::{}", recipe.id),
+            compatibility_paths: recipe
+                .compatibility_paths
+                .iter()
+                .map(|path| (*path).into())
+                .collect(),
+        };
+        record.dialect = CatalogDialect {
+            op_type: recipe.dialect_op_type.into(),
+            op_name: recipe.dialect_op_name.into(),
+            operands: recipe
+                .dialect_operands
+                .iter()
+                .map(|value| (*value).into())
+                .collect(),
+            results: recipe
+                .dialect_results
+                .iter()
+                .map(|value| (*value).into())
+                .collect(),
+        };
+        record.llvm = recipe.llvm_symbol.map(|symbol| CatalogLlvm {
+            symbol: symbol.into(),
+            resolved_symbol: None,
+            arguments: recipe
+                .llvm_arguments
+                .iter()
+                .map(|value| (*value).into())
+                .collect(),
+            results: recipe
+                .llvm_results
+                .iter()
+                .map(|value| (*value).into())
+                .collect(),
+            properties: vec![
+                "IntrNoMem".into(),
+                "IntrSpeculatable".into(),
+                "NoCapture<arg0>".into(),
+            ],
+            result_facts: CatalogLlvmResultFacts {
+                no_undef: false,
+                range: None,
+            },
+        });
+        record.semantics = CatalogSemantics {
+            pure: false,
+            memory: recipe.memory.into(),
+            convergent: true,
+            execution_scope: "cluster".into(),
+        };
+        record.target = CatalogTarget {
+            minimum_ptx,
+            hardware: hardware.clone(),
+            ptx_result: recipe.rust_result.into(),
+            targets: "all".into(),
+            ptx_isa_version: "9.3".into(),
+            ptx_isa_section: recipe.ptx_isa_section.into(),
+            ptx_isa_url: format!(
+                "https://docs.nvidia.com/cuda/parallel-thread-execution/#{}",
+                recipe.ptx_isa_anchor
+            ),
+        };
+        assert_eq!(record.backend_lowerings.len(), 2);
+        for lowering in &mut record.backend_lowerings {
+            lowering.mechanism = BackendLoweringMechanism::InlinePtx;
+            lowering.target = CatalogTargetRequirement {
+                minimum_ptx,
+                hardware: hardware.clone(),
+            };
+        }
+        record.mbarrier_basic = None;
+        record.cluster_memory = Some(ClusterMemory {
+            operation,
+            adapter: recipe.adapter,
+            source_contract: recipe.source_contract,
+            runtime_validation: RuntimeValidation::Unexecuted,
+        });
+        record.lowering = "generated_cluster_memory_inline_ptx".into();
+        record.expected_ptx = recipe.expected_ptx;
+        record.summary = recipe.summary.into();
+        record
+    })
+    .collect()
+}
+
+fn expand_cluster_memory_admission(
+    admission: &ClusterMemoryAdmission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "cluster-memory runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "compact cluster-memory admission requires both backend evidence profiles"
+    );
+    let expected = [
+        ClusterMemoryOperation::MapSharedRank,
+        ClusterMemoryOperation::ReadU32,
+    ];
+    ensure!(
+        admission.variants.len() == expected.len()
+            && admission
+                .variants
+                .iter()
+                .map(|variant| variant.operation)
+                .eq(expected),
+        "compact cluster-memory admission must list map_shared_rank and read_u32 once in canonical order"
+    );
+
+    admission
+        .variants
+        .iter()
+        .map(|variant| {
+            let recipe = cluster_memory_recipe(variant.operation);
+            ensure!(
+                variant.abi_id == recipe.abi_id,
+                "{} must keep reserved ABI ID {}",
+                recipe.id,
+                recipe.abi_id
+            );
+            let source =
+                recipe
+                    .ptx_native_instruction
+                    .map(|instruction| IntrinsicSource::PtxNative {
+                        instruction: instruction.into(),
+                    });
+            Ok(OverlayIntrinsic {
+                id: recipe.id.into(),
+                abi_id: variant.abi_id.clone(),
+                operation_key: recipe.operation_key.into(),
+                family: "cluster_memory".into(),
+                source,
+                source_record: recipe.source_record.map(Into::into),
+                rust_module: "cluster".into(),
+                rust_name: recipe.id.into(),
+                rust_arguments: recipe
+                    .rust_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                rust_result: recipe.rust_result.into(),
+                safe: false,
+                must_use: true,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::cluster::{}", recipe.id),
+                compatibility_rust_paths: recipe
+                    .compatibility_paths
+                    .iter()
+                    .map(|path| (*path).into())
+                    .collect(),
+                dialect_op_type: recipe.dialect_op_type.into(),
+                dialect_op_name: recipe.dialect_op_name.into(),
+                dialect_operands: recipe
+                    .dialect_operands
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                dialect_results: recipe
+                    .dialect_results
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                llvm_symbol: recipe.llvm_symbol.map(Into::into),
+                resolved_llvm_symbol: None,
+                llvm_arguments: recipe
+                    .llvm_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                llvm_results: recipe
+                    .llvm_results
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
+                pure: false,
+                memory: recipe.memory.into(),
+                convergent: true,
+                execution_scope: "cluster".into(),
+                minimum_ptx: "7.8".into(),
+                minimum_sm: Some("sm_90".into()),
+                ptx_result: recipe.rust_result.into(),
+                targets: "all".into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section: recipe.ptx_isa_section.into(),
+                ptx_isa_url: format!(
+                    "https://docs.nvidia.com/cuda/parallel-thread-execution/#{}",
+                    recipe.ptx_isa_anchor
+                ),
+                lowering: "generated_cluster_memory_inline_ptx".into(),
+                backend_lowerings: [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm]
+                    .into_iter()
+                    .map(|backend| OverlayBackendLowering {
+                        backend,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: match backend {
+                            IntrinsicBackend::LlvmNvptx => admission.llvm_evidence_profile.clone(),
+                            IntrinsicBackend::LibNvvm => admission.libnvvm_evidence_profile.clone(),
+                        },
+                        minimum_ptx: Some("7.8".into()),
+                        minimum_sm: Some("sm_90".into()),
+                    })
+                    .collect(),
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                register_mma: None,
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: Some(ClusterMemory {
+                    operation: recipe.operation,
+                    adapter: recipe.adapter,
+                    source_contract: recipe.source_contract,
+                    runtime_validation: admission.runtime_validation,
+                }),
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: recipe.expected_ptx,
+                summary: recipe.summary.into(),
+            })
+        })
+        .collect()
+}
+
+fn validate_cluster_memory_policy(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+    declaration: Option<&ImportedIntrinsic>,
+) -> Result<()> {
+    let cluster = policy
+        .cluster_memory
+        .as_ref()
+        .with_context(|| format!("{} has no closed cluster-memory contract", policy.id))?;
+    let recipe = cluster_memory_recipe(cluster.operation);
+    ensure!(
+        cluster.adapter == recipe.adapter
+            && cluster.source_contract == recipe.source_contract
+            && cluster.runtime_validation == RuntimeValidation::Unexecuted
+            && policy.id == recipe.id
+            && policy.operation_key == recipe.operation_key,
+        "{} does not match its closed cluster-memory identity",
+        policy.id
+    );
+    match cluster.source_contract {
+        ClusterMemorySourceContract::LlvmMapaSharedClusterAs7IdentityInlinePtx => {
+            let declaration = declaration.context("map_shared_rank requires its LLVM identity")?;
+            ensure!(
+                matches!(source, IntrinsicSource::LlvmImported { source_record }
+                    if source_record == "int_nvvm_mapa_shared_cluster")
+                    && policy.source.is_none()
+                    && policy.source_record.as_deref() == recipe.source_record
+                    && policy.llvm_symbol.as_deref() == recipe.llvm_symbol
+                    && declaration.arguments == ["shared_ptr", "i32"]
+                    && declaration.results == ["shared_cluster_ptr"]
+                    && declaration.properties
+                        == ["IntrNoMem", "IntrSpeculatable", "NoCapture<arg0>"],
+                "{} must retain the AS7-returning LLVM mapa record as identity only",
+                policy.id
+            );
+            let selections = declaration
+                .selections
+                .iter()
+                .filter(|selection| selection_matches_policy(policy, selection))
+                .collect::<Vec<_>>();
+            ensure!(
+                selections.len() == 2
+                    && selections
+                        .iter()
+                        .map(|selection| selection.source_record.as_str())
+                        .collect::<BTreeSet<_>>()
+                        == BTreeSet::from(["mapa_shared_cluster_64", "mapa_shared_cluster_64i",])
+                    && selections.iter().all(|selection| {
+                        selection.asm == "mapa.shared::cluster.u64 \t$d, $a, $b;"
+                            && selection.predicates
+                                == [
+                                    "Subtarget->getSmVersion() >= 90",
+                                    "Subtarget->getPTXVersion() >= 78",
+                                ]
+                    }),
+                "{} must retain both exact 64-bit mapa selections",
+                policy.id
+            );
+        }
+        ClusterMemorySourceContract::PtxNativeMapaThenWeakClusterLoad => ensure!(
+            matches!(source, IntrinsicSource::PtxNative { instruction }
+                if Some(instruction.as_str()) == recipe.ptx_native_instruction)
+                && policy.source_record.is_none()
+                && policy.llvm_symbol.is_none()
+                && declaration.is_none()
+                && policy.llvm_arguments.is_empty()
+                && policy.llvm_results.is_empty(),
+            "{} must remain a PTX-native mapa plus weak cluster-load composite",
+            policy.id
+        ),
+    }
+    ensure!(
+        policy.rust_module == "cluster"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == recipe.rust_result
+            && !policy.safe
+            && policy.must_use
+            && policy.public_rust_path == format!("cuda_intrinsics::cluster::{}", recipe.id)
+            && policy.compatibility_rust_paths == recipe.compatibility_paths,
+        "{} Rust API or compatibility paths changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results == recipe.dialect_results
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results == recipe.llvm_results
+            && policy.lowering == "generated_cluster_memory_inline_ptx",
+        "{} dialect carrier or AS7 source boundary changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == recipe.memory
+            && policy.convergent
+            && policy.execution_scope == "cluster",
+        "{} effects changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "7.8"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.targets == "all"
+            && policy.ptx_result == recipe.rust_result
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url
+                == format!(
+                    "https://docs.nvidia.com/cuda/parallel-thread-execution/#{}",
+                    recipe.ptx_isa_anchor
+                ),
+        "{} PTX provenance or target floor changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx == recipe.expected_ptx,
+        "{} expected PTX changed",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, "7.8", Some("sm_90")),
+            (IntrinsicBackend::LibNvvm, "7.8", Some("sm_90")),
+        ],
+        "cluster-memory",
+    )?;
+    ensure_no_other_family_contract(policy, "cluster-memory")?;
+    Ok(())
+}
+
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
     requirements: [(IntrinsicBackend, &str, Option<&str>); 2],
@@ -11203,7 +11782,8 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && (policy.family == "sparse_mma") == policy.sparse_mma.is_some()
             && (policy.family == "prmt") == policy.prmt.is_some()
             && (policy.family == "cluster_barrier") == policy.cluster_barrier.is_some()
-            && (policy.family == "debug_control") == policy.debug_control.is_some(),
+            && (policy.family == "debug_control") == policy.debug_control.is_some()
+            && (policy.family == "cluster_memory") == policy.cluster_memory.is_some(),
         "{} mixes another generated-family contract with {family}",
         policy.id
     );
@@ -12571,6 +13151,22 @@ fn resolve_backend_lowerings(
             ),
         }
     }
+    if let Some(cluster_memory) = &policy.cluster_memory {
+        match cluster_memory.runtime_validation {
+            RuntimeValidation::Unexecuted => ensure!(
+                runtime_states
+                    .iter()
+                    .all(|state| *state == Some(RuntimeValidation::Unexecuted)),
+                "{} cluster-memory runtime is unexecuted but backend evidence disagrees",
+                policy.id
+            ),
+            RuntimeValidation::Executed => ensure!(
+                runtime_states.contains(&Some(RuntimeValidation::Executed)),
+                "{} cluster-memory runtime is executed but no backend evidence records execution",
+                policy.id
+            ),
+        }
+    }
     resolved.sort_by_key(|lowering| lowering.backend);
     Ok(resolved)
 }
@@ -12714,6 +13310,7 @@ fn materialize_record(
         cluster_barrier: policy.cluster_barrier.clone(),
         special_register: policy.special_register.clone(),
         debug_control: policy.debug_control.clone(),
+        cluster_memory: policy.cluster_memory.clone(),
         ldmatrix: policy
             .ldmatrix_variant
             .clone()
@@ -12836,6 +13433,7 @@ mod tests {
             cluster_barrier: None,
             special_register: None,
             debug_control: None,
+            cluster_memory: None,
             ldmatrix_variant: None,
             ldmatrix_safety: None,
             ldmatrix_adapter: None,
@@ -14490,6 +15088,24 @@ mod tests {
         }
     }
 
+    fn test_cluster_memory_admission() -> ClusterMemoryAdmission {
+        ClusterMemoryAdmission {
+            llvm_evidence_profile: "llvm-cluster-memory-test".into(),
+            libnvvm_evidence_profile: "libnvvm-cluster-memory-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: vec![
+                crate::model::ClusterMemoryAdmissionVariant {
+                    abi_id: "i0320".into(),
+                    operation: ClusterMemoryOperation::MapSharedRank,
+                },
+                crate::model::ClusterMemoryAdmissionVariant {
+                    abi_id: "i0321".into(),
+                    operation: ClusterMemoryOperation::ReadU32,
+                },
+            ],
+        }
+    }
+
     #[test]
     fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         let shard = |schema, sparse_mma_f8f6f4_f32, prmt| OverlayShardFile {
@@ -14508,6 +15124,7 @@ mod tests {
             special_registers: None,
             debug_control: None,
             threadfence: None,
+            cluster_memory: None,
         };
         let path = Path::new("intrinsics/overlay/test.toml");
         validate_overlay_shard_schema(&shard(26, None, None), path).unwrap();
@@ -14536,7 +15153,13 @@ mod tests {
         .unwrap();
 
         assert!(validate_overlay_shard_schema(&shard(25, None, None), path).is_err());
-        assert!(validate_overlay_shard_schema(&shard(35, None, None), path).is_err());
+        for schema in 35..=OVERLAY_SHARD_SCHEMA {
+            validate_overlay_shard_schema(&shard(schema, None, None), path).unwrap();
+        }
+        assert!(
+            validate_overlay_shard_schema(&shard(OVERLAY_SHARD_SCHEMA + 1, None, None), path)
+                .is_err()
+        );
         let error =
             validate_overlay_shard_schema(&shard(26, Some(test_f8f6f4_admission()), None), path)
                 .unwrap_err();
@@ -14570,6 +15193,7 @@ mod tests {
             special_registers: None,
             debug_control: None,
             threadfence: None,
+            cluster_memory: None,
         };
         validate_overlay_shard_schema(&fp8_shard(29), path).unwrap();
         validate_overlay_shard_schema_with_max(&fp8_shard(29), path, 30).unwrap();
@@ -14596,6 +15220,7 @@ mod tests {
             special_registers: None,
             debug_control: None,
             threadfence: None,
+            cluster_memory: None,
         };
         validate_overlay_shard_schema_with_max(&cluster_shard, path, 31).unwrap();
         let mut old_cluster_shard = cluster_shard;
@@ -14702,6 +15327,7 @@ record_count = 14
             special_registers: Some(admission.clone()),
             debug_control: None,
             threadfence: None,
+            cluster_memory: None,
         };
         let path = Path::new("intrinsics/overlay/sreg_special.toml");
         validate_overlay_shard_schema(&shard(SPECIAL_REGISTER_SHARD_SCHEMA), path).unwrap();
@@ -15248,6 +15874,7 @@ scope = "system"
             special_registers: None,
             debug_control: Some(test_debug_control_admission()),
             threadfence: None,
+            cluster_memory: None,
         };
         let path = Path::new("intrinsics/overlay/debug_control.toml");
         validate_overlay_shard_schema_with_max(&shard(33), path, 33).unwrap();
@@ -15258,6 +15885,145 @@ scope = "system"
                 .to_string()
                 .contains("requires overlay shard schema 33")
         );
+    }
+
+    #[test]
+    fn cluster_memory_compact_schema_is_reserved_and_fail_closed() {
+        let shard = |schema| OverlayShardFile {
+            schema,
+            family: "cluster_memory".into(),
+            intrinsics: vec![],
+            register_mma_int4: None,
+            register_mma_int8: None,
+            register_mma_b1: None,
+            sparse_mma_integer: None,
+            sparse_mma_f8f6f4_f32: None,
+            prmt: None,
+            packed_conversion_fp8: None,
+            cluster_sreg: None,
+            cluster_barrier: None,
+            special_registers: None,
+            debug_control: None,
+            threadfence: None,
+            cluster_memory: Some(test_cluster_memory_admission()),
+        };
+        let path = Path::new("intrinsics/overlay/cluster_memory.toml");
+        validate_overlay_shard_schema_with_max(
+            &shard(CLUSTER_MEMORY_SHARD_SCHEMA),
+            path,
+            CLUSTER_MEMORY_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(CLUSTER_MEMORY_SHARD_SCHEMA),
+                path,
+                CLUSTER_MEMORY_SHARD_SCHEMA - 1,
+            )
+            .is_err()
+        );
+        let error = validate_overlay_shard_schema_with_max(
+            &shard(CLUSTER_MEMORY_SHARD_SCHEMA - 1),
+            path,
+            CLUSTER_MEMORY_SHARD_SCHEMA,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires overlay shard schema 39")
+        );
+    }
+
+    #[test]
+    fn cluster_memory_admission_preserves_mapa_identity_and_ptx_native_read() {
+        let admission = test_cluster_memory_admission();
+        let records = expand_cluster_memory_admission(&admission).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, "map_shared_rank");
+        assert_eq!(records[1].id, "dsmem_read_u32");
+        assert_eq!(records[0].abi_id, "i0320");
+        assert_eq!(records[1].abi_id, "i0321");
+        assert_eq!(
+            cluster_memory_inline_recipe(ClusterMemoryOperation::MapSharedRank),
+            ("mapa.shared::cluster.u64 $0, $1, $2;", "=l,l,r")
+        );
+        assert_eq!(
+            cluster_memory_inline_recipe(ClusterMemoryOperation::ReadU32),
+            (
+                "{ .reg .u64 %mapped; mapa.shared::cluster.u64 %mapped, $1, $2; ld.shared::cluster.u32 $0, [%mapped]; }",
+                "=r,l,r,~{memory}"
+            )
+        );
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let mapa = &records[0];
+        let declaration = imported
+            .intrinsics
+            .iter()
+            .find(|declaration| declaration.source_record == "int_nvvm_mapa_shared_cluster")
+            .unwrap();
+        assert_eq!(declaration.arguments, ["shared_ptr", "i32"]);
+        assert_eq!(declaration.results, ["shared_cluster_ptr"]);
+        assert_eq!(
+            declaration.properties,
+            ["IntrNoMem", "IntrSpeculatable", "NoCapture<arg0>"]
+        );
+        validate_imported_policy(mapa, declaration).unwrap();
+        assert_eq!(
+            declaration
+                .selections
+                .iter()
+                .filter(|selection| selection.asm.starts_with("mapa.shared::cluster.u64"))
+                .map(|selection| selection.source_record.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["mapa_shared_cluster_64", "mapa_shared_cluster_64i"])
+        );
+
+        let read = &records[1];
+        validate_ptx_native_policy(read).unwrap();
+        assert!(read.source_record.is_none());
+        assert!(read.llvm_symbol.is_none());
+        assert!(matches!(
+            resolve_policy_source(read).unwrap(),
+            IntrinsicSource::PtxNative { .. }
+        ));
+        assert_eq!(read.memory, "read");
+
+        let mut wrong_adapter = mapa.clone();
+        wrong_adapter.cluster_memory.as_mut().unwrap().adapter =
+            ClusterMemoryAdapter::ConstU32PointerRankToU32;
+        assert!(validate_imported_policy(&wrong_adapter, declaration).is_err());
+
+        let mut typed_as3 = mapa.clone();
+        typed_as3.llvm_results = vec!["shared_ptr".into()];
+        assert!(validate_imported_policy(&typed_as3, declaration).is_err());
+
+        let mut wrong_route = mapa.clone();
+        wrong_route.backend_lowerings[0].mechanism = BackendLoweringMechanism::TypedNvvm;
+        assert!(validate_imported_policy(&wrong_route, declaration).is_err());
+
+        let mut wrong_floor = read.clone();
+        wrong_floor.minimum_sm = Some("sm_80".into());
+        assert!(validate_ptx_native_policy(&wrong_floor).is_err());
+
+        let mut missing = admission.clone();
+        missing.variants.pop();
+        assert!(expand_cluster_memory_admission(&missing).is_err());
+
+        let mut duplicate = admission.clone();
+        duplicate.variants[1].operation = ClusterMemoryOperation::MapSharedRank;
+        assert!(expand_cluster_memory_admission(&duplicate).is_err());
+
+        let mut wrong_abi = admission.clone();
+        wrong_abi.variants[0].abi_id = "i9999".into();
+        assert!(expand_cluster_memory_admission(&wrong_abi).is_err());
+
+        let mut executed = admission;
+        executed.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_cluster_memory_admission(&executed).is_err());
     }
 
     #[test]

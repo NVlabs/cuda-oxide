@@ -6,13 +6,14 @@
 use crate::model::{
     ActiveMaskAdapter, BackendLoweringMechanism, CatalogFile, CatalogHardwareAlternative,
     CatalogHardwareTarget, CatalogIntrinsic, CatalogLlvm, CatalogSelection, ClusterBarrierMode,
-    ClusterBarrierOrdering, CpAsyncCachePolicy, CpAsyncControlOperation, CpAsyncMbarrierAdapter,
-    CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize, DebugControlAdapter,
-    DebugControlOperation, DotProductAdapter, DotProductOperation, DotProductSignedness,
-    EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace, IntrinsicBackend,
-    IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity, LdmatrixShape,
-    LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierStateSpace,
-    PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
+    ClusterBarrierOrdering, ClusterMemoryAdapter, ClusterMemoryOperation,
+    ClusterMemorySourceContract, CpAsyncCachePolicy, CpAsyncControlOperation,
+    CpAsyncMbarrierAdapter, CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, CpAsyncSourceSize,
+    DebugControlAdapter, DebugControlOperation, DotProductAdapter, DotProductOperation,
+    DotProductSignedness, EvidenceArtifactKind, EvidenceStageKind, ImportedAddressSpace,
+    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
+    LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation,
+    MbarrierStateSpace, PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
     PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
     PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
     RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
@@ -89,6 +90,12 @@ pub fn all_outputs(
         "crates/cuda-device/src/generated/cluster_barrier.rs".into(),
         render_compat_cluster_barrier(catalog, catalog_sha256),
     );
+    if cluster_memory(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/cluster_memory.rs".into(),
+            render_compat_cluster_memory(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/cuda-device/src/generated/atomic.rs".into(),
         render_compat_packed_atomic(catalog, catalog_sha256),
@@ -183,6 +190,12 @@ pub fn all_outputs(
         "crates/dialect-nvvm/src/ops/generated/cluster_barrier.rs".into(),
         render_dialect_cluster_barrier(catalog, catalog_sha256),
     );
+    if cluster_memory(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/cluster_memory.rs".into(),
+            render_dialect_cluster_memory(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/redux.rs".into(),
         render_dialect_redux(catalog, catalog_sha256),
@@ -284,6 +297,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     || (record.family == "cp_async_mbarrier" && record.cp_async_mbarrier.is_some())
                     || (record.family == "mbarrier_basic" && record.mbarrier_basic.is_some())
                     || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
+                    || (record.family == "cluster_memory" && record.cluster_memory.is_some())
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -581,6 +595,108 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     })
                     && record.lowering == "generated_cluster_barrier",
                 "{} is outside the closed generated cluster-barrier recipe",
+                record.id
+            ),
+            "cluster_memory" => ensure!(
+                record.rust.module == "cluster"
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.semantics.convergent
+                    && record.semantics.execution_scope == "cluster"
+                    && record.target.minimum_ptx.to_string() == "7.8"
+                    && matches!(
+                        &record.target.hardware,
+                        CatalogHardwareTarget::AnyOf { alternatives }
+                            if alternatives.as_slice()
+                                == [CatalogHardwareAlternative::MinimumSm { sm: 90 }]
+                    )
+                    && record.lowering == "generated_cluster_memory_inline_ptx"
+                    && record.backend_lowerings.len() == 2
+                    && record.backend_lowerings.iter().all(|lowering| {
+                        lowering.mechanism == BackendLoweringMechanism::InlinePtx
+                            && lowering.target.minimum_ptx.to_string() == "7.8"
+                            && matches!(
+                                &lowering.target.hardware,
+                                CatalogHardwareTarget::AnyOf { alternatives }
+                                    if alternatives.as_slice()
+                                        == [CatalogHardwareAlternative::MinimumSm { sm: 90 }]
+                            )
+                    })
+                    && record.cluster_memory.as_ref().is_some_and(|cluster| {
+                        cluster.runtime_validation == RuntimeValidation::Unexecuted
+                            && match (cluster.operation, cluster.adapter, cluster.source_contract) {
+                                (
+                                    ClusterMemoryOperation::MapSharedRank,
+                                    ClusterMemoryAdapter::GenericConstAndMutPointerRankToSamePointer,
+                                    ClusterMemorySourceContract::LlvmMapaSharedClusterAs7IdentityInlinePtx,
+                                ) => {
+                                    record.id == "map_shared_rank"
+                                        && record.rust.arguments == ["*const u8", "u32"]
+                                        && record.rust.result == "*const u8"
+                                        && record.rust.compatibility_paths
+                                            == [
+                                                "cuda_device::cluster::map_shared_rank",
+                                                "cuda_device::cluster::map_shared_rank_mut",
+                                            ]
+                                        && record.dialect.op_type == "MapaSharedClusterOp"
+                                        && record.dialect.op_name == "nvvm.mapa_shared_cluster"
+                                        && record.dialect.operands == ["ptr", "i32"]
+                                        && record.dialect.results == ["ptr"]
+                                        && record.semantics.memory == "none"
+                                        && matches!(
+                                            record.source,
+                                            IntrinsicSource::LlvmImported { ref source_record }
+                                                if source_record == "int_nvvm_mapa_shared_cluster"
+                                        )
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.symbol == "llvm.nvvm.mapa.shared.cluster"
+                                                && llvm.arguments == ["shared_ptr", "i32"]
+                                                && llvm.results == ["shared_cluster_ptr"]
+                                                && llvm.properties
+                                                    == [
+                                                        "IntrNoMem",
+                                                        "IntrSpeculatable",
+                                                        "NoCapture<arg0>",
+                                                    ]
+                                        })
+                                        && record
+                                            .selections
+                                            .iter()
+                                            .map(|selection| selection.source_record.as_str())
+                                            .collect::<BTreeSet<_>>()
+                                            == BTreeSet::from([
+                                                "mapa_shared_cluster_64",
+                                                "mapa_shared_cluster_64i",
+                                            ])
+                                }
+                                (
+                                    ClusterMemoryOperation::ReadU32,
+                                    ClusterMemoryAdapter::ConstU32PointerRankToU32,
+                                    ClusterMemorySourceContract::PtxNativeMapaThenWeakClusterLoad,
+                                ) => {
+                                    record.id == "dsmem_read_u32"
+                                        && record.rust.arguments == ["*const u32", "u32"]
+                                        && record.rust.result == "u32"
+                                        && record.rust.compatibility_paths
+                                            == ["cuda_device::cluster::dsmem_read_u32"]
+                                        && record.dialect.op_type == "DsmemReadU32Op"
+                                        && record.dialect.op_name == "nvvm.dsmem_read_u32"
+                                        && record.dialect.operands == ["ptr", "i32"]
+                                        && record.dialect.results == ["i32"]
+                                        && record.semantics.memory == "read"
+                                        && record.llvm.is_none()
+                                        && record.selections.is_empty()
+                                        && matches!(
+                                            record.source,
+                                            IntrinsicSource::PtxNative { ref instruction }
+                                                if instruction
+                                                    == "mapa.shared::cluster.u64 + ld.shared::cluster.u32"
+                                        )
+                                }
+                                _ => false,
+                            }
+                    }),
+                "{} is outside the closed generated cluster-memory recipe",
                 record.id
             ),
             "debug_control" => ensure!(
@@ -1084,6 +1200,13 @@ fn debug_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "debug_control")
+}
+
+fn cluster_memory(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "cluster_memory")
 }
 
 fn cp_async_copies(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -2017,6 +2140,17 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                         "/// This relaxed arrival does not publish earlier memory accesses; add the required cluster-scope fence before it.\n",
                     );
                 }
+            } else if let Some(cluster) = &record.cluster_memory {
+                match cluster.operation {
+                    ClusterMemoryOperation::MapSharedRank => output.push_str(
+                        "/// `_arg0` must point into CTA shared memory, and `_arg1` must name a rank in the same live cluster.\n\
+                         /// The result is a cluster shared-address carrier; an ordinary pointer dereference is not a remote shared-memory access.\n",
+                    ),
+                    ClusterMemoryOperation::ReadU32 => output.push_str(
+                        "/// `_arg0` must point to an aligned readable `u32` in CTA shared memory, and `_arg1` must name a rank in the same live cluster.\n\
+                         /// The target CTA must publish the value with the required cluster synchronization before this weak load.\n",
+                    ),
+                }
             } else if let Some(bridge) = &record.cp_async_mbarrier {
                 output.push_str(
                     "/// `_arg0` must point to a live, initialized, eight-byte-aligned mbarrier object in shared memory.\n\
@@ -2588,6 +2722,60 @@ fn render_compat_cluster_barrier(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
+fn render_compat_cluster_memory(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::cluster` to keep its public API stable.\n\n");
+    for record in cluster_memory(catalog) {
+        let cluster = record
+            .cluster_memory
+            .as_ref()
+            .expect("cluster-memory contract");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "/// Lowers to `{}`.", record.expected_ptx).unwrap();
+        output.push_str("///\n/// # Safety\n");
+        match cluster.operation {
+            ClusterMemoryOperation::MapSharedRank => {
+                output.push_str(
+                    "/// `local_ptr` must point into CTA shared memory, and `target_rank` must name a rank in the same live cluster.\n\
+                     /// The result is a cluster address carrier. Do not use an ordinary pointer dereference for a remote load.\n",
+                );
+                output.push_str("#[must_use]\n#[inline(never)]\n");
+                output.push_str(
+                    "pub unsafe fn map_shared_rank<T>(local_ptr: *const T, target_rank: u32) -> *const T {\n\
+                             let _ = (local_ptr, target_rank);\n\
+                             unreachable!(\"map_shared_rank called outside CUDA kernel context\")\n\
+                         }\n\n",
+                );
+                output.push_str(
+                    "/// Maps a mutable CTA-shared address to another cluster rank.\n\
+                     ///\n\
+                     /// # Safety\n\
+                     /// The mapping requirements above apply, and writes must not race.\n\
+                     #[must_use]\n#[inline(never)]\n\
+                     pub unsafe fn map_shared_rank_mut<T>(local_ptr: *mut T, target_rank: u32) -> *mut T {\n\
+                             let _ = (local_ptr, target_rank);\n\
+                             unreachable!(\"map_shared_rank_mut called outside CUDA kernel context\")\n\
+                     }\n\n",
+                );
+            }
+            ClusterMemoryOperation::ReadU32 => {
+                output.push_str(
+                    "/// `local_ptr` must identify an aligned readable `u32` in CTA shared memory. `target_rank` must name a rank in the same live cluster.\n\
+                     /// The target CTA must publish the value before this weak cluster load.\n",
+                );
+                output.push_str("#[must_use]\n#[inline(never)]\n");
+                output.push_str(
+                    "pub unsafe fn dsmem_read_u32(local_ptr: *const u32, target_rank: u32) -> u32 {\n\
+                             let _ = (local_ptr, target_rank);\n\
+                             unreachable!(\"dsmem_read_u32 called outside CUDA kernel context\")\n\
+                         }\n\n",
+                );
+            }
+        }
+    }
+    output
+}
+
 fn render_compat_debug_control(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::debug` to keep its public API stable.\n\n");
@@ -3084,6 +3272,21 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    dotprod::register(ctx);",
                 "    debug_control::register(ctx);\n    dotprod::register(ctx);",
+            );
+    }
+    if cluster_memory(catalog).next().is_some() {
+        output = output
+            .replace(
+                "mod cluster_barrier;",
+                "mod cluster_barrier;\nmod cluster_memory;",
+            )
+            .replace(
+                "pub use cluster_barrier::*;",
+                "pub use cluster_barrier::*;\npub use cluster_memory::*;",
+            )
+            .replace(
+                "    cluster_barrier::register(ctx);",
+                "    cluster_barrier::register(ctx);\n    cluster_memory::register(ctx);",
             );
     }
     output
@@ -5096,6 +5299,143 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_cluster_memory(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(cluster_memory(catalog).count(), 2);
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r#"//! Structural operations for cluster address mapping and remote shared reads.
+
+use dialect_mir::types::MirPtrType;
+use pliron::{
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::{IntegerType, Signedness},
+    },
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::pliron_op;
+
+fn verify_pointer_rank(
+    ctx: &Context,
+    operation: Ptr<Operation>,
+    name: &str,
+) -> Result<(), Error> {
+    let op = operation.deref(ctx);
+    if op.get_num_operands() != 2 || op.get_num_results() != 1 {
+        return verify_err!(op.loc(), "{name} requires two operands and one result");
+    }
+    if op
+        .get_operand(0)
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .is_none()
+    {
+        return verify_err!(op.loc(), "{name} source must be a MIR pointer");
+    }
+    let rank_ty = op.get_operand(1).get_type(ctx);
+    let rank_ty = rank_ty.deref(ctx);
+    if !rank_ty
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|ty| ty.width() == 32 && ty.signedness() == Signedness::Unsigned)
+    {
+        return verify_err!(op.loc(), "{name} rank must be u32");
+    }
+    Ok(())
+}
+
+#[pliron_op(
+    name = "nvvm.mapa_shared_cluster",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct MapaSharedClusterOp;
+
+impl MapaSharedClusterOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
+        let result_ty = source.get_type(ctx);
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty],
+            vec![source, rank],
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for MapaSharedClusterOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let operation = self.get_operation();
+        verify_pointer_rank(ctx, operation, "nvvm.mapa_shared_cluster")?;
+        let op = operation.deref(ctx);
+        if op.get_result(0).get_type(ctx) != op.get_operand(0).get_type(ctx) {
+            return verify_err!(op.loc(), "nvvm.mapa_shared_cluster must preserve the pointer type");
+        }
+        Ok(())
+    }
+}
+
+#[pliron_op(
+    name = "nvvm.dsmem_read_u32",
+    format,
+    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],
+)]
+pub struct DsmemReadU32Op;
+
+impl DsmemReadU32Op {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
+        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty.to_handle()],
+            vec![source, rank],
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for DsmemReadU32Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let operation = self.get_operation();
+        verify_pointer_rank(ctx, operation, "nvvm.dsmem_read_u32")?;
+        let op = operation.deref(ctx);
+        let result_ty = op.get_result(0).get_type(ctx);
+        let result_ty = result_ty.deref(ctx);
+        if !result_ty
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|ty| ty.width() == 32 && ty.signedness() == Signedness::Unsigned)
+        {
+            return verify_err!(op.loc(), "nvvm.dsmem_read_u32 result must be u32");
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    MapaSharedClusterOp::register(ctx);
+    DsmemReadU32Op::register(ctx);
+}
+"#,
+    );
+    output
+}
+
 fn render_dialect_debug_control(catalog: &CatalogFile, hash: &str) -> String {
     assert_eq!(debug_controls(catalog).count(), 3);
     let mut output = rust_header(catalog, hash);
@@ -5284,6 +5624,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     if debug_controls(catalog).next().is_some() {
         output.push_str(", BreakpointOp, PmEventOp, TrapOp");
+    }
+    for record in cluster_memory(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
     }
     if packed_atomics(catalog).next().is_some() {
         if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
@@ -6149,6 +6493,46 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    for record in cluster_memory(catalog) {
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        output.push_str(
+            "            require_arity(name, args.len(), 2, &loc)?;\n\
+             let (source, last_op) = rvalue::translate_operand(\n\
+                 ctx, body, &args[0], value_map, block_ptr, prev_op, loc.clone(),\n\
+             )?;\n\
+             let (rank, last_op) = rvalue::translate_operand(\n\
+                 ctx, body, &args[1], value_map, block_ptr, last_op, loc.clone(),\n\
+             )?;\n",
+        );
+        writeln!(
+            output,
+            "            let cluster = {}::build(ctx, source, rank);",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("            cluster.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, cluster, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+            "            helpers::insert_op(ctx, cluster, block_ptr, last_op);\n\
+             let result = cluster.deref(ctx).get_result(0);\n",
+        );
+        writeln!(
+            output,
+            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, cluster, value_map, block_map, loc,\n                {:?},\n            )?))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("        }\n");
+    }
     for record in debug_controls(catalog) {
         let operation = record.debug_control.as_ref().unwrap().operation;
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
@@ -6980,9 +7364,24 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in cluster_memory(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     output.push_str(
         "};\nuse llvm_export::{ops::AsmKind, types as llvm_types};\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
     );
+    if cluster_memory(catalog).next().is_some() {
+        output = output
+            .replace(
+                "common::{call_intrinsic, ",
+                "common::{call_intrinsic, cast_to_shared_addrspace, ",
+            )
+            .replace(
+                "use llvm_export::{ops::AsmKind, types as llvm_types};",
+                "use llvm_export::{op_interfaces::CastOpInterface, ops as llvm_ops, ops::AsmKind, types as llvm_types};",
+            );
+    }
     output.push_str("use pliron::location::Located;\n\n");
     output.push_str(
         "fn convert_zero_operand_scalar_direct(\n    ctx: &mut Context,\n    rewriter: &mut DialectConversionRewriter,\n    op: Ptr<Operation>,\n    width: u32,\n    intrinsic_name: &str,\n) -> Result<()> {\n    let result_ty = IntegerType::get(ctx, width, Signedness::Signless);\n    let function_ty = llvm_types::FuncType::get(ctx, result_ty.into(), vec![], false);\n    let call = call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, vec![])?;\n    rewriter.replace_operation(ctx, op, call);\n    Ok(())\n}\n\n",
@@ -7562,6 +7961,46 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "        {helper}(ctx, rewriter, self.get_operation(), operands_info)"
         )
         .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
+    for record in cluster_memory(catalog) {
+        let cluster = record.cluster_memory.as_ref().unwrap();
+        let (template, constraints) =
+            crate::resolve::cluster_memory_inline_recipe(cluster.operation);
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        let operands: Vec<_> = op.deref(ctx).operands().collect();\n",
+        );
+        writeln!(
+            output,
+            "        if operands.len() != 2 {{\n            return pliron::input_err_noloc!({:?}, operands.len());\n        }}",
+            format!("{} requires 2 operands, got {{}}", record.rust.name)
+        )
+        .unwrap();
+        output.push_str(
+            "        let shared_pointer = cast_to_shared_addrspace(ctx, rewriter, operands[0]);\n        let rank = operands[1];\n",
+        );
+        match cluster.operation {
+            ClusterMemoryOperation::MapSharedRank => {
+                writeln!(
+                    output,
+                    "        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, i64_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        let mapped = asm.deref(ctx).get_result(0);\n        let shared_pointer_ty = llvm_types::PointerType::get(ctx, 3);\n        let int_to_ptr = llvm_ops::IntToPtrOp::new(ctx, mapped, shared_pointer_ty.into());\n        rewriter.insert_operation(ctx, int_to_ptr.get_operation());\n        rewriter.replace_operation(ctx, op, int_to_ptr.get_operation());\n        Ok(())"
+                )
+                .unwrap();
+            }
+            ClusterMemoryOperation::ReadU32 => {
+                writeln!(
+                    output,
+                    "        let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, i32_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        rewriter.replace_operation(ctx, op, asm);\n        Ok(())"
+                )
+                .unwrap();
+            }
+        }
         output.push_str("    }\n}\n\n");
     }
     for record in dot_products(catalog) {
@@ -8149,7 +8588,48 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     }
     let mut output = llvm_header(catalog, hash);
     output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
-    if let Some(bridge) = &record.cp_async_mbarrier {
+    if let Some(cluster) = &record.cluster_memory {
+        let (template, constraints) =
+            crate::resolve::cluster_memory_inline_recipe(cluster.operation);
+        match cluster.operation {
+            ClusterMemoryOperation::MapSharedRank => {
+                writeln!(
+                    output,
+                    "define ptr addrspace(3) @probe_{}(ptr %source_generic, i32 %rank) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %source = addrspacecast ptr %source_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  %mapped_integer = call i64 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %source, i32 %rank) #0"
+                )
+                .unwrap();
+                output.push_str(
+                    "  %mapped = inttoptr i64 %mapped_integer to ptr addrspace(3)\n  ret ptr addrspace(3) %mapped\n}\n\nattributes #0 = { convergent }\n",
+                );
+            }
+            ClusterMemoryOperation::ReadU32 => {
+                writeln!(
+                    output,
+                    "define i32 @probe_{}(ptr %source_generic, i32 %rank) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %source = addrspacecast ptr %source_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  %value = call i32 asm sideeffect {template:?}, {constraints:?}(ptr addrspace(3) %source, i32 %rank) #0"
+                )
+                .unwrap();
+                output.push_str("  ret i32 %value\n}\n\nattributes #0 = { convergent }\n");
+            }
+        }
+    } else if let Some(bridge) = &record.cp_async_mbarrier {
         let shared = bridge.state_space == CpAsyncMbarrierStateSpace::Shared;
         let pointer_type = if shared { "ptr addrspace(3)" } else { "ptr" };
         writeln!(
@@ -9153,6 +9633,29 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `cuda_device::cluster::cluster_sync` is the generated compatibility operation: aligned arrive followed by aligned wait.\n",
         );
     }
+    if cluster_memory(catalog).next().is_some() {
+        output.push_str("\n## Cluster-memory contracts\n\n");
+        for record in cluster_memory(catalog) {
+            match record.cluster_memory.as_ref().unwrap().source_contract {
+                ClusterMemorySourceContract::LlvmMapaSharedClusterAs7IdentityInlinePtx => {
+                    writeln!(
+                        output,
+                        "- `{}` keeps LLVM 22's address-space-7 result as source identity only. Both backends use exact convergent `mapa.shared::cluster.u64` inline PTX and preserve the established shared-address carrier; an ordinary pointer dereference is not a remote cluster load.",
+                        record.id
+                    )
+                    .unwrap();
+                }
+                ClusterMemorySourceContract::PtxNativeMapaThenWeakClusterLoad => {
+                    writeln!(
+                        output,
+                        "- `{}` has no one-to-one LLVM intrinsic. Both backends use one convergent `mapa.shared::cluster.u64` plus `ld.shared::cluster.u32` block with a compiler memory clobber.",
+                        record.id
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
     if sync_intrinsics(catalog).any(|record| threadfence_ptx_level(record).is_some()) {
         output.push_str("\n## Synchronization contracts\n\n");
     } else {
@@ -9332,6 +9835,12 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .or_else(|| {
                 record
                     .debug_control
+                    .as_ref()
+                    .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
+            })
+            .or_else(|| {
+                record
+                    .cluster_memory
                     .as_ref()
                     .map(|record| format!("{:?}", record.runtime_validation).to_lowercase())
             })
@@ -11305,6 +11814,142 @@ mod tests {
         ));
         assert!(targets.contains("Operation::get_op::<ClusterBarrierOp>"));
         assert!(targets.contains("ClusterBarrierModeAttr::WaitAligned"));
+    }
+
+    #[test]
+    fn cluster_memory_rendering_preserves_pointer_carrier_and_composite_load() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut catalog = crate::resolve::resolve(&repo_root).unwrap();
+        assert_eq!(cluster_memory(&catalog).count(), 0);
+        assert!(!render_dialect_mod(&catalog, "test-hash").contains("cluster_memory"));
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(!outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/cluster_memory.rs"
+        )));
+        assert!(!outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/cluster_memory.rs"
+        )));
+
+        let template = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == "mbarrier_test_wait")
+            .unwrap()
+            .clone();
+        catalog
+            .intrinsics
+            .extend(crate::resolve::test_cluster_memory_records(&template));
+        validate_renderable(&catalog).unwrap();
+        let records = cluster_memory(&catalog).collect::<Vec<_>>();
+        assert_eq!(records.len(), 2);
+
+        let compatibility = render_compat_cluster_memory(&catalog, "test-hash");
+        for signature in [
+            "pub unsafe fn map_shared_rank<T>(local_ptr: *const T, target_rank: u32) -> *const T",
+            "pub unsafe fn map_shared_rank_mut<T>(local_ptr: *mut T, target_rank: u32) -> *mut T",
+            "pub unsafe fn dsmem_read_u32(local_ptr: *const u32, target_rank: u32) -> u32",
+        ] {
+            assert!(compatibility.contains(signature), "missing {signature}");
+        }
+        assert!(compatibility.contains("ordinary pointer dereference"));
+
+        let dialect_mod = render_dialect_mod(&catalog, "test-hash");
+        assert!(dialect_mod.contains("mod cluster_memory;"));
+        assert!(dialect_mod.contains("pub use cluster_memory::*;"));
+        assert!(dialect_mod.contains("cluster_memory::register(ctx);"));
+
+        let dialect = render_dialect_cluster_memory(&catalog, "test-hash");
+        assert!(dialect.contains("pub struct MapaSharedClusterOp"));
+        assert!(dialect.contains("pub struct DsmemReadU32Op"));
+        assert!(dialect.contains("nvvm.mapa_shared_cluster must preserve the pointer type"));
+        assert!(dialect.contains("nvvm.dsmem_read_u32 result must be u32"));
+        assert!(dialect.contains("MapaSharedClusterOp::register(ctx);"));
+        assert!(dialect.contains("DsmemReadU32Op::register(ctx);"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        for path in [
+            "cuda_device::cluster::map_shared_rank",
+            "cuda_device::cluster::map_shared_rank_mut",
+            "cuda_device::cluster::dsmem_read_u32",
+        ] {
+            assert!(importer.contains(path));
+        }
+        assert!(importer.contains("MapaSharedClusterOp::build(ctx, source, rank)"));
+        assert!(importer.contains("DsmemReadU32Op::build(ctx, source, rank)"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert!(lowering.contains("cast_to_shared_addrspace"));
+        assert!(lowering.contains("llvm_ops::IntToPtrOp::new"));
+        assert!(lowering.contains("llvm_types::PointerType::get(ctx, 3)"));
+        assert!(lowering.contains("mapa.shared::cluster.u64 $0, $1, $2;"));
+        assert!(lowering.contains(
+            "{ .reg .u64 %mapped; mapa.shared::cluster.u64 %mapped, $1, $2; ld.shared::cluster.u32 $0, [%mapped]; }"
+        ));
+        assert!(lowering.contains("\"=l,l,r\""));
+        assert!(lowering.contains("\"=r,l,r,~{memory}\""));
+
+        let map = records
+            .iter()
+            .find(|record| record.id == "map_shared_rank")
+            .unwrap();
+        assert_eq!(map.llvm.as_ref().unwrap().results, ["shared_cluster_ptr"]);
+        let map_probe = render_probe(&catalog, map, "test-hash");
+        assert!(map_probe.contains("define ptr addrspace(3)"));
+        assert!(map_probe.contains("inttoptr i64"));
+        assert!(map_probe.contains("asm sideeffect"));
+        assert!(!map_probe.contains("~{memory}"));
+        assert!(map_probe.contains("attributes #0 = { convergent }"));
+
+        let read = records
+            .iter()
+            .find(|record| record.id == "dsmem_read_u32")
+            .unwrap();
+        assert!(read.llvm.is_none());
+        let read_probe = render_probe(&catalog, read, "test-hash");
+        assert!(read_probe.contains("ld.shared::cluster.u32"));
+        assert!(read_probe.contains("~{memory}"));
+        assert!(read_probe.contains("attributes #0 = { convergent }"));
+
+        let raw = render_raw_abi(&catalog, "test-hash");
+        assert!(raw.contains("pub unsafe fn i0320(_arg0: *const u8, _arg1: u32) -> *const u8"));
+        assert!(raw.contains("pub unsafe fn i0321(_arg0: *const u32, _arg1: u32) -> u32"));
+        assert!(raw.contains("ordinary pointer dereference is not a remote shared-memory access"));
+
+        let reference = render_reference(&catalog, "test-hash");
+        assert!(reference.contains("## Cluster-memory contracts"));
+        assert!(reference.contains("address-space-7 result as source identity only"));
+        assert!(reference.contains("has no one-to-one LLVM intrinsic"));
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/cuda-device/src/generated/cluster_memory.rs"
+        )));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/cluster_memory.rs"
+        )));
+
+        let mut wrong_as = catalog.clone();
+        wrong_as
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "map_shared_rank")
+            .unwrap()
+            .llvm
+            .as_mut()
+            .unwrap()
+            .results = vec!["shared_ptr".into()];
+        assert!(validate_renderable(&wrong_as).is_err());
+
+        let mut wrong_source = catalog;
+        wrong_source
+            .intrinsics
+            .iter_mut()
+            .find(|record| record.id == "dsmem_read_u32")
+            .unwrap()
+            .source = IntrinsicSource::LlvmImported {
+            source_record: "invented".into(),
+        };
+        assert!(validate_renderable(&wrong_source).is_err());
     }
 
     #[test]
