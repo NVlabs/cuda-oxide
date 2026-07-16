@@ -1,6 +1,6 @@
 # Reviewed ordered-metadata sparse INT8 register-MMA family.
 
-schema = 24
+schema = 25
 family = "sparse_mma"
 
 [sparse_mma_integer]

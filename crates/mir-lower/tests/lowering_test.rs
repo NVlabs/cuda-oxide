@@ -5646,6 +5646,194 @@ fn test_generated_ordered_sparse_mma_m16n8k64_int4_lowers_to_exact_convergent_in
     Ok(())
 }
 
+#[test]
+fn test_generated_ordered_sparse_mma_m16n8k128_int4_lowers_to_exact_convergent_inline_ptx()
+-> Result<(), anyhow::Error> {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let cases = [
+        (
+            "s4",
+            "s4",
+            "",
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            "s4",
+            "u4",
+            "",
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            "u4",
+            "u4",
+            "",
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            "u4",
+            "s4",
+            "",
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            "s4",
+            "s4",
+            ".satfinite",
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            "s4",
+            "u4",
+            ".satfinite",
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            "u4",
+            "u4",
+            ".satfinite",
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            "u4",
+            "s4",
+            ".satfinite",
+            nvvm::SparseMmaElementAttr::U4,
+            nvvm::SparseMmaElementAttr::S4,
+            nvvm::SparseMmaOverflowAttr::Satfinite,
+        ),
+    ];
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        for (a_name, b_name, overflow_name, a_element, b_element, overflow) in &cases {
+            let mut ctx = make_test_ctx();
+            let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+            let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..4)
+                .map(|_| i32_ty.into())
+                .chain((0..9).map(|_| u32_ty.into()))
+                .collect();
+            let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+
+            let selector_op = Operation::new(
+                &mut ctx,
+                mir::MirConstantOp::get_concrete_op_info(),
+                vec![u32_ty.into()],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstantOp::new(selector_op).set_attr_value(
+                &ctx,
+                IntegerAttr::new(u32_ty, APInt::from_u32(0, NonZeroUsize::new(32).unwrap())),
+            );
+            selector_op.insert_at_back(entry, &ctx);
+            let selector = selector_op.deref(&ctx).get_result(0);
+
+            let operands = (0..13)
+                .map(|operand| entry.deref(&ctx).get_argument(operand))
+                .chain(std::iter::once(selector))
+                .collect();
+            let operation = Operation::new(
+                &mut ctx,
+                nvvm::SparseMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = nvvm::SparseMmaOp::new(operation);
+            mma.set_attr_nvvm_sparse_mma_shape(&ctx, nvvm::SparseMmaShapeAttr::M16n8k128);
+            mma.set_attr_nvvm_sparse_mma_accumulator(&ctx, nvvm::SparseMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_sparse_mma_a_element(&ctx, a_element.clone());
+            mma.set_attr_nvvm_sparse_mma_b_element(&ctx, b_element.clone());
+            mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, nvvm::SparseMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, nvvm::SparseMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_sparse_mma_overflow(&ctx, overflow.clone());
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, nvvm::SparseMmaMetadataAttr::Ordered);
+            mma.set_attr_nvvm_sparse_mma_selector(&ctx, nvvm::SparseMmaSelectorAttr::ImmediateZero);
+            operation.insert_at_back(entry, &ctx);
+            append_return(&mut ctx, entry);
+
+            mir_lower::lower_mir_to_llvm_with_options(
+                &mut ctx,
+                module_ptr,
+                mir_lower::LoweringOptions {
+                    intrinsic_backend: backend,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+            let body = lowered_kernel_body(&ctx, module_ptr);
+            let lowered = body
+                .iter()
+                .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(*op, &ctx))
+                .collect::<Vec<_>>();
+            assert_eq!(lowered.len(), 1, "{backend:?}");
+            let asm = &lowered[0];
+            let expected_template = format!(
+                "mma.sp::ordered_metadata.sync.aligned.m16n8k128.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {{$8, $9, $10, $11}}, {{$12, $13, $14, $15}}, {{$4, $5, $6, $7}}, $16, $17;"
+            );
+            assert_eq!(
+                asm.get_attr_inline_asm_template(&ctx)
+                    .as_deref()
+                    .map(|value| String::from(value.clone())),
+                Some(expected_template)
+            );
+            assert_eq!(
+                asm.get_attr_inline_asm_constraints(&ctx)
+                    .as_deref()
+                    .map(|value| String::from(value.clone())),
+                Some("=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n".to_string())
+            );
+            assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+            let asm_operation = asm.get_operation().deref(&ctx);
+            assert_eq!(asm_operation.get_num_operands(), 14);
+            assert_eq!(asm_operation.get_num_results(), 1);
+            let lowered_selector = asm_operation.get_operand(13);
+            let defining_op = lowered_selector
+                .defining_op()
+                .expect("sparse MMA selector remains an LLVM constant");
+            let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
+                .expect("sparse MMA selector remains an LLVM integer constant");
+            let attribute = constant.get_value(&ctx);
+            let integer = attribute
+                .downcast_ref::<IntegerAttr>()
+                .expect("sparse MMA selector is an integer");
+            assert_eq!(integer.value().to_u64(), 0);
+
+            let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+            let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+                .expect("generated sparse MMA exports to LLVM IR");
+            assert!(ir.contains("asm sideeffect"), "{ir}");
+            assert!(ir.contains("{ convergent }"), "{ir}");
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // mma.sync m16n8k16 bf16 intrinsic lowering test
 // ---------------------------------------------------------------------------

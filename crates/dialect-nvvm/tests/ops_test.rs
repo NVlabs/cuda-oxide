@@ -1941,6 +1941,147 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
 }
 
 #[test]
+fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
+    use pliron::builtin::{attributes::IntegerAttr, ops::ConstantOp};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), u32_ty.into()]);
+    let i32_value = block.deref(&ctx).get_argument(0);
+    let u32_value = block.deref(&ctx).get_argument(1);
+    let integer = |value| {
+        IntegerAttr::new(
+            u32_ty,
+            APInt::from_u32(value, NonZeroUsize::new(32).unwrap()),
+        )
+    };
+    let zero = ConstantOp::new(&mut ctx, integer(0).into())
+        .get_operation()
+        .deref(&ctx)
+        .get_result(0);
+    let one = ConstantOp::new(&mut ctx, integer(1).into())
+        .get_operation()
+        .deref(&ctx)
+        .get_result(0);
+
+    macro_rules! k128_mma {
+        ($operands:expr, $a:expr, $b:expr, $overflow:expr) => {{
+            let operation = Operation::new(
+                &mut ctx,
+                SparseMmaOp::get_concrete_op_info(),
+                vec![i32_ty.into(); 4],
+                $operands,
+                vec![],
+                0,
+            );
+            let mma = SparseMmaOp::new(operation);
+            mma.set_attr_nvvm_sparse_mma_shape(&ctx, SparseMmaShapeAttr::M16n8k128);
+            mma.set_attr_nvvm_sparse_mma_accumulator(&ctx, SparseMmaAccumulatorAttr::S32);
+            mma.set_attr_nvvm_sparse_mma_a_element(&ctx, $a);
+            mma.set_attr_nvvm_sparse_mma_b_element(&ctx, $b);
+            mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, SparseMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_sparse_mma_overflow(&ctx, $overflow);
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, SparseMmaMetadataAttr::Ordered);
+            mma.set_attr_nvvm_sparse_mma_selector(&ctx, SparseMmaSelectorAttr::ImmediateZero);
+            mma
+        }};
+    }
+
+    let variants = [
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Wrapping,
+        ),
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            SparseMmaElementAttr::S4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::U4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+        (
+            SparseMmaElementAttr::U4,
+            SparseMmaElementAttr::S4,
+            SparseMmaOverflowAttr::Satfinite,
+        ),
+    ];
+    let operands = |selector| [vec![i32_value; 4], vec![u32_value; 9], vec![selector]].concat();
+    for (a, b, overflow) in variants {
+        assert!(verify_op(&k128_mma!(operands(zero), a, b, overflow), &ctx).is_ok());
+    }
+
+    for selector in [one, u32_value] {
+        assert!(
+            verify_op(
+                &k128_mma!(
+                    operands(selector),
+                    SparseMmaElementAttr::S4,
+                    SparseMmaElementAttr::U4,
+                    SparseMmaOverflowAttr::Wrapping
+                ),
+                &ctx,
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        verify_op(
+            &k128_mma!(
+                operands(zero),
+                SparseMmaElementAttr::S4,
+                SparseMmaElementAttr::U8,
+                SparseMmaOverflowAttr::Wrapping
+            ),
+            &ctx,
+        )
+        .is_err()
+    );
+    assert!(
+        verify_op(
+            &k128_mma!(
+                [vec![i32_value; 4], vec![u32_value; 8], vec![zero]].concat(),
+                SparseMmaElementAttr::S4,
+                SparseMmaElementAttr::S4,
+                SparseMmaOverflowAttr::Wrapping
+            ),
+            &ctx,
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn test_matrix_memory_ops_verify_pointer_and_packed_register_types() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);

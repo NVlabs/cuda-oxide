@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for register-only warp MMA.
 
-schema = 24
+schema = 25
 family = "register_mma"
 
 [[intrinsic]]

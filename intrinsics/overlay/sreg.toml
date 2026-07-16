@@ -1,6 +1,6 @@
 # Reviewed cuda-oxide policy for one intrinsic family.
 
-schema = 24
+schema = 25
 family = "sreg"
 
 [[intrinsic]]

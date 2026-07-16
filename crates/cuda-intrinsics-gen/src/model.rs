@@ -573,6 +573,7 @@ pub struct SparseMma {
 pub enum SparseMmaShape {
     M16n8k32,
     M16n8k64,
+    M16n8k128,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2134,6 +2135,24 @@ runtime_validation = "unexecuted"
         assert_eq!(parsed_int4.a_element, SparseMmaElement::S4);
         assert_eq!(parsed_int4.b_element, SparseMmaElement::U4);
 
+        let k128_int4 = int4
+            .replace("shape = \"m16n8k64\"", "shape = \"m16n8k128\"")
+            .replace(
+                "selector = \"immediate_zero_or_one\"",
+                "selector = \"immediate_zero\"",
+            )
+            .replace(
+                "adapter = \"c4_i32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_i32\"",
+                "adapter = \"c4_i32_a4_u32_b4_u32_metadata_u32_selector_u32_to_d4_i32\"",
+            )
+            .replace(
+                "llvm_adapter = \"a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32\"",
+                "llvm_adapter = \"a4_i32_b4_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32\"",
+            );
+        let parsed_k128_int4 = toml::from_str::<SparseMma>(&k128_int4).unwrap();
+        assert_eq!(parsed_k128_int4.shape, SparseMmaShape::M16n8k128);
+        assert_eq!(parsed_k128_int4.selector, SparseMmaSelector::ImmediateZero);
+
         for invalid in [
             valid.replace(
                 "selector = \"immediate_zero_or_one\"",
@@ -2144,7 +2163,7 @@ runtime_validation = "unexecuted"
                 "llvm_adapter = \"a2_i32_b2_i32_c4_i32_metadata_i32_selector_i32_to_d4_i32\"",
                 "llvm_adapter = \"c_then_a_then_b\"",
             ),
-            valid.replace("shape = \"m16n8k32\"", "shape = \"m16n8k128\""),
+            valid.replace("shape = \"m16n8k32\"", "shape = \"m16n8k256\""),
             format!("{valid}unreviewed = true\n"),
         ] {
             assert!(toml::from_str::<SparseMma>(&invalid).is_err(), "{invalid}");
@@ -2154,7 +2173,7 @@ runtime_validation = "unexecuted"
     #[test]
     fn sparse_mma_admission_accepts_the_canonical_name_and_legacy_alias() {
         let canonical = r#"
-schema = 24
+schema = 25
 family = "sparse_mma"
 
 [sparse_mma_integer]

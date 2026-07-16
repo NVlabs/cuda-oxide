@@ -1,0 +1,129 @@
+{
+  "schema": 5,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_s4",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_s4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production generated_intrinsics route produced 322,508-byte compute_80 NVVM IR with SHA-256 bb497f219e2fbfc53236897bc82e98ddaf4744ec165e0d00fb5fa729b9131edf and 90,188-byte LTOIR with SHA-256 e1a4cb0426ff501a2343035a9919afcba0621af35511f9d596862bcb728f5c39. All eight raw variants use selector 0. An auxiliary 5,008-byte combined probe with SHA-256 7145b7febe8ce9f319a106e508a95639d3c06ac7a7cdf1be2c17e0c1f637e516 separately passed CUDA 13.3 libNVVM and emitted 3,925-byte PTX with SHA-256 dff59159b2f46e214feb32f6aa60bd64989e75e30cb49da16cc62600654c887f containing all eight forms."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "nvJitLink produced a 27,880-byte cubin with SHA-256 f228004e5ee3be5d09bcc6e9c4f6be4a4e81123be335e929f71e3f718d328a81. Disassembly contained 60 IMMA.SP instructions in total, exactly 30 IMMA.SP.16864 instructions, and exactly 10 IMMA.SP.168128 forms: all eight raw variants plus two compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "s32", "s4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_s4_u4",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_s4_u4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.s4.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained wrapping s4-by-u4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "s32", "s4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_u4",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_u4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained wrapping u4-by-u4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "s32", "u4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_u4_s4",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_u4_s4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.u4.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained wrapping u4-by-s4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "s32", "u4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_s4_satfinite",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_s4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained saturating s4-by-s4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "satfinite", "s32", "s4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_s4_u4_satfinite",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_s4_u4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.s4.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained saturating s4-by-u4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "satfinite", "s32", "s4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_u4_satfinite",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_u4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.u4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained saturating u4-by-u4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "satfinite", "s32", "u4", "u4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k128_s32_u4_s4_satfinite",
+      "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_u4_s4",
+      "llvm_symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.u4.s4",
+      "llvm_arguments": ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
+      "llvm_results": ["i32", "i32", "i32", "i32"],
+      "target_triple": "nvptx64-nvidia-cuda", "gpu_target": "compute_80", "ptx_feature": "PTX ISA 8.5 minimum; CUDA 13.3 emits PTX 9.3", "status": "validated",
+      "stages": [
+        {"targets": ["compute_80", "ptx93"], "representation": "convergent ordered sparse m16n8k128 INT4 inline PTX in the generated coverage kernel", "stage": "backend_codegen", "mechanism": "inline_ptx", "outcome": "succeeded", "detail": "The production artifacts described by the first record retained saturating u4-by-s4 PTX with selector 0."},
+        {"targets": ["sm_80", "ptx93"], "representation": "generated sparse-MMA coverage kernel with ordered m16n8k128 INT4 calls", "stage": "device_link", "mechanism": "inline_ptx", "outcome": "succeeded", "artifact_kind": "cubin", "detail": "The 27,880-byte production cubin described by the first record retained all eight raw variants and both compatibility-path calls.", "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33", "tool_version": "V13.3.33", "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"}
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mma", "modifiers": ["sp::ordered_metadata", "sync", "aligned", "m16n8k128", "row", "col", "satfinite", "s32", "u4", "s4", "s32"], "operands": [{"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register_list", "length": 4}, {"kind": "register"}, {"kind": "immediate"}]}
+    }
+  ]
+}
