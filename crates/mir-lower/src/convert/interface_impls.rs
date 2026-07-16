@@ -36,14 +36,12 @@ use dialect_mir::ops::{
     MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
-    ClcQueryGetFirstCtaidXOp, ClcQueryGetFirstCtaidYOp, ClcQueryGetFirstCtaidZOp,
-    ClcQueryIsCanceledOp, ClcTryCancelMulticastOp, ClcTryCancelOp, CpAsyncBulkCommitGroupOp,
-    CpAsyncBulkTensorG2sTile1dOp, CpAsyncBulkTensorG2sTile2dMulticastCg2Op,
-    CpAsyncBulkTensorG2sTile2dMulticastOp, CpAsyncBulkTensorG2sTile2dOp,
-    CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp, CpAsyncBulkTensorG2sTile5dOp,
-    CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp, CpAsyncBulkTensorS2gTile3dOp,
-    CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp, CpAsyncBulkWaitGroupOp,
-    CpAsyncBulkWaitGroupReadOp, DsmemReadU32Op, ElectSyncOp, InlinePtxOp, MapaSharedClusterOp,
+    CpAsyncBulkCommitGroupOp, CpAsyncBulkTensorG2sTile1dOp,
+    CpAsyncBulkTensorG2sTile2dMulticastCg2Op, CpAsyncBulkTensorG2sTile2dMulticastOp,
+    CpAsyncBulkTensorG2sTile2dOp, CpAsyncBulkTensorG2sTile3dOp, CpAsyncBulkTensorG2sTile4dOp,
+    CpAsyncBulkTensorG2sTile5dOp, CpAsyncBulkTensorS2gTile1dOp, CpAsyncBulkTensorS2gTile2dOp,
+    CpAsyncBulkTensorS2gTile3dOp, CpAsyncBulkTensorS2gTile4dOp, CpAsyncBulkTensorS2gTile5dOp,
+    CpAsyncBulkWaitGroupOp, CpAsyncBulkWaitGroupReadOp, ElectSyncOp, InlinePtxOp,
     NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, Tcgen05AllocCg2Op,
     Tcgen05AllocOp, Tcgen05CommitCg2Op, Tcgen05CommitMulticastCg2Op, Tcgen05CommitOp,
     Tcgen05CommitSharedClusterCg2Op, Tcgen05CommitSharedClusterOp, Tcgen05CpSmemToTmemCg2Op,
@@ -933,42 +931,6 @@ impl MirToLlvmConversion for VprintfOp {
     }
 }
 
-// ---- NVVM Cluster ops ------------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for MapaSharedClusterOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cluster::convert_mapa_shared_cluster(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for DsmemReadU32Op {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::cluster::convert_dsmem_read_u32(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
 // ---- NVVM Warp ops ---------------------------------------------------------
 
 #[op_interface_impl]
@@ -1741,115 +1703,6 @@ impl MirToLlvmConversion for NvvmAtomicCmpxchgOp {
             rewriter,
             self.get_operation(),
             operands_info,
-        )
-    }
-}
-
-// ---- NVVM CLC ops ----------------------------------------------------------
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClcTryCancelOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::clc::convert_try_cancel(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            false,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClcTryCancelMulticastOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::clc::convert_try_cancel(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            true,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClcQueryIsCanceledOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::clc::convert_query_is_canceled(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClcQueryGetFirstCtaidXOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::clc::convert_query_get_first_ctaid(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "x",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClcQueryGetFirstCtaidYOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::clc::convert_query_get_first_ctaid(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "y",
-        )
-    }
-}
-
-#[op_interface_impl]
-impl MirToLlvmConversion for ClcQueryGetFirstCtaidZOp {
-    fn convert(
-        &self,
-        ctx: &mut Context,
-        rewriter: &mut DialectConversionRewriter,
-        operands_info: &OperandsInfo,
-    ) -> Result<()> {
-        super::intrinsics::clc::convert_query_get_first_ctaid(
-            ctx,
-            rewriter,
-            self.get_operation(),
-            operands_info,
-            "z",
         )
     }
 }

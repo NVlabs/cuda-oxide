@@ -165,6 +165,18 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
 #[cfg(test)]
 pub(crate) fn test_catalog_with_clc(repo_root: &Path) -> Result<CatalogFile> {
     let mut catalog = resolve(repo_root)?;
+    let active_count = catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "clc")
+        .count();
+    if active_count != 0 {
+        ensure!(
+            active_count == 6,
+            "active CLC family must contain six records"
+        );
+        return Ok(catalog);
+    }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
     let operations = [
@@ -2173,7 +2185,8 @@ fn clc_recipe(operation: ClcOperation) -> ClcRecipe {
             targets: if operation == ClcOperation::TryCancel {
                 "all"
             } else {
-                "sm_100a|sm_101a|sm_110a|sm_120a"
+                // LLVM 22 exposes 101a; CUDA 13.3 exposes the other toolkit names.
+                "sm_100a|sm_101a|sm_103a|sm_110a|sm_120a|sm_121a"
             },
             minimum_sm: if operation == ClcOperation::TryCancel {
                 Some("sm_100")
@@ -4163,8 +4176,10 @@ fn validate_selected_target_predicates(
                             alternatives: vec![
                                 CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
                                 CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
                                 CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
                                 CatalogHardwareAlternative::ExactArchitecture { sm: 120 },
+                                CatalogHardwareAlternative::ExactArchitecture { sm: 121 },
                             ],
                         },
                 "{} multicast target predicate must map to the reviewed exact architectures",
@@ -12526,147 +12541,6 @@ pub(crate) fn cluster_memory_inline_recipe(
     (recipe.inline_ptx, recipe.inline_constraints)
 }
 
-#[cfg(test)]
-pub(crate) fn test_cluster_memory_records(template: &CatalogIntrinsic) -> Vec<CatalogIntrinsic> {
-    [
-        ClusterMemoryOperation::MapSharedRank,
-        ClusterMemoryOperation::ReadU32,
-    ]
-    .into_iter()
-    .map(|operation| {
-        let recipe = cluster_memory_recipe(operation);
-        let minimum_ptx = "7.8".parse::<PtxVersion>().unwrap();
-        let hardware = CatalogHardwareTarget::AnyOf {
-            alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm: 90 }],
-        };
-        let mut record = template.clone();
-        record.id = recipe.id.into();
-        record.operation_key = recipe.operation_key.into();
-        record.family = "cluster_memory".into();
-        record.source = match (recipe.source_record, recipe.ptx_native_instruction) {
-            (Some(source_record), None) => IntrinsicSource::LlvmImported {
-                source_record: source_record.into(),
-            },
-            (None, Some(instruction)) => IntrinsicSource::PtxNative {
-                instruction: instruction.into(),
-            },
-            _ => unreachable!("closed cluster-memory recipe has one source"),
-        };
-        record.selections = if operation == ClusterMemoryOperation::MapSharedRank {
-            ["mapa_shared_cluster_64", "mapa_shared_cluster_64i"]
-                .into_iter()
-                .map(|source_record| CatalogSelection {
-                    source_record: source_record.into(),
-                    asm: "mapa.shared::cluster.u64 \t$d, $a, $b;".into(),
-                    predicates: vec![
-                        "Subtarget->getSmVersion() >= 90".into(),
-                        "Subtarget->getPTXVersion() >= 78".into(),
-                    ],
-                    constraints: Default::default(),
-                })
-                .collect()
-        } else {
-            vec![]
-        };
-        record.rust = CatalogRust {
-            abi_id: recipe.abi_id.into(),
-            module: "cluster".into(),
-            name: recipe.id.into(),
-            arguments: recipe
-                .rust_arguments
-                .iter()
-                .map(|value| (*value).into())
-                .collect(),
-            result: recipe.rust_result.into(),
-            safe: false,
-            must_use: true,
-            safe_allowlist_reason: None,
-            canonical_path: canonical_rust_path(1, recipe.abi_id),
-            public_path: format!("cuda_intrinsics::cluster::{}", recipe.id),
-            compatibility_paths: recipe
-                .compatibility_paths
-                .iter()
-                .map(|path| (*path).into())
-                .collect(),
-        };
-        record.dialect = CatalogDialect {
-            op_type: recipe.dialect_op_type.into(),
-            op_name: recipe.dialect_op_name.into(),
-            operands: recipe
-                .dialect_operands
-                .iter()
-                .map(|value| (*value).into())
-                .collect(),
-            results: recipe
-                .dialect_results
-                .iter()
-                .map(|value| (*value).into())
-                .collect(),
-        };
-        record.llvm = recipe.llvm_symbol.map(|symbol| CatalogLlvm {
-            symbol: symbol.into(),
-            resolved_symbol: None,
-            arguments: recipe
-                .llvm_arguments
-                .iter()
-                .map(|value| (*value).into())
-                .collect(),
-            results: recipe
-                .llvm_results
-                .iter()
-                .map(|value| (*value).into())
-                .collect(),
-            properties: vec![
-                "IntrNoMem".into(),
-                "IntrSpeculatable".into(),
-                "NoCapture<arg0>".into(),
-            ],
-            result_facts: CatalogLlvmResultFacts {
-                no_undef: false,
-                range: None,
-            },
-        });
-        record.semantics = CatalogSemantics {
-            pure: false,
-            memory: recipe.memory.into(),
-            convergent: true,
-            execution_scope: "cluster".into(),
-        };
-        record.target = CatalogTarget {
-            minimum_ptx,
-            hardware: hardware.clone(),
-            ptx_result: recipe.rust_result.into(),
-            targets: "all".into(),
-            ptx_isa_version: "9.3".into(),
-            ptx_isa_section: recipe.ptx_isa_section.into(),
-            ptx_isa_url: format!(
-                "https://docs.nvidia.com/cuda/parallel-thread-execution/#{}",
-                recipe.ptx_isa_anchor
-            ),
-        };
-        assert_eq!(record.backend_lowerings.len(), 2);
-        for lowering in &mut record.backend_lowerings {
-            lowering.mechanism = BackendLoweringMechanism::InlinePtx;
-            lowering.target = CatalogTargetRequirement {
-                minimum_ptx,
-                hardware: hardware.clone(),
-            };
-        }
-        record.mbarrier_basic = None;
-        record.cluster_memory = Some(ClusterMemory {
-            operation,
-            adapter: recipe.adapter,
-            source_contract: recipe.source_contract,
-            runtime_validation: RuntimeValidation::Unexecuted,
-        });
-        record.lowering = "generated_cluster_memory_inline_ptx".into();
-        record.expected_ptx = recipe.expected_ptx;
-        record.summary = recipe.summary.into();
-        record
-    })
-    .collect()
-}
-
 fn expand_cluster_memory_admission(
     admission: &ClusterMemoryAdmission,
 ) -> Result<Vec<OverlayIntrinsic>> {
@@ -17365,8 +17239,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 43);
-        assert_eq!(overlay.intrinsics.len(), 319);
+        assert_eq!(overlay.shards.len(), 45);
+        assert_eq!(overlay.intrinsics.len(), 327);
         assert_eq!(
             overlay
                 .intrinsics
@@ -17478,6 +17352,22 @@ mod tests {
                 .filter(|record| record.family == "mbarrier_basic")
                 .count(),
             4
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "cluster_memory")
+                .count(),
+            2
+        );
+        assert_eq!(
+            overlay
+                .intrinsics
+                .iter()
+                .filter(|record| record.family == "clc")
+                .count(),
+            6
         );
         assert_eq!(
             overlay
@@ -18734,8 +18624,10 @@ scope = "system"
                 alternatives: vec![
                     CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
                     CatalogHardwareAlternative::ExactArchitecture { sm: 101 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 103 },
                     CatalogHardwareAlternative::ExactArchitecture { sm: 110 },
                     CatalogHardwareAlternative::ExactArchitecture { sm: 120 },
+                    CatalogHardwareAlternative::ExactArchitecture { sm: 121 },
                 ],
             }
         );

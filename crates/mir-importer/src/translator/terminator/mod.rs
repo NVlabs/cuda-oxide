@@ -2356,51 +2356,8 @@ fn try_dispatch_intrinsic(
         )?)),
 
         // =================================================================
-        // Thread Block Clusters (from intrinsics::cluster) - sm_90+
+        // Compile-time cluster configuration
         // =================================================================
-        "cuda_device::cluster::map_shared_rank" => {
-            Ok(Some(intrinsics::cluster::emit_map_shared_rank(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::cluster::map_shared_rank_mut" => {
-            // Same implementation as map_shared_rank, just different pointer mutability
-            Ok(Some(intrinsics::cluster::emit_map_shared_rank(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::cluster::dsmem_read_u32" => {
-            Ok(Some(intrinsics::cluster::emit_dsmem_read_u32(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
         "cuda_device::cluster::__cluster_config" => {
             // Compile-time cluster configuration marker from #[cluster(x,y,z)] attribute.
             // The cluster dimensions are extracted in body.rs during MIR scanning.
@@ -2755,74 +2712,6 @@ fn try_dispatch_intrinsic(
         "cuda_device::tcgen05::tcgen05_cp_smem_to_tmem_cg2" => {
             Ok(Some(intrinsics::tcgen05::emit_tcgen05_cp_smem_to_tmem_cg2(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-
-        // =================================================================
-        // CLC - Cluster Launch Control (from intrinsics::clc)
-        // =================================================================
-        "cuda_device::clc::clc_try_cancel" => Ok(Some(intrinsics::clc::emit_clc_try_cancel(
-            ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-        )?)),
-        "cuda_device::clc::clc_try_cancel_multicast" => {
-            Ok(Some(intrinsics::clc::emit_clc_try_cancel_multicast(
-                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
-            )?))
-        }
-        "cuda_device::clc::clc_query_is_canceled" => {
-            Ok(Some(intrinsics::clc::emit_clc_query_is_canceled(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::clc::clc_query_get_first_ctaid_x" => {
-            Ok(Some(intrinsics::clc::emit_clc_query_get_first_ctaid_x(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::clc::clc_query_get_first_ctaid_y" => {
-            Ok(Some(intrinsics::clc::emit_clc_query_get_first_ctaid_y(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
-        "cuda_device::clc::clc_query_get_first_ctaid_z" => {
-            Ok(Some(intrinsics::clc::emit_clc_query_get_first_ctaid_z(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
             )?))
         }
 

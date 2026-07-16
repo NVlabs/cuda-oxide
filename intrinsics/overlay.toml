@@ -4,7 +4,9 @@ intrinsic_abi = 1
 backend_profile = "rust-llvm-22.1.2-1cb4e383"
 shards = [
     "overlay/active_mask.toml",
+    "overlay/clc.toml",
     "overlay/cluster_barrier.toml",
+    "overlay/cluster_memory.toml",
     "overlay/cp_async_control.toml",
     "overlay/cp_async_copy.toml",
     "overlay/cp_async_mbarrier.toml",

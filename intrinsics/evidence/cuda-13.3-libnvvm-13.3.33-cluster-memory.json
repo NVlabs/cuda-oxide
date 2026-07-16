@@ -1,0 +1,83 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33-cluster-memory",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "cuda-13.3-libnvvm",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_90",
+    "ptx_feature": "PTX ISA 9.3 emitted by CUDA 13.3",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "cluster_memory_inline_probe",
+      "coverage_count": 2,
+      "stages": [
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "one convergent legacy NVVM IR kernel containing exact mapa and remote u32-load inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM retained both mapa instructions and one ld.shared::cluster.u32 with no extern calls. The 1,222-byte source had SHA-256 b966d8131b036df01f435a9dab89559917d5ac23d6e26d0adfc23a959d899cdc; the 2,208-byte LTOIR had SHA-256 a8006b43c0aacce7c48c04a1d3599127db090a21b4f2ed7cddc1d676a6243728; the 922-byte linked PTX had SHA-256 e8d9eea75eec5d6179fab2ba58d900c14bc5ed3af1c9ffe2c39f6e7c9fc798d0."
+        },
+        {
+          "targets": ["sm_90", "ptx93"],
+          "representation": "linked cubin retaining the cluster-memory kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 3,840-byte cubin with SHA-256 5fc93334fcfa3fe77cee54dd6470bdecb562c8ecd205425b64df9d81a95ae091.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["map_shared_rank"]}],
+      "product_count": 1,
+      "fixtures": ["cluster_memory_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_mapa_shared_cluster",
+        "llvm_symbol": "llvm.nvvm.mapa.shared.cluster",
+        "expected_ptx": {
+          "mnemonic": "mapa",
+          "modifiers": ["shared::cluster", "u64"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        },
+        "facts": {
+          "llvm_arguments": ["shared_ptr", "i32"],
+          "llvm_results": ["shared_cluster_ptr"]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["dsmem_read_u32"]}],
+      "product_count": 1,
+      "fixtures": ["cluster_memory_inline_probe"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "mapa.shared::cluster.u64 + ld.shared::cluster.u32"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "ld",
+          "modifiers": ["shared::cluster", "u32"],
+          "operands": [{"kind": "register"}, {"kind": "address"}]
+        }
+      }
+    }
+  ]
+}

@@ -4935,6 +4935,107 @@
         "modifiers": ["wait_group", "sync", "aligned"],
         "operands": [{"kind": "immediate"}]
       }
+    },
+    {
+      "id": "map_shared_rank",
+      "source_record": "int_nvvm_mapa_shared_cluster",
+      "llvm_symbol": "llvm.nvvm.mapa.shared.cluster",
+      "llvm_arguments": ["shared_ptr", "i32"],
+      "llvm_results": ["shared_cluster_ptr"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx78",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "mapa", "modifiers": ["shared::cluster", "u64"], "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]}
+    },
+    {
+      "id": "dsmem_read_u32",
+      "source": {"kind": "ptx_native", "instruction": "mapa.shared::cluster.u64 + ld.shared::cluster.u32"},
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx78",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "ld", "modifiers": ["shared::cluster", "u32"], "operands": [{"kind": "register"}, {"kind": "address"}]}
+    },
+    {
+      "id": "clc_try_cancel",
+      "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_shared",
+      "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.shared",
+      "llvm_arguments": ["shared_ptr", "shared_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["try_cancel", "async", "shared::cta", "mbarrier::complete_tx::bytes", "b128"], "operands": [{"kind": "address"}, {"kind": "address"}]}
+    },
+    {
+      "id": "clc_try_cancel_multicast",
+      "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_multicast_shared",
+      "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.multicast.shared",
+      "llvm_arguments": ["shared_ptr", "shared_ptr"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["try_cancel", "async", "shared::cta", "mbarrier::complete_tx::bytes", "multicast::cluster::all", "b128"], "operands": [{"kind": "address"}, {"kind": "address"}]}
+    },
+    {
+      "id": "clc_query_is_canceled",
+      "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_is_canceled",
+      "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.is_canceled",
+      "llvm_arguments": ["i128"],
+      "llvm_results": ["i1"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "is_canceled", "pred", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+    },
+    {
+      "id": "clc_query_get_first_ctaid_x",
+      "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_x",
+      "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.x",
+      "llvm_arguments": ["i128"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::x", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+    },
+    {
+      "id": "clc_query_get_first_ctaid_y",
+      "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_y",
+      "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.y",
+      "llvm_arguments": ["i128"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::y", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+    },
+    {
+      "id": "clc_query_get_first_ctaid_z",
+      "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_z",
+      "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.z",
+      "llvm_arguments": ["i128"],
+      "llvm_results": ["i32"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::z", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
     }
   ]
 }

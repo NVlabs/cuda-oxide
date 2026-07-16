@@ -11,10 +11,12 @@
   },
   "inputs": {
     "imported_sha256": "6098b65ba1475773fce761a93e14d3e7ef194e8be65bfe091b0bb6cdfbd22f79",
-    "overlay_sha256": "d41ce061554c0f647ab2e0c7c92b00f176b3c28b9ec2b2eacc959c5f9313b102",
-    "abi_ledger_sha256": "95e60b63c27ec8249695d4584ba77ba1802550f700fe3ccfb7642b848d9a70ba",
+    "overlay_sha256": "f7d3fb5fdc76ba70542d558c35311138063d51dfd77450dea521d001ae58751a",
+    "abi_ledger_sha256": "edccc79dee50ac016f2092bdcbe79d5c0ed4dc256c50eff9ca4d776903f7157b",
     "evidence_sha256": [
+      "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
+      "cuda-13.3-libnvvm-13.3.33-cluster-memory.json:ed69e2a41a442f35a765cd893f4c83bbe854a110d4682cbf107967f86d4e3580",
       "cuda-13.3-libnvvm-13.3.33-cp-async-mbarrier.json:e9af33fd3344f27534ff207245c8758e4fb94665a8a61d3c8576ce4cb38ce012",
       "cuda-13.3-libnvvm-13.3.33-cp-async.json:b1501f11f6b0ddbf20623e3174fd64f1eac30330081cbd2c707ffe2140a2e040",
       "cuda-13.3-libnvvm-13.3.33-debug-control.json:184227ee2b4791011f563f597d8f6fb2393430b327a72c758c34ceec44c9469b",
@@ -42,7 +44,9 @@
       "cuda-13.3-libnvvm-13.3.33-threadfence.json:22af6e0b46e1898ef4958e0fb7d52af8e3670b8528e54895ca4d3faf0a15f7dc",
       "cuda-13.3-libnvvm-13.3.33-wgmma-control.json:6afe57cb717496e040ed81f12d28f1b8a3fe3603e98180626de4bfb265d02c61",
       "cuda-13.3-libnvvm-13.3.33.json:4724c52179de538a9688b044f0504f549746357a121572d0f411e413c77314c0",
+      "rust-llvm-22.1.2-1cb4e383-clc.json:3cff4d4dbf0c505db87979c021de292395ef6383a72f610cb0d30196f644692f",
       "rust-llvm-22.1.2-1cb4e383-cluster-barrier.json:10b857690722e43670121d16b356ea0074105968388aa91f5012e7aaa63fd795",
+      "rust-llvm-22.1.2-1cb4e383-cluster-memory.json:7556423a1daebe9b5269d3db8e94ef4114192b8d719a33fb01a34aa6b53a874d",
       "rust-llvm-22.1.2-1cb4e383-cluster-sreg.json:91bad86696394b7eb34261fef0025087550558fe21ecb402e6d9da91fbc09136",
       "rust-llvm-22.1.2-1cb4e383-cp-async-mbarrier.json:fbb4f8eede91751b2a5bc82b614bad456346791b8d27a76407a3eea3ca9bb7eb",
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
@@ -69,7 +73,7 @@
       "rust-llvm-22.1.2-1cb4e383-stmatrix.json:2613b295a6baaf873eef8111b0a9a49699df238490bbf8b05aea49e79f332dcc",
       "rust-llvm-22.1.2-1cb4e383-threadfence.json:682055fd75b61cd6f86f92e5927cde6ed44091f461fb72569cee67e2e7b0783e",
       "rust-llvm-22.1.2-1cb4e383-wgmma-control.json:5313c7c088b6489341c4b9e46038b773c4768a954b4b538d22f2aed470905027",
-      "rust-llvm-22.1.2-1cb4e383.json:f0e70cb44d7dabfbb64a8ad6d3f9a3efe86cffaa7064c735ae8646f326cc1063"
+      "rust-llvm-22.1.2-1cb4e383.json:b4212d105c92f8b5d5e82989045967ceaaa58b7a11648d46db015fd716640ee7"
     ]
   },
   "intrinsics": [
@@ -3897,6 +3901,1584 @@
         "operands": []
       },
       "summary": "Suspends device execution for a debugger breakpoint."
+    },
+    {
+      "id": "clc_query_get_first_ctaid_x",
+      "operation_key": "cluster.launch_control.query.first_ctaid.x",
+      "family": "clc",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_x"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0325",
+        "module": "clc",
+        "name": "clc_query_get_first_ctaid_x",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0325",
+        "public_path": "cuda_intrinsics::clc::clc_query_get_first_ctaid_x",
+        "compatibility_paths": [
+          "cuda_device::clc::clc_query_get_first_ctaid_x"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClcQueryGetFirstCtaidXOp",
+        "op_name": "nvvm.clc_query_get_first_ctaid_x",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.x",
+        "arguments": [
+          "i128"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.18-19 Cluster Launch Control",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "typed declarations for unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 1,394-byte source with SHA-256 895fe9619dfbb6be46fc38eec6731ec5e5fee6db392b2033b2b8f246a5e65a5f and produced 2,412-byte bitcode with SHA-256 fdd42b00f2b88733727f997b2d8527911593601acc2d49d2379c1af23735528b.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "one typed LLVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted all five exact CLC instructions with no extern calls. The 1,651-byte PTX had SHA-256 6f0d5158aa6786a127524302e620110064063991155aea99ce634290803b6996.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "typed LLVM PTX retaining the unicast and query kernel",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 6,008-byte cubin with SHA-256 257a5c67bb688844d2dec63c2351d13b987918a5b6e8c324558be33d99e3b15d.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "one NVVM IR 2.0 module declaring unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,898-byte source with SHA-256 37ddba55e2ee9cd6643285442a3eb625a2a3cb626d8da8627ab0b7ccf9910b15.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "one typed libNVVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 3,096-byte LTOIR with SHA-256 ef38dfe4cca9b5ef09d0ba5d0eefa3874c24ef29af751f880a461e1567f28db4. nvJitLink's 1,700-byte PTX had SHA-256 dd4e2baaeb1704866cbe790baf7880a7f71d17b8f6231b9d3a778a47453cb4ee and retained all five exact instructions with no extern calls.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the unicast and query kernel",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 6,000-byte cubin with SHA-256 3d1ae4180befb13753735b0457f9292ec10d593873dee4e77ef1fb634dfa3aea.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "clc": {
+        "operation": "query_get_first_ctaid_x",
+        "adapter": "pair_u64_to_i128_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_clc",
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "get_first_ctaid::x",
+          "b32",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      },
+      "summary": "Returns the X coordinate from a successful cancellation response."
+    },
+    {
+      "id": "clc_query_get_first_ctaid_y",
+      "operation_key": "cluster.launch_control.query.first_ctaid.y",
+      "family": "clc",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_y"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0326",
+        "module": "clc",
+        "name": "clc_query_get_first_ctaid_y",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0326",
+        "public_path": "cuda_intrinsics::clc::clc_query_get_first_ctaid_y",
+        "compatibility_paths": [
+          "cuda_device::clc::clc_query_get_first_ctaid_y"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClcQueryGetFirstCtaidYOp",
+        "op_name": "nvvm.clc_query_get_first_ctaid_y",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.y",
+        "arguments": [
+          "i128"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.18-19 Cluster Launch Control",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "typed declarations for unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 1,394-byte source with SHA-256 895fe9619dfbb6be46fc38eec6731ec5e5fee6db392b2033b2b8f246a5e65a5f and produced 2,412-byte bitcode with SHA-256 fdd42b00f2b88733727f997b2d8527911593601acc2d49d2379c1af23735528b.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "one typed LLVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted all five exact CLC instructions with no extern calls. The 1,651-byte PTX had SHA-256 6f0d5158aa6786a127524302e620110064063991155aea99ce634290803b6996.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "typed LLVM PTX retaining the unicast and query kernel",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 6,008-byte cubin with SHA-256 257a5c67bb688844d2dec63c2351d13b987918a5b6e8c324558be33d99e3b15d.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "one NVVM IR 2.0 module declaring unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,898-byte source with SHA-256 37ddba55e2ee9cd6643285442a3eb625a2a3cb626d8da8627ab0b7ccf9910b15.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "one typed libNVVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 3,096-byte LTOIR with SHA-256 ef38dfe4cca9b5ef09d0ba5d0eefa3874c24ef29af751f880a461e1567f28db4. nvJitLink's 1,700-byte PTX had SHA-256 dd4e2baaeb1704866cbe790baf7880a7f71d17b8f6231b9d3a778a47453cb4ee and retained all five exact instructions with no extern calls.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the unicast and query kernel",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 6,000-byte cubin with SHA-256 3d1ae4180befb13753735b0457f9292ec10d593873dee4e77ef1fb634dfa3aea.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "clc": {
+        "operation": "query_get_first_ctaid_y",
+        "adapter": "pair_u64_to_i128_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_clc",
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "get_first_ctaid::y",
+          "b32",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      },
+      "summary": "Returns the Y coordinate from a successful cancellation response."
+    },
+    {
+      "id": "clc_query_get_first_ctaid_z",
+      "operation_key": "cluster.launch_control.query.first_ctaid.z",
+      "family": "clc",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_z"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0327",
+        "module": "clc",
+        "name": "clc_query_get_first_ctaid_z",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0327",
+        "public_path": "cuda_intrinsics::clc::clc_query_get_first_ctaid_z",
+        "compatibility_paths": [
+          "cuda_device::clc::clc_query_get_first_ctaid_z"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClcQueryGetFirstCtaidZOp",
+        "op_name": "nvvm.clc_query_get_first_ctaid_z",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.z",
+        "arguments": [
+          "i128"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.18-19 Cluster Launch Control",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "typed declarations for unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 1,394-byte source with SHA-256 895fe9619dfbb6be46fc38eec6731ec5e5fee6db392b2033b2b8f246a5e65a5f and produced 2,412-byte bitcode with SHA-256 fdd42b00f2b88733727f997b2d8527911593601acc2d49d2379c1af23735528b.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "one typed LLVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted all five exact CLC instructions with no extern calls. The 1,651-byte PTX had SHA-256 6f0d5158aa6786a127524302e620110064063991155aea99ce634290803b6996.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "typed LLVM PTX retaining the unicast and query kernel",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 6,008-byte cubin with SHA-256 257a5c67bb688844d2dec63c2351d13b987918a5b6e8c324558be33d99e3b15d.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "one NVVM IR 2.0 module declaring unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,898-byte source with SHA-256 37ddba55e2ee9cd6643285442a3eb625a2a3cb626d8da8627ab0b7ccf9910b15.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "one typed libNVVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 3,096-byte LTOIR with SHA-256 ef38dfe4cca9b5ef09d0ba5d0eefa3874c24ef29af751f880a461e1567f28db4. nvJitLink's 1,700-byte PTX had SHA-256 dd4e2baaeb1704866cbe790baf7880a7f71d17b8f6231b9d3a778a47453cb4ee and retained all five exact instructions with no extern calls.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the unicast and query kernel",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 6,000-byte cubin with SHA-256 3d1ae4180befb13753735b0457f9292ec10d593873dee4e77ef1fb634dfa3aea.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "clc": {
+        "operation": "query_get_first_ctaid_z",
+        "adapter": "pair_u64_to_i128_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_clc",
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "get_first_ctaid::z",
+          "b32",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      },
+      "summary": "Returns the Z coordinate from a successful cancellation response."
+    },
+    {
+      "id": "clc_query_is_canceled",
+      "operation_key": "cluster.launch_control.query.is_canceled",
+      "family": "clc",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_is_canceled"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0324",
+        "module": "clc",
+        "name": "clc_query_is_canceled",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0324",
+        "public_path": "cuda_intrinsics::clc::clc_query_is_canceled",
+        "compatibility_paths": [
+          "cuda_device::clc::clc_query_is_canceled"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClcQueryIsCanceledOp",
+        "op_name": "nvvm.clc_query_is_canceled",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.is_canceled",
+        "arguments": [
+          "i128"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.18-19 Cluster Launch Control",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "typed declarations for unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 1,394-byte source with SHA-256 895fe9619dfbb6be46fc38eec6731ec5e5fee6db392b2033b2b8f246a5e65a5f and produced 2,412-byte bitcode with SHA-256 fdd42b00f2b88733727f997b2d8527911593601acc2d49d2379c1af23735528b.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "one typed LLVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted all five exact CLC instructions with no extern calls. The 1,651-byte PTX had SHA-256 6f0d5158aa6786a127524302e620110064063991155aea99ce634290803b6996.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "typed LLVM PTX retaining the unicast and query kernel",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 6,008-byte cubin with SHA-256 257a5c67bb688844d2dec63c2351d13b987918a5b6e8c324558be33d99e3b15d.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "one NVVM IR 2.0 module declaring unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,898-byte source with SHA-256 37ddba55e2ee9cd6643285442a3eb625a2a3cb626d8da8627ab0b7ccf9910b15.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "one typed libNVVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 3,096-byte LTOIR with SHA-256 ef38dfe4cca9b5ef09d0ba5d0eefa3874c24ef29af751f880a461e1567f28db4. nvJitLink's 1,700-byte PTX had SHA-256 dd4e2baaeb1704866cbe790baf7880a7f71d17b8f6231b9d3a778a47453cb4ee and retained all five exact instructions with no extern calls.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the unicast and query kernel",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 6,000-byte cubin with SHA-256 3d1ae4180befb13753735b0457f9292ec10d593873dee4e77ef1fb634dfa3aea.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "clc": {
+        "operation": "query_is_canceled",
+        "adapter": "pair_u64_to_i128_bool_to_u32",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_clc",
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "is_canceled",
+          "pred",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      },
+      "summary": "Returns whether the Cluster Launch Control request was canceled."
+    },
+    {
+      "id": "clc_try_cancel",
+      "operation_key": "cluster.launch_control.try_cancel",
+      "family": "clc",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_shared"
+      },
+      "selections": [
+        {
+          "source_record": "CLUSTERLAUNCHCONTRL_TRY_CANCEL",
+          "asm": "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.b128 \t[$addr], [$mbar];",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 100",
+            "Subtarget->getPTXVersion() >= 86"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0322",
+        "module": "clc",
+        "name": "clc_try_cancel",
+        "arguments": [
+          "*mut u8",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0322",
+        "public_path": "cuda_intrinsics::clc::clc_try_cancel",
+        "compatibility_paths": [
+          "cuda_device::clc::clc_try_cancel"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClcTryCancelOp",
+        "op_name": "nvvm.clc_try_cancel",
+        "operands": [
+          "ptr",
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.shared",
+        "arguments": [
+          "shared_ptr",
+          "shared_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrHasSideEffects"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.18-19 Cluster Launch Control",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "typed declarations for unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 1,394-byte source with SHA-256 895fe9619dfbb6be46fc38eec6731ec5e5fee6db392b2033b2b8f246a5e65a5f and produced 2,412-byte bitcode with SHA-256 fdd42b00f2b88733727f997b2d8527911593601acc2d49d2379c1af23735528b.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "one typed LLVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted all five exact CLC instructions with no extern calls. The 1,651-byte PTX had SHA-256 6f0d5158aa6786a127524302e620110064063991155aea99ce634290803b6996.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "typed LLVM PTX retaining the unicast and query kernel",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas produced a 6,008-byte cubin with SHA-256 257a5c67bb688844d2dec63c2351d13b987918a5b6e8c324558be33d99e3b15d.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100"
+              ],
+              "representation": "one NVVM IR 2.0 module declaring unicast try-cancel and all four query operations",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 1,898-byte source with SHA-256 37ddba55e2ee9cd6643285442a3eb625a2a3cb626d8da8627ab0b7ccf9910b15.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "one typed libNVVM kernel retaining unicast try-cancel and all four CLC queries",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 3,096-byte LTOIR with SHA-256 ef38dfe4cca9b5ef09d0ba5d0eefa3874c24ef29af751f880a461e1567f28db4. nvJitLink's 1,700-byte PTX had SHA-256 dd4e2baaeb1704866cbe790baf7880a7f71d17b8f6231b9d3a778a47453cb4ee and retained all five exact instructions with no extern calls.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the unicast and query kernel",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 6,000-byte cubin with SHA-256 3d1ae4180befb13753735b0457f9292ec10d593873dee4e77ef1fb634dfa3aea.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "clc": {
+        "operation": "try_cancel",
+        "adapter": "generic_pointers_to_shared",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_clc",
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "try_cancel",
+          "async",
+          "shared::cta",
+          "mbarrier::complete_tx::bytes",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Requests one pending CTA and writes its response to shared memory."
+    },
+    {
+      "id": "clc_try_cancel_multicast",
+      "operation_key": "cluster.launch_control.try_cancel.multicast",
+      "family": "clc",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_multicast_shared"
+      },
+      "selections": [
+        {
+          "source_record": "CLUSTERLAUNCHCONTRL_TRY_CANCEL_MULTICAST",
+          "asm": "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.multicast::cluster::all.b128 \t[$addr], [$mbar];",
+          "predicates": [
+            "Subtarget->hasClusterLaunchControlTryCancelMulticastSupport()"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0323",
+        "module": "clc",
+        "name": "clc_try_cancel_multicast",
+        "arguments": [
+          "*mut u8",
+          "*mut u64"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0323",
+        "public_path": "cuda_intrinsics::clc::clc_try_cancel_multicast",
+        "compatibility_paths": [
+          "cuda_device::clc::clc_try_cancel_multicast"
+        ]
+      },
+      "dialect": {
+        "op_type": "ClcTryCancelMulticastOp",
+        "op_name": "nvvm.clc_try_cancel_multicast",
+        "operands": [
+          "ptr",
+          "ptr"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.multicast.shared",
+        "arguments": [
+          "shared_ptr",
+          "shared_ptr"
+        ],
+        "results": [],
+        "properties": [
+          "IntrArgMemOnly",
+          "IntrHasSideEffects"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": false,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "exact_architecture",
+              "sm": 100
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 101
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 103
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 110
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 120
+            },
+            {
+              "kind": "exact_architecture",
+              "sm": 121
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "sm_100a|sm_101a|sm_103a|sm_110a|sm_120a|sm_121a",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.18-19 Cluster Launch Control",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-clusterlaunchcontrol-try-cancel"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100a",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "exact_architecture",
+                  "sm": 100
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 101
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 103
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 110
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100a"
+              ],
+              "representation": "typed declaration for multicast try-cancel",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "llvm-as accepted the 390-byte source with SHA-256 e4ed73cd8c39af86e8723ca03126c44f31cc9511a73b6ece710b7875bc128b14 and produced 1,912-byte bitcode with SHA-256 2d37df5745e6221f4b75791540de98edab835e3370f36043bcf6aa7af4a3c22d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx86"
+              ],
+              "representation": "one typed LLVM kernel retaining multicast try-cancel",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM 22 emitted one exact multicast instruction with no extern call for sm_100a/PTX 8.6, sm_101a/PTX 8.6, sm_103a/PTX 8.8, sm_110a/PTX 9.0, sm_120a/PTX 8.7, and sm_121a/PTX 9.0. Their PTX SHA-256 values were 366b5155464356e2e01d29fb3ad209f365ba68fc2e540489ce7e2f5830658cde, bf925481f00d8023b5493cf2daee655ba90e32486d16b140c013df87bc1b5625, 6310890cf30d93ae0d02d63362350bfd13428ec4522358d80b459a3b1e86435b, 7ae967df1894e5a0158eabed03a607eeb971d1d2f7e5ad2892ca7f632d95ccd7, a4d5dd50691a5e0d3a32d4c77bf87258009ecebf2d66d00bb73292d0cbb4fa4e, and c52b501ba903c302697c994c9ea3abd4506b8a3aee1fd6ca320cad533140c894. Plain sm_100 failed instruction selection, as required.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx86"
+              ],
+              "representation": "typed LLVM PTX retaining the multicast kernel",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas assembled the exact probes for sm_100a, sm_103a, sm_110a, sm_120a, and sm_121a. Their cubin SHA-256 values were 30160dcbe4de4c64e9b78f907e2663cdfb244fbe1a5dfbba66a6b8a1c52d5d76, 357d54085a3c661f8b0841d933d2d1600a688b54a5004ac0610469c35d016c57, 6d3afe7f862c5f2b5931972aa5c5dac9e2649f14407dfe67ade547b72af951db, e481feac9e4382025b1204c38614a1f5bdf141f9ce226da45d4ff835d58fdaba, and dcb515f3f0bb87fb6ffb2e74b78542979a0264f56b6df43a3913786e201c44f9. CUDA 13.3 does not expose the LLVM-only sm_101a name.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-clc",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "exact_architecture",
+                  "sm": 100
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 101
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 103
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 110
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 120
+                },
+                {
+                  "kind": "exact_architecture",
+                  "sm": 121
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100a"
+              ],
+              "representation": "one NVVM IR 2.0 module declaring multicast try-cancel",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM verified the 789-byte source with SHA-256 41969303d126b015e653137ac3ebf7cca283544cd0f2a85067a631241ee27582.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx93"
+              ],
+              "representation": "one typed libNVVM kernel retaining multicast try-cancel",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM produced 2,484-byte LTOIR with SHA-256 e18003b9fd91884b03a64dcabad7f091061d9a28300346ff815b6b5499e8b6bd. nvJitLink's 677-byte PTX had SHA-256 6d65ac91ef71804809bb05a81d454b1598a83df7ba1f1bc45f4635e582419678 and retained the exact multicast instruction with no extern call. Plain sm_100 failed terminal compilation, as required.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100a",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the multicast kernel",
+              "stage": "device_link",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 5,408-byte cubin with SHA-256 16e900a28f60744304dc5629f4742d971dbc5b7438cb895f5bbfd2dea2ea031f.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "clc": {
+        "operation": "try_cancel_multicast",
+        "adapter": "generic_pointers_to_shared",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_clc",
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "try_cancel",
+          "async",
+          "shared::cta",
+          "mbarrier::complete_tx::bytes",
+          "multicast::cluster::all",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Requests one pending CTA and multicasts its response across the cluster."
     },
     {
       "id": "clock",
@@ -13572,6 +15154,210 @@
       "summary": "Multiplies four pairs of packed unsigned bytes, sums them, and adds an unsigned accumulator."
     },
     {
+      "id": "dsmem_read_u32",
+      "operation_key": "cluster.shared_memory.map_rank_then_read_u32",
+      "family": "cluster_memory",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mapa.shared::cluster.u64 + ld.shared::cluster.u32"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0321",
+        "module": "cluster",
+        "name": "dsmem_read_u32",
+        "arguments": [
+          "*const u32",
+          "u32"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0321",
+        "public_path": "cuda_intrinsics::cluster::dsmem_read_u32",
+        "compatibility_paths": [
+          "cuda_device::cluster::dsmem_read_u32"
+        ]
+      },
+      "dialect": {
+        "op_type": "DsmemReadU32Op",
+        "op_name": "nvvm.dsmem_read_u32",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.8 Data Movement and Conversion Instructions: ld",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-ld"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-cluster-memory",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "one convergent LLVM kernel containing exact mapa and remote u32-load inline PTX",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted both mapa instructions and one ld.shared::cluster.u32 with no extern calls. The 690-byte source had SHA-256 ad8a94dfa560d523bfe8cf963f8779132c960e1e6e5717e080e72819936f446a; the 1,007-byte PTX had SHA-256 005a7f90c8a3bd97a99792ce8a181d43c28fb318cd20dce6068fcb349800a951.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX retaining both cluster-memory operations",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the module and produced a 3,712-byte cubin with SHA-256 1780aee43cd691bd7e3a79f4bc4b2d163e5cdfc11e08441ae318dfb091a5057a.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-memory",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one convergent legacy NVVM IR kernel containing exact mapa and remote u32-load inline PTX",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained both mapa instructions and one ld.shared::cluster.u32 with no extern calls. The 1,222-byte source had SHA-256 b966d8131b036df01f435a9dab89559917d5ac23d6e26d0adfc23a959d899cdc; the 2,208-byte LTOIR had SHA-256 a8006b43c0aacce7c48c04a1d3599127db090a21b4f2ed7cddc1d676a6243728; the 922-byte linked PTX had SHA-256 e8d9eea75eec5d6179fab2ba58d900c14bc5ed3af1c9ffe2c39f6e7c9fc798d0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the cluster-memory kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,840-byte cubin with SHA-256 5fc93334fcfa3fe77cee54dd6470bdecb562c8ecd205425b64df9d81a95ae091.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_memory": {
+        "operation": "read_u32",
+        "adapter": "const_u32_pointer_rank_to_u32",
+        "source_contract": "ptx_native_mapa_then_weak_cluster_load",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cluster_memory_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "ld",
+        "modifiers": [
+          "shared::cluster",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      },
+      "summary": "Maps a CTA-shared address to another cluster rank and reads one weak u32 value."
+    },
+    {
       "id": "dynamic_smem_size",
       "operation_key": "shared.dynamic_size",
       "family": "sreg",
@@ -19117,6 +20903,250 @@
         ]
       },
       "summary": "Loads four transposed 8×8 b16 matrices cooperatively from shared memory and returns this lane's four packed register fragments."
+    },
+    {
+      "id": "map_shared_rank",
+      "operation_key": "cluster.shared_address.map_rank",
+      "family": "cluster_memory",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mapa_shared_cluster"
+      },
+      "selections": [
+        {
+          "source_record": "mapa_shared_cluster_64",
+          "asm": "mapa.shared::cluster.u64 \t$d, $a, $b;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        },
+        {
+          "source_record": "mapa_shared_cluster_64i",
+          "asm": "mapa.shared::cluster.u64 \t$d, $a, $b;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 90",
+            "Subtarget->getPTXVersion() >= 78"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i0320",
+        "module": "cluster",
+        "name": "map_shared_rank",
+        "arguments": [
+          "*const u8",
+          "u32"
+        ],
+        "result": "*const u8",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0320",
+        "public_path": "cuda_intrinsics::cluster::map_shared_rank",
+        "compatibility_paths": [
+          "cuda_device::cluster::map_shared_rank",
+          "cuda_device::cluster::map_shared_rank_mut"
+        ]
+      },
+      "dialect": {
+        "op_type": "MapaSharedClusterOp",
+        "op_name": "nvvm.mapa_shared_cluster",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "ptr"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mapa.shared.cluster",
+        "arguments": [
+          "shared_ptr",
+          "i32"
+        ],
+        "results": [
+          "shared_cluster_ptr"
+        ],
+        "properties": [
+          "IntrNoMem",
+          "IntrSpeculatable",
+          "NoCapture<arg0>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "cluster"
+      },
+      "target": {
+        "minimum_ptx": "7.8",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 90
+            }
+          ]
+        },
+        "ptx_result": "*const u8",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.9.24 Data Movement and Conversion Instructions: mapa",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-mapa"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_90",
+        "ptx_feature": "+ptx78"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-cluster-memory",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "one convergent LLVM kernel containing exact mapa and remote u32-load inline PTX",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "The pinned Rust LLVM emitted both mapa instructions and one ld.shared::cluster.u32 with no extern calls. The 690-byte source had SHA-256 ad8a94dfa560d523bfe8cf963f8779132c960e1e6e5717e080e72819936f446a; the 1,007-byte PTX had SHA-256 005a7f90c8a3bd97a99792ce8a181d43c28fb318cd20dce6068fcb349800a951.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx78"
+              ],
+              "representation": "LLVM-produced PTX retaining both cluster-memory operations",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the module and produced a 3,712-byte cubin with SHA-256 1780aee43cd691bd7e3a79f4bc4b2d163e5cdfc11e08441ae318dfb091a5057a.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33-cluster-memory",
+          "target": {
+            "minimum_ptx": "7.8",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 90
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "one convergent legacy NVVM IR kernel containing exact mapa and remote u32-load inline PTX",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM retained both mapa instructions and one ld.shared::cluster.u32 with no extern calls. The 1,222-byte source had SHA-256 b966d8131b036df01f435a9dab89559917d5ac23d6e26d0adfc23a959d899cdc; the 2,208-byte LTOIR had SHA-256 a8006b43c0aacce7c48c04a1d3599127db090a21b4f2ed7cddc1d676a6243728; the 922-byte linked PTX had SHA-256 e8d9eea75eec5d6179fab2ba58d900c14bc5ed3af1c9ffe2c39f6e7c9fc798d0.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_90",
+                "ptx93"
+              ],
+              "representation": "linked cubin retaining the cluster-memory kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 3,840-byte cubin with SHA-256 5fc93334fcfa3fe77cee54dd6470bdecb562c8ecd205425b64df9d81a95ae091.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "cluster_memory": {
+        "operation": "map_shared_rank",
+        "adapter": "generic_const_and_mut_pointer_rank_to_same_pointer",
+        "source_contract": "llvm_mapa_shared_cluster_as7_identity_inline_ptx",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_cluster_memory_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mapa",
+        "modifiers": [
+          "shared::cluster",
+          "u64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Maps a CTA-shared address to the same offset in another cluster rank."
     },
     {
       "id": "match_all_i64_sync",

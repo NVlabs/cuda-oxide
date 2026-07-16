@@ -99,8 +99,6 @@
 
 mod asm;
 pub mod atomic;
-mod clc;
-mod cluster;
 mod debug;
 mod generated;
 mod grid;
@@ -114,8 +112,6 @@ use pliron::context::Context;
 // Re-export all operations for public API
 pub use asm::*;
 pub use atomic::*;
-pub use clc::*;
-pub use cluster::*;
 pub use debug::*;
 pub use generated::*;
 pub use grid::*;
@@ -131,10 +127,8 @@ pub use wgmma::*;
 pub fn register(ctx: &mut Context) {
     atomic::register(ctx);
     asm::register(ctx);
-    clc::register(ctx);
     generated::register(ctx);
     warp::register(ctx);
-    cluster::register(ctx);
     grid::register(ctx);
     tma::register(ctx);
     wgmma::register(ctx);

@@ -2240,3 +2240,59 @@ status = "active"
 catalog_id = "wgmma_wait_group"
 operation_key = "wgmma.control.wait_group.sync.aligned"
 raw_rust_signature = { safe = false, arguments = ["u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0320"
+status = "active"
+catalog_id = "map_shared_rank"
+operation_key = "cluster.shared_address.map_rank"
+raw_rust_signature = { safe = false, arguments = ["*const u8", "u32"], result = "*const u8" }
+
+[[entry]]
+abi_id = "i0321"
+status = "active"
+catalog_id = "dsmem_read_u32"
+operation_key = "cluster.shared_memory.map_rank_then_read_u32"
+raw_rust_signature = { safe = false, arguments = ["*const u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0322"
+status = "active"
+catalog_id = "clc_try_cancel"
+operation_key = "cluster.launch_control.try_cancel"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0323"
+status = "active"
+catalog_id = "clc_try_cancel_multicast"
+operation_key = "cluster.launch_control.try_cancel.multicast"
+raw_rust_signature = { safe = false, arguments = ["*mut u8", "*mut u64"], result = "()" }
+
+[[entry]]
+abi_id = "i0324"
+status = "active"
+catalog_id = "clc_query_is_canceled"
+operation_key = "cluster.launch_control.query.is_canceled"
+raw_rust_signature = { safe = false, arguments = ["u64", "u64"], result = "u32" }
+
+[[entry]]
+abi_id = "i0325"
+status = "active"
+catalog_id = "clc_query_get_first_ctaid_x"
+operation_key = "cluster.launch_control.query.first_ctaid.x"
+raw_rust_signature = { safe = false, arguments = ["u64", "u64"], result = "u32" }
+
+[[entry]]
+abi_id = "i0326"
+status = "active"
+catalog_id = "clc_query_get_first_ctaid_y"
+operation_key = "cluster.launch_control.query.first_ctaid.y"
+raw_rust_signature = { safe = false, arguments = ["u64", "u64"], result = "u32" }
+
+[[entry]]
+abi_id = "i0327"
+status = "active"
+catalog_id = "clc_query_get_first_ctaid_z"
+operation_key = "cluster.launch_control.query.first_ctaid.z"
+raw_rust_signature = { safe = false, arguments = ["u64", "u64"], result = "u32" }

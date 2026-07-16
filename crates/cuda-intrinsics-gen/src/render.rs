@@ -8910,6 +8910,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "use llvm_export::{ops::AsmKind, types as llvm_types};",
                 "use llvm_export::{op_interfaces::CastOpInterface, ops as llvm_ops, ops::AsmKind, types as llvm_types};",
+            )
+            .replace(
+                "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
+                "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
             );
     }
     output.push_str("use pliron::location::Located;\n\n");
@@ -13850,7 +13854,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 319);
+        assert_eq!(catalog.intrinsics.len(), 327);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -14516,26 +14520,7 @@ mod tests {
     #[test]
     fn cluster_memory_rendering_preserves_pointer_carrier_and_composite_load() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let mut catalog = crate::resolve::resolve(&repo_root).unwrap();
-        assert_eq!(cluster_memory(&catalog).count(), 0);
-        assert!(!render_dialect_mod(&catalog, "test-hash").contains("cluster_memory"));
-        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
-        assert!(!outputs.contains_key(&PathBuf::from(
-            "crates/cuda-device/src/generated/cluster_memory.rs"
-        )));
-        assert!(!outputs.contains_key(&PathBuf::from(
-            "crates/dialect-nvvm/src/ops/generated/cluster_memory.rs"
-        )));
-
-        let template = catalog
-            .intrinsics
-            .iter()
-            .find(|record| record.id == "mbarrier_test_wait")
-            .unwrap()
-            .clone();
-        catalog
-            .intrinsics
-            .extend(crate::resolve::test_cluster_memory_records(&template));
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
         let records = cluster_memory(&catalog).collect::<Vec<_>>();
         assert_eq!(records.len(), 2);
@@ -14721,7 +14706,7 @@ mod tests {
 
         let targets = render_targets(&catalog, "test-hash");
         assert!(targets.contains(
-            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(110), GeneratedHardwareAlternative::ExactArchitecture(120)])"
+            "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110), GeneratedHardwareAlternative::ExactArchitecture(120), GeneratedHardwareAlternative::ExactArchitecture(121)])"
         ));
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
