@@ -1,4 +1,4 @@
-# Reviewed base sparse INT8 register-MMA family.
+# Reviewed sparse m16n8k128 INT4 register-MMA family.
 
 schema = 26
 family = "sparse_mma"
@@ -10,49 +10,49 @@ runtime_validation = "unexecuted"
 metadata = "standard"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "s8"
-b_element = "s8"
+shape = "m16n8k128"
+a_element = "s4"
+b_element = "s4"
 overflow = "wrapping"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "s8"
-b_element = "u8"
+shape = "m16n8k128"
+a_element = "s4"
+b_element = "u4"
 overflow = "wrapping"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "u8"
-b_element = "u8"
+shape = "m16n8k128"
+a_element = "u4"
+b_element = "u4"
 overflow = "wrapping"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "u8"
-b_element = "s8"
+shape = "m16n8k128"
+a_element = "u4"
+b_element = "s4"
 overflow = "wrapping"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "s8"
-b_element = "s8"
+shape = "m16n8k128"
+a_element = "s4"
+b_element = "s4"
 overflow = "satfinite"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "s8"
-b_element = "u8"
+shape = "m16n8k128"
+a_element = "s4"
+b_element = "u4"
 overflow = "satfinite"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "u8"
-b_element = "u8"
+shape = "m16n8k128"
+a_element = "u4"
+b_element = "u4"
 overflow = "satfinite"
 
 [[sparse_mma_integer.variant]]
-shape = "m16n8k32"
-a_element = "u8"
-b_element = "s8"
+shape = "m16n8k128"
+a_element = "u4"
+b_element = "s4"
 overflow = "satfinite"

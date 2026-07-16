@@ -45,9 +45,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 29;
-const OVERLAY_SHARD_SCHEMA: u32 = 25;
-pub(crate) const CATALOG_SCHEMA: u32 = 28;
+const OVERLAY_SCHEMA: u32 = 30;
+const OVERLAY_SHARD_SCHEMA: u32 = 26;
+pub(crate) const CATALOG_SCHEMA: u32 = 29;
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let lock = read_upstream_lock(repo_root)?;
@@ -7361,6 +7361,118 @@ fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMmaRecipe> {
             "int_nvvm_mma_sp_ordered_metadata_m16n8k128_row_col_satfinite_u4_s4",
             "llvm.nvvm.mma.sp.ordered.metadata.m16n8k128.row.col.satfinite.u4.s4",
         ),
+        (M16n8k64, S4, S4, Wrapping, Standard) => (
+            "mma_sp_m16n8k64_s32_s4",
+            "i0211",
+            "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_s4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.s4",
+        ),
+        (M16n8k64, S4, U4, Wrapping, Standard) => (
+            "mma_sp_m16n8k64_s32_s4_u4",
+            "i0212",
+            "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_s4_u4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.s4.u4",
+        ),
+        (M16n8k64, U4, U4, Wrapping, Standard) => (
+            "mma_sp_m16n8k64_s32_u4",
+            "i0213",
+            "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_u4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.u4",
+        ),
+        (M16n8k64, U4, S4, Wrapping, Standard) => (
+            "mma_sp_m16n8k64_s32_u4_s4",
+            "i0214",
+            "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_u4_s4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.u4.s4",
+        ),
+        (M16n8k64, S4, S4, Satfinite, Standard) => (
+            "mma_sp_m16n8k64_s32_s4_satfinite",
+            "i0215",
+            "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s4",
+        ),
+        (M16n8k64, S4, U4, Satfinite, Standard) => (
+            "mma_sp_m16n8k64_s32_s4_u4_satfinite",
+            "i0216",
+            "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_s4_u4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.s4.u4",
+        ),
+        (M16n8k64, U4, U4, Satfinite, Standard) => (
+            "mma_sp_m16n8k64_s32_u4_satfinite",
+            "i0217",
+            "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u4",
+        ),
+        (M16n8k64, U4, S4, Satfinite, Standard) => (
+            "mma_sp_m16n8k64_s32_u4_s4_satfinite",
+            "i0218",
+            "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k64_row_col_satfinite_u4_s4",
+            "llvm.nvvm.mma.sp.m16n8k64.row.col.satfinite.u4.s4",
+        ),
+        (M16n8k128, S4, S4, Wrapping, Standard) => (
+            "mma_sp_m16n8k128_s32_s4",
+            "i0219",
+            "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_s4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.s4",
+        ),
+        (M16n8k128, S4, U4, Wrapping, Standard) => (
+            "mma_sp_m16n8k128_s32_s4_u4",
+            "i0220",
+            "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_s4_u4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.s4.u4",
+        ),
+        (M16n8k128, U4, U4, Wrapping, Standard) => (
+            "mma_sp_m16n8k128_s32_u4",
+            "i0221",
+            "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_u4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.u4",
+        ),
+        (M16n8k128, U4, S4, Wrapping, Standard) => (
+            "mma_sp_m16n8k128_s32_u4_s4",
+            "i0222",
+            "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.wrapping.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_u4_s4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.u4.s4",
+        ),
+        (M16n8k128, S4, S4, Satfinite, Standard) => (
+            "mma_sp_m16n8k128_s32_s4_satfinite",
+            "i0223",
+            "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_s4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.s4",
+        ),
+        (M16n8k128, S4, U4, Satfinite, Standard) => (
+            "mma_sp_m16n8k128_s32_s4_u4_satfinite",
+            "i0224",
+            "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_s4_u4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.s4.u4",
+        ),
+        (M16n8k128, U4, U4, Satfinite, Standard) => (
+            "mma_sp_m16n8k128_s32_u4_satfinite",
+            "i0225",
+            "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_u4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.u4",
+        ),
+        (M16n8k128, U4, S4, Satfinite, Standard) => (
+            "mma_sp_m16n8k128_s32_u4_s4_satfinite",
+            "i0226",
+            "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.satfinite.standard_metadata",
+            "int_nvvm_mma_sp_m16n8k128_row_col_satfinite_u4_s4",
+            "llvm.nvvm.mma.sp.m16n8k128.row.col.satfinite.u4.s4",
+        ),
         _ => return None,
     };
     let mut ptx_modifiers = vec![
@@ -9784,8 +9896,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 29);
-        assert_eq!(overlay.intrinsics.len(), 210);
+        assert_eq!(overlay.shards.len(), 31);
+        assert_eq!(overlay.intrinsics.len(), 226);
         assert_eq!(
             overlay
                 .intrinsics
@@ -9840,7 +9952,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "sparse_mma")
                 .count(),
-            48
+            64
         );
         assert_eq!(
             overlay
@@ -10318,13 +10430,13 @@ mod tests {
             .iter()
             .filter(|record| record.family == "sparse_mma")
             .collect::<Vec<_>>();
-        assert_eq!(records.len(), 48);
+        assert_eq!(records.len(), 64);
         assert_eq!(
             records
                 .iter()
                 .map(|record| record.abi_id.as_str())
                 .collect::<BTreeSet<_>>(),
-            (163..=210)
+            (163..=226)
                 .map(|id| format!("i{id:04}"))
                 .collect::<BTreeSet<_>>()
                 .iter()
@@ -10399,13 +10511,10 @@ mod tests {
             for a_element in [SparseMmaElement::S4, SparseMmaElement::U4] {
                 for b_element in [SparseMmaElement::S4, SparseMmaElement::U4] {
                     for overflow in [SparseMmaOverflow::Wrapping, SparseMmaOverflow::Satfinite] {
-                        expected_variants.insert((
-                            shape,
-                            a_element,
-                            b_element,
-                            overflow,
-                            SparseMmaMetadata::Ordered,
-                        ));
+                        for metadata in [SparseMmaMetadata::Standard, SparseMmaMetadata::Ordered] {
+                            expected_variants
+                                .insert((shape, a_element, b_element, overflow, metadata));
+                        }
                     }
                 }
             }
@@ -10425,11 +10534,13 @@ mod tests {
                 "Range<arg9",
                 "Range<arg9,0,1>",
             ),
+            ("mma_sp_m16n8k64_s32_s4", "Range<arg9", "Range<arg9,0,1>"),
             (
                 "mma_sp_ordered_metadata_m16n8k128_s32_s4",
                 "Range<arg13",
                 "Range<arg13,0,2>",
             ),
+            ("mma_sp_m16n8k128_s32_s4", "Range<arg13", "Range<arg13,0,2>"),
         ] {
             let valid = records
                 .iter()
@@ -10498,6 +10609,20 @@ mod tests {
             ordered_k64_int4.sparse_mma.as_ref().unwrap().llvm_adapter,
             SparseMmaLlvmAdapter::A2I32B2I32C4I32MetadataI32SelectorI32ToD4I32
         );
+        let standard_k64_int4 = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mma_sp_m16n8k64_s32_s4")
+            .unwrap();
+        assert_eq!(standard_k64_int4.minimum_ptx, "7.1");
+        assert_eq!(
+            standard_k64_int4.rust_arguments,
+            ordered_k64_int4.rust_arguments
+        );
+        assert_eq!(
+            standard_k64_int4.llvm_arguments,
+            ordered_k64_int4.llvm_arguments
+        );
 
         let ordered_k128_int4 = records
             .iter()
@@ -10521,6 +10646,20 @@ mod tests {
         assert_eq!(
             ordered_k128_int4.sparse_mma.as_ref().unwrap().llvm_adapter,
             SparseMmaLlvmAdapter::A4I32B4I32C4I32MetadataI32SelectorI32ToD4I32
+        );
+        let standard_k128_int4 = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mma_sp_m16n8k128_s32_s4")
+            .unwrap();
+        assert_eq!(standard_k128_int4.minimum_ptx, "7.1");
+        assert_eq!(
+            standard_k128_int4.rust_arguments,
+            ordered_k128_int4.rust_arguments
+        );
+        assert_eq!(
+            standard_k128_int4.llvm_arguments,
+            ordered_k128_int4.llvm_arguments
         );
 
         let mut wrong_k128_selector = ordered_k128_int4.clone();

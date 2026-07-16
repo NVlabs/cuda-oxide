@@ -1,6 +1,6 @@
 # Reviewed classic cp.async group controls.
 
-schema = 25
+schema = 26
 family = "cp_async_control"
 
 [[intrinsic]]

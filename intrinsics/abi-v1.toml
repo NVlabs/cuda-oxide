@@ -1477,3 +1477,115 @@ status = "active"
 catalog_id = "mma_sp_ordered_metadata_m16n8k128_s32_u4_s4_satfinite"
 operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.satfinite.ordered_metadata"
 raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0211"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_s4"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0212"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_s4_u4"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0213"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_u4"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0214"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_u4_s4"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0215"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_s4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.s4.s4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0216"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_s4_u4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.s4.u4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0217"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_u4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.u4.u4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0218"
+status = "active"
+catalog_id = "mma_sp_m16n8k64_s32_u4_s4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k64.row.col.s32.u4.s4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0219"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_s4"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0220"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_s4_u4"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0221"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_u4"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0222"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_u4_s4"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.wrapping.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0223"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_s4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.s4.s4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0224"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_s4_u4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.s4.u4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0225"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_u4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.u4.u4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }
+
+[[entry]]
+abi_id = "i0226"
+status = "active"
+catalog_id = "mma_sp_m16n8k128_s32_u4_s4_satfinite"
+operation_key = "matrix.mma.sp.m16n8k128.row.col.s32.u4.s4.s32.satfinite.standard_metadata"
+raw_rust_signature = { safe = false, arguments = ["[i32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[i32; 4]" }

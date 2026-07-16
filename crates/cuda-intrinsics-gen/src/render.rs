@@ -8602,7 +8602,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 210);
+        assert_eq!(catalog.intrinsics.len(), 226);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -8831,7 +8831,7 @@ mod tests {
             .iter()
             .filter(|record| record.sparse_mma.as_ref().unwrap().shape == SparseMmaShape::M16n8k128)
             .count();
-        assert_eq!((records.len(), k32, k64, k128), (48, 16, 24, 8));
+        assert_eq!((records.len(), k32, k64, k128), (64, 16, 32, 16));
         let standard_k64 = records
             .iter()
             .copied()
@@ -8852,6 +8852,19 @@ mod tests {
         assert_eq!(
             sparse_mma_constraints(standard_k64),
             "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n"
+        );
+        let standard_int4_k64 = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mma_sp_m16n8k64_s32_s4")
+            .unwrap();
+        assert_eq!(
+            sparse_mma_template(standard_int4_k64),
+            "mma.sp.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32 {$0, $1, $2, $3}, {$8, $9}, {$10, $11}, {$4, $5, $6, $7}, $12, $13;"
+        );
+        assert_eq!(
+            sparse_mma_constraints(standard_int4_k64),
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,n"
         );
         let ordered_int4_k64 = records
             .iter()
@@ -8895,6 +8908,19 @@ mod tests {
             sparse_mma_constraints(ordered_int4_k128),
             "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n"
         );
+        let standard_int4_k128 = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mma_sp_m16n8k128_s32_s4")
+            .unwrap();
+        assert_eq!(
+            sparse_mma_template(standard_int4_k128),
+            "mma.sp.sync.aligned.m16n8k128.row.col.s32.s4.s4.s32 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13, $14, $15}, {$4, $5, $6, $7}, $16, $17;"
+        );
+        assert_eq!(
+            sparse_mma_constraints(standard_int4_k128),
+            "=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n"
+        );
 
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
@@ -8908,7 +8934,7 @@ mod tests {
         }
 
         let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 48);
+        assert_eq!(compatibility.matches("pub unsafe fn ").count(), 64);
         assert!(
             compatibility
                 .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
@@ -8975,16 +9001,18 @@ mod tests {
         assert!(targets.contains("GeneratedSparseMmaElement::U4"));
         assert!(targets.contains("SparseMmaElementAttr::S4"));
         assert!(targets.contains("SparseMmaElementAttr::U4"));
+        assert!(targets.contains("GeneratedSparseMmaMetadata::Standard"));
+        assert!(targets.contains("SparseMmaMetadataAttr::Standard"));
         assert!(targets.contains("GeneratedSparseMmaMetadata::Ordered"));
         assert!(targets.contains("SparseMmaMetadataAttr::Ordered"));
 
-        assert_eq!(raw.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(), 16);
+        assert_eq!(raw.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(), 32);
         assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 32);
         assert_eq!(
             compatibility
                 .matches(SPARSE_MMA_STANDARD_METADATA_RULE)
                 .count(),
-            16
+            32
         );
         assert_eq!(
             compatibility
@@ -9009,6 +9037,8 @@ mod tests {
                 .contains("mma.sp::ordered_metadata.sync.aligned.m16n8k128.row.col.s32.s4.s4.s32")
         );
         assert!(lowering.contains("mma.sp.sync.aligned.m16n8k64.row.col.s32.s8.s8.s32"));
+        assert!(lowering.contains("mma.sp.sync.aligned.m16n8k64.row.col.s32.s4.s4.s32"));
+        assert!(lowering.contains("mma.sp.sync.aligned.m16n8k128.row.col.s32.s4.s4.s32"));
 
         for record in &records {
             let probe = render_probe(&catalog, record, "test-hash");
@@ -9030,7 +9060,7 @@ mod tests {
         assert!(reference.contains("LLVM source record uses A, B, C, metadata, selector order"));
         assert_eq!(
             reference.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(),
-            16
+            32
         );
         assert_eq!(
             reference.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(),

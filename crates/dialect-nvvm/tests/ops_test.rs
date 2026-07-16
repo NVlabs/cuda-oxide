@@ -1812,7 +1812,7 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
     wrong_type[4] = signless_i32_value;
     assert!(verify_op(&k64_mma!(wrong_type, SparseMmaMetadataAttr::Standard), &ctx).is_err());
 
-    macro_rules! ordered_int4_mma {
+    macro_rules! int4_mma {
         ($operands:expr, $a:expr, $b:expr, $overflow:expr, $metadata:expr) => {{
             let operation = Operation::new(
                 &mut ctx,
@@ -1880,42 +1880,34 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
     ];
     let int4_operands =
         |selector| [vec![i32_value; 4], vec![u32_value; 5], vec![selector]].concat();
-    for (index, (a, b, overflow)) in int4_variants.into_iter().enumerate() {
-        let selector = if index % 2 == 0 { zero } else { one };
-        assert!(
-            verify_op(
-                &ordered_int4_mma!(
-                    int4_operands(selector),
-                    a,
-                    b,
-                    overflow,
-                    SparseMmaMetadataAttr::Ordered
-                ),
-                &ctx,
-            )
-            .is_ok()
-        );
+    for metadata in [
+        SparseMmaMetadataAttr::Standard,
+        SparseMmaMetadataAttr::Ordered,
+    ] {
+        for (index, (a, b, overflow)) in int4_variants.iter().enumerate() {
+            let selector = if index % 2 == 0 { zero } else { one };
+            assert!(
+                verify_op(
+                    &int4_mma!(
+                        int4_operands(selector),
+                        a.clone(),
+                        b.clone(),
+                        overflow.clone(),
+                        metadata.clone()
+                    ),
+                    &ctx,
+                )
+                .is_ok()
+            );
+        }
     }
 
     assert!(
         verify_op(
-            &ordered_int4_mma!(
+            &int4_mma!(
                 int4_operands(zero),
                 SparseMmaElementAttr::S4,
                 SparseMmaElementAttr::U8,
-                SparseMmaOverflowAttr::Wrapping,
-                SparseMmaMetadataAttr::Ordered
-            ),
-            &ctx,
-        )
-        .is_err()
-    );
-    assert!(
-        verify_op(
-            &ordered_int4_mma!(
-                int4_operands(zero),
-                SparseMmaElementAttr::S4,
-                SparseMmaElementAttr::S4,
                 SparseMmaOverflowAttr::Wrapping,
                 SparseMmaMetadataAttr::Standard
             ),
@@ -1923,25 +1915,30 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
         )
         .is_err()
     );
-    for selector in [two, u32_value] {
-        assert!(
-            verify_op(
-                &ordered_int4_mma!(
-                    int4_operands(selector),
-                    SparseMmaElementAttr::S4,
-                    SparseMmaElementAttr::U4,
-                    SparseMmaOverflowAttr::Wrapping,
-                    SparseMmaMetadataAttr::Ordered
-                ),
-                &ctx,
-            )
-            .is_err()
-        );
+    for metadata in [
+        SparseMmaMetadataAttr::Standard,
+        SparseMmaMetadataAttr::Ordered,
+    ] {
+        for selector in [two, u32_value] {
+            assert!(
+                verify_op(
+                    &int4_mma!(
+                        int4_operands(selector),
+                        SparseMmaElementAttr::S4,
+                        SparseMmaElementAttr::U4,
+                        SparseMmaOverflowAttr::Wrapping,
+                        metadata.clone()
+                    ),
+                    &ctx,
+                )
+                .is_err()
+            );
+        }
     }
 }
 
 #[test]
-fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
+fn generated_sparse_mma_m16n8k128_int4_verifies_metadata_selector_and_widths() {
     use pliron::builtin::{attributes::IntegerAttr, ops::ConstantOp};
     use pliron::utils::apint::APInt;
     use std::num::NonZeroUsize;
@@ -1971,7 +1968,7 @@ fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
         .get_result(0);
 
     macro_rules! k128_mma {
-        ($operands:expr, $a:expr, $b:expr, $overflow:expr) => {{
+        ($operands:expr, $a:expr, $b:expr, $overflow:expr, $metadata:expr) => {{
             let operation = Operation::new(
                 &mut ctx,
                 SparseMmaOp::get_concrete_op_info(),
@@ -1988,7 +1985,7 @@ fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
             mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, SparseMmaLayoutAttr::Row);
             mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, SparseMmaLayoutAttr::Col);
             mma.set_attr_nvvm_sparse_mma_overflow(&ctx, $overflow);
-            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, SparseMmaMetadataAttr::Ordered);
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, $metadata);
             mma.set_attr_nvvm_sparse_mma_selector(&ctx, SparseMmaSelectorAttr::ImmediateZero);
             mma
         }};
@@ -2037,23 +2034,46 @@ fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
         ),
     ];
     let operands = |selector| [vec![i32_value; 4], vec![u32_value; 9], vec![selector]].concat();
-    for (a, b, overflow) in variants {
-        assert!(verify_op(&k128_mma!(operands(zero), a, b, overflow), &ctx).is_ok());
+    for metadata in [
+        SparseMmaMetadataAttr::Standard,
+        SparseMmaMetadataAttr::Ordered,
+    ] {
+        for (a, b, overflow) in &variants {
+            assert!(
+                verify_op(
+                    &k128_mma!(
+                        operands(zero),
+                        a.clone(),
+                        b.clone(),
+                        overflow.clone(),
+                        metadata.clone()
+                    ),
+                    &ctx,
+                )
+                .is_ok()
+            );
+        }
     }
 
-    for selector in [one, u32_value] {
-        assert!(
-            verify_op(
-                &k128_mma!(
-                    operands(selector),
-                    SparseMmaElementAttr::S4,
-                    SparseMmaElementAttr::U4,
-                    SparseMmaOverflowAttr::Wrapping
-                ),
-                &ctx,
-            )
-            .is_err()
-        );
+    for metadata in [
+        SparseMmaMetadataAttr::Standard,
+        SparseMmaMetadataAttr::Ordered,
+    ] {
+        for selector in [one, u32_value] {
+            assert!(
+                verify_op(
+                    &k128_mma!(
+                        operands(selector),
+                        SparseMmaElementAttr::S4,
+                        SparseMmaElementAttr::U4,
+                        SparseMmaOverflowAttr::Wrapping,
+                        metadata.clone()
+                    ),
+                    &ctx,
+                )
+                .is_err()
+            );
+        }
     }
     assert!(
         verify_op(
@@ -2061,7 +2081,8 @@ fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
                 operands(zero),
                 SparseMmaElementAttr::S4,
                 SparseMmaElementAttr::U8,
-                SparseMmaOverflowAttr::Wrapping
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard
             ),
             &ctx,
         )
@@ -2073,7 +2094,8 @@ fn generated_ordered_sparse_mma_m16n8k128_int4_verifies_selector_and_widths() {
                 [vec![i32_value; 4], vec![u32_value; 8], vec![zero]].concat(),
                 SparseMmaElementAttr::S4,
                 SparseMmaElementAttr::S4,
-                SparseMmaOverflowAttr::Wrapping
+                SparseMmaOverflowAttr::Wrapping,
+                SparseMmaMetadataAttr::Standard
             ),
             &ctx,
         )
