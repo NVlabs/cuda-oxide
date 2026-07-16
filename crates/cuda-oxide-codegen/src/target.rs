@@ -750,6 +750,7 @@ pub enum PtxIsaRequirement {
     Ptx78,
     Ptx80,
     Ptx86,
+    Ptx87,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -777,9 +778,10 @@ pub(crate) fn generated_ptx_isa_requirement(
             72..=78 => PtxIsaRequirement::Ptx78,
             79..=80 => PtxIsaRequirement::Ptx80,
             81..=86 => PtxIsaRequirement::Ptx86,
+            87 => PtxIsaRequirement::Ptx87,
             _ => {
                 return Err(format!(
-                    "generated intrinsic `{}` (`{}`) requires PTX {}.{}, newer than cuda-oxide's supported PTX 8.6 floor",
+                    "generated intrinsic `{}` (`{}`) requires PTX {}.{}, newer than cuda-oxide's supported PTX 8.7 floor",
                     target.id,
                     target.marker,
                     target_requirement.minimum_ptx.major(),
@@ -1361,6 +1363,7 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
         PtxIsaRequirement::Ptx78 => 78,
         PtxIsaRequirement::Ptx80 => 80,
         PtxIsaRequirement::Ptx86 => 86,
+        PtxIsaRequirement::Ptx87 => 87,
     };
     if requested <= minimum {
         return None;
@@ -1374,6 +1377,7 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
         PtxIsaRequirement::Ptx78 => Some("+ptx78"),
         PtxIsaRequirement::Ptx80 => Some("+ptx80"),
         PtxIsaRequirement::Ptx86 => Some("+ptx86"),
+        PtxIsaRequirement::Ptx87 => Some("+ptx87"),
     }
 }
 
@@ -1446,6 +1450,80 @@ fn arch_compute_capability_and_suffix(arch: &str) -> Option<(u32, Option<char>)>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generated_intrinsic_targets::{
+        GeneratedIntrinsicTarget, GeneratedIntrinsicVariant, GeneratedPtxVersion,
+        GeneratedTargetRequirement,
+    };
+
+    static EXACT_SM120A: &[GeneratedHardwareAlternative] =
+        &[GeneratedHardwareAlternative::ExactArchitecture(120)];
+    static PTX87_EXACT_SM120A: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+        marker: "test:ptx87",
+        id: "ptx87_exact_sm120a",
+        abi_id: "test",
+        dialect_op: "test.ptx87",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(87),
+            hardware: GeneratedHardwareTarget::AnyOf(EXACT_SM120A),
+        },
+        backend_requirements: &[],
+        selections: &[],
+        llvm: None,
+    };
+    static PTX88_FUTURE: GeneratedIntrinsicTarget = GeneratedIntrinsicTarget {
+        marker: "test:ptx88",
+        id: "ptx88_future",
+        abi_id: "test",
+        dialect_op: "test.ptx88",
+        variant: GeneratedIntrinsicVariant::Scalar,
+        requirement: GeneratedTargetRequirement {
+            minimum_ptx: GeneratedPtxVersion::from_encoded(88),
+            hardware: GeneratedHardwareTarget::All,
+        },
+        backend_requirements: &[],
+        selections: &[],
+        llvm: None,
+    };
+
+    #[test]
+    fn generated_ptx87_exact_sm120a_requirement_is_preserved() {
+        let generated = GeneratedModuleRequirements::from_targets(vec![&PTX87_EXACT_SM120A]);
+
+        assert_eq!(
+            generated_ptx_isa_requirement(&generated).unwrap(),
+            PtxIsaRequirement::Ptx87
+        );
+        assert!(PtxIsaRequirement::Ptx86 < PtxIsaRequirement::Ptx87);
+        assert_eq!(
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx87),
+            Some("+ptx87")
+        );
+        assert_eq!(
+            required_ptx_feature("sm_120a", PtxIsaRequirement::Ptx87),
+            None
+        );
+        assert_eq!(
+            select_target_with_generated(DetectedFeatures::Basic, &generated).unwrap(),
+            "sm_120a"
+        );
+        assert!(generated_target_satisfied("sm_120a", &generated));
+        for incompatible in ["sm_120", "sm_120f", "sm_121a"] {
+            assert!(
+                !generated_target_satisfied(incompatible, &generated),
+                "{incompatible}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_ptx_floor_above_87_is_rejected() {
+        let generated = GeneratedModuleRequirements::from_targets(vec![&PTX88_FUTURE]);
+        let error = generated_ptx_isa_requirement(&generated).unwrap_err();
+
+        assert!(error.contains("requires PTX 8.8"), "{error}");
+        assert!(error.contains("supported PTX 8.7"), "{error}");
+    }
 
     #[test]
     fn generated_redux_floor_matches_the_lowered_ptx_detector() {

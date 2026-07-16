@@ -4282,8 +4282,16 @@ fn validate_packed_alu_policy(
     ensure_exact_inline_ptx_backends(
         policy,
         [
-            (IntrinsicBackend::LlvmNvptx, llvm_floor.0, llvm_floor.1),
-            (IntrinsicBackend::LibNvvm, libnvvm_floor.0, libnvvm_floor.1),
+            (
+                IntrinsicBackend::LlvmNvptx,
+                llvm_floor.0,
+                Some(llvm_floor.1),
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                libnvvm_floor.0,
+                Some(libnvvm_floor.1),
+            ),
         ],
         "packed-ALU",
     )?;
@@ -5638,8 +5646,8 @@ fn validate_packed_conversion_policy(
     ensure_exact_inline_ptx_backends(
         policy,
         [
-            (IntrinsicBackend::LlvmNvptx, "7.0", "sm_80"),
-            (IntrinsicBackend::LibNvvm, "7.0", "sm_80"),
+            (IntrinsicBackend::LlvmNvptx, "7.0", Some("sm_80")),
+            (IntrinsicBackend::LibNvvm, "7.0", Some("sm_80")),
         ],
         "packed conversion",
     )?;
@@ -7446,12 +7454,12 @@ fn validate_sparse_mma_policy(
             (
                 IntrinsicBackend::LlvmNvptx,
                 sparse_mma_minimum_ptx(mma.metadata),
-                "sm_80",
+                Some("sm_80"),
             ),
             (
                 IntrinsicBackend::LibNvvm,
                 sparse_mma_minimum_ptx(mma.metadata),
-                "sm_80",
+                Some("sm_80"),
             ),
         ],
         "sparse MMA",
@@ -7549,12 +7557,12 @@ fn validate_register_mma_policy(
             (
                 IntrinsicBackend::LlvmNvptx,
                 recipe.minimum_ptx,
-                recipe.minimum_sm,
+                Some(recipe.minimum_sm),
             ),
             (
                 IntrinsicBackend::LibNvvm,
                 recipe.minimum_ptx,
-                recipe.minimum_sm,
+                Some(recipe.minimum_sm),
             ),
         ],
         "register MMA",
@@ -7565,7 +7573,7 @@ fn validate_register_mma_policy(
 
 fn ensure_exact_inline_ptx_backends(
     policy: &OverlayIntrinsic,
-    requirements: [(IntrinsicBackend, &str, &str); 2],
+    requirements: [(IntrinsicBackend, &str, Option<&str>); 2],
     family: &str,
 ) -> Result<()> {
     let backend_pairs: BTreeSet<_> = policy
@@ -7591,13 +7599,13 @@ fn ensure_exact_inline_ptx_backends(
     );
     let requirements: BTreeMap<_, _> = requirements
         .into_iter()
-        .map(|(backend, ptx, sm)| (backend, (ptx, sm)))
+        .map(|(backend, ptx, minimum_sm)| (backend, (ptx, minimum_sm)))
         .collect();
     for lowering in &policy.backend_lowerings {
         let (minimum_ptx, minimum_sm) = requirements[&lowering.backend];
         ensure!(
             lowering.minimum_ptx.as_deref() == Some(minimum_ptx)
-                && lowering.minimum_sm.as_deref() == Some(minimum_sm)
+                && lowering.minimum_sm.as_deref() == minimum_sm
                 && !lowering.evidence_profile.trim().is_empty(),
             "{} backend {:?} does not carry its exact {family} floor",
             policy.id,
@@ -7650,39 +7658,82 @@ fn parse_hardware_target_fields(
     targets: &str,
     minimum_sm: Option<&str>,
 ) -> Result<CatalogHardwareTarget> {
+    if targets == "all" {
+        let Some(minimum_sm) = minimum_sm else {
+            return Ok(CatalogHardwareTarget::All);
+        };
+        let sm = parse_sm_spelling(intrinsic_id, "minimum_sm", minimum_sm, None)?;
+        return Ok(CatalogHardwareTarget::AnyOf {
+            alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm }],
+        });
+    }
+
     ensure!(
-        targets == "all",
-        "{} targets {:?} is not a reviewed hardware rule; use `targets = \"all\"` with optional monotonic `minimum_sm = \"sm_NN\"`",
+        minimum_sm.is_none(),
+        "{} exact targets {:?} cannot be combined with minimum_sm",
         intrinsic_id,
         targets
     );
-    let Some(minimum_sm) = minimum_sm else {
-        return Ok(CatalogHardwareTarget::All);
+    let suffix = targets
+        .chars()
+        .last()
+        .filter(|suffix| matches!(suffix, 'a' | 'f'));
+    let Some(suffix) = suffix else {
+        bail!(
+            "{} targets {:?} must be `all`, exact `sm_Na`, or family `sm_Nf`",
+            intrinsic_id,
+            targets
+        );
     };
-    let digits = minimum_sm.strip_prefix("sm_").with_context(|| {
-        format!(
-            "{} minimum_sm {:?} must use unsuffixed sm_NN form",
-            intrinsic_id, minimum_sm
-        )
+    let sm = parse_sm_spelling(intrinsic_id, "targets", targets, Some(suffix))?;
+    let alternative = match suffix {
+        'a' => CatalogHardwareAlternative::ExactArchitecture { sm },
+        'f' => CatalogHardwareAlternative::FamilyTarget { sm },
+        _ => unreachable!(),
+    };
+    Ok(CatalogHardwareTarget::AnyOf {
+        alternatives: vec![alternative],
+    })
+}
+
+fn parse_sm_spelling(
+    intrinsic_id: &str,
+    field: &str,
+    value: &str,
+    suffix: Option<char>,
+) -> Result<u16> {
+    let body = value.strip_prefix("sm_").with_context(|| {
+        format!("{intrinsic_id} {field} {value:?} must use canonical sm_NN spelling")
     })?;
+    let digits = match suffix {
+        Some(suffix) => body.strip_suffix(suffix).with_context(|| {
+            format!("{intrinsic_id} {field} {value:?} has the wrong target suffix")
+        })?,
+        None => body,
+    };
     ensure!(
         matches!(digits.len(), 2 | 3) && digits.bytes().all(|byte| byte.is_ascii_digit()),
-        "{} minimum_sm {:?} must use unsuffixed sm_NN form",
+        "{} {} {:?} must use canonical sm_NN{} spelling",
         intrinsic_id,
-        minimum_sm
+        field,
+        value,
+        suffix.map_or("", |suffix| if suffix == 'a' { "a" } else { "f" })
     );
     let sm: u16 = digits
         .parse()
-        .with_context(|| format!("{} minimum_sm is too large", intrinsic_id))?;
+        .with_context(|| format!("{intrinsic_id} {field} target is too large"))?;
+    let canonical = match suffix {
+        Some(suffix) => format!("sm_{sm}{suffix}"),
+        None => format!("sm_{sm}"),
+    };
     ensure!(
-        sm > 0 && format!("sm_{sm}") == minimum_sm,
-        "{} minimum_sm {:?} is not canonical",
+        sm > 0 && canonical == value,
+        "{} {} {:?} is not canonical",
         intrinsic_id,
-        minimum_sm
+        field,
+        value
     );
-    Ok(CatalogHardwareTarget::AnyOf {
-        alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm }],
-    })
+    Ok(sm)
 }
 
 fn backend_target_requirement(
@@ -8579,21 +8630,10 @@ fn validate_selected_stage_targets(
     })?;
     let requirement = backend_target_requirement(policy, lowering)?;
     let expected_ptx = requirement.minimum_ptx.encoded();
-    let expected_sm = match requirement.hardware {
-        CatalogHardwareTarget::AnyOf { alternatives }
-            if alternatives.len() == 1
-                && matches!(
-                    alternatives[0],
-                    CatalogHardwareAlternative::MinimumSm { .. }
-                ) =>
-        {
-            match alternatives[0] {
-                CatalogHardwareAlternative::MinimumSm { sm } => sm,
-                _ => unreachable!(),
-            }
-        }
+    let expected_hardware = match requirement.hardware {
+        CatalogHardwareTarget::AnyOf { alternatives } if alternatives.len() == 1 => alternatives[0],
         _ => bail!(
-            "{} selected backend stages require one minimum SM floor",
+            "{} selected backend stages require one hardware target",
             policy.id
         ),
     };
@@ -8606,29 +8646,23 @@ fn validate_selected_stage_targets(
         );
     }
     for stage in required_stages {
-        let (sm, ptx) = selected_stage_floor(stage)?;
-        let sm_matches = if stage.stage == EvidenceStageKind::BackendCodegen {
-            sm == expected_sm
-        } else {
-            // A versioned terminal tool may have dropped an older architecture
-            // while still accepting its forward-compatible PTX for a newer SM.
-            // Codegen proves the admitted floor; terminal validation proves the
-            // exact instruction is accepted at an architecture satisfying it.
-            sm >= expected_sm
-        };
+        let (hardware, ptx) = selected_stage_floor(stage)?;
+        let allow_forward_minimum = stage.stage != EvidenceStageKind::BackendCodegen;
+        let hardware_matches =
+            selected_stage_hardware_matches(hardware, expected_hardware, allow_forward_minimum);
         let ptx_matches = match lowering.backend {
             IntrinsicBackend::LlvmNvptx => ptx == expected_ptx,
             IntrinsicBackend::LibNvvm => ptx >= expected_ptx,
         };
         ensure!(
-            sm_matches && ptx_matches,
-            "{} evidence stage {:?} targets sm_{} / PTX {}.{} instead of a compatible target at catalog floor sm_{} / PTX {}.{}",
+            hardware_matches && ptx_matches,
+            "{} evidence stage {:?} targets {} / PTX {}.{} instead of a compatible target at catalog floor {} / PTX {}.{}",
             policy.id,
             stage.stage,
-            sm,
+            describe_stage_hardware(hardware),
             ptx / 10,
             ptx % 10,
-            expected_sm,
+            describe_stage_hardware(expected_hardware),
             expected_ptx / 10,
             expected_ptx % 10
         );
@@ -8641,13 +8675,13 @@ fn validate_selected_stage_targets(
                     policy.id
                 )
             })?;
-        let (sm, ptx) = selected_stage_floor(runtime)?;
+        let (hardware, ptx) = selected_stage_floor(runtime)?;
         let ptx_matches = match lowering.backend {
             IntrinsicBackend::LlvmNvptx => ptx == expected_ptx,
             IntrinsicBackend::LibNvvm => ptx >= expected_ptx,
         };
         ensure!(
-            sm >= expected_sm && ptx_matches,
+            selected_stage_hardware_matches(hardware, expected_hardware, true) && ptx_matches,
             "{} runtime stage target does not satisfy its catalog floor",
             policy.id
         );
@@ -8669,16 +8703,67 @@ fn is_normalized_stage_target(target: &str) -> bool {
     if let Some(value) = target.strip_prefix("ptx") {
         return value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit());
     }
-    let value = target
-        .strip_prefix("sm_")
-        .or_else(|| target.strip_prefix("compute_"));
-    let Some(value) = value else { return false };
-    let digits = value.strip_suffix('a').unwrap_or(value);
-    matches!(digits.len(), 2 | 3) && digits.bytes().all(|byte| byte.is_ascii_digit())
+    parse_stage_hardware(target).is_some()
 }
 
-fn selected_stage_floor(stage: &crate::model::EvidenceStage) -> Result<(u16, u16)> {
-    let mut sm = None;
+fn parse_stage_hardware(target: &str) -> Option<CatalogHardwareAlternative> {
+    let value = target
+        .strip_prefix("sm_")
+        .or_else(|| target.strip_prefix("compute_"))?;
+    let suffix = value
+        .chars()
+        .last()
+        .filter(|suffix| matches!(suffix, 'a' | 'f'));
+    let digits = suffix.map_or(value, |suffix| &value[..value.len() - suffix.len_utf8()]);
+    if !matches!(digits.len(), 2 | 3) || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let sm: u16 = digits.parse().ok()?;
+    if sm == 0 || sm.to_string() != digits {
+        return None;
+    }
+    Some(match suffix {
+        None => CatalogHardwareAlternative::MinimumSm { sm },
+        Some('a') => CatalogHardwareAlternative::ExactArchitecture { sm },
+        Some('f') => CatalogHardwareAlternative::FamilyTarget { sm },
+        _ => unreachable!(),
+    })
+}
+
+fn selected_stage_hardware_matches(
+    actual: CatalogHardwareAlternative,
+    expected: CatalogHardwareAlternative,
+    allow_forward_minimum: bool,
+) -> bool {
+    match expected {
+        CatalogHardwareAlternative::MinimumSm { sm: expected } => {
+            if allow_forward_minimum {
+                match actual {
+                    CatalogHardwareAlternative::MinimumSm { sm }
+                    | CatalogHardwareAlternative::ExactArchitecture { sm }
+                    | CatalogHardwareAlternative::FamilyTarget { sm } => sm >= expected,
+                }
+            } else {
+                actual == CatalogHardwareAlternative::MinimumSm { sm: expected }
+            }
+        }
+        CatalogHardwareAlternative::ExactArchitecture { .. }
+        | CatalogHardwareAlternative::FamilyTarget { .. } => actual == expected,
+    }
+}
+
+fn describe_stage_hardware(hardware: CatalogHardwareAlternative) -> String {
+    match hardware {
+        CatalogHardwareAlternative::MinimumSm { sm } => format!("sm_{sm}"),
+        CatalogHardwareAlternative::ExactArchitecture { sm } => format!("sm_{sm}a"),
+        CatalogHardwareAlternative::FamilyTarget { sm } => format!("sm_{sm}f"),
+    }
+}
+
+fn selected_stage_floor(
+    stage: &crate::model::EvidenceStage,
+) -> Result<(CatalogHardwareAlternative, u16)> {
+    let mut hardware = None;
     let mut ptx = None;
     for target in &stage.targets {
         if let Some(value) = target.strip_prefix("ptx") {
@@ -8687,23 +8772,17 @@ fn selected_stage_floor(stage: &crate::model::EvidenceStage) -> Result<(u16, u16
                 ptx.replace(value).is_none(),
                 "stage has duplicate PTX targets"
             );
-        } else if let Some(value) = target
-            .strip_prefix("sm_")
-            .or_else(|| target.strip_prefix("compute_"))
-        {
+        } else {
+            let value = parse_stage_hardware(target)
+                .with_context(|| format!("stage has unsupported target spelling {target:?}"))?;
             ensure!(
-                !value.ends_with('a'),
-                "selected stage cannot use suffixed target {target}"
-            );
-            let value = value.parse::<u16>()?;
-            ensure!(
-                sm.replace(value).is_none(),
+                hardware.replace(value).is_none(),
                 "stage has duplicate architecture targets"
             );
         }
     }
     Ok((
-        sm.context("selected stage has no architecture target")?,
+        hardware.context("selected stage has no architecture target")?,
         ptx.context("selected stage has no PTX target")?,
     ))
 }
@@ -13418,7 +13497,14 @@ mod tests {
         ];
         validate_selected_stage_targets(&target_policy, &record, &lowering).unwrap();
 
+        record.stages[0].targets = vec!["sm_75a".into(), "ptx65".into()];
+        assert!(validate_selected_stage_targets(&target_policy, &record, &lowering).is_err());
+        record.stages[0].targets = vec!["sm_75".into(), "ptx65".into()];
+
         record.stages[1].targets = vec!["sm_80".into(), "ptx65".into()];
+        validate_selected_stage_targets(&target_policy, &record, &lowering).unwrap();
+
+        record.stages[1].targets = vec!["sm_90a".into(), "ptx65".into()];
         validate_selected_stage_targets(&target_policy, &record, &lowering).unwrap();
 
         record.stages[1].targets = vec!["sm_74".into(), "ptx65".into()];
@@ -13438,6 +13524,71 @@ mod tests {
                 .to_string()
                 .contains("runtime stage")
         );
+    }
+
+    #[test]
+    fn exact_and_family_evidence_targets_match_at_every_stage() {
+        let lowering = crate::model::OverlayBackendLowering {
+            backend: IntrinsicBackend::LlvmNvptx,
+            mechanism: BackendLoweringMechanism::InlinePtx,
+            evidence_profile: "test".into(),
+            minimum_ptx: None,
+            minimum_sm: None,
+        };
+
+        for (target, wrong_targets) in [
+            ("sm_120a", ["sm_120", "sm_120f", "sm_121a"]),
+            ("sm_120f", ["sm_120", "sm_120a", "sm_121f"]),
+        ] {
+            let mut target_policy = policy();
+            target_policy.minimum_ptx = "8.7".into();
+            target_policy.targets = target.into();
+            let mut record = evidence();
+            record.status = "validated".into();
+            record.runtime_validation = Some(RuntimeValidation::Unexecuted);
+            record.stages = vec![
+                evidence_stage(
+                    EvidenceStageKind::BackendCodegen,
+                    BackendLoweringMechanism::InlinePtx,
+                    &[target, "ptx87"],
+                ),
+                evidence_stage(
+                    EvidenceStageKind::PtxAssembly,
+                    BackendLoweringMechanism::InlinePtx,
+                    &[target, "ptx87"],
+                ),
+            ];
+            validate_selected_stage_targets(&target_policy, &record, &lowering).unwrap();
+
+            for wrong in wrong_targets {
+                record.stages[0].targets = vec![wrong.into(), "ptx87".into()];
+                let error = validate_selected_stage_targets(&target_policy, &record, &lowering)
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains(target), "{error}");
+            }
+            record.stages[0].targets = vec![target.into(), "ptx87".into()];
+            for wrong in wrong_targets {
+                record.stages[1].targets = vec![wrong.into(), "ptx87".into()];
+                let error = validate_selected_stage_targets(&target_policy, &record, &lowering)
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains(target), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn suffixed_evidence_target_spellings_are_normalized() {
+        for target in ["sm_120a", "compute_120a", "sm_120f", "compute_120f"] {
+            assert!(is_normalized_stage_target(target), "{target}");
+        }
+        for target in ["sm_120", "compute_120", "ptx87"] {
+            assert!(is_normalized_stage_target(target), "{target}");
+        }
+        for target in ["sm_0120a", "sm_120af", "sm_120x", "compute_120A"] {
+            assert!(!is_normalized_stage_target(target), "{target}");
+        }
     }
 
     #[test]
@@ -13640,7 +13791,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_all_target_and_monotonic_minimum_sm_are_typed() {
+    fn hardware_targets_are_parsed_without_losing_suffix_semantics() {
         let all = policy();
         assert_eq!(
             parse_hardware_target(&all).unwrap(),
@@ -13656,11 +13807,103 @@ mod tests {
             }
         );
 
-        minimum.minimum_sm = Some("sm_90a".into());
-        assert!(parse_hardware_target(&minimum).is_err());
-        minimum.minimum_sm = None;
-        minimum.targets = "sm_75+".into();
-        assert!(parse_hardware_target(&minimum).is_err());
+        let mut exact = policy();
+        exact.targets = "sm_120a".into();
+        assert_eq!(
+            parse_hardware_target(&exact).unwrap(),
+            CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::ExactArchitecture { sm: 120 }],
+            }
+        );
+
+        let mut family = policy();
+        family.targets = "sm_120f".into();
+        assert_eq!(
+            parse_hardware_target(&family).unwrap(),
+            CatalogHardwareTarget::AnyOf {
+                alternatives: vec![CatalogHardwareAlternative::FamilyTarget { sm: 120 }],
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_or_conflicting_hardware_targets_are_rejected() {
+        for malformed in [
+            "sm_120",
+            "sm_120af",
+            "sm_120A",
+            "sm_0120a",
+            "sm_0a",
+            "sm_120+",
+            "compute_120a",
+            "all ",
+        ] {
+            let mut record = policy();
+            record.targets = malformed.into();
+            assert!(parse_hardware_target(&record).is_err(), "{malformed}");
+        }
+
+        let mut suffixed_minimum = policy();
+        suffixed_minimum.minimum_sm = Some("sm_90a".into());
+        assert!(parse_hardware_target(&suffixed_minimum).is_err());
+
+        for target in ["sm_120a", "sm_120f"] {
+            let mut conflicting = policy();
+            conflicting.targets = target.into();
+            conflicting.minimum_sm = Some("sm_120".into());
+            let error = parse_hardware_target(&conflicting).unwrap_err().to_string();
+            assert!(error.contains("cannot be combined"), "{error}");
+        }
+    }
+
+    #[test]
+    fn exact_inline_ptx_routes_can_inherit_exact_or_family_targets() {
+        for target in ["sm_120a", "sm_120f"] {
+            let mut record = policy();
+            record.minimum_ptx = "8.7".into();
+            record.targets = target.into();
+            record.backend_lowerings = [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm]
+                .into_iter()
+                .map(|backend| crate::model::OverlayBackendLowering {
+                    backend,
+                    mechanism: BackendLoweringMechanism::InlinePtx,
+                    evidence_profile: "test".into(),
+                    minimum_ptx: Some("8.7".into()),
+                    minimum_sm: None,
+                })
+                .collect();
+
+            ensure_exact_inline_ptx_backends(
+                &record,
+                [
+                    (IntrinsicBackend::LlvmNvptx, "8.7", None),
+                    (IntrinsicBackend::LibNvvm, "8.7", None),
+                ],
+                "test",
+            )
+            .unwrap();
+            for lowering in &record.backend_lowerings {
+                assert_eq!(
+                    backend_target_requirement(&record, lowering)
+                        .unwrap()
+                        .hardware,
+                    parse_hardware_target(&record).unwrap()
+                );
+            }
+
+            record.backend_lowerings[0].minimum_sm = Some("sm_120".into());
+            assert!(
+                ensure_exact_inline_ptx_backends(
+                    &record,
+                    [
+                        (IntrinsicBackend::LlvmNvptx, "8.7", None),
+                        (IntrinsicBackend::LibNvvm, "8.7", None),
+                    ],
+                    "test",
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
