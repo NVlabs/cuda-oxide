@@ -36,19 +36,19 @@ use crate::model::{
     PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
     ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
     RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource, RegisterMmaElement,
-    RegisterMmaF8F6F4Admission, RegisterMmaIntegerAdmission, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape,
-    RuntimeValidation, ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat,
-    ScalarArithmeticOperation, ScalarArithmeticRounding, ScalarArithmeticSaturation,
-    ScalarArithmeticSubnormal, ScalarConversion, ScalarConversionAdapter,
-    ScalarConversionAdmission, ScalarConversionDestinationFormat,
-    ScalarConversionResultRepresentation, ScalarConversionRounding, ScalarConversionSaturation,
-    ScalarConversionSourceFormat, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
-    SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata,
-    SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape, SpecialRegister,
-    SpecialRegisterAdmission, SpecialRegisterKind, SpecialRegisterLlvmExclusion,
-    SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
+    RegisterMmaF8F6F4Admission, RegisterMmaFp8Admission, RegisterMmaIntegerAdmission,
+    RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation, ScalarArithmetic,
+    ScalarArithmeticAdmission, ScalarArithmeticFormat, ScalarArithmeticOperation,
+    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
+    ScalarConversion, ScalarConversionAdapter, ScalarConversionAdmission,
+    ScalarConversionDestinationFormat, ScalarConversionResultRepresentation,
+    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, SparseMma,
+    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
+    SparseMmaF8F6F4Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
+    SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
+    SparseMmaShape, SpecialRegister, SpecialRegisterAdmission, SpecialRegisterKind,
+    SpecialRegisterLlvmExclusion, SpecialRegisterLlvmExclusionReason, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, SpecialRegisterWidth,
     StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05Adapter,
     Tcgen05Admission, Tcgen05Operation, Tcgen05SourceContract, ThreadfenceAdmission,
@@ -66,11 +66,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 42;
+const OVERLAY_SCHEMA: u32 = 43;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 47;
+const OVERLAY_SHARD_SCHEMA: u32 = 48;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
+const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 const PRMT_SHARD_SCHEMA: u32 = 28;
 const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
@@ -88,7 +89,7 @@ const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
 const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
 const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 45;
-pub(crate) const CATALOG_SCHEMA: u32 = 42;
+pub(crate) const CATALOG_SCHEMA: u32 = 43;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
 const BLACKWELL_LDMATRIX_LIBNVVM_TARGETS: &str = BLACKWELL_LDMATRIX_LLVM_TARGETS;
@@ -767,6 +768,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let binary_mma_admission = shard.register_mma_b1.take();
         let f8f6f4_f32_mma_admission = shard.register_mma_f8f6f4_f32.take();
         let f8f6f4_f16_mma_admission = shard.register_mma_f8f6f4_f16.take();
+        let fp8_mma_admission = shard.register_mma_fp8.take();
         let sparse_mma_admission = shard.sparse_mma_integer.take();
         let sparse_mma_f8f6f4_admission = shard.sparse_mma_f8f6f4_f32.take();
         let prmt_admission = shard.prmt.take();
@@ -790,6 +792,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             + usize::from(binary_mma_admission.is_some())
             + usize::from(f8f6f4_f32_mma_admission.is_some())
             + usize::from(f8f6f4_f16_mma_admission.is_some())
+            + usize::from(fp8_mma_admission.is_some())
             + usize::from(sparse_mma_admission.is_some())
             + usize::from(sparse_mma_f8f6f4_admission.is_some());
         ensure!(
@@ -831,6 +834,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics =
                 expand_register_mma_f8f6f4_admission(&admission, RegisterMmaAccumulator::F16)?;
+        }
+        if let Some(admission) = fp8_mma_admission {
+            ensure!(
+                shard.family == "register_mma" && shard.intrinsics.is_empty(),
+                "compact standard FP8 MMA admission must be the only content of a register_mma shard"
+            );
+            shard.intrinsics = expand_register_mma_fp8_admission(&admission)?;
         }
         if let Some(admission) = sparse_mma_admission {
             ensure!(
@@ -1017,6 +1027,11 @@ fn validate_overlay_shard_schema_with_max(
             || shard.schema >= REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA,
         "compact dense f8f6f4 F16 MMA admission requires overlay shard schema {}",
         REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.register_mma_fp8.is_none() || shard.schema >= REGISTER_MMA_FP8_SHARD_SCHEMA,
+        "compact standard FP8 MMA admission requires overlay shard schema {}",
+        REGISTER_MMA_FP8_SHARD_SCHEMA
     );
     ensure!(
         shard.prmt.is_none() || shard.schema >= PRMT_SHARD_SCHEMA,
@@ -14022,6 +14037,7 @@ fn expand_register_mma_integer_admission(
         let mma = RegisterMma {
             shape: variant.shape,
             operation: RegisterMmaOperation::Multiply,
+            kind: None,
             accumulator: RegisterMmaAccumulator::S32,
             a_element: variant.a_element,
             b_element: variant.b_element,
@@ -14220,7 +14236,8 @@ fn is_dense_f8f6f4_register_mma_policy(policy: &OverlayIntrinsic) -> bool {
     policy.family == "register_mma"
         && policy.targets == REGISTER_MMA_F8F6F4_TARGETS
         && policy.register_mma.as_ref().is_some_and(|mma| {
-            mma.shape == RegisterMmaShape::M16n8k32
+            mma.kind != Some(RegisterMmaKind::Standard)
+                && mma.shape == RegisterMmaShape::M16n8k32
                 && mma.operation == RegisterMmaOperation::Multiply
                 && matches!(
                     mma.accumulator,
@@ -14357,6 +14374,7 @@ fn expand_register_mma_f8f6f4_admission(
             let mma = RegisterMma {
                 shape: RegisterMmaShape::M16n8k32,
                 operation: RegisterMmaOperation::Multiply,
+                kind: None,
                 accumulator: contract.accumulator,
                 a_element,
                 b_element,
@@ -14507,6 +14525,287 @@ fn expand_register_mma_f8f6f4_admission(
     Ok(records)
 }
 
+const REGISTER_MMA_FP8_SHAPES: [RegisterMmaShape; 2] =
+    [RegisterMmaShape::M16n8k16, RegisterMmaShape::M16n8k32];
+const REGISTER_MMA_FP8_ACCUMULATORS: [RegisterMmaAccumulator; 2] =
+    [RegisterMmaAccumulator::F16, RegisterMmaAccumulator::F32];
+const REGISTER_MMA_FP8_ELEMENTS: [RegisterMmaElement; 2] =
+    [RegisterMmaElement::E4m3, RegisterMmaElement::E5m2];
+
+fn register_mma_fp8_element_name(element: RegisterMmaElement) -> Option<&'static str> {
+    match element {
+        RegisterMmaElement::E4m3 => Some("e4m3"),
+        RegisterMmaElement::E5m2 => Some("e5m2"),
+        _ => None,
+    }
+}
+
+fn register_mma_fp8_shape_contract(
+    shape: RegisterMmaShape,
+) -> Result<(&'static str, usize, usize)> {
+    match shape {
+        RegisterMmaShape::M16n8k16 => Ok(("m16n8k16", 2, 1)),
+        RegisterMmaShape::M16n8k32 => Ok(("m16n8k32", 4, 2)),
+        _ => bail!("unsupported standard FP8 register-MMA shape {shape:?}"),
+    }
+}
+
+fn register_mma_fp8_minimum_ptx(
+    shape: RegisterMmaShape,
+    accumulator: RegisterMmaAccumulator,
+) -> &'static str {
+    // ptxas requires PTX 8.7 for the k32 F16 form despite LLVM's 8.4 predicate.
+    match (shape, accumulator) {
+        (RegisterMmaShape::M16n8k32, RegisterMmaAccumulator::F32) => "8.4",
+        _ => "8.7",
+    }
+}
+
+fn register_mma_fp8_abi_id(
+    shape_index: usize,
+    accumulator_index: usize,
+    a_index: usize,
+    b_index: usize,
+) -> String {
+    let offset = shape_index * 8 + accumulator_index * 4 + a_index * 2 + b_index;
+    format!("i{:04}", 504 + offset)
+}
+
+fn expand_register_mma_fp8_admission(
+    admission: &RegisterMmaFp8Admission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "standard FP8 MMA runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "standard FP8 MMA admission requires both backend evidence profiles"
+    );
+    ensure!(
+        admission.first_abi_id == "i0504"
+            && admission.shapes == REGISTER_MMA_FP8_SHAPES
+            && admission.accumulators == REGISTER_MMA_FP8_ACCUMULATORS
+            && admission.a_elements == REGISTER_MMA_FP8_ELEMENTS
+            && admission.b_elements == REGISTER_MMA_FP8_ELEMENTS
+            && admission.product_count == 16,
+        "standard FP8 MMA admission must retain the canonical 2 by 2 by 2 by 2 matrix"
+    );
+
+    let mut records = Vec::with_capacity(admission.product_count);
+    for (shape_index, &shape) in admission.shapes.iter().enumerate() {
+        let (shape_name, a_count, b_count) = register_mma_fp8_shape_contract(shape)?;
+        for (accumulator_index, &accumulator) in admission.accumulators.iter().enumerate() {
+            let minimum_ptx = register_mma_fp8_minimum_ptx(shape, accumulator);
+            let (scalar, rust_arguments, rust_result, dialect_operands, dialect_results, adapter) =
+                match accumulator {
+                    RegisterMmaAccumulator::F16 => (
+                        "f16",
+                        vec![
+                            "[u32; 2]".into(),
+                            format!("[u32; {a_count}]"),
+                            if b_count == 1 {
+                                "u32".into()
+                            } else {
+                                "[u32; 2]".into()
+                            },
+                        ],
+                        "[u32; 2]".to_owned(),
+                        [
+                            vec!["i32".into(); 2],
+                            vec!["i32".into(); a_count],
+                            vec!["i32".into(); b_count],
+                        ]
+                        .concat(),
+                        vec!["i32".into(); 2],
+                        if shape == RegisterMmaShape::M16n8k16 {
+                            RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32
+                        } else {
+                            RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32
+                        },
+                    ),
+                    RegisterMmaAccumulator::F32 => (
+                        "f32",
+                        vec![
+                            "[f32; 4]".into(),
+                            format!("[u32; {a_count}]"),
+                            if b_count == 1 {
+                                "u32".into()
+                            } else {
+                                "[u32; 2]".into()
+                            },
+                        ],
+                        "[f32; 4]".to_owned(),
+                        [
+                            vec!["f32".into(); 4],
+                            vec!["i32".into(); a_count],
+                            vec!["i32".into(); b_count],
+                        ]
+                        .concat(),
+                        vec!["f32".into(); 4],
+                        if shape == RegisterMmaShape::M16n8k16 {
+                            RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
+                        } else {
+                            RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32
+                        },
+                    ),
+                    _ => unreachable!("validated standard FP8 accumulator"),
+                };
+            let llvm_arguments = [
+                vec!["i32".into(); a_count + b_count],
+                if accumulator == RegisterMmaAccumulator::F16 {
+                    vec!["v2f16".into(); 2]
+                } else {
+                    vec!["f32".into(); 4]
+                },
+            ]
+            .concat();
+            let llvm_results = if accumulator == RegisterMmaAccumulator::F16 {
+                vec!["v2f16".into(); 2]
+            } else {
+                vec!["f32".into(); 4]
+            };
+            let result_count = dialect_results.len();
+
+            for (a_index, &a_element) in admission.a_elements.iter().enumerate() {
+                for (b_index, &b_element) in admission.b_elements.iter().enumerate() {
+                    let a = register_mma_fp8_element_name(a_element)
+                        .expect("validated standard FP8 A element");
+                    let b = register_mma_fp8_element_name(b_element)
+                        .expect("validated standard FP8 B element");
+                    let id = format!("mma_{shape_name}_fp8_{scalar}_{a}_{b}");
+                    let source_record =
+                        format!("int_nvvm_mma_{shape_name}_row_col_{scalar}_{a}_{b}_{scalar}");
+                    let llvm_symbol =
+                        format!("llvm.nvvm.mma.{shape_name}.row.col.{scalar}.{a}.{b}.{scalar}");
+                    let mma = RegisterMma {
+                        shape,
+                        operation: RegisterMmaOperation::Multiply,
+                        kind: Some(RegisterMmaKind::Standard),
+                        accumulator,
+                        a_element,
+                        b_element,
+                        a_layout: RegisterMmaLayout::Row,
+                        b_layout: RegisterMmaLayout::Col,
+                        overflow: RegisterMmaOverflow::NotApplicable,
+                        participation: RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+                        adapter,
+                        compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+                        runtime_validation: admission.runtime_validation,
+                    };
+                    records.push(OverlayIntrinsic {
+                        id: id.clone(),
+                        abi_id: register_mma_fp8_abi_id(
+                            shape_index,
+                            accumulator_index,
+                            a_index,
+                            b_index,
+                        ),
+                        operation_key: format!(
+                            "matrix.mma.{shape_name}.row.col.standard_fp8.{scalar}.{a}.{b}.{scalar}"
+                        ),
+                        family: "register_mma".into(),
+                        source: None,
+                        source_record: Some(source_record),
+                        rust_module: "matrix".into(),
+                        rust_name: id.clone(),
+                        rust_arguments: rust_arguments.clone(),
+                        rust_result: rust_result.clone(),
+                        safe: false,
+                        must_use: true,
+                        safe_allowlist_reason: None,
+                        public_rust_path: format!("cuda_intrinsics::matrix::{id}"),
+                        compatibility_rust_paths: vec![format!("cuda_device::wmma::{id}")],
+                        dialect_op_type: "RegisterMmaOp".into(),
+                        dialect_op_name: "nvvm.register_mma".into(),
+                        dialect_operands: dialect_operands.clone(),
+                        dialect_results: dialect_results.clone(),
+                        llvm_symbol: Some(llvm_symbol),
+                        resolved_llvm_symbol: None,
+                        llvm_arguments: llvm_arguments.clone(),
+                        llvm_results: llvm_results.clone(),
+                        pure: false,
+                        memory: "none".into(),
+                        convergent: true,
+                        execution_scope: "warp".into(),
+                        minimum_ptx: minimum_ptx.into(),
+                        minimum_sm: Some("sm_89".into()),
+                        ptx_result: rust_result.clone(),
+                        targets: "all".into(),
+                        ptx_isa_version: "9.3".into(),
+                        ptx_isa_section: "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
+                        ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma".into(),
+                        lowering: "generated_register_mma".into(),
+                        backend_lowerings: [
+                            (IntrinsicBackend::LlvmNvptx, &admission.llvm_evidence_profile),
+                            (IntrinsicBackend::LibNvvm, &admission.libnvvm_evidence_profile),
+                        ]
+                        .into_iter()
+                        .map(|(backend, evidence_profile)| OverlayBackendLowering {
+                            backend,
+                            mechanism: BackendLoweringMechanism::InlinePtx,
+                            evidence_profile: evidence_profile.clone(),
+                            targets: None,
+                            minimum_ptx: Some(minimum_ptx.into()),
+                            minimum_sm: Some("sm_89".into()),
+                        })
+                        .collect(),
+                        packed_atomic: None,
+                        redux: None,
+                        vote: None,
+                        active_mask: None,
+                        warp_match: None,
+                        warp_barrier: None,
+                        warp_shuffle: None,
+                        dot_product: None,
+                        packed_alu: None,
+                        packed_conversion: None,
+                        scalar_conversion: None,
+                        scalar_arithmetic: None,
+                        cp_async_copy: None,
+                        cp_async_control: None,
+                        cp_async_mbarrier: None,
+                        mbarrier_basic: None,
+                        movmatrix: None,
+                        mbarrier_extended: None,
+                        register_mma: Some(mma),
+                        sparse_mma: None,
+                        prmt: None,
+                        cluster_barrier: None,
+                        wgmma_control: None,
+                        special_register: None,
+                        debug_control: None,
+                        cluster_memory: None,
+                        clc: None,
+                        tma: None,
+                        tcgen05: None,
+                        ldmatrix_variant: None,
+                        ldmatrix_safety: None,
+                        ldmatrix_adapter: None,
+                        selected_address_space: None,
+                        expected_ptx: InstructionPattern {
+                            mnemonic: "mma".into(),
+                            modifiers: ["sync", "aligned", shape_name, "row", "col", scalar, a, b, scalar]
+                                .into_iter()
+                                .map(Into::into)
+                                .collect(),
+                            operands: [result_count, a_count, b_count, result_count]
+                                .map(|length| OperandPattern::RegisterList { length })
+                                .into(),
+                        },
+                        summary: format!(
+                            "Multiplies warp-distributed {a} A and {b} B fragments and adds an {scalar} accumulator."
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    ensure!(records.len() == admission.product_count);
+    Ok(records)
+}
+
 fn expand_register_mma_binary_admission(
     admission: &RegisterMmaBinaryAdmission,
 ) -> Result<Vec<OverlayIntrinsic>> {
@@ -14547,6 +14846,7 @@ fn expand_register_mma_binary_admission(
         let mma = RegisterMma {
             shape: variant.shape,
             operation: variant.operation,
+            kind: None,
             accumulator: RegisterMmaAccumulator::S32,
             a_element: RegisterMmaElement::B1,
             b_element: RegisterMmaElement::B1,
@@ -15443,10 +15743,19 @@ fn validate_register_mma_policy(
         .register_mma
         .as_ref()
         .with_context(|| format!("{} has no closed register-MMA contract", policy.id))?;
-    if register_mma_f8f6f4_element_name(mma.a_element).is_some()
-        || register_mma_f8f6f4_element_name(mma.b_element).is_some()
-    {
-        return validate_register_mma_f8f6f4_policy(policy, declaration, mma);
+    match mma.kind {
+        Some(RegisterMmaKind::Standard) => {
+            return validate_register_mma_fp8_policy(policy, declaration, mma);
+        }
+        Some(RegisterMmaKind::F8f6f4) => {
+            return validate_register_mma_f8f6f4_policy(policy, declaration, mma);
+        }
+        None if register_mma_f8f6f4_element_name(mma.a_element).is_some()
+            || register_mma_f8f6f4_element_name(mma.b_element).is_some() =>
+        {
+            return validate_register_mma_f8f6f4_policy(policy, declaration, mma);
+        }
+        None => {}
     }
     let recipe = register_mma_recipe(mma)
         .with_context(|| format!("{} requests an unsupported register-MMA variant", policy.id))?;
@@ -15544,6 +15853,238 @@ fn validate_register_mma_policy(
     Ok(())
 }
 
+fn validate_register_mma_fp8_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    mma: &RegisterMma,
+) -> Result<()> {
+    let shape_index = REGISTER_MMA_FP8_SHAPES
+        .iter()
+        .position(|value| *value == mma.shape)
+        .with_context(|| format!("{} has an unsupported standard FP8 shape", policy.id))?;
+    let accumulator_index = REGISTER_MMA_FP8_ACCUMULATORS
+        .iter()
+        .position(|value| *value == mma.accumulator)
+        .with_context(|| format!("{} has an unsupported standard FP8 accumulator", policy.id))?;
+    let a_index = REGISTER_MMA_FP8_ELEMENTS
+        .iter()
+        .position(|value| *value == mma.a_element)
+        .with_context(|| format!("{} has an unsupported standard FP8 A element", policy.id))?;
+    let b_index = REGISTER_MMA_FP8_ELEMENTS
+        .iter()
+        .position(|value| *value == mma.b_element)
+        .with_context(|| format!("{} has an unsupported standard FP8 B element", policy.id))?;
+    let (shape_name, a_count, b_count) = register_mma_fp8_shape_contract(mma.shape)?;
+    let minimum_ptx = register_mma_fp8_minimum_ptx(mma.shape, mma.accumulator);
+    let a = register_mma_fp8_element_name(mma.a_element).expect("validated A element");
+    let b = register_mma_fp8_element_name(mma.b_element).expect("validated B element");
+    let (
+        scalar,
+        rust_arguments,
+        rust_result,
+        dialect_operands,
+        dialect_results,
+        llvm_arguments,
+        llvm_results,
+        adapter,
+    ) = match mma.accumulator {
+        RegisterMmaAccumulator::F16 => (
+            "f16",
+            vec![
+                "[u32; 2]".into(),
+                format!("[u32; {a_count}]"),
+                if b_count == 1 {
+                    "u32".into()
+                } else {
+                    "[u32; 2]".into()
+                },
+            ],
+            "[u32; 2]".to_owned(),
+            [
+                vec!["i32".to_owned(); 2],
+                vec!["i32".to_owned(); a_count],
+                vec!["i32".to_owned(); b_count],
+            ]
+            .concat(),
+            vec!["i32".to_owned(); 2],
+            [
+                vec!["i32".to_owned(); a_count + b_count],
+                vec!["v2f16".to_owned(); 2],
+            ]
+            .concat(),
+            vec!["v2f16".to_owned(); 2],
+            if mma.shape == RegisterMmaShape::M16n8k16 {
+                RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32
+            } else {
+                RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32
+            },
+        ),
+        RegisterMmaAccumulator::F32 => (
+            "f32",
+            vec![
+                "[f32; 4]".into(),
+                format!("[u32; {a_count}]"),
+                if b_count == 1 {
+                    "u32".into()
+                } else {
+                    "[u32; 2]".into()
+                },
+            ],
+            "[f32; 4]".to_owned(),
+            [
+                vec!["f32".to_owned(); 4],
+                vec!["i32".to_owned(); a_count],
+                vec!["i32".to_owned(); b_count],
+            ]
+            .concat(),
+            vec!["f32".to_owned(); 4],
+            [
+                vec!["i32".to_owned(); a_count + b_count],
+                vec!["f32".to_owned(); 4],
+            ]
+            .concat(),
+            vec!["f32".to_owned(); 4],
+            if mma.shape == RegisterMmaShape::M16n8k16 {
+                RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
+            } else {
+                RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32
+            },
+        ),
+        _ => unreachable!("validated accumulator"),
+    };
+    let expected_id = format!("mma_{shape_name}_fp8_{scalar}_{a}_{b}");
+    let expected_source = format!("int_nvvm_mma_{shape_name}_row_col_{scalar}_{a}_{b}_{scalar}");
+    let expected_symbol = format!("llvm.nvvm.mma.{shape_name}.row.col.{scalar}.{a}.{b}.{scalar}");
+
+    ensure!(
+        policy.id == expected_id
+            && policy.abi_id
+                == register_mma_fp8_abi_id(shape_index, accumulator_index, a_index, b_index)
+            && policy.operation_key
+                == format!(
+                    "matrix.mma.{shape_name}.row.col.standard_fp8.{scalar}.{a}.{b}.{scalar}"
+                )
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(expected_source.as_str())
+            && policy.llvm_symbol.as_deref() == Some(expected_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} standard FP8 MMA identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "matrix"
+            && policy.rust_name == expected_id
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == rust_result
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{expected_id}")
+            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{expected_id}")],
+        "{} must preserve its unsafe must-use standard FP8 API",
+        policy.id
+    );
+    ensure!(
+        mma.kind == Some(RegisterMmaKind::Standard)
+            && mma.operation == RegisterMmaOperation::Multiply
+            && mma.a_layout == RegisterMmaLayout::Row
+            && mma.b_layout == RegisterMmaLayout::Col
+            && mma.overflow == RegisterMmaOverflow::NotApplicable
+            && mma.participation
+                == RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
+            && mma.adapter == adapter
+            && mma.compatibility_source == RegisterMmaCompatibilitySource::GeneratedStub
+            && mma.runtime_validation == RuntimeValidation::Unexecuted
+            && policy.dialect_op_type == "RegisterMmaOp"
+            && policy.dialect_op_name == "nvvm.register_mma"
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results == dialect_results
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results == llvm_results
+            && policy.ptx_result == rust_result
+            && policy.lowering == "generated_register_mma",
+        "{} standard FP8 MMA carrier or lowering changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "none"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == minimum_ptx
+            && policy.minimum_sm.as_deref() == Some("sm_89")
+            && policy.targets == "all",
+        "{} standard FP8 effects or target floor changed",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma",
+        "{} standard FP8 PTX provenance changed",
+        policy.id
+    );
+    let [selection] = declaration.selections.as_slice() else {
+        bail!(
+            "{} must retain exactly one standard FP8 selection",
+            policy.id
+        );
+    };
+    let expected_predicates = if mma.shape == RegisterMmaShape::M16n8k16 {
+        [
+            "Subtarget->getSmVersion() >= 89",
+            "Subtarget->getPTXVersion() >= 87",
+        ]
+    } else {
+        [
+            "Subtarget->getSmVersion() >= 89",
+            "Subtarget->getPTXVersion() >= 84",
+        ]
+    };
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA"]
+            && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
+            && selection_matches_policy(policy, selection)
+            && selection.predicates == expected_predicates
+            && selection.constraints.is_empty(),
+        "{} imported standard FP8 declaration or selection changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: "mma".into(),
+                modifiers: [
+                    "sync", "aligned", shape_name, "row", "col", scalar, a, b, scalar
+                ]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+                operands: [
+                    dialect_results.len(),
+                    a_count,
+                    b_count,
+                    dialect_results.len()
+                ]
+                .map(|length| OperandPattern::RegisterList { length })
+                .into(),
+            },
+        "{} expected standard FP8 PTX changed",
+        policy.id
+    );
+    ensure_exact_inline_ptx_backends(
+        policy,
+        [
+            (IntrinsicBackend::LlvmNvptx, minimum_ptx, Some("sm_89")),
+            (IntrinsicBackend::LibNvvm, minimum_ptx, Some("sm_89")),
+        ],
+        "standard FP8 register MMA",
+    )?;
+    ensure_no_other_family_contract(policy, "standard FP8 register MMA")?;
+    Ok(())
+}
+
 fn validate_register_mma_f8f6f4_policy(
     policy: &OverlayIntrinsic,
     declaration: &ImportedIntrinsic,
@@ -15602,6 +16143,7 @@ fn validate_register_mma_f8f6f4_policy(
             && policy.llvm_results == contract.llvm_results
             && policy.ptx_result == contract.rust_result
             && mma.shape == RegisterMmaShape::M16n8k32
+            && mma.kind != Some(RegisterMmaKind::Standard)
             && mma.operation == RegisterMmaOperation::Multiply
             && mma.accumulator == contract.accumulator
             && mma.a_layout == RegisterMmaLayout::Row
@@ -21981,8 +22523,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 53);
-        assert_eq!(overlay.intrinsics.len(), 503);
+        assert_eq!(overlay.shards.len(), 54);
+        assert_eq!(overlay.intrinsics.len(), 519);
         assert_eq!(
             overlay
                 .intrinsics
@@ -22069,7 +22611,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "register_mma")
                 .count(),
-            108
+            124
         );
         assert_eq!(
             overlay
@@ -22214,6 +22756,20 @@ mod tests {
             targets: ["sm_120a", "sm_120f", "sm_121a", "sm_121f"]
                 .map(Into::into)
                 .into(),
+        }
+    }
+
+    fn test_register_mma_fp8_admission() -> RegisterMmaFp8Admission {
+        RegisterMmaFp8Admission {
+            llvm_evidence_profile: "llvm-fp8-test".into(),
+            libnvvm_evidence_profile: "libnvvm-fp8-test".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            first_abi_id: "i0504".into(),
+            shapes: REGISTER_MMA_FP8_SHAPES.into(),
+            accumulators: REGISTER_MMA_FP8_ACCUMULATORS.into(),
+            a_elements: REGISTER_MMA_FP8_ELEMENTS.into(),
+            b_elements: REGISTER_MMA_FP8_ELEMENTS.into(),
+            product_count: 16,
         }
     }
 
@@ -22527,6 +23083,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32,
             prmt,
@@ -22611,6 +23168,18 @@ mod tests {
                 .contains("requires overlay shard schema 47")
         );
 
+        let mut standard_fp8_mma = shard(REGISTER_MMA_FP8_SHARD_SCHEMA, None, None);
+        standard_fp8_mma.family = "register_mma".into();
+        standard_fp8_mma.register_mma_fp8 = Some(test_register_mma_fp8_admission());
+        validate_overlay_shard_schema(&standard_fp8_mma, path).unwrap();
+        standard_fp8_mma.schema -= 1;
+        assert!(
+            validate_overlay_shard_schema(&standard_fp8_mma, path)
+                .unwrap_err()
+                .to_string()
+                .contains("requires overlay shard schema 48")
+        );
+
         let fp8_shard = |schema| OverlayShardFile {
             schema,
             family: "packed_conversion".into(),
@@ -22620,6 +23189,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -22657,6 +23227,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -22695,6 +23266,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -22933,6 +23505,7 @@ record_count = 14
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -23431,6 +24004,487 @@ scope = "system"
     }
 
     #[test]
+    fn compact_standard_fp8_admission_is_closed_and_ordered() {
+        let admission = test_register_mma_fp8_admission();
+        let records = expand_register_mma_fp8_admission(&admission).unwrap();
+        assert_eq!(records.len(), 16);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.abi_id.clone())
+                .collect::<Vec<_>>(),
+            (504..=519)
+                .map(|id| format!("i{id:04}"))
+                .collect::<Vec<_>>()
+        );
+
+        let mut index = 0;
+        for &shape in &REGISTER_MMA_FP8_SHAPES {
+            let (shape_name, a_count, b_count) = register_mma_fp8_shape_contract(shape).unwrap();
+            for &accumulator in &REGISTER_MMA_FP8_ACCUMULATORS {
+                let (scalar, arguments, result, adapter, result_count) = match accumulator {
+                    RegisterMmaAccumulator::F16 => (
+                        "f16",
+                        vec![
+                            "[u32; 2]".to_owned(),
+                            format!("[u32; {a_count}]"),
+                            if b_count == 1 {
+                                "u32".to_owned()
+                            } else {
+                                "[u32; 2]".to_owned()
+                            },
+                        ],
+                        "[u32; 2]",
+                        if shape == RegisterMmaShape::M16n8k16 {
+                            RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32
+                        } else {
+                            RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32
+                        },
+                        2,
+                    ),
+                    RegisterMmaAccumulator::F32 => (
+                        "f32",
+                        vec![
+                            "[f32; 4]".to_owned(),
+                            format!("[u32; {a_count}]"),
+                            if b_count == 1 {
+                                "u32".to_owned()
+                            } else {
+                                "[u32; 2]".to_owned()
+                            },
+                        ],
+                        "[f32; 4]",
+                        if shape == RegisterMmaShape::M16n8k16 {
+                            RegisterMmaAdapter::C4F32A2U32B1U32ToD4F32
+                        } else {
+                            RegisterMmaAdapter::C4F32A4U32B2U32ToD4F32
+                        },
+                        4,
+                    ),
+                    _ => unreachable!(),
+                };
+                for &a_element in &REGISTER_MMA_FP8_ELEMENTS {
+                    for &b_element in &REGISTER_MMA_FP8_ELEMENTS {
+                        let record = &records[index];
+                        let a = register_mma_fp8_element_name(a_element).unwrap();
+                        let b = register_mma_fp8_element_name(b_element).unwrap();
+                        assert_eq!(record.id, format!("mma_{shape_name}_fp8_{scalar}_{a}_{b}"));
+                        assert_eq!(
+                            record.operation_key,
+                            format!(
+                                "matrix.mma.{shape_name}.row.col.standard_fp8.{scalar}.{a}.{b}.{scalar}"
+                            )
+                        );
+                        assert_eq!(
+                            record.source_record.as_deref(),
+                            Some(
+                                format!(
+                                    "int_nvvm_mma_{shape_name}_row_col_{scalar}_{a}_{b}_{scalar}"
+                                )
+                                .as_str()
+                            )
+                        );
+                        assert_eq!(record.rust_arguments, arguments);
+                        assert_eq!(record.rust_result, result);
+                        assert_eq!(
+                            record.minimum_ptx,
+                            register_mma_fp8_minimum_ptx(shape, accumulator)
+                        );
+                        assert_eq!(record.minimum_sm.as_deref(), Some("sm_89"));
+                        assert_eq!(
+                            record.expected_ptx.operands,
+                            [result_count, a_count, b_count, result_count]
+                                .map(|length| OperandPattern::RegisterList { length })
+                        );
+                        let mma = record.register_mma.as_ref().unwrap();
+                        assert_eq!(mma.kind, Some(RegisterMmaKind::Standard));
+                        assert_eq!(mma.adapter, adapter);
+                        index += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(index, records.len());
+
+        let mut reordered = admission.clone();
+        reordered.shapes.swap(0, 1);
+        assert!(expand_register_mma_fp8_admission(&reordered).is_err());
+        let mut reordered = admission.clone();
+        reordered.accumulators.swap(0, 1);
+        assert!(expand_register_mma_fp8_admission(&reordered).is_err());
+        let mut reordered = admission.clone();
+        reordered.a_elements.swap(0, 1);
+        assert!(expand_register_mma_fp8_admission(&reordered).is_err());
+        let mut reordered = admission.clone();
+        reordered.b_elements.swap(0, 1);
+        assert!(expand_register_mma_fp8_admission(&reordered).is_err());
+        let mut wrong = admission.clone();
+        wrong.product_count = 15;
+        assert!(expand_register_mma_fp8_admission(&wrong).is_err());
+        let mut wrong = admission.clone();
+        wrong.first_abi_id = "i0505".into();
+        assert!(expand_register_mma_fp8_admission(&wrong).is_err());
+        let mut wrong = admission;
+        wrong.runtime_validation = RuntimeValidation::Executed;
+        assert!(expand_register_mma_fp8_admission(&wrong).is_err());
+    }
+
+    #[test]
+    fn standard_fp8_policies_match_llvm_and_fail_closed() {
+        let records =
+            expand_register_mma_fp8_admission(&test_register_mma_fp8_admission()).unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+
+        for record in &records {
+            let declaration = declarations[record.source_record.as_deref().unwrap()];
+            validate_imported_policy(record, declaration).unwrap();
+            let mma = record.register_mma.as_ref().unwrap();
+            let source_floor = declaration.selections[0]
+                .predicates
+                .iter()
+                .find(|predicate| predicate.contains("getPTXVersion"))
+                .unwrap();
+            if mma.shape == RegisterMmaShape::M16n8k32 {
+                assert!(source_floor.ends_with(">= 84"));
+                if mma.accumulator == RegisterMmaAccumulator::F16 {
+                    assert_eq!(record.minimum_ptx, "8.7");
+                } else {
+                    assert_eq!(record.minimum_ptx, "8.4");
+                }
+            } else {
+                assert!(source_floor.ends_with(">= 87"));
+                assert_eq!(record.minimum_ptx, "8.7");
+            }
+        }
+
+        let valid = &records[0];
+        let declaration = declarations[valid.source_record.as_deref().unwrap()];
+        let mut wrong = valid.clone();
+        wrong.register_mma.as_mut().unwrap().kind = None;
+        assert!(validate_imported_policy(&wrong, declaration).is_err());
+        let mut wrong = valid.clone();
+        wrong.register_mma.as_mut().unwrap().adapter = RegisterMmaAdapter::C2U32A4U32B2U32ToD2U32;
+        assert!(validate_imported_policy(&wrong, declaration).is_err());
+        let mut wrong_declaration = declaration.clone();
+        wrong_declaration.selections[0].predicates[1] = "Subtarget->getPTXVersion() >= 84".into();
+        assert!(validate_imported_policy(valid, &wrong_declaration).is_err());
+        let mut wrong = valid.clone();
+        wrong.minimum_ptx = "8.4".into();
+        assert!(validate_imported_policy(&wrong, declaration).is_err());
+
+        let mut old = expand_register_mma_f8f6f4_admission(
+            &test_register_mma_f8f6f4_admission(RegisterMmaAccumulator::F32),
+            RegisterMmaAccumulator::F32,
+        )
+        .unwrap()
+        .remove(18);
+        let mut standard = records[12].clone();
+        assert_ne!(old.id, standard.id);
+        standard.id = old.id.clone();
+        assert!(validate_unique_overlay(&[old.clone(), standard], 1).is_err());
+        old.register_mma.as_mut().unwrap().kind = Some(RegisterMmaKind::F8f6f4);
+        assert_eq!(
+            old.register_mma.as_ref().unwrap().kind,
+            Some(RegisterMmaKind::F8f6f4)
+        );
+    }
+
+    #[test]
+    fn standard_fp8_resolves_exact_routes_and_target_floors() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = resolve(&repo_root).unwrap();
+        let records = catalog
+            .intrinsics
+            .iter()
+            .filter(|record| {
+                record.rust.abi_id.as_str() >= "i0504" && record.rust.abi_id.as_str() <= "i0519"
+            })
+            .collect::<Vec<_>>();
+        let expected = [
+            (
+                "mma_m16n8k16_fp8_f16_e4m3_e4m3",
+                "i0504",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f16_e4m3_e5m2",
+                "i0505",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f16_e5m2_e4m3",
+                "i0506",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f16_e5m2_e5m2",
+                "i0507",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f32_e4m3_e4m3",
+                "i0508",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F32,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f32_e4m3_e5m2",
+                "i0509",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F32,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f32_e5m2_e4m3",
+                "i0510",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F32,
+                87,
+            ),
+            (
+                "mma_m16n8k16_fp8_f32_e5m2_e5m2",
+                "i0511",
+                RegisterMmaShape::M16n8k16,
+                RegisterMmaAccumulator::F32,
+                87,
+            ),
+            (
+                "mma_m16n8k32_fp8_f16_e4m3_e4m3",
+                "i0512",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k32_fp8_f16_e4m3_e5m2",
+                "i0513",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k32_fp8_f16_e5m2_e4m3",
+                "i0514",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k32_fp8_f16_e5m2_e5m2",
+                "i0515",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F16,
+                87,
+            ),
+            (
+                "mma_m16n8k32_fp8_f32_e4m3_e4m3",
+                "i0516",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F32,
+                84,
+            ),
+            (
+                "mma_m16n8k32_fp8_f32_e4m3_e5m2",
+                "i0517",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F32,
+                84,
+            ),
+            (
+                "mma_m16n8k32_fp8_f32_e5m2_e4m3",
+                "i0518",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F32,
+                84,
+            ),
+            (
+                "mma_m16n8k32_fp8_f32_e5m2_e5m2",
+                "i0519",
+                RegisterMmaShape::M16n8k32,
+                RegisterMmaAccumulator::F32,
+                84,
+            ),
+        ];
+        assert_eq!(records.len(), expected.len());
+        let sm_89 = CatalogHardwareTarget::AnyOf {
+            alternatives: vec![CatalogHardwareAlternative::MinimumSm { sm: 89 }],
+        };
+        let expected_routes = [
+            (
+                IntrinsicBackend::LlvmNvptx,
+                BackendLoweringMechanism::InlinePtx,
+                "rust-llvm-22.1.2-1cb4e383",
+            ),
+            (
+                IntrinsicBackend::LibNvvm,
+                BackendLoweringMechanism::InlinePtx,
+                "cuda-13.3-libnvvm-13.3.33",
+            ),
+        ];
+        let mut floor_groups = BTreeMap::new();
+
+        for (record, &(id, abi_id, shape, accumulator, minimum_ptx)) in
+            records.iter().zip(&expected)
+        {
+            assert_eq!(record.id, id);
+            assert_eq!(record.rust.abi_id, abi_id);
+            let mma = record.register_mma.as_ref().unwrap();
+            assert_eq!((mma.shape, mma.accumulator), (shape, accumulator));
+            assert_eq!(record.target.minimum_ptx.encoded(), minimum_ptx);
+            assert_eq!(record.target.hardware, sm_89);
+            assert_eq!(
+                record
+                    .backend_lowerings
+                    .iter()
+                    .map(|route| (
+                        route.backend,
+                        route.mechanism,
+                        route.evidence_profile.as_str()
+                    ))
+                    .collect::<Vec<_>>(),
+                expected_routes
+            );
+            for route in &record.backend_lowerings {
+                assert_eq!(route.target.minimum_ptx.encoded(), minimum_ptx);
+                assert_eq!(route.target.hardware, sm_89);
+            }
+            *floor_groups
+                .entry((shape, accumulator, minimum_ptx))
+                .or_insert(0) += 1;
+
+            if shape == RegisterMmaShape::M16n8k32 && accumulator == RegisterMmaAccumulator::F16 {
+                assert_eq!(
+                    record
+                        .selections
+                        .iter()
+                        .flat_map(|selection| &selection.predicates)
+                        .filter(|predicate| predicate.contains("getPTXVersion"))
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                    ["Subtarget->getPTXVersion() >= 84"]
+                );
+                let llvm_route = &record.backend_lowerings[0];
+                assert!(llvm_route.stages.iter().any(|stage| {
+                    stage.stage == EvidenceStageKind::PtxAssembly
+                        && stage.mechanism == Some(BackendLoweringMechanism::InlinePtx)
+                        && stage.outcome == "succeeded"
+                        && stage.targets == ["sm_89", "ptx87"]
+                        && stage.artifact_kind == Some(EvidenceArtifactKind::Cubin)
+                }));
+                assert!(llvm_route.stages.iter().any(|stage| {
+                    stage.stage == EvidenceStageKind::PtxAssembly
+                        && stage.mechanism == Some(BackendLoweringMechanism::InlinePtx)
+                        && stage.outcome == "failed"
+                        && stage.targets == ["sm_89", "ptx86"]
+                }));
+            }
+        }
+        assert_eq!(
+            floor_groups,
+            BTreeMap::from([
+                (
+                    (RegisterMmaShape::M16n8k16, RegisterMmaAccumulator::F16, 87),
+                    4
+                ),
+                (
+                    (RegisterMmaShape::M16n8k16, RegisterMmaAccumulator::F32, 87),
+                    4
+                ),
+                (
+                    (RegisterMmaShape::M16n8k32, RegisterMmaAccumulator::F16, 87),
+                    4
+                ),
+                (
+                    (RegisterMmaShape::M16n8k32, RegisterMmaAccumulator::F32, 84),
+                    4
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn existing_catalog_intrinsics_keep_their_json_shape_without_kind() {
+        fn abi_number(abi_id: &str) -> u16 {
+            validate_abi_id(abi_id).unwrap();
+            abi_id[1..].parse().unwrap()
+        }
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let original: serde_json::Value =
+            read_json(&repo_root.join("intrinsics/catalog.json")).unwrap();
+        let catalog: CatalogFile = read_json(&repo_root.join("intrinsics/catalog.json")).unwrap();
+        let serialized = serde_json::to_value(&catalog).unwrap();
+        let original_by_abi = original["intrinsics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| {
+                let abi_id = record["rust"]["abi_id"].as_str().unwrap();
+                (abi_number(abi_id), record)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let serialized_by_abi = serialized["intrinsics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| {
+                let abi_id = record["rust"]["abi_id"].as_str().unwrap();
+                (abi_number(abi_id), record)
+            })
+            .collect::<BTreeMap<_, _>>();
+        for abi in 1..=503 {
+            assert_eq!(original_by_abi.get(&abi), serialized_by_abi.get(&abi));
+        }
+
+        let existing = catalog
+            .intrinsics
+            .iter()
+            .filter(|record| abi_number(&record.rust.abi_id) <= 503)
+            .collect::<Vec<_>>();
+        assert_eq!(existing.len(), 503);
+        assert!(existing.iter().all(|record| {
+            record
+                .register_mma
+                .as_ref()
+                .is_none_or(|mma| mma.kind.is_none())
+        }));
+
+        let standard_fp8 = catalog
+            .intrinsics
+            .iter()
+            .filter(|record| (504..=519).contains(&abi_number(&record.rust.abi_id)))
+            .collect::<Vec<_>>();
+        assert!(standard_fp8.is_empty() || standard_fp8.len() == 16);
+        if standard_fp8.len() == 16 {
+            assert!(standard_fp8.iter().all(|record| {
+                record
+                    .register_mma
+                    .as_ref()
+                    .is_some_and(|mma| mma.kind == Some(RegisterMmaKind::Standard))
+            }));
+            for abi in 504..=519 {
+                assert_eq!(original_by_abi[&abi]["register_mma"]["kind"], "standard");
+            }
+        }
+    }
+
+    #[test]
     fn dense_f8f6f4_candidate_floor_uses_the_resolved_policy() {
         for accumulator in [RegisterMmaAccumulator::F16, RegisterMmaAccumulator::F32] {
             let policy = expand_register_mma_f8f6f4_admission(
@@ -23675,6 +24729,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -23804,6 +24859,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -23952,6 +25008,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -24001,6 +25058,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -24042,6 +25100,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -24480,6 +25539,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_fp8: None,
             sparse_mma_integer: None,
             sparse_mma_f8f6f4_f32: None,
             prmt: None,
@@ -24587,14 +25647,15 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "register_mma")
             .collect();
-        assert_eq!(records.len(), 108);
+        assert_eq!(records.len(), 124);
 
         let dense_f8f6f4_records = records
             .iter()
             .copied()
             .filter(|record| {
                 record.register_mma.as_ref().is_some_and(|mma| {
-                    register_mma_f8f6f4_element_name(mma.a_element).is_some()
+                    mma.kind != Some(RegisterMmaKind::Standard)
+                        && register_mma_f8f6f4_element_name(mma.a_element).is_some()
                         && register_mma_f8f6f4_element_name(mma.b_element).is_some()
                 })
             })

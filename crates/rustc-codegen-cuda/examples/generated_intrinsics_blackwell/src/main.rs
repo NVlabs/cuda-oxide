@@ -234,6 +234,58 @@ mod kernels {
         }
     }
 
+    /// Keeps every standard FP8 register-MMA form in device code.
+    ///
+    /// This kernel is compile-only and is never launched by the example.
+    #[kernel]
+    pub fn compile_standard_fp8_mma(mut output: DisjointSlice<u32>) {
+        let c_f16 = [0; 2];
+        let c_f32 = [0.0; 4];
+        let a_k16 = [0; 2];
+        let b_k16 = 0;
+        let a_k32 = [0; 4];
+        let b_k32 = [0; 2];
+
+        // SAFETY: every lane follows the same warp-synchronous sequence.
+        let f16_values = unsafe {
+            [
+                matrix::mma_m16n8k16_fp8_f16_e4m3_e4m3(c_f16, a_k16, b_k16),
+                matrix::mma_m16n8k16_fp8_f16_e4m3_e5m2(c_f16, a_k16, b_k16),
+                matrix::mma_m16n8k16_fp8_f16_e5m2_e4m3(c_f16, a_k16, b_k16),
+                matrix::mma_m16n8k16_fp8_f16_e5m2_e5m2(c_f16, a_k16, b_k16),
+                matrix::mma_m16n8k32_fp8_f16_e4m3_e4m3(c_f16, a_k32, b_k32),
+                matrix::mma_m16n8k32_fp8_f16_e4m3_e5m2(c_f16, a_k32, b_k32),
+                matrix::mma_m16n8k32_fp8_f16_e5m2_e4m3(c_f16, a_k32, b_k32),
+                matrix::mma_m16n8k32_fp8_f16_e5m2_e5m2(c_f16, a_k32, b_k32),
+            ]
+        };
+        let f32_values = unsafe {
+            [
+                matrix::mma_m16n8k16_fp8_f32_e4m3_e4m3(c_f32, a_k16, b_k16),
+                matrix::mma_m16n8k16_fp8_f32_e4m3_e5m2(c_f32, a_k16, b_k16),
+                matrix::mma_m16n8k16_fp8_f32_e5m2_e4m3(c_f32, a_k16, b_k16),
+                matrix::mma_m16n8k16_fp8_f32_e5m2_e5m2(c_f32, a_k16, b_k16),
+                matrix::mma_m16n8k32_fp8_f32_e4m3_e4m3(c_f32, a_k32, b_k32),
+                matrix::mma_m16n8k32_fp8_f32_e4m3_e5m2(c_f32, a_k32, b_k32),
+                matrix::mma_m16n8k32_fp8_f32_e5m2_e4m3(c_f32, a_k32, b_k32),
+                matrix::mma_m16n8k32_fp8_f32_e5m2_e5m2(c_f32, a_k32, b_k32),
+            ]
+        };
+
+        let mut value = 0;
+        for lanes in f16_values {
+            value ^= lanes[0] ^ lanes[1];
+        }
+        for lanes in f32_values {
+            value ^= lanes[0].to_bits() ^ lanes[1].to_bits();
+            value ^= lanes[2].to_bits() ^ lanes[3].to_bits();
+        }
+
+        if let Some((slot, _)) = output.get_mut_indexed() {
+            *slot = value;
+        }
+    }
+
     /// Keeps every Blackwell `ldmatrix` variant in device code.
     ///
     /// This kernel is compile-only and is never launched by the example.

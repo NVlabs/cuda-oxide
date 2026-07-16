@@ -159,6 +159,8 @@ pub struct OverlayShardFile {
     pub register_mma_f8f6f4_f32: Option<RegisterMmaF8F6F4Admission>,
     #[serde(default)]
     pub register_mma_f8f6f4_f16: Option<RegisterMmaF8F6F4Admission>,
+    #[serde(default)]
+    pub register_mma_fp8: Option<RegisterMmaFp8Admission>,
     #[serde(default, alias = "sparse_mma_int8")]
     pub sparse_mma_integer: Option<SparseMmaIntegerAdmission>,
     #[serde(default)]
@@ -641,6 +643,21 @@ pub struct RegisterMmaF8F6F4Admission {
     pub b_elements: Vec<RegisterMmaElement>,
     pub product_count: usize,
     pub targets: Vec<String>,
+}
+
+/// Compact admission for the standard FP8 register-MMA family.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMmaFp8Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    pub first_abi_id: String,
+    pub shapes: Vec<RegisterMmaShape>,
+    pub accumulators: Vec<RegisterMmaAccumulator>,
+    pub a_elements: Vec<RegisterMmaElement>,
+    pub b_elements: Vec<RegisterMmaElement>,
+    pub product_count: usize,
 }
 
 /// Compact admission for a sparse integer register-MMA family.
@@ -1279,6 +1296,8 @@ pub enum MovmatrixAdapter {
 pub struct RegisterMma {
     pub shape: RegisterMmaShape,
     pub operation: RegisterMmaOperation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<RegisterMmaKind>,
     pub accumulator: RegisterMmaAccumulator,
     pub a_element: RegisterMmaElement,
     pub b_element: RegisterMmaElement,
@@ -1289,6 +1308,13 @@ pub struct RegisterMma {
     pub adapter: RegisterMmaAdapter,
     pub compatibility_source: RegisterMmaCompatibilitySource,
     pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterMmaKind {
+    Standard,
+    F8f6f4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1367,7 +1393,9 @@ pub enum RegisterMmaParticipation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegisterMmaAdapter {
+    C2U32A2U32B1U32ToD2U32,
     C2U32A4U32B2U32ToD2U32,
+    C4F32A2U32B1U32ToD4F32,
     C4F32A4U32B2U32ToD4F32,
     C2F64A1F64B1F64ToD2F64,
     C2I32A1U32B1U32ToD2I32,
