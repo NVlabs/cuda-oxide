@@ -20,14 +20,16 @@ use crate::model::{
     PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
     RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
     RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
-    RuntimeValidation, ScalarConversionRounding, ScalarConversionSaturation, SparseMma,
-    SparseMmaAccumulator, SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement,
-    SparseMmaLayout, SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape,
-    SpecialRegisterObservation, SpecialRegisterOutputConstraint, SpecialRegisterPtxType,
-    StmatrixLayout, StmatrixMultiplicity, Tcgen05Adapter, Tcgen05Operation, Tcgen05SourceContract,
-    TmaAdapter, TmaOperation, VoteAdapter, VoteMode, WarpBarrierAdapter, WarpMatchAdapter,
-    WarpMatchMode, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleOperandEncoding,
-    WarpShuffleValueKind, WgmmaControlAdapter, WgmmaControlMode, WgmmaControlParticipation,
+    RuntimeValidation, ScalarArithmeticFormat, ScalarArithmeticOperation, ScalarArithmeticRounding,
+    ScalarArithmeticSaturation, ScalarArithmeticSubnormal, ScalarConversionRounding,
+    ScalarConversionSaturation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
+    SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, SpecialRegisterObservation,
+    SpecialRegisterOutputConstraint, SpecialRegisterPtxType, StmatrixLayout, StmatrixMultiplicity,
+    Tcgen05Adapter, Tcgen05Operation, Tcgen05SourceContract, TmaAdapter, TmaOperation, VoteAdapter,
+    VoteMode, WarpBarrierAdapter, WarpMatchAdapter, WarpMatchMode, WarpShuffleAdapter,
+    WarpShuffleMode, WarpShuffleOperandEncoding, WarpShuffleValueKind, WgmmaControlAdapter,
+    WgmmaControlMode, WgmmaControlParticipation,
 };
 use anyhow::{Result, ensure};
 use std::collections::{BTreeMap, BTreeSet};
@@ -168,6 +170,12 @@ pub fn all_outputs(
             ("lo", "hi"),
         ),
     );
+    if scalar_arithmetics(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/float.rs".into(),
+            render_compat_scalar_arithmetic(catalog, catalog_sha256),
+        );
+    }
     if debug_controls(catalog).next().is_some() {
         outputs.insert(
             "crates/cuda-device/src/generated/debug_control.rs".into(),
@@ -248,6 +256,12 @@ pub fn all_outputs(
         outputs.insert(
             "crates/dialect-nvvm/src/ops/generated/scalar_conversion.rs".into(),
             render_dialect_scalar_conversion(catalog, catalog_sha256),
+        );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/scalar_arithmetic.rs".into(),
+            render_dialect_scalar_arithmetic(catalog, catalog_sha256),
         );
     }
     outputs.insert(
@@ -679,6 +693,34 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                     && record.lowering == "generated_scalar_conversion"
                     && record.scalar_conversion.is_some(),
                 "{} is outside the closed generated scalar-conversion recipe",
+                record.id
+            ),
+            "scalar_arithmetic" => ensure!(
+                record.scalar_arithmetic.as_ref().is_some_and(|arithmetic| {
+                    let ty = match arithmetic.format {
+                        ScalarArithmeticFormat::F32 => "f32",
+                        ScalarArithmeticFormat::F64 => "f64",
+                    };
+                    let arity = match arithmetic.operation {
+                        ScalarArithmeticOperation::Mul | ScalarArithmeticOperation::Div => 2,
+                        ScalarArithmeticOperation::Fma => 3,
+                    };
+                    record.rust.arguments == vec![ty; arity]
+                        && record.rust.result == ty
+                        && record.dialect.operands == vec![ty; arity]
+                        && record.dialect.results == [ty]
+                        && record.semantics.pure
+                            == (arithmetic.operation != ScalarArithmeticOperation::Div)
+                })
+                    && record.rust.module == "float"
+                    && record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.op_type == "ScalarArithmeticOp"
+                    && record.dialect.op_name == "nvvm.scalar_arithmetic"
+                    && record.semantics.memory == "none"
+                    && !record.semantics.convergent
+                    && record.lowering == "generated_scalar_arithmetic",
+                "{} is outside the closed generated scalar-arithmetic recipe",
                 record.id
             ),
             "prmt" => ensure!(
@@ -1680,6 +1722,87 @@ fn scalar_conversion_saturation_attr(record: &CatalogIntrinsic) -> &'static str 
 }
 
 fn scalar_conversion_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
+    format!(
+        "{}.{}",
+        record.expected_ptx.mnemonic,
+        record.expected_ptx.modifiers.join(".")
+    )
+}
+
+fn scalar_arithmetics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "scalar_arithmetic")
+}
+
+fn scalar_arithmetic_contract(record: &CatalogIntrinsic) -> &crate::model::ScalarArithmetic {
+    record
+        .scalar_arithmetic
+        .as_ref()
+        .expect("scalar-arithmetic contract")
+}
+
+fn scalar_arithmetic_format_attr(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).format {
+        ScalarArithmeticFormat::F32 => "ScalarArithmeticFormatAttr::F32",
+        ScalarArithmeticFormat::F64 => "ScalarArithmeticFormatAttr::F64",
+    }
+}
+
+fn scalar_arithmetic_operation_attr(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).operation {
+        ScalarArithmeticOperation::Mul => "ScalarArithmeticOperationAttr::Mul",
+        ScalarArithmeticOperation::Div => "ScalarArithmeticOperationAttr::Div",
+        ScalarArithmeticOperation::Fma => "ScalarArithmeticOperationAttr::Fma",
+    }
+}
+
+fn scalar_arithmetic_rounding_attr(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).rounding {
+        ScalarArithmeticRounding::Rn => "ScalarArithmeticRoundingAttr::Rn",
+        ScalarArithmeticRounding::Rz => "ScalarArithmeticRoundingAttr::Rz",
+        ScalarArithmeticRounding::Rm => "ScalarArithmeticRoundingAttr::Rm",
+        ScalarArithmeticRounding::Rp => "ScalarArithmeticRoundingAttr::Rp",
+    }
+}
+
+fn scalar_arithmetic_subnormal_attr(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).subnormal {
+        ScalarArithmeticSubnormal::Preserve => "ScalarArithmeticSubnormalAttr::Preserve",
+        ScalarArithmeticSubnormal::Ftz => "ScalarArithmeticSubnormalAttr::Ftz",
+    }
+}
+
+fn scalar_arithmetic_saturation_attr(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).saturation {
+        ScalarArithmeticSaturation::None => "ScalarArithmeticSaturationAttr::None",
+        ScalarArithmeticSaturation::Sat => "ScalarArithmeticSaturationAttr::Sat",
+    }
+}
+
+fn scalar_arithmetic_arity(record: &CatalogIntrinsic) -> usize {
+    match scalar_arithmetic_contract(record).operation {
+        ScalarArithmeticOperation::Mul | ScalarArithmeticOperation::Div => 2,
+        ScalarArithmeticOperation::Fma => 3,
+    }
+}
+
+fn scalar_arithmetic_rust_type(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).format {
+        ScalarArithmeticFormat::F32 => "f32",
+        ScalarArithmeticFormat::F64 => "f64",
+    }
+}
+
+fn scalar_arithmetic_llvm_type(record: &CatalogIntrinsic) -> &'static str {
+    match scalar_arithmetic_contract(record).format {
+        ScalarArithmeticFormat::F32 => "float",
+        ScalarArithmeticFormat::F64 => "double",
+    }
+}
+
+fn scalar_arithmetic_ptx_mnemonic(record: &CatalogIntrinsic) -> String {
     format!(
         "{}.{}",
         record.expected_ptx.mnemonic,
@@ -4591,6 +4714,45 @@ fn render_compat_packed_conversion(
     output
 }
 
+fn render_compat_scalar_arithmetic(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::float`.\n\n");
+    for record in scalar_arithmetics(catalog) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with("cuda_device::float::"))
+            .expect("scalar-arithmetic compatibility path");
+        let ty = scalar_arithmetic_rust_type(record);
+        let arity = scalar_arithmetic_arity(record);
+        let parameters = (0..arity)
+            .map(|index| format!("arg{index}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = (0..arity)
+            .map(|index| format!("arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub fn {}({parameters}) -> {ty} {{",
+            record.rust.name
+        )
+        .unwrap();
+        writeln!(output, "    let _ = ({arguments});").unwrap();
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
 fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -4606,6 +4768,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    redux::register(ctx);",
                 "    redux::register(ctx);\n    scalar_conversion::register(ctx);",
+            );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        output = output
+            .replace("mod redux;", "mod redux;\nmod scalar_arithmetic;")
+            .replace(
+                "pub use redux::*;",
+                "pub use redux::*;\npub use scalar_arithmetic::*;",
+            )
+            .replace(
+                "    redux::register(ctx);",
+                "    redux::register(ctx);\n    scalar_arithmetic::register(ctx);",
             );
     }
     if debug_controls(catalog).next().is_some() {
@@ -7143,6 +7317,174 @@ pub(super) fn register(ctx: &mut Context) {
     output
 }
 
+fn render_dialect_scalar_arithmetic(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        r##"//! One structural operation for generated scalar arithmetic.
+
+use pliron::{
+    attribute::Attribute,
+    builtin::{op_interfaces::NResultsInterface, types::{FP32Type, FP64Type}},
+    common_traits::Verify,
+    context::{Context, Ptr},
+    location::Located,
+    op::Op,
+    operation::Operation,
+    result::Error,
+    r#type::Typed,
+    value::Value,
+    verify_err,
+};
+use pliron_derive::{pliron_attr, pliron_op};
+
+#[pliron_attr(name = "nvvm.scalar_arithmetic_format", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarArithmeticFormatAttr { F32, F64 }
+
+#[pliron_attr(name = "nvvm.scalar_arithmetic_operation", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarArithmeticOperationAttr { Mul, Div, Fma }
+
+#[pliron_attr(name = "nvvm.scalar_arithmetic_rounding", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarArithmeticRoundingAttr { Rn, Rz, Rm, Rp }
+
+#[pliron_attr(name = "nvvm.scalar_arithmetic_subnormal", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarArithmeticSubnormalAttr { Preserve, Ftz }
+
+#[pliron_attr(name = "nvvm.scalar_arithmetic_saturation", format, verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum ScalarArithmeticSaturationAttr { None, Sat }
+
+/// Scalar arithmetic with explicit PTX modifiers.
+#[pliron_op(
+    name = "nvvm.scalar_arithmetic",
+    format,
+    interfaces = [NResultsInterface<1>],
+    attributes = (
+        nvvm_scalar_arithmetic_format: ScalarArithmeticFormatAttr,
+        nvvm_scalar_arithmetic_operation: ScalarArithmeticOperationAttr,
+        nvvm_scalar_arithmetic_rounding: ScalarArithmeticRoundingAttr,
+        nvvm_scalar_arithmetic_subnormal: ScalarArithmeticSubnormalAttr,
+        nvvm_scalar_arithmetic_saturation: ScalarArithmeticSaturationAttr
+    )
+)]
+pub struct ScalarArithmeticOp;
+
+impl ScalarArithmeticOp {
+    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
+
+    pub fn build(
+        ctx: &mut Context,
+        operands: Vec<Value>,
+        format: ScalarArithmeticFormatAttr,
+        operation: ScalarArithmeticOperationAttr,
+        rounding: ScalarArithmeticRoundingAttr,
+        subnormal: ScalarArithmeticSubnormalAttr,
+        saturation: ScalarArithmeticSaturationAttr,
+    ) -> Ptr<Operation> {
+        let result_ty = match &format {
+            ScalarArithmeticFormatAttr::F32 => FP32Type::get(ctx).into(),
+            ScalarArithmeticFormatAttr::F64 => FP64Type::get(ctx).into(),
+        };
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty],
+            operands,
+            vec![],
+            0,
+        );
+        let this = Self { op };
+        this.set_attr_nvvm_scalar_arithmetic_format(ctx, format);
+        this.set_attr_nvvm_scalar_arithmetic_operation(ctx, operation);
+        this.set_attr_nvvm_scalar_arithmetic_rounding(ctx, rounding);
+        this.set_attr_nvvm_scalar_arithmetic_subnormal(ctx, subnormal);
+        this.set_attr_nvvm_scalar_arithmetic_saturation(ctx, saturation);
+        this.get_operation()
+    }
+}
+
+impl Verify for ScalarArithmeticOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let Some(format) = self.get_attr_nvvm_scalar_arithmetic_format(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic requires a format");
+        };
+        let Some(operation) = self.get_attr_nvvm_scalar_arithmetic_operation(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic requires an operation");
+        };
+        let Some(rounding) = self.get_attr_nvvm_scalar_arithmetic_rounding(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic requires rounding");
+        };
+        let Some(subnormal) = self.get_attr_nvvm_scalar_arithmetic_subnormal(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic requires a subnormal mode");
+        };
+        let Some(saturation) = self.get_attr_nvvm_scalar_arithmetic_saturation(ctx) else {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic requires saturation");
+        };
+        let admitted = matches!(
+            (&*format, &*operation, &*rounding, &*subnormal, &*saturation),
+"##,
+    );
+    for (index, record) in scalar_arithmetics(catalog).enumerate() {
+        if index != 0 {
+            output.push_str(" |\n");
+        }
+        writeln!(
+            output,
+            "            ({}, {}, {}, {}, {})",
+            scalar_arithmetic_format_attr(record),
+            scalar_arithmetic_operation_attr(record),
+            scalar_arithmetic_rounding_attr(record),
+            scalar_arithmetic_subnormal_attr(record),
+            scalar_arithmetic_saturation_attr(record),
+        )
+        .unwrap();
+    }
+    output.push_str(
+        r##"        );
+        if !admitted {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic variant is not admitted");
+        }
+        let expected_operands = match &*operation {
+            ScalarArithmeticOperationAttr::Mul | ScalarArithmeticOperationAttr::Div => 2,
+            ScalarArithmeticOperationAttr::Fma => 3,
+        };
+        if op.get_num_operands() != expected_operands || op.get_num_results() != 1 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.scalar_arithmetic requires {} operands and one result",
+                expected_operands,
+            );
+        }
+        let type_matches = |ty: pliron::r#type::TypeHandle| match &*format {
+            ScalarArithmeticFormatAttr::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
+            ScalarArithmeticFormatAttr::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
+        };
+        if !(0..expected_operands).all(|index| type_matches(op.get_operand(index).get_type(ctx)))
+            || !type_matches(op.get_result(0).get_type(ctx))
+        {
+            return verify_err!(op.loc(), "nvvm.scalar_arithmetic types do not match its format");
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(ctx: &mut Context) {
+    ScalarArithmeticFormatAttr::register(ctx);
+    ScalarArithmeticOperationAttr::register(ctx);
+    ScalarArithmeticRoundingAttr::register(ctx);
+    ScalarArithmeticSubnormalAttr::register(ctx);
+    ScalarArithmeticSaturationAttr::register(ctx);
+    ScalarArithmeticOp::register(ctx);
+}
+"##,
+    );
+    output
+}
+
 fn render_dialect_prmt(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
@@ -7871,6 +8213,64 @@ fn render_importer_scalar_conversion_dispatch(
     output.push_str("        }\n");
 }
 
+fn render_importer_scalar_arithmetic_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    let arity = scalar_arithmetic_arity(record);
+    writeln!(
+        output,
+        "            require_arity(name, args.len(), {arity}, &loc)?;"
+    )
+    .unwrap();
+    for index in 0..arity {
+        let previous = if index == 0 { "prev_op" } else { "last_op" };
+        writeln!(
+            output,
+            "            let (arg{index}, last_op) = rvalue::translate_operand(\n                ctx, body, &args[{index}], value_map, block_ptr, {previous}, loc.clone(),\n            )?;"
+        )
+        .unwrap();
+    }
+    let arguments = (0..arity)
+        .map(|index| format!("arg{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        output,
+        "            let intrinsic = ScalarArithmeticOp::build(ctx, vec![{arguments}], {}, {}, {}, {}, {});",
+        scalar_arithmetic_format_attr(record),
+        scalar_arithmetic_operation_attr(record),
+        scalar_arithmetic_rounding_attr(record),
+        scalar_arithmetic_subnormal_attr(record),
+        scalar_arithmetic_saturation_attr(record),
+    )
+    .unwrap();
+    output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+    writeln!(
+        output,
+        "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    output.push_str(
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+                     let result = intrinsic.deref(ctx).get_result(0);\n",
+    );
+    writeln!(
+        output,
+        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        format!("{} call without target block", record.rust.name)
+    )
+    .unwrap();
+    output.push_str("        }\n");
+}
+
 fn render_importer_elect_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -7976,6 +8376,11 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     if scalar_conversions(catalog).next().is_some() {
         output.push_str(
             ", ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr",
+        );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        output.push_str(
+            ", ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -8808,6 +9213,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     }
     for record in scalar_conversions(catalog) {
         render_importer_scalar_conversion_dispatch(&mut output, catalog, record);
+    }
+    for record in scalar_arithmetics(catalog) {
+        render_importer_scalar_arithmetic_dispatch(&mut output, catalog, record);
     }
     for record in movmatrix(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
@@ -10171,6 +10579,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "prmt::convert_generated_prmt, scalar_conversion::convert_generated_scalar_conversion, ",
         );
     }
+    if scalar_arithmetics(catalog).next().is_some() {
+        output = output.replace(
+            "prmt::convert_generated_prmt, ",
+            "prmt::convert_generated_prmt, scalar_arithmetic::convert_generated_scalar_arithmetic, ",
+        );
+    }
     if elect_intrinsics(catalog).next().is_some() {
         output = output.replace(
             "warp::{convert_active_mask,",
@@ -10217,6 +10631,11 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
     if scalar_conversions(catalog).next().is_some() {
         output.push_str(
             ", ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr",
+        );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        output.push_str(
+            ", ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -10870,6 +11289,29 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_conversion variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_conversion(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1,\n        )\n    }\n}\n\n",
+        );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        output.push_str(
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for ScalarArithmeticOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_scalar_arithmetic_format(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_subnormal(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_saturation(ctx).as_deref(),\n        ) {\n",
+        );
+        for record in scalar_arithmetics(catalog) {
+            writeln!(
+                output,
+                "            (Some(&{}), Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {:?}, {}),",
+                scalar_arithmetic_format_attr(record),
+                scalar_arithmetic_operation_attr(record),
+                scalar_arithmetic_rounding_attr(record),
+                scalar_arithmetic_subnormal_attr(record),
+                scalar_arithmetic_saturation_attr(record),
+                record.llvm_identifier(),
+                scalar_arithmetic_ptx_mnemonic(record),
+                scalar_arithmetic_contract(record).format == ScalarArithmeticFormat::F64,
+            )
+            .unwrap();
+        }
+        output.push_str(
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_arithmetic variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_arithmetic(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2,\n        )\n    }\n}\n\n",
         );
     }
     if cluster_barriers(catalog).next().is_some() {
@@ -11900,6 +12342,34 @@ fn generated_intrinsic_variant(record: &CatalogIntrinsic) -> String {
             layout(mma.b_layout),
         );
     }
+    if let Some(arithmetic) = &record.scalar_arithmetic {
+        let format = match arithmetic.format {
+            ScalarArithmeticFormat::F32 => "GeneratedScalarArithmeticFormat::F32",
+            ScalarArithmeticFormat::F64 => "GeneratedScalarArithmeticFormat::F64",
+        };
+        let operation = match arithmetic.operation {
+            ScalarArithmeticOperation::Mul => "GeneratedScalarArithmeticOperation::Mul",
+            ScalarArithmeticOperation::Div => "GeneratedScalarArithmeticOperation::Div",
+            ScalarArithmeticOperation::Fma => "GeneratedScalarArithmeticOperation::Fma",
+        };
+        let rounding = match arithmetic.rounding {
+            ScalarArithmeticRounding::Rn => "GeneratedScalarArithmeticRounding::Rn",
+            ScalarArithmeticRounding::Rz => "GeneratedScalarArithmeticRounding::Rz",
+            ScalarArithmeticRounding::Rm => "GeneratedScalarArithmeticRounding::Rm",
+            ScalarArithmeticRounding::Rp => "GeneratedScalarArithmeticRounding::Rp",
+        };
+        let subnormal = match arithmetic.subnormal {
+            ScalarArithmeticSubnormal::Preserve => "GeneratedScalarArithmeticSubnormal::Preserve",
+            ScalarArithmeticSubnormal::Ftz => "GeneratedScalarArithmeticSubnormal::Ftz",
+        };
+        let saturation = match arithmetic.saturation {
+            ScalarArithmeticSaturation::None => "GeneratedScalarArithmeticSaturation::None",
+            ScalarArithmeticSaturation::Sat => "GeneratedScalarArithmeticSaturation::Sat",
+        };
+        return format!(
+            "GeneratedIntrinsicVariant::ScalarArithmetic {{ format: {format}, operation: {operation}, rounding: {rounding}, subnormal: {subnormal}, saturation: {saturation} }}"
+        );
+    }
     if let Some(conversion) = &record.scalar_conversion {
         let rounding = match conversion.rounding {
             ScalarConversionRounding::NearestAway => {
@@ -12046,6 +12516,26 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n}",
             "    ClusterBarrier { mode: GeneratedClusterBarrierMode },\n    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n    WgmmaControl { mode: GeneratedWgmmaControlMode },\n}",
         );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticFormat { F32, F64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticOperation { Mul, Div, Fma }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticRounding { Rn, Rz, Rm, Rp }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticSubnormal { Preserve, Ftz }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedScalarArithmeticSaturation { None, Sat }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {",
+        );
+        if wgmma_controls(catalog).next().is_some() {
+            replace_exact_render_fragment(
+                &mut output,
+                "    WgmmaControl { mode: GeneratedWgmmaControlMode },\n}",
+                "    WgmmaControl { mode: GeneratedWgmmaControlMode },\n    ScalarArithmetic { format: GeneratedScalarArithmeticFormat, operation: GeneratedScalarArithmeticOperation, rounding: GeneratedScalarArithmeticRounding, subnormal: GeneratedScalarArithmeticSubnormal, saturation: GeneratedScalarArithmeticSaturation },\n}",
+            );
+        } else {
+            replace_exact_render_fragment(
+                &mut output,
+                "    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n}",
+                "    ScalarConversion { rounding: GeneratedScalarConversionRounding, saturation: GeneratedScalarConversionSaturation },\n    ScalarArithmetic { format: GeneratedScalarArithmeticFormat, operation: GeneratedScalarArithmeticOperation, rounding: GeneratedScalarArithmeticRounding, subnormal: GeneratedScalarArithmeticSubnormal, saturation: GeneratedScalarArithmeticSaturation },\n}",
+            );
+        }
     }
     for record in records.iter().copied() {
         let llvm_facts = match &record.llvm {
@@ -12215,6 +12705,43 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             );
         }
     }
+    if scalar_arithmetics(catalog).next().is_some() {
+        let arithmetic_match = r#"        GeneratedIntrinsicVariant::ScalarArithmetic { format, operation: arithmetic_operation, rounding, subnormal, saturation } => {
+            let Some(op) = Operation::get_op::<ScalarArithmeticOp>(operation, ctx) else { return false; };
+            let format_matches = match format {
+                GeneratedScalarArithmeticFormat::F32 => op.get_attr_nvvm_scalar_arithmetic_format(ctx).as_deref() == Some(&ScalarArithmeticFormatAttr::F32),
+                GeneratedScalarArithmeticFormat::F64 => op.get_attr_nvvm_scalar_arithmetic_format(ctx).as_deref() == Some(&ScalarArithmeticFormatAttr::F64),
+            };
+            let operation_matches = match arithmetic_operation {
+                GeneratedScalarArithmeticOperation::Mul => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Mul),
+                GeneratedScalarArithmeticOperation::Div => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Div),
+                GeneratedScalarArithmeticOperation::Fma => op.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref() == Some(&ScalarArithmeticOperationAttr::Fma),
+            };
+            let rounding_matches = match rounding {
+                GeneratedScalarArithmeticRounding::Rn => op.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref() == Some(&ScalarArithmeticRoundingAttr::Rn),
+                GeneratedScalarArithmeticRounding::Rz => op.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref() == Some(&ScalarArithmeticRoundingAttr::Rz),
+                GeneratedScalarArithmeticRounding::Rm => op.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref() == Some(&ScalarArithmeticRoundingAttr::Rm),
+                GeneratedScalarArithmeticRounding::Rp => op.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref() == Some(&ScalarArithmeticRoundingAttr::Rp),
+            };
+            let subnormal_matches = match subnormal {
+                GeneratedScalarArithmeticSubnormal::Preserve => op.get_attr_nvvm_scalar_arithmetic_subnormal(ctx).as_deref() == Some(&ScalarArithmeticSubnormalAttr::Preserve),
+                GeneratedScalarArithmeticSubnormal::Ftz => op.get_attr_nvvm_scalar_arithmetic_subnormal(ctx).as_deref() == Some(&ScalarArithmeticSubnormalAttr::Ftz),
+            };
+            let saturation_matches = match saturation {
+                GeneratedScalarArithmeticSaturation::None => op.get_attr_nvvm_scalar_arithmetic_saturation(ctx).as_deref() == Some(&ScalarArithmeticSaturationAttr::None),
+                GeneratedScalarArithmeticSaturation::Sat => op.get_attr_nvvm_scalar_arithmetic_saturation(ctx).as_deref() == Some(&ScalarArithmeticSaturationAttr::Sat),
+            };
+            format_matches && operation_matches && rounding_matches && subnormal_matches && saturation_matches
+        }
+"#;
+        replace_exact_render_fragment(
+            &mut output,
+            "            rounding_matches && saturation_matches\n        }\n    }\n}\n",
+            &format!(
+                "            rounding_matches && saturation_matches\n        }}\n{arithmetic_match}    }}\n}}\n"
+            ),
+        );
+    }
     output.push_str(
         "\nuse dialect_nvvm::ops::{ClusterBarrierModeAttr, ClusterBarrierOp, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr, PrmtModeAttr, PrmtOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr};\nuse pliron::{context::{Context, Ptr}, operation::Operation};\n",
     );
@@ -12230,6 +12757,13 @@ fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
             &mut output,
             "SparseMmaSelectorAttr, SparseMmaShapeAttr",
             "ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr",
+        );
+    }
+    if scalar_arithmetics(catalog).next().is_some() {
+        replace_exact_render_fragment(
+            &mut output,
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr",
+            "ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr",
         );
     }
     output.push_str(
@@ -13659,6 +14193,35 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         )
         .unwrap();
         writeln!(output, "  ret {result_ty} %result\n}}\n").unwrap();
+    } else if record.scalar_arithmetic.is_some() {
+        let ty = scalar_arithmetic_llvm_type(record);
+        let arity = scalar_arithmetic_arity(record);
+        let declaration = std::iter::repeat_n(ty, arity)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let parameters = (0..arity)
+            .map(|index| format!("{ty} %arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = (0..arity)
+            .map(|index| format!("{ty} %arg{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "declare {ty} @{}({declaration})",
+            llvm(record).symbol
+        )
+        .unwrap();
+        output.push('\n');
+        writeln!(output, "define {ty} @probe_{}({parameters}) {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call {ty} @{}({arguments})",
+            llvm(record).symbol
+        )
+        .unwrap();
+        writeln!(output, "  ret {ty} %result\n}}").unwrap();
     } else if record.scalar_conversion.is_some() {
         writeln!(output, "declare i32 @{}(float)", llvm(record).symbol).unwrap();
         output.push('\n');
@@ -13894,6 +14457,16 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             "- `{}` converts one `f32` value to raw TF32 bits with `{}`. LLVM-NVPTX uses the typed intrinsic; libNVVM uses pure inline PTX so the native target floor is preserved.",
             record.id,
             scalar_conversion_ptx_mnemonic(record),
+        )
+        .unwrap();
+    }
+    output.push_str("\n## Explicit-rounding scalar-arithmetic contracts\n\n");
+    for record in scalar_arithmetics(catalog) {
+        writeln!(
+            output,
+            "- `{}` performs `{}`. LLVM-NVPTX uses the typed intrinsic; libNVVM uses pure inline PTX.",
+            record.id,
+            scalar_arithmetic_ptx_mnemonic(record),
         )
         .unwrap();
     }
@@ -16313,7 +16886,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 389);
+        assert_eq!(catalog.intrinsics.len(), 433);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 58);
         let generated_records = records
@@ -17465,5 +18038,89 @@ mod tests {
             .unwrap()
             .runtime_validation = RuntimeValidation::Executed;
         assert!(validate_renderable(&wrong_runtime).is_err());
+    }
+
+    #[test]
+    fn scalar_arithmetic_rendering_uses_one_closed_carrier() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        validate_renderable(&catalog).unwrap();
+        let records = scalar_arithmetics(&catalog).collect::<Vec<_>>();
+        assert_eq!(records.len(), 44);
+        assert!(records.iter().all(|record| {
+            record.semantics.pure
+                == (record.scalar_arithmetic.as_ref().unwrap().operation
+                    != ScalarArithmeticOperation::Div)
+        }));
+
+        let compatibility = render_compat_scalar_arithmetic(&catalog, "test-hash");
+        assert!(compatibility.contains("pub fn mul_rn_f64(arg0: f64, arg1: f64) -> f64"));
+        assert!(
+            compatibility
+                .contains("pub fn fma_rp_ftz_sat_f32(arg0: f32, arg1: f32, arg2: f32) -> f32")
+        );
+        assert_eq!(compatibility.matches("#[must_use]").count(), 44);
+
+        let dialect = render_dialect_scalar_arithmetic(&catalog, "test-hash");
+        assert_eq!(dialect.matches("pub struct ScalarArithmeticOp").count(), 1);
+        for attr in [
+            "ScalarArithmeticFormatAttr",
+            "ScalarArithmeticOperationAttr",
+            "ScalarArithmeticRoundingAttr",
+            "ScalarArithmeticSubnormalAttr",
+            "ScalarArithmeticSaturationAttr",
+        ] {
+            assert!(dialect.contains(attr));
+            assert!(dialect.contains(&format!("{attr}::register(ctx)")));
+        }
+        assert!(dialect.contains("variant is not admitted"));
+        assert!(dialect.contains("ScalarArithmeticOperationAttr::Fma => 3"));
+
+        let importer = render_importer(&catalog, "test-hash");
+        assert_eq!(
+            importer.matches("ScalarArithmeticOp::build(ctx").count(),
+            44
+        );
+        assert!(importer.contains("cuda_device::float::fma_rp_ftz_sat_f32"));
+
+        let lowering = render_lowering(&catalog, "test-hash");
+        assert_eq!(
+            lowering
+                .matches("impl MirToLlvmConversion for ScalarArithmeticOp")
+                .count(),
+            1
+        );
+        assert!(lowering.contains("llvm_nvvm_mul_rn_d"));
+        assert!(lowering.contains("fma.rp.ftz.sat.f32"));
+        assert!(lowering.contains("recipe.0, recipe.1, recipe.2"));
+
+        let targets = render_targets(&catalog, "test-hash");
+        assert!(targets.contains("GeneratedIntrinsicVariant::ScalarArithmetic"));
+        assert!(targets.contains("GeneratedScalarArithmeticFormat::F64"));
+        assert!(targets.contains("GeneratedScalarArithmeticSaturation::Sat"));
+        assert!(targets.contains("Operation::get_op::<ScalarArithmeticOp>"));
+
+        let f64_mul = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "mul_rn_f64")
+            .unwrap();
+        let f64_probe = render_probe(&catalog, f64_mul, "test-hash");
+        assert!(f64_probe.contains("declare double @llvm.nvvm.mul.rn.d(double, double)"));
+        let f32_sat = records
+            .iter()
+            .copied()
+            .find(|record| record.id == "fma_rp_ftz_sat_f32")
+            .unwrap();
+        let f32_probe = render_probe(&catalog, f32_sat, "test-hash");
+        assert!(
+            f32_probe.contains("declare float @llvm.nvvm.fma.rp.ftz.sat.f(float, float, float)")
+        );
+
+        let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/float.rs")));
+        assert!(outputs.contains_key(&PathBuf::from(
+            "crates/dialect-nvvm/src/ops/generated/scalar_arithmetic.rs"
+        )));
     }
 }

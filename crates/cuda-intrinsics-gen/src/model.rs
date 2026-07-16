@@ -166,6 +166,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub scalar_conversion: Option<ScalarConversionAdmission>,
     #[serde(default)]
+    pub scalar_arithmetic: Option<ScalarArithmeticAdmission>,
+    #[serde(default)]
     pub cluster_sreg: Option<ClusterSregAdmission>,
     #[serde(default)]
     pub cluster_barrier: Option<ClusterBarrierAdmission>,
@@ -560,6 +562,29 @@ pub struct ScalarConversionAdmissionVariant {
     pub saturation: ScalarConversionSaturation,
 }
 
+/// Compact admission for scalar floating-point arithmetic.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarArithmeticAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<ScalarArithmeticAdmissionVariant>,
+}
+
+/// One reviewed scalar arithmetic variant.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarArithmeticAdmissionVariant {
+    pub abi_id: String,
+    pub format: ScalarArithmeticFormat,
+    pub operation: ScalarArithmeticOperation,
+    pub rounding: ScalarArithmeticRounding,
+    pub subnormal: ScalarArithmeticSubnormal,
+    pub saturation: ScalarArithmeticSaturation,
+}
+
 /// Compact admission for a closed dense integer register-MMA family.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -710,6 +735,8 @@ pub struct OverlayIntrinsic {
     pub packed_conversion: Option<PackedConversion>,
     #[serde(default)]
     pub scalar_conversion: Option<ScalarConversion>,
+    #[serde(default)]
+    pub scalar_arithmetic: Option<ScalarArithmetic>,
     #[serde(default)]
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default)]
@@ -1882,6 +1909,56 @@ pub enum PackedAluAdapter {
     DirectPackedU32,
 }
 
+/// Closed contract for scalar floating-point arithmetic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScalarArithmetic {
+    pub format: ScalarArithmeticFormat,
+    pub operation: ScalarArithmeticOperation,
+    pub rounding: ScalarArithmeticRounding,
+    pub subnormal: ScalarArithmeticSubnormal,
+    pub saturation: ScalarArithmeticSaturation,
+    pub runtime_validation: RuntimeValidation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarArithmeticFormat {
+    F32,
+    F64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarArithmeticOperation {
+    Mul,
+    Div,
+    Fma,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarArithmeticRounding {
+    Rn,
+    Rz,
+    Rm,
+    Rp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarArithmeticSubnormal {
+    Preserve,
+    Ftz,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalarArithmeticSaturation {
+    None,
+    Sat,
+}
+
 /// Closed contract for converting two scalar values into one packed value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2442,6 +2519,8 @@ pub struct CatalogIntrinsic {
     pub packed_conversion: Option<PackedConversion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scalar_conversion: Option<ScalarConversion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scalar_arithmetic: Option<ScalarArithmetic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp_async_copy: Option<CpAsyncCopy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

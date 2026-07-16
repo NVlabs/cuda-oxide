@@ -25,13 +25,14 @@ use dialect_nvvm::ops::{
     ReadPtxSregWarpIdOp, ReduxSyncAddOp, ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp,
     ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr,
     RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr,
-    RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ScalarConversionOp,
-    ScalarConversionRoundingAttr, ScalarConversionSaturationAttr, ShflSyncBflyI64Op,
-    ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op, SparseMmaAccumulatorAttr,
-    SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp,
-    SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr, StmatrixM8n8X4Op,
-    ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp,
-    VoteSyncBallotOp, VoteSyncUniOp,
+    RegisterMmaOverflowAttr, RegisterMmaShapeAttr, ScalarArithmeticFormatAttr, ScalarArithmeticOp,
+    ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr,
+    ScalarArithmeticSubnormalAttr, ScalarConversionOp, ScalarConversionRoundingAttr,
+    ScalarConversionSaturationAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
+    ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr,
+    SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr,
+    SparseMmaShapeAttr, StmatrixM8n8X4Op, ThreadfenceBlockOp, ThreadfenceOp, ThreadfenceSystemOp,
+    VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp,
 };
 
 #[test]
@@ -254,6 +255,83 @@ fn generated_scalar_conversion_accepts_only_reviewed_f32_to_i32_variants() {
     wrong_result
         .set_attr_nvvm_scalar_conversion_saturation(&ctx, ScalarConversionSaturationAttr::None);
     assert!(verify_op(&wrong_result, &ctx).is_err());
+}
+
+#[test]
+fn generated_scalar_arithmetic_accepts_only_admitted_shapes_and_types() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+    let f64_ty = FP64Type::get(&ctx);
+    let block = BasicBlock::new(&mut ctx, None, vec![f32_ty.into(), f64_ty.into()]);
+    let f32_value = block.deref(&ctx).get_argument(0);
+    let f64_value = block.deref(&ctx).get_argument(1);
+
+    let valid_f32 = ScalarArithmeticOp::build(
+        &mut ctx,
+        vec![f32_value, f32_value],
+        ScalarArithmeticFormatAttr::F32,
+        ScalarArithmeticOperationAttr::Mul,
+        ScalarArithmeticRoundingAttr::Rn,
+        ScalarArithmeticSubnormalAttr::Preserve,
+        ScalarArithmeticSaturationAttr::None,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(valid_f32), &ctx).is_ok());
+
+    let valid_f64 = ScalarArithmeticOp::build(
+        &mut ctx,
+        vec![f64_value, f64_value, f64_value],
+        ScalarArithmeticFormatAttr::F64,
+        ScalarArithmeticOperationAttr::Fma,
+        ScalarArithmeticRoundingAttr::Rz,
+        ScalarArithmeticSubnormalAttr::Preserve,
+        ScalarArithmeticSaturationAttr::None,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(valid_f64), &ctx).is_ok());
+
+    let f64_ftz = ScalarArithmeticOp::build(
+        &mut ctx,
+        vec![f64_value, f64_value],
+        ScalarArithmeticFormatAttr::F64,
+        ScalarArithmeticOperationAttr::Mul,
+        ScalarArithmeticRoundingAttr::Rn,
+        ScalarArithmeticSubnormalAttr::Ftz,
+        ScalarArithmeticSaturationAttr::None,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(f64_ftz), &ctx).is_err());
+
+    let wrong_arity = ScalarArithmeticOp::build(
+        &mut ctx,
+        vec![f32_value, f32_value],
+        ScalarArithmeticFormatAttr::F32,
+        ScalarArithmeticOperationAttr::Fma,
+        ScalarArithmeticRoundingAttr::Rn,
+        ScalarArithmeticSubnormalAttr::Preserve,
+        ScalarArithmeticSaturationAttr::None,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(wrong_arity), &ctx).is_err());
+
+    let wrong_type = ScalarArithmeticOp::build(
+        &mut ctx,
+        vec![f32_value, f64_value],
+        ScalarArithmeticFormatAttr::F32,
+        ScalarArithmeticOperationAttr::Mul,
+        ScalarArithmeticRoundingAttr::Rn,
+        ScalarArithmeticSubnormalAttr::Preserve,
+        ScalarArithmeticSaturationAttr::None,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(wrong_type), &ctx).is_err());
+
+    let missing_attrs = Operation::new(
+        &mut ctx,
+        ScalarArithmeticOp::get_concrete_op_info(),
+        vec![f32_ty.into()],
+        vec![f32_value, f32_value],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ScalarArithmeticOp::new(missing_attrs), &ctx).is_err());
 }
 
 #[test]

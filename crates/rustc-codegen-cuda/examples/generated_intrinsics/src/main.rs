@@ -9,7 +9,9 @@
 //! directly. This covers the raw path instead of only `cuda-device` wrappers.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_device::float as device_float;
 use cuda_device::{DisjointSlice, cuda_module, kernel};
+use cuda_intrinsics::float as raw_float;
 use cuda_intrinsics::matrix;
 use cuda_intrinsics::prmt::{prmt, prmt_b4e, prmt_ecl, prmt_ecr, prmt_f4e, prmt_rc8, prmt_rc16};
 use cuda_intrinsics::sreg::{
@@ -28,6 +30,85 @@ use cuda_intrinsics::warp::{
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    /// Keeps every explicit-rounding scalar arithmetic intrinsic in the module.
+    ///
+    /// This coverage kernel is compiled but not launched by the example.
+    #[kernel]
+    pub fn compile_scalar_explicit_rounding(
+        mut output_f32: DisjointSlice<f32>,
+        mut output_f64: DisjointSlice<f64>,
+        a32: f32,
+        b32: f32,
+        c32: f32,
+        a64: f64,
+        b64: f64,
+        c64: f64,
+    ) {
+        if cuda_device::thread::index_1d().get() != 0 {
+            return;
+        }
+        let values_f64 = [
+            raw_float::mul_rn_f64(a64, b64),
+            device_float::mul_rz_f64(a64, b64),
+            raw_float::mul_rm_f64(a64, b64),
+            device_float::mul_rp_f64(a64, b64),
+            raw_float::div_rn_f64(a64, b64),
+            device_float::div_rz_f64(a64, b64),
+            raw_float::div_rm_f64(a64, b64),
+            device_float::div_rp_f64(a64, b64),
+            raw_float::fma_rn_f64(a64, b64, c64),
+            device_float::fma_rz_f64(a64, b64, c64),
+            raw_float::fma_rm_f64(a64, b64, c64),
+            device_float::fma_rp_f64(a64, b64, c64),
+        ];
+        let values_f32 = [
+            raw_float::mul_rn_f32(a32, b32),
+            raw_float::mul_rn_ftz_f32(a32, b32),
+            device_float::mul_rz_f32(a32, b32),
+            device_float::mul_rz_ftz_f32(a32, b32),
+            raw_float::mul_rm_f32(a32, b32),
+            raw_float::mul_rm_ftz_f32(a32, b32),
+            device_float::mul_rp_f32(a32, b32),
+            device_float::mul_rp_ftz_f32(a32, b32),
+            raw_float::div_rn_f32(a32, b32),
+            raw_float::div_rn_ftz_f32(a32, b32),
+            device_float::div_rz_f32(a32, b32),
+            device_float::div_rz_ftz_f32(a32, b32),
+            raw_float::div_rm_f32(a32, b32),
+            raw_float::div_rm_ftz_f32(a32, b32),
+            device_float::div_rp_f32(a32, b32),
+            device_float::div_rp_ftz_f32(a32, b32),
+            raw_float::fma_rn_f32(a32, b32, c32),
+            raw_float::fma_rn_ftz_f32(a32, b32, c32),
+            raw_float::fma_rn_sat_f32(a32, b32, c32),
+            raw_float::fma_rn_ftz_sat_f32(a32, b32, c32),
+            device_float::fma_rz_f32(a32, b32, c32),
+            device_float::fma_rz_ftz_f32(a32, b32, c32),
+            device_float::fma_rz_sat_f32(a32, b32, c32),
+            device_float::fma_rz_ftz_sat_f32(a32, b32, c32),
+            raw_float::fma_rm_f32(a32, b32, c32),
+            raw_float::fma_rm_ftz_f32(a32, b32, c32),
+            raw_float::fma_rm_sat_f32(a32, b32, c32),
+            raw_float::fma_rm_ftz_sat_f32(a32, b32, c32),
+            device_float::fma_rp_f32(a32, b32, c32),
+            device_float::fma_rp_ftz_f32(a32, b32, c32),
+            device_float::fma_rp_sat_f32(a32, b32, c32),
+            device_float::fma_rp_ftz_sat_f32(a32, b32, c32),
+        ];
+        for (index, value) in values_f32.into_iter().enumerate() {
+            if index < output_f32.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_f32.get_unchecked_mut(index) = value };
+            }
+        }
+        for (index, value) in values_f64.into_iter().enumerate() {
+            if index < output_f64.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_f64.get_unchecked_mut(index) = value };
+            }
+        }
+    }
 
     /// Keeps both generated movmatrix entry points in the compiled module.
     ///
@@ -156,20 +237,30 @@ mod kernels {
         // Keep every base sparse INT8 MMA form in the generated path.
         let sparse_int8 = unsafe {
             [
-                matrix::mma_sp_m16n8k32_s32_s8(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
-                )[0],
+                matrix::mma_sp_m16n8k32_s32_s8([0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0)
+                    [0],
                 matrix::mma_sp_m16n8k32_s32_s8_u8(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    1,
                 )[0],
-                matrix::mma_sp_m16n8k32_s32_u8(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
-                )[0],
+                matrix::mma_sp_m16n8k32_s32_u8([0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0)
+                    [0],
                 matrix::mma_sp_m16n8k32_s32_u8_s8(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    1,
                 )[0],
                 matrix::mma_sp_m16n8k32_s32_s8_satfinite(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k32_s32_s8_u8_satfinite(
                     [0; 4],
@@ -179,7 +270,11 @@ mod kernels {
                     1,
                 )[0],
                 matrix::mma_sp_m16n8k32_s32_u8_satfinite(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k32_s32_u8_s8_satfinite(
                     [0; 4],
@@ -193,17 +288,23 @@ mod kernels {
         // Keep every base sparse m16n8k64 INT8 form in the generated path.
         let sparse_int8_k64 = unsafe {
             [
-                matrix::mma_sp_m16n8k64_s32_s8(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
-                )[0],
+                matrix::mma_sp_m16n8k64_s32_s8([0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0)
+                    [0],
                 matrix::mma_sp_m16n8k64_s32_s8_u8(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
-                matrix::mma_sp_m16n8k64_s32_u8(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
-                )[0],
+                matrix::mma_sp_m16n8k64_s32_u8([0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0)
+                    [0],
                 matrix::mma_sp_m16n8k64_s32_u8_s8(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k64_s32_s8_satfinite(
                     [0; 4],
@@ -239,28 +340,60 @@ mod kernels {
         let ordered_sparse_int8 = unsafe {
             [
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_s8(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_s8_u8(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_u8(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_u8_s8(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_s8_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_s8_u8_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_u8_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k32_s32_u8_s8_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
             ]
         };
@@ -268,57 +401,111 @@ mod kernels {
         let ordered_sparse_int8_k64 = unsafe {
             [
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s8(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s8_u8(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u8(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u8_s8(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s8_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s8_u8_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u8_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u8_s8_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
             ]
         };
         // Keep every standard-metadata m16n8k64 INT4 form in the generated path.
         let sparse_int4_k64 = unsafe {
             [
-                matrix::mma_sp_m16n8k64_s32_s4(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
-                )[0],
+                matrix::mma_sp_m16n8k64_s32_s4([0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0)
+                    [0],
                 matrix::mma_sp_m16n8k64_s32_s4_u4(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    1,
                 )[0],
-                matrix::mma_sp_m16n8k64_s32_u4(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
-                )[0],
+                matrix::mma_sp_m16n8k64_s32_u4([0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0)
+                    [0],
                 matrix::mma_sp_m16n8k64_s32_u4_s4(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    1,
                 )[0],
                 matrix::mma_sp_m16n8k64_s32_s4_satfinite(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k64_s32_s4_u4_satfinite(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    1,
                 )[0],
                 matrix::mma_sp_m16n8k64_s32_u4_satfinite(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k64_s32_u4_s4_satfinite(
-                    [0; 4], [0; 2], [0; 2], standard_sparse_metadata, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    standard_sparse_metadata,
+                    1,
                 )[0],
             ]
         };
@@ -326,28 +513,60 @@ mod kernels {
         let sparse_int4_k128 = unsafe {
             [
                 matrix::mma_sp_m16n8k128_s32_s4(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_s4_u4(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_u4(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_u4_s4(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_s4_satfinite(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_s4_u4_satfinite(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_u4_satfinite(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
                 matrix::mma_sp_m16n8k128_s32_u4_s4_satfinite(
-                    [0; 4], [0; 4], [0; 4], standard_sparse_metadata, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    standard_sparse_metadata,
+                    0,
                 )[0],
             ]
         };
@@ -355,28 +574,60 @@ mod kernels {
         let ordered_sparse_int4_k64 = unsafe {
             [
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4_u4(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4_s4(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_s4_u4_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k64_s32_u4_s4_satfinite(
-                    [0; 4], [0; 2], [0; 2], 0x4444_4444, 1,
+                    [0; 4],
+                    [0; 2],
+                    [0; 2],
+                    0x4444_4444,
+                    1,
                 )[0],
             ]
         };
@@ -384,28 +635,60 @@ mod kernels {
         let ordered_sparse_int4_k128 = unsafe {
             [
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_s4(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_s4_u4(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_u4(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_u4_s4(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_s4_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_s4_u4_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_u4_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
                 matrix::mma_sp_ordered_metadata_m16n8k128_s32_u4_s4_satfinite(
-                    [0; 4], [0; 4], [0; 4], 0x4444_4444, 0,
+                    [0; 4],
+                    [0; 4],
+                    [0; 4],
+                    0x4444_4444,
+                    0,
                 )[0],
             ]
         };

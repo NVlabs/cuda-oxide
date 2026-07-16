@@ -227,7 +227,7 @@ pub(crate) fn run_candidate(repo_root: &Path, options: CandidateProbeOptions) ->
         .first()
         .context("candidate resolver returned no intrinsic")?;
     ensure!(
-        record.id == options.intrinsic_id,
+        record.id == options.intrinsic_id || record.rust.abi_id == options.intrinsic_id,
         "candidate resolver returned the wrong intrinsic"
     );
 
@@ -1072,6 +1072,9 @@ fn assert_canonical_intrinsic_declaration(canonical: &str, llvm: &CatalogLlvm) -
             "IntrReadMem" => reads_memory = true,
             "IntrWriteMem" => writes_memory = true,
             "IntrHasSideEffects" => has_side_effects = true,
+            "Commutative" | "IntrNoCreateUndefOrPoison" => {
+                // These are TableGen selection semantics, not LLVM IR attributes.
+            }
             "NoUndef<ret>" => {
                 // Return attributes are asserted from the normalized result facts below.
                 ensure!(
@@ -2186,6 +2189,30 @@ attributes #0 = { nounwind }
                 .to_string()
                 .contains("unsupported imported LLVM property")
         );
+    }
+
+    #[test]
+    fn accepts_known_tablegen_semantics_without_ir_attributes() {
+        let llvm = llvm_facts(
+            "llvm.nvvm.test",
+            None,
+            &["f64", "f64"],
+            &["f64"],
+            &[
+                "Commutative",
+                "IntrNoCreateUndefOrPoison",
+                "IntrNoMem",
+                "IntrSpeculatable",
+            ],
+            false,
+            None,
+        );
+        let canonical = r#"
+declare double @llvm.nvvm.test(double, double) #0
+attributes #0 = { speculatable memory(none) }
+"#;
+
+        assert_canonical_intrinsic_declaration(canonical, &llvm).unwrap();
     }
 
     #[test]

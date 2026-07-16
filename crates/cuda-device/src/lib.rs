@@ -27,6 +27,7 @@ pub mod disjoint;
 pub mod dotprod;
 pub mod f16x2;
 pub mod fence;
+pub mod float;
 pub mod grid;
 pub mod prmt;
 pub mod ptx;
